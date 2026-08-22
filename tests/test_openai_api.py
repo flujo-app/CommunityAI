@@ -4,9 +4,12 @@ mapping, non-streaming and SSE responses, auth. No swarm, no network -- the mode
 are minimal fakes; the streaming path still runs through the real transformers TextIteratorStreamer.
 """
 
+import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import torch
 
@@ -14,6 +17,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from drift.api.server import build_generate_kwargs, create_app, message_text, trim_stop_strings
+from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime, ModelState
 
 NEW_TOKENS = [101, 102, 103]
 
@@ -105,6 +109,32 @@ def test_chat_completion_non_stream(api):
     assert api.model.last_gen_kwargs["do_sample"] is False
 
 
+def test_requested_model_must_resolve_exactly(api):
+    response = api.client.post(
+        "/v1/chat/completions",
+        json={"model": "different/model", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 404
+    assert "unknown model" in response.json()["detail"]
+
+
+def test_multi_model_requests_require_and_select_a_registered_model():
+    first, second = FakeModel(), FakeModel()
+    manager = ModelManager()
+    manager.register_loaded("first", first, FakeTokenizer())
+    manager.register_loaded("second", second, FakeTokenizer(), aliases=("second-alias",))
+    client = TestClient(create_app(model_manager=manager))
+
+    missing = client.post("/v1/completions", json={"prompt": "hi"})
+    assert missing.status_code == 400
+
+    selected = client.post("/v1/completions", json={"model": "second-alias", "prompt": "hi"})
+    assert selected.status_code == 200
+    assert selected.json()["model"] == "second"
+    assert first.last_gen_kwargs is None
+    assert second.last_gen_kwargs is not None
+
+
 def test_chat_completion_finish_reason_length(api):
     response = api.client.post(
         "/v1/chat/completions",
@@ -171,3 +201,72 @@ def test_api_cli_rejects_revocations_outside_manifest_mode(monkeypatch):
     )
     with pytest.raises(SystemExit):
         run_api.main()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_lazy_load_releases_its_eventual_runtime_lease():
+    loader_started = threading.Event()
+    allow_loader_to_finish = threading.Event()
+    manager = ModelManager(max_loaded_models=1)
+
+    def loader():
+        loader_started.set()
+        assert allow_loader_to_finish.wait(timeout=2)
+        return ModelRuntime(FakeModel(), FakeTokenizer())
+
+    manager.register(ModelDescriptor("model"), loader)
+    app = create_app(model_manager=manager)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        request = asyncio.create_task(client.post("/v1/completions", json={"model": "model", "prompt": "hi"}))
+        loop = asyncio.get_running_loop()
+        assert await loop.run_in_executor(None, loader_started.wait, 1)
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        allow_loader_to_finish.set()
+
+        for _ in range(100):
+            snapshot = manager.snapshots()[0]
+            if snapshot.state is ModelState.READY and snapshot.active_requests == 0:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("cancelled load left a runtime lease active")
+
+    manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_generation_keeps_lease_until_executor_finishes():
+    generation_started = threading.Event()
+    allow_generation_to_finish = threading.Event()
+
+    class BlockingModel(FakeModel):
+        def generate(self, input_ids, **kwargs):
+            generation_started.set()
+            assert allow_generation_to_finish.wait(timeout=2)
+            return torch.cat([input_ids, torch.tensor([[101]])], dim=1)
+
+    manager = ModelManager(max_loaded_models=1)
+    manager.register_loaded("model", BlockingModel(), FakeTokenizer())
+    app = create_app(model_manager=manager)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        request = asyncio.create_task(client.post("/v1/completions", json={"model": "model", "prompt": "hi"}))
+        loop = asyncio.get_running_loop()
+        assert await loop.run_in_executor(None, generation_started.wait, 1)
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+
+        assert manager.snapshots()[0].active_requests == 1
+        allow_generation_to_finish.set()
+        for _ in range(100):
+            if manager.snapshots()[0].active_requests == 0:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("cancelled generation released its runtime too early or stranded the lease")
+
+    manager.shutdown()

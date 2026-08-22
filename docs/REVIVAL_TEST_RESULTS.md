@@ -14,6 +14,40 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 1. Reproducible execution baseline | Complete | Windows CPU, Docker Linux CPU, Windows CUDA, and native hosted Apple Silicon macOS all served blocks `0:8` and produced exact token parity; macOS also passed the MPS block-portability checks | None |
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
+| 4. Unified local node and multi-model OpenAI API | In progress | Exact multi-manifest/name/alias selection, strict secret-free config, concurrency-safe lazy loading, hard runtime residency, cancellation-safe leases, LRU idle eviction, authenticated status and safe unload, loaded-route coverage, persistent local key bootstrap, loopback guard, bounded generation concurrency, and clean shutdown; broad offline tests pass | Lightweight unloaded-model discovery, worker supervision, key CRUD, activity/cancellation controls, edge measurements, and representative client/restart/failover validation |
+
+## Unified local node: first vertical slice
+
+On 2026-08-22, the initial milestone 4 service boundary was implemented in
+[`ADR 0001`](adr/0001-unified-local-node.md). The existing OpenAI facade now routes
+requests through a model manager. It rejects unknown requested models, requires an
+explicit model when more than one is registered, and preserves the single-model
+compatibility behavior. The manager serializes concurrent first loads, publishes
+observable lifecycle and error state, retries failed lazy loads, and closes each
+loaded runtime once during shutdown.
+
+`drift node` registers pinned manifests without downloading their client artifacts
+at startup, binds to `127.0.0.1:8080` by default, authenticates the OpenAI and
+`/control/v1/status` surfaces, and requires `--allow_network` for a non-loopback
+listener. With no explicit key it atomically creates a dedicated local secret file
+and never logs the value. The first focused verification covers the manager, API,
+manifest-pinned loader, control endpoint, key persistence, argument guard, and
+shutdown lifecycle.
+
+The second slice added [`NodeConfig v1`](NODE_CONFIG_V1.md), with strict duplicate
+and unknown-field rejection, paths relative to the config, per-model peer/cache/
+revocation/retry inputs, and no provider or API secret fields. A configurable hard
+runtime limit now leases models for the full request, waits rather than evicting an
+active model, evicts only the least-recently-used idle model, closes its routing
+resources synchronously, and exposes authenticated explicit unload. Cancellation
+tests prove that an executor-backed load or generation cannot strand or prematurely
+release a lease. Loaded route managers expose their existing verified coverage view
+without status-triggered DHT activity; unloaded models remain explicitly unknown.
+
+The expanded broad offline suite passed with 175 tests and 7 skips. The
+full top-level suite still requires its existing `INITIAL_PEERS` external-swarm
+fixture, so no real swarm or representative external OpenAI clients have been
+claimed for the multi-model slice.
 
 ## Manifest artifact integrity
 

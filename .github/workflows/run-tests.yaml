@@ -60,12 +60,16 @@ jobs:
             tests/test_join_token.py \
             tests/test_kv_cache_strategy.py \
             tests/test_loading_diagnostics.py \
+            tests/test_model_manager.py \
             tests/test_model_manifest.py \
+            tests/test_node_config.py \
+            tests/test_node.py \
             tests/test_openai_api.py \
             tests/test_paged_cache.py \
             tests/test_priority_pool.py \
             tests/test_process_lifetime.py \
             tests/test_protocol_identity.py \
+            tests/test_route_health.py \
             tests/test_server_registry.py \
             tests/test_startup_guard.py \
             tests/test_tied_embeddings_from_pretrained.py

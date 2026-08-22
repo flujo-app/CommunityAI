@@ -342,6 +342,24 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    lifecycle, route/coverage status, bounded concurrency, and clean shutdown. Measure
    the current client-side embedding/head cost and decide the thin-edge protocol.
    Validate compatibility with representative OpenAI clients before adding a GUI.
+
+   The first vertical slice is implemented according to
+   [`ADR 0001`](adr/0001-unified-local-node.md): `drift node` owns a stable,
+   authenticated loopback API; registers one exact manifest; lazily and safely loads
+   its client runtime through a thread-safe model manager; resolves manifest names,
+   API aliases, and digests without fallback; reports versioned authenticated status;
+   generates a persistent local key when needed; refuses accidental non-loopback
+   binding; and cleans up the client route manager and DHT on shutdown. The existing
+   single-model `drift api` surface now uses the same selection path and rejects a
+   mismatched request model.
+
+   The second slice adds strict secret-free
+   [`NodeConfig v1`](NODE_CONFIG_V1.md), bounded
+   runtime residency, request-scoped leases, least-recently-used idle eviction,
+   authenticated safe unload, and coverage observations from loaded route managers.
+   An HTTP cancellation cannot release or evict a runtime while its executor thread
+   is still generating. Lightweight coverage discovery for unloaded models, worker
+   supervision, full key CRUD, edge measurements, and compatibility validation remain.
 5. **Desktop application and contribution controls.** Ship signed installers for
    Windows, Linux, and macOS; complete first-run onboarding; manage keys in native
    credential stores; show endpoint, model, route and contribution health; enforce
