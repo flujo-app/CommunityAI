@@ -1,7 +1,7 @@
 # ModelManifest v1
 
 Status: implementation complete, including signed worker identity and resumable artifact integrity;
-public-network approval awaits the macOS and signed multi-machine validation runs.
+public-network approval awaits the macOS validation run.
 
 `ModelManifest v1` gives one model execution profile a content-derived identity. A
 manifest pins the upstream commit, model shape, runtime compatibility, tensor and
@@ -209,7 +209,7 @@ revocation, replay/expiry enforcement, deterministic interrupted-download tests,
 a successful real Hub HTTP 206 resume followed by SHA-256 promotion. Native Windows
 has passed signed manifested exact parity and in-generation failover locally. The
 macOS workflow runs canonical vectors, adversarial identity tests, a real Hub resume,
-and manifested exact parity, but its first hosted run still has to complete. The Fly
-harness is updated for persistent worker identities; rerun it before approving public
-deployment. Converted and pre-quantized formats still require model-specific release
+and manifested exact parity, but its first hosted run still has to complete. A signed
+two-worker Fly swarm has passed cross-Machine routing and exact parity under the same
+manifest. Converted and pre-quantized formats still require model-specific release
 qualification even though the v1 verifier treats them as declared content.

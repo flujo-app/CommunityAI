@@ -13,7 +13,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | --- | --- | --- | --- |
 | 1. Reproducible execution baseline | Mostly complete | Windows CPU, Docker Linux CPU, and Windows CUDA all served blocks `0:8` and produced exact token parity | Native macOS install and smoke test |
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
-| 3. Public protocol identity and content integrity | Implementation complete; validation pending | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, a real Hub HTTP 206 resume, signed Windows parity/failover, and prior Fly poison rejection are proven | First green macOS security/parity workflow and signed Fly multi-machine rerun |
+| 3. Public protocol identity and content integrity | Implementation complete; validation pending | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, a real Hub HTTP 206 resume, signed Windows parity/failover, signed Fly cross-Machine parity, and prior Fly poison rejection are proven | First green macOS security/parity workflow |
 
 ## Manifest artifact integrity
 
@@ -80,6 +80,20 @@ signed announcement through Hivemind DHT storage. Adversarial tests cover signat
 tampering, PeerID substitution, expiry, replay, equivocation, copied block keys,
 manifest mismatch, unsigned records, non-finite metadata, rotation forks,
 unauthorized revocation, and duplicate JSON keys.
+
+The signed Fly rerun used commit `d528cdf` and image digest
+`sha256:39faf8150963f8f7f1b165bf54247d1c3165225a263641c73f283271cb118b20`
+in `iad`: one private bootstrap, one independently signed `0:4` worker, one
+independently signed `4:8` worker, and an ephemeral client. The client accepted
+`replicas=[1,1,1,1,1,1,1,1]`, selected route
+`0:4 via …R3N3BA => 4:8 via …PrQMCV`, and produced
+`[[1,16644,31844,260,1496,2789,3557,21075,31843,1100]]`, exactly matching stock
+Transformers. Coverage took 4.966 seconds, first-token latency was 0.274 seconds,
+and eight-token generation took 0.352 seconds (22.714 token/s). The client exited
+with code 0 and was not OOM-killed. A 512 MiB bootstrap sizing probe was OOM-killed
+before joining the swarm and immediately destroyed; the validated bootstrap used
+1 GiB. All four successful-run Machines were then destroyed, and the final Machine
+list was empty.
 
 The artifact verifier also gained a locked content-addressed partial cache. A live
 Hub test seeded 2,097,152 bytes of TinyLlama's 9,251,608-byte `model.safetensors`,

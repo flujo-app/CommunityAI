@@ -330,8 +330,9 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    into a locked private partial and are atomically promoted only after size and
    SHA-256 verification. A real Hub test resumed TinyLlama at byte 2,097,152 with
    HTTP 206, and signed Windows CPU parity plus in-generation failover passed. The
-   macOS gate is now in CI and the Fly harness uses persistent signing identities;
-   their first green/rerun evidence is still required before public-network approval.
+   signed Fly rerun then routed across independent `0:4` and `4:8` identities and
+   passed exact parity. The first green hosted macOS run remains required before
+   public-network approval.
 4. **Unified local node and multi-model OpenAI API.** Introduce the persistent node
    daemon, worker supervision, a versioned local control API, multi-model discovery
    and lazy client loading, a stable localhost OpenAI endpoint, local API-key

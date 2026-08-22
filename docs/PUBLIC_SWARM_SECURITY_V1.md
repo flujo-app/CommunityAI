@@ -131,6 +131,7 @@ content-derived public namespace through the manifested CLI path.
 
 The macOS CI leg generates a pinned TinyLlama manifest, exercises a real HTTP Range
 resume, and runs a signed local swarm with exact stock-model token parity. Windows
-executes the same path through the local smoke harness, and the Fly harness now gives
-every manifested worker a persistent signing identity for the next paid
-multi-machine run.
+executes the same path through the local smoke harness. A Fly Linux rerun used
+independent persistent identities for `0:4` and `4:8`, validated full signed coverage
+from a separate client, routed across both Machines, and passed exact stock-model
+token parity.
