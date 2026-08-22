@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from drift.cli.run_node import _validate_args, build_parser
 from drift.model_manifest import ModelManifest
-from drift.node.keys import load_or_create_api_key
+from drift.node.keys import ApiKeyStore, load_or_create_api_key
 from drift.node.loading import make_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime, ModelState
 from drift.node.server import create_node_app
@@ -110,6 +110,90 @@ def test_node_refuses_to_unload_a_model_with_an_active_lease():
         )
         assert response.status_code == 409
         lease.release()
+
+
+def test_authenticated_worker_controls_are_routed_through_supervisor():
+    class FakeSupervisor:
+        def __init__(self):
+            self.state = "paused"
+            self.calls = []
+            self.closed = False
+
+        def snapshots(self):
+            return ({"id": "worker", "model": "model", "state": self.state},)
+
+        def snapshot(self, worker_id):
+            assert worker_id == "worker"
+            return self.snapshots()[0]
+
+        def start_worker(self, worker_id):
+            self.calls.append(("start", worker_id))
+            self.state = "running"
+            return True
+
+        def pause_worker(self, worker_id):
+            self.calls.append(("pause", worker_id))
+            self.state = "paused"
+            return True
+
+        def restart_worker(self, worker_id):
+            self.calls.append(("restart", worker_id))
+            self.state = "running"
+            return True
+
+        def shutdown(self):
+            self.closed = True
+
+    manager = ModelManager()
+    manager.register(ModelDescriptor("model"), lambda: ModelRuntime(FakeModel(), FakeTokenizer()))
+    supervisor = FakeSupervisor()
+    app = create_node_app(manager, api_keys=["secret"], worker_supervisor=supervisor)
+    headers = {"Authorization": "Bearer secret"}
+
+    with TestClient(app) as client:
+        assert client.get("/control/v1/workers").status_code == 401
+        assert client.get("/control/v1/workers", headers=headers).json()["workers"][0]["state"] == "paused"
+        for action in ("start", "pause", "restart"):
+            response = client.post(f"/control/v1/workers/worker/{action}", headers=headers)
+            assert response.status_code == 200
+            assert response.json()["changed"] is True
+
+    assert supervisor.calls == [("start", "worker"), ("pause", "worker"), ("restart", "worker")]
+    assert supervisor.closed
+
+
+def test_persistent_key_crud_updates_authentication_immediately(tmp_path):
+    store = ApiKeyStore(tmp_path / "api-keys.json")
+    first_secret = "drift_first-secret"
+    first = store.ensure_key(first_secret, label="bootstrap")
+    manager = ModelManager()
+    manager.register(ModelDescriptor("model"), lambda: ModelRuntime(FakeModel(), FakeTokenizer()))
+    app = create_node_app(manager, api_key_store=store)
+    first_headers = {"Authorization": f"Bearer {first_secret}"}
+
+    with TestClient(app) as client:
+        listed = client.get("/control/v1/keys", headers=first_headers)
+        assert listed.status_code == 200
+        assert listed.json()["keys"] == [first]
+        assert "secret_hash" not in listed.text
+
+        created = client.post("/control/v1/keys", headers=first_headers, json={"label": "second client"})
+        assert created.status_code == 201
+        second_secret = created.json()["secret"]
+        second = created.json()["key"]
+        second_headers = {"Authorization": f"Bearer {second_secret}"}
+        assert client.get("/v1/models", headers=second_headers).status_code == 200
+        renamed = client.patch(
+            f"/control/v1/keys/{second['id']}", headers=second_headers, json={"label": "renamed client"}
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["key"]["label"] == "renamed client"
+
+        revoked = client.delete(f"/control/v1/keys/{first['id']}", headers=second_headers)
+        assert revoked.status_code == 200
+        assert revoked.json()["key"]["revoked_at"] is not None
+        assert client.get("/v1/models", headers=first_headers).status_code == 401
+        assert client.delete(f"/control/v1/keys/{second['id']}", headers=second_headers).status_code == 409
 
 
 def test_node_parser_requires_explicit_network_opt_in():

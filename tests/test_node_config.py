@@ -1,11 +1,12 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
-from drift.cli.run_node import _build_model_manager
+from drift.cli.run_node import _build_model_manager, _build_worker_supervisor
 from drift.model_manifest import ModelManifest
-from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
+from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig, WorkerConfig
 from drift.node.model_manager import ModelRuntime, ModelState
 
 
@@ -13,6 +14,8 @@ def _config_dict(**overrides):
     source = {
         "schema_version": 1,
         "max_loaded_models": 1,
+        "discovery_update_period": 12,
+        "discovery_startup_timeout": 4,
         "models": [
             {
                 "manifest": "manifests/one.json",
@@ -33,6 +36,8 @@ def test_node_config_resolves_paths_relative_to_its_own_directory(tmp_path):
 
     assert config.schema_version == NODE_CONFIG_SCHEMA_VERSION
     assert config.max_loaded_models == 1
+    assert config.discovery_update_period == 12
+    assert config.discovery_startup_timeout == 4
     model = config.models[0]
     assert model.manifest_path == (tmp_path / "manifests/one.json").resolve()
     assert model.cache_dir == (tmp_path / "cache/one").resolve()
@@ -47,6 +52,38 @@ def test_node_config_is_strict_and_does_not_accept_secrets(tmp_path):
 
     with pytest.raises(NodeConfigError, match="unknown field.*token"):
         NodeConfig.from_dict(source, base_dir=tmp_path)
+
+
+def test_node_config_parses_strict_worker_controls(tmp_path):
+    source = _config_dict(
+        workers=[
+            {
+                "id": "gpu-0",
+                "model": "tiny-test",
+                "identity_path": "secrets/gpu-0.key",
+                "block_indices": "0:4",
+                "enabled": True,
+                "auto_restart": False,
+                "restart_backoff": 2,
+                "device": "cuda:0",
+                "cache_dir": "worker-cache",
+                "max_disk_space": "20GiB",
+                "throughput": 1.5,
+                "port": 31337,
+                "public_ip": "203.0.113.4",
+            }
+        ]
+    )
+
+    worker = NodeConfig.from_dict(source, base_dir=tmp_path).workers[0]
+
+    assert worker.worker_id == "gpu-0"
+    assert worker.identity_path == (tmp_path / "secrets/gpu-0.key").resolve()
+    assert worker.block_indices == "0:4"
+    assert worker.enabled is True
+    assert worker.auto_restart is False
+    assert worker.throughput == 1.5
+    assert worker.port == 31337
 
 
 @pytest.mark.parametrize(
@@ -96,7 +133,7 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
         ),
     )
 
-    manager, descriptors = _build_model_manager(config, token="provider-token")
+    manager, descriptors, discovery = _build_model_manager(config, token="provider-token")
 
     assert [descriptor.model_id for descriptor in descriptors] == [first.name, second.name]
     assert [snapshot.state for snapshot in manager.snapshots()] == [ModelState.KNOWN, ModelState.KNOWN]
@@ -107,3 +144,44 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
     assert loader_calls[1][1]["request_timeout"] == 9
     assert loader_calls[1][1]["max_retries"] == 4
     assert all(call[1]["token"] == "provider-token" for call in loader_calls)
+    assert discovery.snapshot(first.digest_id)["status"] == "unknown"
+    manager.shutdown()
+
+
+def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    config = NodeConfig(
+        schema_version=1,
+        max_loaded_models=1,
+        models=(NodeModelConfig(manifest_path, ("peer-one",)),),
+        workers=(
+            WorkerConfig(
+                worker_id="worker",
+                model=manifest.aliases[0],
+                identity_path=tmp_path / "worker.key",
+                num_blocks=2,
+                throughput=1.25,
+            ),
+        ),
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+
+    supervisor = _build_worker_supervisor(config, manager, token="provider-token")
+    launch = supervisor.launches[0]
+
+    assert launch.model_id == manifest.name
+    assert launch.command[:4] == (sys.executable, "-m", "drift.cli", "server")
+    assert "--model_manifest" in launch.command
+    assert str(manifest_path) in launch.command
+    assert launch.command[launch.command.index("--num_blocks") + 1] == "2"
+    assert launch.command[launch.command.index("--throughput") + 1] == "1.25"
+    assert "provider-token" not in launch.command
+    assert launch.environment == (("HF_TOKEN", "provider-token"),)
+    supervisor.shutdown()
+    manager.shutdown()

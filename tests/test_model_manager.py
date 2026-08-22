@@ -164,6 +164,34 @@ def test_snapshot_marks_loaded_incomplete_routes_as_degraded():
     assert snapshot.route == route
 
 
+def test_unloaded_model_can_publish_lightweight_discovery_health():
+    manager = ModelManager()
+    route = {"status": "complete", "source": "discovery"}
+    manager.register(
+        ModelDescriptor("model"),
+        lambda: ModelRuntime(object(), object()),
+        route_health=lambda: route,
+    )
+
+    snapshot = manager.snapshots()[0]
+
+    assert snapshot.state is ModelState.KNOWN
+    assert snapshot.route == route
+
+
+def test_shutdown_callbacks_run_once_even_when_one_fails(caplog):
+    manager = ModelManager()
+    calls = []
+    manager.add_shutdown_callback(lambda: (_ for _ in ()).throw(RuntimeError("service failed")))
+    manager.add_shutdown_callback(lambda: calls.append("closed"))
+
+    manager.shutdown()
+    manager.shutdown()
+
+    assert calls == ["closed"]
+    assert "Failed to close a model-manager service" in caplog.text
+
+
 def test_bounded_residency_evicts_the_least_recent_idle_model():
     manager = ModelManager(max_loaded_models=2)
     closed = []

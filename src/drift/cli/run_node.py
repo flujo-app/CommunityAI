@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
 from pathlib import Path
 
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
@@ -11,9 +12,11 @@ from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 import drift
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
-from drift.node.keys import load_or_create_api_key
+from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery
+from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key
 from drift.node.loading import make_manifest_loader
-from drift.node.model_manager import ModelDescriptor, ModelManager
+from drift.node.model_manager import ModelDescriptor, ModelManager, ModelNotFoundError
+from drift.node.worker_supervisor import WorkerLaunch, WorkerSupervisor
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
 use_hivemind_log_handler("in_root_logger")
@@ -112,6 +115,9 @@ def _load_node_config(args: argparse.Namespace) -> NodeConfig:
             schema_version=configured.schema_version,
             max_loaded_models=args.max_loaded_models,
             models=configured.models,
+            workers=configured.workers,
+            discovery_update_period=configured.discovery_update_period,
+            discovery_startup_timeout=configured.discovery_startup_timeout,
         )
 
     manifest_path = Path(args.model_manifest).expanduser().resolve()
@@ -132,15 +138,34 @@ def _load_node_config(args: argparse.Namespace) -> NodeConfig:
     )
 
 
-def _build_model_manager(config: NodeConfig, *, token: str | None) -> tuple[ModelManager, tuple[ModelDescriptor, ...]]:
+def _build_model_manager(
+    config: NodeConfig, *, token: str | None
+) -> tuple[ModelManager, tuple[ModelDescriptor, ...], ModelCoverageDiscovery]:
     manager = ModelManager(max_loaded_models=config.max_loaded_models)
     descriptors = []
     try:
+        configured_manifests = []
         for model_config in config.models:
             manifest = ModelManifest.load(model_config.manifest_path)
             manifest.validate_runtime(drift.__version__)
             if manifest.runtime.adapter_profile != "none":
                 raise ManifestError("Content-addressed adapter profiles are not executable in this release")
+            configured_manifests.append((model_config, manifest))
+
+        discovery = ModelCoverageDiscovery(
+            [
+                CoverageTarget(
+                    manifest=manifest,
+                    initial_peers=model_config.initial_peers,
+                    revocation_files=model_config.revocation_files,
+                )
+                for model_config, manifest in configured_manifests
+            ],
+            update_period=config.discovery_update_period,
+            startup_timeout=config.discovery_startup_timeout,
+        )
+        manager.add_shutdown_callback(discovery.close)
+        for model_config, manifest in configured_manifests:
             descriptors.append(
                 manager.register_manifest(
                     manifest,
@@ -153,12 +178,107 @@ def _build_model_manager(config: NodeConfig, *, token: str | None) -> tuple[Mode
                         request_timeout=model_config.request_timeout,
                         max_retries=model_config.max_retries,
                     ),
+                    route_health=discovery.observer(manifest.digest_id),
                 )
             )
     except BaseException:
         manager.shutdown()
         raise
-    return manager, tuple(descriptors)
+    return manager, tuple(descriptors), discovery
+
+
+def _build_worker_supervisor(
+    config: NodeConfig, manager: ModelManager, *, token: str | None = None
+) -> WorkerSupervisor:
+    manifested_models = {}
+    for model_config in config.models:
+        manifest = ModelManifest.load(model_config.manifest_path)
+        manifested_models[manifest.digest_id] = (model_config, manifest)
+
+    launches = []
+    for worker in config.workers:
+        try:
+            descriptor = manager.resolve(worker.model)
+        except ModelNotFoundError as exc:
+            raise NodeConfigError(f"worker {worker.worker_id!r} selects {exc}") from exc
+        model_config, manifest = manifested_models[descriptor.manifest_digest]
+        if worker.num_blocks is not None and worker.num_blocks > manifest.model.num_blocks:
+            raise NodeConfigError(
+                f"worker {worker.worker_id!r} requests {worker.num_blocks} blocks from a "
+                f"{manifest.model.num_blocks}-block model"
+            )
+        if worker.block_indices is not None and int(worker.block_indices.split(":")[1]) > manifest.model.num_blocks:
+            raise NodeConfigError(
+                f"worker {worker.worker_id!r} block range exceeds model size {manifest.model.num_blocks}"
+            )
+        if worker.public_ip is not None and worker.port is None:
+            raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
+
+        command = [
+            sys.executable,
+            "-m",
+            "drift.cli",
+            "server",
+            manifest.source.repository,
+            "--model_manifest",
+            str(model_config.manifest_path),
+            "--identity_path",
+            str(worker.identity_path),
+            "--initial_peers",
+            *model_config.initial_peers,
+            "--throughput",
+            str(worker.throughput),
+        ]
+        if worker.num_blocks is not None:
+            command.extend(("--num_blocks", str(worker.num_blocks)))
+        else:
+            command.extend(("--block_indices", worker.block_indices))
+        if worker.device is not None:
+            command.extend(("--device", worker.device))
+        cache_dir = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
+        if cache_dir is not None:
+            command.extend(("--cache_dir", str(cache_dir)))
+        if worker.max_disk_space is not None:
+            command.extend(("--max_disk_space", worker.max_disk_space))
+        if worker.port is not None:
+            command.extend(("--port", str(worker.port)))
+        if worker.public_ip is not None:
+            command.extend(("--public_ip", worker.public_ip))
+        for revocation_file in model_config.revocation_files:
+            command.extend(("--revocation_file", str(revocation_file)))
+
+        launches.append(
+            WorkerLaunch(
+                worker_id=worker.worker_id,
+                model_id=descriptor.model_id,
+                command=tuple(command),
+                auto_start=worker.enabled,
+                auto_restart=worker.auto_restart,
+                restart_backoff=worker.restart_backoff,
+                environment=(("HF_TOKEN", token),) if token is not None else (),
+            )
+        )
+    return WorkerSupervisor(launches)
+
+
+def _prepare_api_key_store(data_dir: Path, supplied_keys: list[str]) -> tuple[ApiKeyStore, Path | None, bool]:
+    """Import explicit keys or bootstrap only an otherwise keyless store.
+
+    Once control clients have created a replacement and revoked the bootstrap key,
+    the persistent managed-key set is authoritative across node restarts.
+    """
+    key_store = ApiKeyStore(data_dir / "api-keys.json")
+    if supplied_keys:
+        for index, key in enumerate(supplied_keys, start=1):
+            key_store.ensure_key(key, label=f"command-line-{index}")
+        return key_store, None, False
+    if any(item["revoked_at"] is None for item in key_store.list()):
+        return key_store, None, False
+
+    key_path = data_dir / "local-api.key"
+    key, created = load_or_create_api_key(key_path)
+    key_store.ensure_key(key, label="bootstrap")
+    return key_store, key_path, created
 
 
 def main() -> None:
@@ -168,7 +288,8 @@ def main() -> None:
 
     try:
         config = _load_node_config(args)
-        manager, descriptors = _build_model_manager(config, token=args.token)
+        manager, descriptors, discovery = _build_model_manager(config, token=args.token)
+        worker_supervisor = _build_worker_supervisor(config, manager, token=args.token)
     except (NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))
 
@@ -179,32 +300,40 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit(f"drift node requires the 'api' extra: pip install drift[api] ({exc})") from exc
 
-    if args.api_key:
-        api_keys = args.api_key
-    else:
-        key_path = args.data_dir / "local-api.key"
-        key, created = load_or_create_api_key(key_path)
-        api_keys = [key]
-        if created:
-            logger.info(f"Created the local API key in {key_path}; its value is not written to logs")
-        else:
-            logger.info(f"Using the local API key from {key_path}")
+    try:
+        key_store, key_path, created = _prepare_api_key_store(args.data_dir, args.api_key)
+        if key_path is not None:
+            if created:
+                logger.info(f"Created the local API key in {key_path}; its value is not written to logs")
+            else:
+                logger.info(f"Using the local API key from {key_path}")
+        elif not args.api_key:
+            logger.info(f"Using the active managed API keys in {key_store.path}")
+    except (ApiKeyStoreError, OSError, ValueError) as exc:
+        parser.error(str(exc))
 
     # Arm this before a lazy request can create the model client's p2pd child.
     tie_child_processes_to_this_process()
     app = create_node_app(
         manager,
-        api_keys=api_keys,
+        api_key_store=key_store,
         host=args.host,
         port=args.port,
         max_concurrent=args.max_concurrent,
         default_max_tokens=args.default_max_tokens,
+        worker_supervisor=worker_supervisor,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
     logger.info(
         f"Local node knows {len(descriptors)} exact model(s) ({model_names}) at http://{args.host}:{args.port}/v1"
     )
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    discovery.start()
+    worker_supervisor.start_service()
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    finally:
+        worker_supervisor.shutdown()
+        manager.shutdown()
 
 
 if __name__ == "__main__":

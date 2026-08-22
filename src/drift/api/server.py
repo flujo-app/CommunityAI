@@ -20,7 +20,7 @@ import secrets
 import time
 import uuid
 from queue import Empty
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch
 from fastapi import FastAPI, HTTPException, Request
@@ -141,6 +141,7 @@ def create_app(
     *,
     model_manager: Optional[ModelManager] = None,
     api_keys: Optional[List[str]] = None,
+    api_key_verifier: Optional[Callable[[str], bool]] = None,
     max_concurrent: int = 1,
     default_max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> FastAPI:
@@ -161,17 +162,24 @@ def create_app(
         model_manager.register_loaded(model_name, model, tokenizer)
     elif model is not None or tokenizer is not None or model_name is not None:
         raise ValueError("pass either model_manager or the single-model arguments, not both")
+    if api_keys and api_key_verifier is not None:
+        raise ValueError("pass either api_keys or api_key_verifier, not both")
 
     app = FastAPI(title="DRIFT-LLM OpenAI-compatible API")
     semaphore = asyncio.Semaphore(max_concurrent)
     served_since = int(time.time())
 
     def check_auth(request: Request) -> None:
-        if not api_keys:
+        if not api_keys and api_key_verifier is None:
             return
         auth = request.headers.get("authorization", "")
         candidate = auth[len("Bearer ") :] if auth.startswith("Bearer ") else ""
-        if not any(secrets.compare_digest(candidate, key) for key in api_keys):
+        valid = (
+            api_key_verifier(candidate)
+            if api_key_verifier is not None
+            else any(secrets.compare_digest(candidate, key) for key in api_keys)
+        )
+        if not valid:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
     async def load_model(identifier: Optional[str]) -> LoadedModel:
@@ -204,11 +212,14 @@ def create_app(
     def generate_sync(
         loaded: LoadedModel, input_ids: torch.Tensor, gen_kwargs: Dict[str, Any], streamer=None
     ) -> torch.Tensor:
-        # tokenizer is required by transformers when stop_strings is set; harmless otherwise
+        # Transformers requires the tokenizer for stop-string matching, but otherwise
+        # forwards unknown generate kwargs into model.forward(). Distributed model
+        # forwards intentionally reject a stray ``tokenizer`` argument.
+        call_kwargs = dict(gen_kwargs)
+        if call_kwargs.get("stop_strings"):
+            call_kwargs["tokenizer"] = loaded.runtime.tokenizer
         with torch.inference_mode():
-            return loaded.runtime.model.generate(
-                input_ids, tokenizer=loaded.runtime.tokenizer, streamer=streamer, **gen_kwargs
-            )
+            return loaded.runtime.model.generate(input_ids, streamer=streamer, **call_kwargs)
 
     def usage(input_ids: torch.Tensor, output_ids: torch.Tensor) -> Dict[str, int]:
         prompt_tokens = input_ids.shape[1]
@@ -298,6 +309,7 @@ def create_app(
                     "created": served_since,
                     "owned_by": "drift",
                     "status": snapshot.state.value,
+                    "availability": snapshot.route.get("status") if snapshot.route is not None else "unknown",
                     "aliases": list(snapshot.aliases),
                     "manifest_digest": snapshot.manifest_digest,
                 }

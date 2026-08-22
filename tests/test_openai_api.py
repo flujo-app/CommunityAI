@@ -45,6 +45,8 @@ class FakeModel:
 
     def generate(self, input_ids, tokenizer=None, streamer=None, max_new_tokens=None, **kwargs):
         self.last_gen_kwargs = dict(kwargs, max_new_tokens=max_new_tokens)
+        if tokenizer is not None:
+            self.last_gen_kwargs["tokenizer"] = tokenizer
         new_tokens = NEW_TOKENS[: max_new_tokens if max_new_tokens is not None else len(NEW_TOKENS)]
         output_ids = torch.cat([input_ids, torch.tensor([new_tokens])], dim=1)
         if streamer is not None:
@@ -116,6 +118,19 @@ def test_requested_model_must_resolve_exactly(api):
     )
     assert response.status_code == 404
     assert "unknown model" in response.json()["detail"]
+
+
+def test_tokenizer_generate_kwarg_is_only_sent_for_stop_strings(api):
+    plain = api.client.post("/v1/completions", json={"model": "fake/model", "prompt": "hi", "temperature": 0})
+    assert plain.status_code == 200
+    assert "tokenizer" not in api.model.last_gen_kwargs
+
+    stopped = api.client.post(
+        "/v1/completions",
+        json={"model": "fake/model", "prompt": "hi", "temperature": 0, "stop": "tok102"},
+    )
+    assert stopped.status_code == 200
+    assert api.model.last_gen_kwargs["tokenizer"].__class__ is FakeTokenizer
 
 
 def test_multi_model_requests_require_and_select_a_registered_model():

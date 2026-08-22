@@ -21,6 +21,7 @@ COPY scripts/install.sh ./scripts/install.sh
 
 # Exercise the supported Linux installer itself while building the smoke image.
 RUN DRIFT_DEVICE=cpu sh scripts/install.sh \
+    && uv pip install --python /workspace/.venv/bin/python ".[api,benchmark]" "openai>=2,<3" \
     && rm -rf /root/.cache/uv
 
 FROM python:3.12-slim-bookworm

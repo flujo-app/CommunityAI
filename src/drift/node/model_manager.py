@@ -156,6 +156,7 @@ class LoadedModel:
 class _ModelRecord:
     descriptor: ModelDescriptor
     loader: Callable[[], ModelRuntime]
+    route_health: Optional[Callable[[], Dict[str, Any]]] = None
     state: ModelState = ModelState.KNOWN
     runtime: Optional[ModelRuntime] = None
     last_error: Optional[str] = None
@@ -179,9 +180,16 @@ class ModelManager:
         self._lock = threading.RLock()
         self._capacity_changed = threading.Condition(self._lock)
         self._max_loaded_models = max_loaded_models
+        self._shutdown_callbacks: list[Callable[[], None]] = []
         self._closed = False
 
-    def register(self, descriptor: ModelDescriptor, loader: Callable[[], ModelRuntime]) -> None:
+    def register(
+        self,
+        descriptor: ModelDescriptor,
+        loader: Callable[[], ModelRuntime],
+        *,
+        route_health: Optional[Callable[[], Dict[str, Any]]] = None,
+    ) -> None:
         """Register a lazy runtime and reject every ambiguous alias up front."""
         if not callable(loader):
             raise TypeError("loader must be callable")
@@ -192,14 +200,32 @@ class ModelManager:
             conflicts = [value for value in identifiers if value.casefold() in self._identifiers]
             if conflicts:
                 raise ValueError(f"model identifier already registered: {conflicts[0]!r}")
-            self._records[descriptor.model_id] = _ModelRecord(descriptor=descriptor, loader=loader)
+            self._records[descriptor.model_id] = _ModelRecord(
+                descriptor=descriptor,
+                loader=loader,
+                route_health=route_health,
+            )
             for value in identifiers:
                 self._identifiers[value.casefold()] = descriptor.model_id
 
-    def register_manifest(self, manifest: ModelManifest, loader: Callable[[], ModelRuntime]) -> ModelDescriptor:
+    def register_manifest(
+        self,
+        manifest: ModelManifest,
+        loader: Callable[[], ModelRuntime],
+        *,
+        route_health: Optional[Callable[[], Dict[str, Any]]] = None,
+    ) -> ModelDescriptor:
         descriptor = ModelDescriptor.from_manifest(manifest)
-        self.register(descriptor, loader)
+        self.register(descriptor, loader, route_health=route_health)
         return descriptor
+
+    def add_shutdown_callback(self, callback: Callable[[], None]) -> None:
+        if not callable(callback):
+            raise TypeError("shutdown callback must be callable")
+        with self._lock:
+            if self._closed:
+                raise ModelManagerClosedError("model manager is shutting down")
+            self._shutdown_callbacks.append(callback)
 
     def register_loaded(
         self, model_id: str, model: Any, tokenizer: Any, *, aliases: Iterable[str] = ()
@@ -430,9 +456,12 @@ class ModelManager:
             for record in sorted(self._records.values(), key=lambda item: item.descriptor.model_id.casefold()):
                 route = None
                 state = record.state
-                if record.runtime is not None and record.runtime.route_health is not None:
+                route_reader = record.runtime.route_health if record.runtime is not None else None
+                if route_reader is None:
+                    route_reader = record.route_health
+                if route_reader is not None:
                     try:
-                        route = record.runtime.route_health()
+                        route = route_reader()
                     except Exception:
                         logger.exception("Failed to read route health for model %r", record.descriptor.model_id)
                         route = {"status": "unknown"}
@@ -461,6 +490,8 @@ class ModelManager:
                 return
             self._closed = True
             records = tuple(self._records.values())
+            shutdown_callbacks = tuple(self._shutdown_callbacks)
+            self._shutdown_callbacks.clear()
             for record in records:
                 record.state = ModelState.STOPPING
             self._capacity_changed.notify_all()
@@ -477,6 +508,12 @@ class ModelManager:
                         # Shutdown is best-effort across every configured model. A failed
                         # closer must not prevent later runtimes from releasing their DHTs.
                         logger.exception("Failed to close model runtime %r", record.descriptor.model_id)
+
+        for callback in shutdown_callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.exception("Failed to close a model-manager service")
 
     def residency(self) -> Dict[str, Optional[int]]:
         """Return a stable runtime-budget snapshot for the control API."""

@@ -336,7 +336,7 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    manifest, resumed a real Hub artifact at byte 2,097,152 with HTTP 206, served all
    eight blocks through a signed manifested identity, and matched the stock token
    output exactly. This closes the milestone's cross-platform validation gate.
-4. **Unified local node and multi-model OpenAI API.** Introduce the persistent node
+4. **Unified local node and multi-model OpenAI API — complete.** Introduce the persistent node
    daemon, worker supervision, a versioned local control API, multi-model discovery
    and lazy client loading, a stable localhost OpenAI endpoint, local API-key
    lifecycle, route/coverage status, bounded concurrency, and clean shutdown. Measure
@@ -358,8 +358,23 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    runtime residency, request-scoped leases, least-recently-used idle eviction,
    authenticated safe unload, and coverage observations from loaded route managers.
    An HTTP cancellation cannot release or evict a runtime while its executor thread
-   is still generating. Lightweight coverage discovery for unloaded models, worker
-   supervision, full key CRUD, edge measurements, and compatibility validation remain.
+   is still generating.
+
+   The final slice adds artifact-free, manifest-bound coverage discovery for every
+   configured model; isolated contribution-worker processes with observable restart
+   backoff and authenticated start, pause, and restart controls; persistent labeled
+   API-key creation, listing, relabeling, and revocation with hash-only storage; and a
+   reproducible cold-client benchmark for cache growth, local embedding/head
+   weights, process-tree RAM/accelerator use, load time, first-token latency, and
+   decode rate. A real Fly
+   swarm exposed two distinct manifests through one restarted node. The official
+   OpenAI Python client listed and generated from both, streamed a completion, reused
+   the persistent key after restart, and proved one-runtime LRU eviction plus exact
+   stock-model token parity. Unloaded discovery observed complete `8:8` external
+   routes without loading either client runtime. The measured TinyLlama CPU client
+   used 16,384,000 bytes for local embedding/head parameters and 11,773,110 bytes of
+   cold cache growth; this model fits the current local-logits edge design, while
+   larger selectable models still require their own published measurements.
 5. **Desktop application and contribution controls.** Ship signed installers for
    Windows, Linux, and macOS; complete first-run onboarding; manage keys in native
    credential stores; show endpoint, model, route and contribution health; enforce

@@ -14,7 +14,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 1. Reproducible execution baseline | Complete | Windows CPU, Docker Linux CPU, Windows CUDA, and native hosted Apple Silicon macOS all served blocks `0:8` and produced exact token parity; macOS also passed the MPS block-portability checks | None |
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
-| 4. Unified local node and multi-model OpenAI API | In progress | Exact multi-manifest/name/alias selection, strict secret-free config, concurrency-safe lazy loading, hard runtime residency, cancellation-safe leases, LRU idle eviction, authenticated status and safe unload, loaded-route coverage, persistent local key bootstrap, loopback guard, bounded generation concurrency, and clean shutdown; broad offline tests pass | Lightweight unloaded-model discovery, worker supervision, key CRUD, activity/cancellation controls, edge measurements, and representative client/restart/failover validation |
+| 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
 
 ## Unified local node: first vertical slice
 
@@ -42,12 +42,63 @@ active model, evicts only the least-recently-used idle model, closes its routing
 resources synchronously, and exposes authenticated explicit unload. Cancellation
 tests prove that an executor-backed load or generation cannot strand or prematurely
 release a lease. Loaded route managers expose their existing verified coverage view
-without status-triggered DHT activity; unloaded models remain explicitly unknown.
+without status-triggered DHT activity.
 
-The expanded broad offline suite passed with 175 tests and 7 skips. The
-full top-level suite still requires its existing `INITIAL_PEERS` external-swarm
-fixture, so no real swarm or representative external OpenAI clients have been
-claimed for the multi-model slice.
+The final slice completes the milestone. One client-mode TLS DHT is shared by
+models with the same seed set, while each query independently enforces its exact
+manifest digest, execution profile, signed-announcement replay order, and
+revocations. It reports unloaded coverage without constructing tokenizers or model
+weights and degrades to observable `unknown` state if discovery is unavailable.
+Configured contribution workers run in isolated child processes with explicit
+start, pause, restart, crash state, bounded log capture, and configured restart
+delay. The control API now creates, lists, relabels, and revokes 256-bit local keys;
+only domain-separated hashes are persisted, and the plaintext secret is returned
+once. Revoking the final active key is refused.
+
+`drift edge-benchmark` measures a dedicated cold cache, the unique parameter
+storage used by the client embeddings/head, process-tree RSS, available accelerator
+allocations, runtime load, first token, and post-first-token decode. It writes a
+versioned JSON result and refuses a nonempty cache unless explicitly acknowledged.
+The current bootstrap secret file remains the documented headless fallback; moving
+secrets into native OS credential stores belongs to milestone 5.
+
+The completed broad offline matrix passed with 201 tests and 7 platform/device
+skips. The repository's top-level external-swarm fixtures still require
+`INITIAL_PEERS`, so the offline CI file list is run explicitly and the real swarm is
+validated separately.
+
+## Unified local node: external multi-model validation
+
+On 2026-08-22, image
+`sha256:aafb9c9a168e4d7838ddea576e5777833f3a603239b1d5af27bcce1c721fe121`
+ran in Fly region `iad` with one bootstrap, one external full-range worker for each
+of two distinct manifested namespaces, and one client node. Both manifests pinned
+TinyLlama commit `298338802ab94432b917bcce11382aa151aee50f` but had different
+exact DHT identities. Artifact-free discovery observed complete `8:8` routes with
+two peer announcements per model before either client runtime was loaded.
+
+The official OpenAI Python SDK 2.54.0 connected over a real localhost TCP listener.
+It listed both models, generated from each, and streamed a completion. Alpha and
+Beta each produced `", a little"`, matching an independently loaded stock model.
+With `max_loaded_models=1`, status showed Alpha evicted when Beta loaded. The entire
+node then restarted, accepted the same persistent local key, lazily loaded Alpha,
+and repeated exact parity. During this run the API regression test also caught and
+fixed a Transformers 5 compatibility bug: the tokenizer generation argument is now
+sent only when stop strings require it.
+
+The dedicated cold benchmark against the external Alpha worker recorded:
+
+- 11,773,110 bytes of cache download/growth;
+- 16,384,000 unique bytes of local embedding/head parameters on CPU;
+- 445,968,384 bytes baseline, 1,073,139,712 bytes loaded, and 1,082,388,480
+  bytes peak process-tree RSS, for a 636,420,096-byte peak delta;
+- 9.872 seconds to load and 0.237 seconds to first token; and
+- 21.360 post-first-token token/s for a three-token generation, producing IDs
+  `[1,16644,31844,260,1496]` and decoded text `<s> Hello, a little`.
+
+The benchmark used Python 3.12.14, PyTorch 2.6.0 CPU, and Linux. Every temporary
+Fly Machine was destroyed after validation; the final application Machine list was
+empty.
 
 ## Manifest artifact integrity
 

@@ -23,11 +23,12 @@ routing remains client-side and therefore does not depend on an operator gateway
 - the loopback OpenAI and control listeners;
 - configuration and local API authentication;
 - a model registry and client-runtime lifecycle; and
-- future supervision of isolated contribution workers.
+- supervision of isolated contribution workers.
 
 Contribution workers remain child processes. A worker crash must not terminate the
-local API. The first implementation slice does not start a worker; it establishes
-the service and lifecycle boundary that the supervisor will join.
+local API. The supervisor starts, pauses, restarts, observes, and automatically
+restarts configured workers without placing their model execution inside the HTTP
+process.
 
 `drift api` remains a compatible single-model command. Internally, the HTTP facade
 adapts its already-loaded model into the same manager interface.
@@ -76,10 +77,10 @@ The versioned control surface begins with:
 GET /control/v1/status
 ```
 
-It reports node state, endpoint, and model snapshots. Loaded-route coverage,
-runtime residency, and explicit safe unload now extend `/control/v1`. Requests,
-key mutation, configuration mutation, and worker controls will continue extending
-it without making the GUI manipulate processes directly.
+It reports node state, endpoint, and model snapshots. Loaded and unloaded route
+coverage, runtime residency, explicit safe unload, worker controls, and key mutation
+now extend `/control/v1` without making the GUI manipulate processes directly.
+Configuration mutation remains a later concern.
 
 `/health` is deliberately unauthenticated and contains only coarse liveness.
 OpenAI endpoints and `/control/v1/*` require the same local bearer-key set in this
@@ -92,23 +93,23 @@ The node binds to loopback by default. A non-loopback host requires the explicit
 
 When no key is supplied, the headless node atomically creates a dedicated secret at
 `~/.drift/node/local-api.key`, requests owner-only permissions, and logs only its
-path. It is not stored in ordinary model configuration. The desktop milestone will
-replace this bootstrap store with native credential storage where available and add
-the complete create/label/revoke UI.
+path. It is not stored in ordinary model configuration. Labeled keys are random
+256-bit secrets whose metadata and domain-separated hashes are persisted; creation
+returns plaintext once and revocation applies immediately. The desktop milestone
+will replace bootstrap secret-file storage with native credential storage where
+available and expose the lifecycle in its UI.
 
-## Consequences and follow-up
+## Consequences and implementation status
 
-The second slice adds strict secret-free multi-manifest configuration, a hard
-resident-runtime budget, request-scoped runtime leases, least-recently-used idle
-eviction, explicit safe unload, and read-only coverage observations from each
-loaded route manager. It does not complete milestone 4. The next slices must add:
-
-1. lightweight route and complete-coverage discovery for unloaded models;
-2. isolated worker supervision and pause/restart controls;
-3. API-key create, label, list, and revoke operations;
-4. request cancellation and richer activity diagnostics;
-5. client-side embedding/head resource benchmarks and the thin-edge decision; and
-6. representative OpenAI-client compatibility and restart/failover tests.
+Milestone 4 is complete. Strict secret-free multi-manifest configuration, a hard
+resident-runtime budget, cancellation-safe request leases, least-recently-used idle
+eviction, explicit safe unload, loaded and unloaded coverage observations, isolated
+worker supervision, labeled key CRUD, and versioned edge benchmarking all live
+behind this boundary. A real external two-manifest swarm passed official OpenAI
+Python client listing, completion and streaming, exact parity, LRU eviction, full
+node restart, and persistent-key reuse. The measured TinyLlama client fits the
+current local embedding/head design; every larger selectable model must publish its
+own resource envelope before that conclusion is generalized.
 
 No desktop GUI, cross-model allocator, public catalog, or credit behavior belongs
 in this service until its corresponding roadmap gate begins.

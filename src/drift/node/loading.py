@@ -102,4 +102,11 @@ def _runtime_route_observer(model) -> Callable[[], dict]:
     """Build a cheap observer over the loaded client's last routing snapshot."""
     remote_layers = model.transformer.h
     sequence_manager = remote_layers.sequence_manager
-    return lambda: sequence_manager_route_health(sequence_manager)
+
+    def observe() -> dict:
+        result = sequence_manager_route_health(sequence_manager)
+        result["source"] = "runtime"
+        result["last_error"] = None
+        return result
+
+    return observe

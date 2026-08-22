@@ -1,7 +1,8 @@
 import time
 from types import SimpleNamespace
 
-from drift.node.route_health import sequence_manager_route_health
+from drift.data_structures import RemoteModuleInfo, ServerState
+from drift.node.route_health import module_infos_route_health, sequence_manager_route_health
 
 
 class Lock:
@@ -64,3 +65,23 @@ def test_route_health_reports_exact_missing_blocks():
     assert health["covered_blocks"] == 2
     assert health["missing_blocks"] == [1, 3]
     assert health["minimum_replicas"] == 0
+
+
+def test_module_info_health_ignores_joining_workers():
+    online, joining = object(), object()
+    health = module_infos_route_health(
+        [
+            RemoteModuleInfo(
+                "model.0",
+                {
+                    online: SimpleNamespace(state=ServerState.ONLINE),
+                    joining: SimpleNamespace(state=ServerState.JOINING),
+                },
+            ),
+            RemoteModuleInfo("model.1", {joining: SimpleNamespace(state=ServerState.JOINING)}),
+        ]
+    )
+
+    assert health["status"] == "incomplete"
+    assert health["replica_counts"] == [1, 0]
+    assert health["missing_blocks"] == [1]

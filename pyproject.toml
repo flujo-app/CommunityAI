@@ -68,6 +68,10 @@ api = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
 ]
+benchmark = [
+    # Process-tree peak RSS sampling for `drift edge-benchmark`.
+    "psutil>=5.9",
+]
 dev = [
     # These three + the `-p no:anyio` addopts below are one interlocked cluster pinned to the
     # pytest 6 era. Blockers to bumping: (a) pytest-forked mishandles teardown on pytest >=7
@@ -84,6 +88,8 @@ dev = [
     # tests/test_openai_api.py exercises the `drift api` shim offline (fastapi TestClient needs httpx)
     "fastapi>=0.115",
     "httpx>=0.27",
+    # Representative compatibility gate for the documented localhost OpenAI endpoint.
+    "openai>=2,<3",
 ]
 
 [project.scripts]

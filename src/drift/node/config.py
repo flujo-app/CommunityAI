@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
@@ -42,6 +43,12 @@ def _require_string(value: Any, field: str) -> str:
 def _require_positive_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise NodeConfigError(f"{field} must be an integer >= 1")
+    return value
+
+
+def _require_bool(value: Any, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise NodeConfigError(f"{field} must be a boolean")
     return value
 
 
@@ -109,12 +116,110 @@ class NodeModelConfig:
 
 
 @dataclass(frozen=True)
+class WorkerConfig:
+    """One isolated contribution worker controlled by the local node."""
+
+    worker_id: str
+    model: str
+    identity_path: Path
+    num_blocks: Optional[int] = None
+    block_indices: Optional[str] = None
+    enabled: bool = False
+    auto_restart: bool = True
+    restart_backoff: float = 5.0
+    device: Optional[str] = None
+    cache_dir: Optional[Path] = None
+    max_disk_space: Optional[str] = None
+    throughput: float | str = "auto"
+    port: Optional[int] = None
+    public_ip: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, source: Mapping[str, Any], *, base_dir: Path, index: int) -> "WorkerConfig":
+        field = f"workers[{index}]"
+        source = _require_object(source, field)
+        _require_fields(
+            source,
+            field,
+            required=("id", "model", "identity_path"),
+            optional=(
+                "num_blocks",
+                "block_indices",
+                "enabled",
+                "auto_restart",
+                "restart_backoff",
+                "device",
+                "cache_dir",
+                "max_disk_space",
+                "throughput",
+                "port",
+                "public_ip",
+            ),
+        )
+        worker_id = _require_string(source["id"], f"{field}.id")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", worker_id):
+            raise NodeConfigError(f"{field}.id must match [A-Za-z0-9][A-Za-z0-9._-]{{0,63}}")
+
+        num_blocks_value = source.get("num_blocks")
+        block_indices_value = source.get("block_indices")
+        if (num_blocks_value is None) == (block_indices_value is None):
+            raise NodeConfigError(f"{field} must provide exactly one of num_blocks or block_indices")
+        num_blocks = (
+            None if num_blocks_value is None else _require_positive_int(num_blocks_value, f"{field}.num_blocks")
+        )
+        block_indices = None
+        if block_indices_value is not None:
+            block_indices = _require_string(block_indices_value, f"{field}.block_indices")
+            match = re.fullmatch(r"(0|[1-9][0-9]*):(0|[1-9][0-9]*)", block_indices)
+            if match is None or int(match.group(1)) >= int(match.group(2)):
+                raise NodeConfigError(f"{field}.block_indices must be a non-empty start:end range")
+
+        throughput_value = source.get("throughput", "auto")
+        if isinstance(throughput_value, str):
+            if throughput_value != "auto":
+                raise NodeConfigError(f"{field}.throughput must be 'auto' or a finite number > 0")
+            throughput: float | str = throughput_value
+        else:
+            throughput = _require_positive_number(throughput_value, f"{field}.throughput")
+
+        port_value = source.get("port")
+        port = None if port_value is None else _require_positive_int(port_value, f"{field}.port")
+        if port is not None and port > 65535:
+            raise NodeConfigError(f"{field}.port must be <= 65535")
+
+        def optional_string(name: str) -> Optional[str]:
+            value = source.get(name)
+            return None if value is None else _require_string(value, f"{field}.{name}")
+
+        cache_value = source.get("cache_dir")
+        return cls(
+            worker_id=worker_id,
+            model=_require_string(source["model"], f"{field}.model"),
+            identity_path=_resolve_path(source["identity_path"], f"{field}.identity_path", base_dir),
+            num_blocks=num_blocks,
+            block_indices=block_indices,
+            enabled=_require_bool(source.get("enabled", False), f"{field}.enabled"),
+            auto_restart=_require_bool(source.get("auto_restart", True), f"{field}.auto_restart"),
+            restart_backoff=_require_positive_number(source.get("restart_backoff", 5), f"{field}.restart_backoff"),
+            device=optional_string("device"),
+            cache_dir=None if cache_value is None else _resolve_path(cache_value, f"{field}.cache_dir", base_dir),
+            max_disk_space=optional_string("max_disk_space"),
+            throughput=throughput,
+            port=port,
+            public_ip=optional_string("public_ip"),
+        )
+
+
+@dataclass(frozen=True)
 class NodeConfig:
     """Versioned multi-model configuration loaded atomically at node startup."""
 
     schema_version: int
     max_loaded_models: int
     models: Tuple[NodeModelConfig, ...]
+    workers: Tuple[WorkerConfig, ...] = ()
+    discovery_update_period: float = 30.0
+    discovery_startup_timeout: float = 15.0
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any], *, base_dir: Path) -> "NodeConfig":
@@ -123,7 +228,7 @@ class NodeConfig:
             source,
             "node config",
             required=("schema_version", "models"),
-            optional=("max_loaded_models",),
+            optional=("max_loaded_models", "discovery_update_period", "discovery_startup_timeout", "workers"),
         )
         schema_version = _require_positive_int(source["schema_version"], "schema_version")
         if schema_version != NODE_CONFIG_SCHEMA_VERSION:
@@ -137,10 +242,26 @@ class NodeConfig:
         manifest_paths = [model.manifest_path for model in models]
         if len(set(manifest_paths)) != len(manifest_paths):
             raise NodeConfigError("models must not configure the same manifest path more than once")
+        workers_value = source.get("workers", [])
+        if not isinstance(workers_value, list):
+            raise NodeConfigError("workers must be a JSON array")
+        workers = tuple(
+            WorkerConfig.from_dict(item, base_dir=base_dir, index=index) for index, item in enumerate(workers_value)
+        )
+        worker_ids = [worker.worker_id.casefold() for worker in workers]
+        if len(set(worker_ids)) != len(worker_ids):
+            raise NodeConfigError("worker ids must be unique case-insensitively")
         return cls(
             schema_version=schema_version,
             max_loaded_models=_require_positive_int(source.get("max_loaded_models", 1), "max_loaded_models"),
             models=models,
+            workers=workers,
+            discovery_update_period=_require_positive_number(
+                source.get("discovery_update_period", 30), "discovery_update_period"
+            ),
+            discovery_startup_timeout=_require_positive_number(
+                source.get("discovery_startup_timeout", 15), "discovery_startup_timeout"
+            ),
         )
 
     @classmethod
