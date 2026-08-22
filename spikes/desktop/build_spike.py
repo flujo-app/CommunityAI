@@ -16,6 +16,24 @@ def _directory_metrics(path: Path) -> tuple[int, int]:
     return sum(item.stat().st_size for item in files), len(files)
 
 
+def _run_bundle(executable: Path, action: str, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        [str(executable), action],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=environment,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"packaged executable failed {action} with exit code {result.returncode}\n"
+            f"stdout:\n{result.stdout.strip()}\n"
+            f"stderr:\n{result.stderr.strip()}"
+        )
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shell", required=True, choices=("pyside", "webview"))
@@ -81,23 +99,9 @@ def main() -> int:
     environment.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
     if platform.system() == "Linux" and args.shell == "webview":
         environment.setdefault("PYWEBVIEW_GUI", "qt")
-    check = subprocess.run(
-        [str(executable), "--check-runtime"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=environment,
-    )
+    check = _run_bundle(executable, "--check-runtime", environment)
     runtime = json.loads(check.stdout.strip())
-    subprocess.run(
-        [str(executable), "--ui-self-test"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=environment,
-    )
+    _run_bundle(executable, "--ui-self-test", environment)
     bundle_bytes, file_count = _directory_metrics(bundle_root)
     metrics = {
         "schema_version": 1,
