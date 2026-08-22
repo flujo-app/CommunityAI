@@ -1,6 +1,6 @@
 # ADR 0002: Desktop shell implementation spike
 
-- Status: Proposed; spike in progress
+- Status: Accepted; PySide 6 selected for product implementation
 - Date: 2026-08-22
 - Roadmap: Milestone 5
 
@@ -82,14 +82,41 @@ The repository CI produces unsigned spike bundles and size manifests. Signing an
 tests require platform signing identities and remain a mandatory pre-release gate, not a
 reason to embed test credentials in the repository.
 
-### Preliminary Windows evidence
+### Cross-platform packaging evidence
 
-On the initial Windows 10 development run, both source shells and both packaged binaries
-completed the authenticated UI self-test against an isolated fake node. PySide 6.11.2
-produced an approximately 125.1 MB onedir bundle; pywebview 6.2.1 produced an approximately
-40.0 MB bundle using the installed WebView2 runtime. These are directional results only:
-the local measurement environment contained both shell dependencies. The CI matrix builds
-each shell in a clean job and is the decision-grade source for bundle comparisons.
+The clean [three-platform CI run](https://github.com/flujo-app/CommunityAI/actions/runs/32595385317)
+built each shell independently and ran its packaged runtime check and authenticated UI
+self-test. All six jobs passed. Sizes below are uncompressed onedir bundle bytes; all
+artifacts are unsigned.
+
+| Platform | PySide 6.11.2 | pywebview 6.2.1 | Result |
+| --- | ---: | ---: | --- |
+| Windows x64 | 128,862,316 bytes / 236 files | 29,234,555 bytes / 215 files | Both passed |
+| Linux x64 | 324,323,392 bytes / 367 files | 948,268,266 bytes / 1,942 files | Both passed |
+| macOS arm64 | 210,278,876 bytes / 268 files | 43,560,981 bytes / 106 files | Both passed |
+
+The Linux jobs install `libegl`, `libgl`, DBus, and xkbcommon as explicit clean-runner
+prerequisites. The build harness preserves packaged-process stdout and stderr on failure,
+so missing runtime libraries do not collapse into an opaque exit code.
+
+## Outcome
+
+Select **PySide 6** for the production desktop shell and retire the pywebview alternative
+after promoting the shared node client and acceptance contract.
+
+Pywebview has a compelling size advantage on Windows and macOS, but its Linux Qt package
+is approximately 2.9 times the PySide package and contains more than five times as many
+files. It also introduces a JavaScript bridge and three renderer/backend families across
+the supported platforms. PySide provides one Python-native widget and accessibility model,
+one asynchronous task boundary, and the more consistent cross-platform packaging result.
+That consistency outweighs its larger Windows and macOS bundles for this product.
+
+This selection closes the shell-comparison gate, not the release gates. Productization
+must still measure cold startup and RSS, prove GUI/node/worker crash isolation, implement
+login startup and single-instance lifecycle behavior, use each operating system's native
+credential store, complete keyboard and screen-reader testing, and pass signed installer,
+upgrade, rollback, uninstall, and retained-data tests. No unsigned spike artifact is a
+release candidate.
 
 ## Security boundary implemented before productization
 
@@ -112,15 +139,3 @@ a non-loopback URL.
 This spike does not choose the final visual design, implement autonomous cross-model
 allocation, add public catalogs or credits, bundle model runtimes into the GUI, or relax
 the release gates in `docs/REVIVAL.md`.
-
-## Outcome template
-
-When the three-platform measurements are available, replace the status above with
-`Accepted` and record:
-
-- selected shell and rejected alternative;
-- artifact and runtime measurements by platform;
-- accessibility and crash-isolation results;
-- signing, upgrade, rollback, and uninstall results;
-- native credential-store behavior; and
-- any architectural consequence for the node/control API.

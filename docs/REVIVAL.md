@@ -386,9 +386,11 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    and service integration, accessibility, bundle size, and cross-platform CI.
 
    The shell comparison and its fixed acceptance criteria are tracked in
-   [`ADR 0002`](adr/0002-desktop-shell-spike.md). The checked-in prototypes keep
-   both UI processes outside the model runtime and package each alternative in a
-   clean environment so their measurements remain comparable.
+   [`ADR 0002`](adr/0002-desktop-shell-spike.md). All six clean Windows, Linux, and
+   macOS package/UI-smoke jobs passed; PySide 6 is selected for product implementation
+   because it has the more consistent cross-platform runtime and avoids pywebview's
+   948 MB Linux Qt bundle and additional JavaScript bridge. The shared protocol client
+   and acceptance contract will be promoted from the spike.
 
    The first production security prerequisite is implemented: managed OpenAI client
    keys authorize only `/v1/*`, while a distinct privileged control credential
@@ -427,7 +429,7 @@ must not be settled accidentally by the first GUI implementation:
 
 | Decision | Starting hypothesis | Evidence required |
 | --- | --- | --- |
-| Desktop shell | Prefer the smallest design that can reuse the Python core while preserving process isolation; compare PySide with a sidecar-based shell. | Signed installer prototypes on all three OSes, upgrade/rollback, tray/service behavior, accessibility, crash isolation, and package size. |
+| Desktop shell | Resolved in ADR 0002: implement the product shell in PySide 6 while preserving the standalone node boundary. | Signed installer prototypes on all three OSes, upgrade/rollback, tray/service behavior, accessibility, crash isolation, and startup/RSS measurements remain release gates. |
 | Thin edge | Keep embeddings/head local where affordable; add remote ingress/egress roles only for devices that miss published budgets. | Per-model RAM/disk/latency data, token parity, logits/sampling trade-offs, privacy analysis, and failover tests. |
 | Catalog governance | Threshold-signed and forkable catalogs, with trust roots selected by each installation. | Key compromise/rotation drill, rollback protection, alternative-catalog interoperability, and malicious-manifest rejection. |
 | Demand signal | Coarse signed aggregates and observed route pressure, never request contents. | Sybil/spam simulation, privacy review, convergence under bursty demand, and proof that one attacker cannot trigger a network-wide download storm. |

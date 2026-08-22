@@ -15,7 +15,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 fixes the PySide/webview experiment; both Windows source and packaged UI smokes pass; OpenAI inference keys and the privileged control credential are now separate authorities | Clean cross-platform shell evidence, native credential storage, contribution policies and budgets, lifecycle integration, signing, updates, rollback, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6 after all six clean Windows/Linux/macOS package and UI-smoke jobs passed; OpenAI inference keys and the privileged control credential are separate authorities | Native credential storage, contribution policies and budgets, lifecycle integration, startup/RSS and crash-isolation measurements, signing, updates, rollback, accessibility, and installer gates remain |
 
 ## Desktop milestone: control authority separation
 
@@ -31,7 +31,25 @@ key and creates `~/.drift/node/control-api.key` on first upgraded startup. An ex
 private path can be supplied with `--control_key_path`; putting the privileged secret
 itself on the command line is not supported. The desktop spike already reads this
 credential through a private-file bridge and will move it into the native OS store
-after the shell decision.
+during the selected PySide product implementation.
+
+## Desktop milestone: shell decision
+
+The clean cross-platform matrix built PySide 6.11.2 and pywebview 6.2.1 independently,
+verified the collected framework, and completed the same packaged authenticated UI smoke
+against an isolated fake node. All six package jobs passed.
+
+| Platform | PySide bundle | pywebview bundle |
+| --- | ---: | ---: |
+| Windows x64 | 128,862,316 bytes / 236 files | 29,234,555 bytes / 215 files |
+| Linux x64 | 324,323,392 bytes / 367 files | 948,268,266 bytes / 1,942 files |
+| macOS arm64 | 210,278,876 bytes / 268 files | 43,560,981 bytes / 106 files |
+
+ADR 0002 therefore selects PySide 6 for product implementation. Pywebview's Windows and
+macOS size advantage does not offset its 948 MB Linux Qt bundle, larger backend variance,
+and additional JavaScript bridge. The unsigned CI artifacts prove clean packaging and UI
+startup only; native credential stores, accessibility, lifecycle, crash isolation,
+startup/RSS, signed installers, upgrades, rollback, and uninstall remain open release gates.
 
 ## Unified local node: first vertical slice
 

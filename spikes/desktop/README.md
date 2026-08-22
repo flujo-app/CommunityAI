@@ -5,6 +5,9 @@ This standalone package compares the two desktop-shell candidates from
 depend on the `drift` package: both shells communicate with an already-running local
 node through `/control/v1`.
 
+The cross-platform experiment selected PySide 6 for product implementation. The
+pywebview prototype remains here only to preserve the measured comparison.
+
 ## Install
 
 Create a disposable virtual environment inside this directory, then install one shell:
@@ -29,8 +32,8 @@ communityai-desktop-spike --store-control-key
 For a headless development node, its existing private key file can be selected instead:
 
 ```shell
-communityai-desktop-spike --shell pyside --control-key-file /path/to/local-api.key
-communityai-desktop-spike --shell webview --control-key-file /path/to/local-api.key
+communityai-desktop-spike --shell pyside --control-key-file /path/to/control-api.key
+communityai-desktop-spike --shell webview --control-key-file /path/to/control-api.key
 ```
 
 The default endpoint is `http://127.0.0.1:8080`. A URL ending in `/v1` is accepted and
