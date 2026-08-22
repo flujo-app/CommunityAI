@@ -31,10 +31,12 @@ responses.
 2. **Real multi-machine swarm.** Two or more machines, explicit block coverage,
    restart testing, disconnect recovery, and latency/throughput measurements. A
    private Fly Machines swarm has proven coverage, redundancy, exact parity,
-   measurements, and restart recovery. Exact full-prefix activation replay now
-   recovers an interrupted local two-replica swarm with token parity. Repeating
-   the original in-generation SIGKILL test on a rebuilt Fly swarm is the remaining
-   Milestone 2 confirmation.
+   measurements, restart recovery, and in-generation recovery. During a
+   900-token request, the selected `4:8` Machine was killed with SIGKILL; the
+   client excluded its stale route, replayed 249 cached activation tokens through
+   the duplicate in bounded chunks, and completed with exact stock-model parity.
+   A subsequent request confirmed that the survivor's attention cache had been
+   released. Milestone 2 is complete.
 3. **Safe public pilot.** Signed worker identity and announcements, admission and
    rate limits, health/coverage monitoring, abuse controls, and documented prompt
    visibility. A private/VPN swarm remains the default until these gates pass.
@@ -45,7 +47,7 @@ responses.
    capacity-aware routing, observable service-level objectives, and contributor
    access credits.
 
-Detailed baseline evidence and the current blocker are recorded in
+Detailed baseline evidence and the remaining gates are recorded in
 [`REVIVAL_TEST_RESULTS.md`](REVIVAL_TEST_RESULTS.md).
 
 ## Nakshatra relationship

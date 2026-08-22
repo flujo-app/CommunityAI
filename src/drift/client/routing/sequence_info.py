@@ -2,6 +2,7 @@ import dataclasses
 import time
 from typing import Iterable, List, Optional, Tuple
 
+from hivemind.p2p import PeerID
 from hivemind.utils.logging import get_logger
 
 from drift.data_structures import ModuleUID, RemoteModuleInfo, RemoteSpanInfo, ServerState
@@ -53,6 +54,14 @@ class RemoteSequenceInfo:
 
         self.spans_by_priority, self.spans_containing_block = self._sort_spans(self.block_infos)
         self.last_updated_time = time.perf_counter()
+
+    def remove_peer_(self, peer_id: PeerID) -> bool:
+        """Remove a failed peer and rebuild the derived routing spans immediately."""
+        for block_info in self.block_infos:
+            block_info.servers.pop(peer_id, None)
+
+        self.spans_by_priority, self.spans_containing_block = self._sort_spans(self.block_infos)
+        return any(not block_info.servers for block_info in self.block_infos)
 
     @staticmethod
     def _sort_spans(block_infos: List[RemoteModuleInfo]):

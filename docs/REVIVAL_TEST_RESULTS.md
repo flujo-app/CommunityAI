@@ -1,6 +1,6 @@
 # Revival baseline results
 
-Test date: 2026-08-21
+Test dates: 2026-08-21 through 2026-08-22
 
 These tests exercise `Maykeye/TinyLLama-v0` as an eight-block model and compare
 greedy distributed generation with the stock Transformers implementation. The
@@ -12,7 +12,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | Milestone | Status | Evidence | Remaining gate |
 | --- | --- | --- | --- |
 | 1. Reproducible execution baseline | Mostly complete | Windows CPU, Docker Linux CPU, and Windows CUDA all served blocks `0:8` and produced exact token parity | Native macOS install and smoke test |
-| 2. Real multi-machine swarm | In progress | Private Fly swarm reached explicit `0:8` coverage, two replicas per block, exact parity, measured generation, and restart recovery; local two-replica interruption recovery now passes exact parity | Repeat the in-flight SIGKILL test on a rebuilt Fly swarm and verify cache cleanup |
+| 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 
 ## Linux CPU
 
@@ -76,13 +76,8 @@ AssertionError: 0 and 465
 ```
 
 Retries continued with exponential backoff capped at 60 seconds until the client
-was stopped, so this is not currently seamless or bounded recovery. DHT discovery
-and rerouting are working; the missing piece is KV/attention-cache continuity.
-Milestone 2 and the public-swarm release gate must remain open until the client
-can restore the replacement worker to the current generation position, for
-example by replaying the full cached activation prefix or by
-replicating/checkpointing session cache state. A bounded replay window is exact
-only for architectures whose attention semantics impose the same bound.
+was stopped. This established the original failure before activation replay was
+implemented. The same scenario now passes as recorded below.
 
 ## Local interruption recovery
 
@@ -108,14 +103,49 @@ and completed eight generated tokens in the same session.
 - the recovered output exactly matched stock Transformers generation; and
 - the smoke used a finite three-attempt retry budget.
 
-This proves the replay path over real DHT/RPC/cache handling on one machine. The
-original Fly SIGKILL scenario remains the real multi-machine release gate.
+This proved the replay path over real DHT/RPC/cache handling on one machine before
+the multi-machine rerun.
+
+## Fly in-generation recovery
+
+On 2026-08-22, a rebuilt Fly swarm in `iad` used one bootstrap, two `0:4`
+workers, two `4:8` workers, and an ephemeral client. The client observed
+`replicas=[2,2,2,2,2,2,2,2]` before starting a 900-token request. Route logs
+confirmed `0:4 via …vDwsBq => 4:8 via …RHpT5a`.
+
+The selected `4:8` Machine exited from SIGKILL with code 137 at 03:52:45 UTC,
+while its duplicate remained healthy. At 03:52:48 the request hit its finite
+five-second RPC deadline, immediately routed `4:8` to peer `…GKLtKa`, and
+replayed 249 cached activation tokens from position zero in chunks of at most 64
+batch-tokens. The request completed at 03:53:09 without restarting the client.
+
+- all 900 generated tokens exactly matched stock Transformers;
+- total generation time was 30.505 seconds at 29.503 token/s;
+- failure detection, replay, and the remaining 651 tokens completed in 20.311
+  seconds after the failed RPC was reported;
+- the client used a finite three-attempt retry budget; and
+- peak client RSS was 501,596 KiB.
+
+The Fly test also exposed and fixed two recovery edge cases. Failed peers were
+removed from raw block metadata but not from the already-derived route spans, so
+a retry could reselect a dead peer until its DHT record expired. Rebuilding those
+spans immediately makes the duplicate eligible on the first retry. Separately,
+large prefixes exceeded a server configured with `max_batch_size=64`; replay now
+streams a configurable 64 batch-tokens per RPC while retaining the complete
+client-side prefix if a replacement also fails.
+
+Cache cleanup was checked after the recovered session logged
+`rpc_inference.close`. A new client then opened the survivor with its allocation
+log reporting `already used … (0.0%)`, completed an eight-token request in 0.232
+seconds with exact parity, and closed both its first-token and generation
+sessions. All 12 temporary Machines were then destroyed; the final Fly Machine
+list was empty.
 
 ## Follow-up issues
 
-1. Rebuild the temporary Fly swarm and repeat the 512-token in-generation SIGKILL
-   test with exact parity, bounded recovery time, and cache-cleanup checks.
-2. Extend end-to-end interruption testing to split block routes and Gemma 4;
+1. Turn the route-aware Fly SIGKILL procedure into an opt-in script with a cleanup
+   trap, so the paid test can be repeated without manual log orchestration.
+2. Extend end-to-end interruption testing to split replacement routes and Gemma 4;
    beam-search recovery needs a reorder-aware activation history before it can be
    enabled safely.
 3. Run the native macOS installer and the same exact-parity smoke test.

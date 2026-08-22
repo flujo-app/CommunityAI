@@ -398,11 +398,11 @@ class RemoteSequenceManager:
             logger.debug(f"Peer {peer_id} did not respond, banning it temporarily")
             self.state.banned_peers.register_failure(peer_id)
         with self.lock_changes:
-            should_update = False
-            for info in self.state.sequence_info.block_infos:
-                info.servers.pop(peer_id, None)
-                if not info.servers:
-                    should_update = True
+            should_update = (
+                self.state.sequence_info.remove_peer_(peer_id)
+                if peer_id is not None
+                else any(not info.servers for info in self.state.sequence_info.block_infos)
+            )
             if should_update:
                 self.ready.clear()
                 self.update(wait=False)

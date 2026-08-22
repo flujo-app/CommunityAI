@@ -234,6 +234,43 @@ class _ServerInferenceSession:
         elif not is_dummy(prompts):
             self.replay_prompts = prompts
 
+        if self.needs_replay:
+            replay_chunk_tokens = max(self.config.replay_chunk_size // inputs.shape[0], 1)
+            if n_input_tokens > replay_chunk_tokens:
+                full_history = inputs
+                full_per_layer_history = per_layer_inputs if has_per_layer_inputs else None
+                self._replay_target_position = None
+                self.history = None
+                self.per_layer_history = None
+                chunk_outputs = []
+                produced_shared_kv = {}
+                try:
+                    for chunk_start in range(0, n_input_tokens, replay_chunk_tokens):
+                        chunk_end = min(chunk_start + replay_chunk_tokens, n_input_tokens)
+                        chunk_per_layer_inputs = (
+                            full_per_layer_history[:, :, chunk_start:chunk_end, :]
+                            if full_per_layer_history is not None
+                            else None
+                        )
+                        chunk_output, chunk_shared_kv = self.step(
+                            full_history[:, chunk_start:chunk_end, :],
+                            prompts,
+                            hypo_ids,
+                            step_id=f"{step_id}:replay:{chunk_start}",
+                            per_layer_inputs=chunk_per_layer_inputs,
+                            shared_kv_states=shared_kv_states,
+                        )
+                        chunk_outputs.append(chunk_output)
+                        produced_shared_kv.update(chunk_shared_kv)
+                finally:
+                    # Keep the complete client-side prefix even if a replacement fails during replay,
+                    # so the next replacement can restart from position zero as well.
+                    self.history = full_history
+                    self.per_layer_history = full_per_layer_history
+
+                assert self._position == n_input_tokens
+                return torch.cat(chunk_outputs, dim=1), produced_shared_kv
+
         # serialize inputs and put them into the queue. Gemma 4 appends the per-layer inputs as a
         # fourth tensor and, when a KV-sharing donor lives upstream, its keys/values as further
         # tensors; other models keep the original 3-tensor layout for wire compatibility.

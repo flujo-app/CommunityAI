@@ -119,7 +119,7 @@ def run_worker() -> None:
         "--max_chunk_size_bytes",
         str(16 * 1024 * 1024),
         "--throughput",
-        "1.0",
+        os.environ.get("FLY_SMOKE_THROUGHPUT", "1.0"),
         "--update_period",
         "5",
         "--expiration",

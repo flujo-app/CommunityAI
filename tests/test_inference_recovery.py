@@ -1,16 +1,20 @@
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
 import torch
 from hivemind.compression import deserialize_torch_tensor, serialize_torch_tensor
+from hivemind.dht.node import Blacklist
 from hivemind.moe.client.remote_expert_worker import RemoteExpertWorker
 from hivemind.proto import runtime_pb2
 from hivemind.utils.serializer import MSGPackSerializer
 
 from drift.client.config import ClientConfig
 from drift.client.inference_session import InferenceSession, _ServerInferenceSession
-from drift.data_structures import RemoteSpanInfo, ServerInfo, ServerState
+from drift.client.routing.sequence_info import RemoteSequenceInfo
+from drift.client.routing.sequence_manager import RemoteSequenceManager, SequenceManagerState
+from drift.data_structures import RemoteModuleInfo, RemoteSpanInfo, ServerInfo, ServerState
 from drift.utils.misc import DUMMY, DUMMY_INT64, is_dummy
 
 
@@ -21,6 +25,32 @@ def _span(peer_id: str, start: int, end: int) -> RemoteSpanInfo:
 def _rpc_info():
     tensor_schema = SimpleNamespace(compression=runtime_pb2.CompressionType.NONE)
     return {"inference_schema": ((tensor_schema, tensor_schema, tensor_schema), {})}
+
+
+def test_request_failure_immediately_removes_stale_peer_from_routes():
+    failed_peer = "failed"
+    spare_peer = "spare"
+    online = ServerInfo(ServerState.ONLINE, throughput=1.0)
+    sequence_info = RemoteSequenceInfo.make_empty(["model.0", "model.1"])
+    sequence_info.update_(
+        [
+            RemoteModuleInfo(f"model.{block_index}", {failed_peer: online, spare_peer: online})
+            for block_index in range(2)
+        ]
+    )
+
+    manager = object.__new__(RemoteSequenceManager)
+    manager.state = SequenceManagerState(
+        sequence_info=sequence_info,
+        banned_peers=Blacklist(base_time=15, backoff_rate=2.0),
+    )
+    manager.lock_changes = threading.Lock()
+
+    manager.on_request_failure(failed_peer)
+
+    assert failed_peer in manager.state.banned_peers
+    assert all(failed_peer not in info.servers for info in sequence_info.block_infos)
+    assert all([span.peer_id for span in spans] == [spare_peer] for spans in sequence_info.spans_containing_block)
 
 
 @pytest.fixture
@@ -40,7 +70,7 @@ def coroutine_runner(monkeypatch):
 
 def test_server_session_replays_full_prefix_from_position_zero(coroutine_runner):
     session = _ServerInferenceSession(
-        ClientConfig(),
+        ClientConfig(replay_chunk_size=3),
         _span("replacement", 0, 2),
         "model.0 model.1",
         _rpc_info(),
@@ -80,15 +110,16 @@ def test_server_session_replays_full_prefix_from_position_zero(coroutine_runner)
         per_layer_inputs=per_layer_current,
     )
 
-    replay_metadata = MSGPackSerializer.loads(requests[0].metadata)
-    replay_tensors = [deserialize_torch_tensor(tensor) for tensor in requests[0].tensors]
+    replay_metadata = [MSGPackSerializer.loads(request.metadata) for request in requests]
+    replay_tensors = [[deserialize_torch_tensor(tensor) for tensor in request.tensors] for request in requests]
     expected_history = torch.cat([prefix, current], dim=1)
     expected_per_layer_history = torch.cat([per_layer_prefix, per_layer_current], dim=2)
 
-    assert replay_metadata["start_from_position"] == 0
-    assert torch.equal(replay_tensors[0], expected_history)
-    assert torch.equal(replay_tensors[1], replay_prompts)
-    assert torch.equal(replay_tensors[3], expected_per_layer_history)
+    assert [metadata["start_from_position"] for metadata in replay_metadata] == [0, 3]
+    assert [tensors[0].shape[1] for tensors in replay_tensors] == [3, 1]
+    assert torch.equal(torch.cat([tensors[0] for tensors in replay_tensors], dim=1), expected_history)
+    assert all(torch.equal(tensors[1], replay_prompts) for tensors in replay_tensors)
+    assert torch.equal(torch.cat([tensors[3] for tensors in replay_tensors], dim=2), expected_per_layer_history)
     assert torch.equal(outputs, expected_history + 1)
     assert session.position == 4
     assert not session.needs_replay
@@ -102,8 +133,8 @@ def test_server_session_replays_full_prefix_from_position_zero(coroutine_runner)
         step_id="ordinary-step",
         per_layer_inputs=next_per_layer,
     )
-    next_metadata = MSGPackSerializer.loads(requests[1].metadata)
-    next_tensors = [deserialize_torch_tensor(tensor) for tensor in requests[1].tensors]
+    next_metadata = MSGPackSerializer.loads(requests[2].metadata)
+    next_tensors = [deserialize_torch_tensor(tensor) for tensor in requests[2].tensors]
 
     assert next_metadata["start_from_position"] == 4
     assert next_tensors[0].shape[1] == 1
