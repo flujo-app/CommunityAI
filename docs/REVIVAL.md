@@ -288,10 +288,11 @@ proof-of-work, staking, or blockchain consensus into inference routing.
 
 ## Milestones
 
-1. **Reproducible execution baseline — mostly complete.** Native Windows, Linux,
+1. **Reproducible execution baseline — complete.** Native Windows, Linux,
    and macOS setup; local DHT smoke test; exact token parity with a stock model; CPU
-   and accelerator diagnostics. Windows CPU, Linux CPU, and Windows CUDA are proven
-   on an eight-block TinyLlama swarm; macOS remains outstanding.
+   and accelerator diagnostics. Windows CPU, Linux CPU, Windows CUDA, and a native
+   hosted Apple Silicon macOS run are proven on an eight-block TinyLlama swarm; the
+   macOS matrix also passes the MPS block-portability checks.
 2. **Real multi-machine swarm — complete.** Two or more machines, explicit block
    coverage, restart testing, disconnect recovery, and latency/throughput
    measurements. A private Fly Machines swarm has proven coverage, redundancy,
@@ -300,7 +301,7 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    client excluded its stale route, replayed 249 cached activation tokens through
    the duplicate in bounded chunks, and completed with exact stock-model parity. A
    subsequent request confirmed that the survivor's attention cache was released.
-3. **Public protocol identity and content integrity — implementation complete; validation pending.** Specify `ModelManifest v1`
+3. **Public protocol identity and content integrity — complete.** Specify `ModelManifest v1`
    and content-derived DHT namespaces; pin exact model revisions; sign and validate
    worker identity, announcements, intent leases, and execution profiles; reject
    manifest mismatches; authenticate and encrypt transport; define key rotation and
@@ -331,8 +332,10 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    SHA-256 verification. A real Hub test resumed TinyLlama at byte 2,097,152 with
    HTTP 206, and signed Windows CPU parity plus in-generation failover passed. The
    signed Fly rerun then routed across independent `0:4` and `4:8` identities and
-   passed exact parity. The first green hosted macOS run remains required before
-   public-network approval.
+   passed exact parity. A hosted Apple Silicon macOS run then generated the pinned
+   manifest, resumed a real Hub artifact at byte 2,097,152 with HTTP 206, served all
+   eight blocks through a signed manifested identity, and matched the stock token
+   output exactly. This closes the milestone's cross-platform validation gate.
 4. **Unified local node and multi-model OpenAI API.** Introduce the persistent node
    daemon, worker supervision, a versioned local control API, multi-model discovery
    and lazy client loading, a stable localhost OpenAI endpoint, local API-key

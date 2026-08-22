@@ -11,9 +11,9 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 
 | Milestone | Status | Evidence | Remaining gate |
 | --- | --- | --- | --- |
-| 1. Reproducible execution baseline | Mostly complete | Windows CPU, Docker Linux CPU, and Windows CUDA all served blocks `0:8` and produced exact token parity | Native macOS install and smoke test |
+| 1. Reproducible execution baseline | Complete | Windows CPU, Docker Linux CPU, Windows CUDA, and native hosted Apple Silicon macOS all served blocks `0:8` and produced exact token parity; macOS also passed the MPS block-portability checks | None |
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
-| 3. Public protocol identity and content integrity | Implementation complete; validation pending | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, a real Hub HTTP 206 resume, signed Windows parity/failover, signed Fly cross-Machine parity, and prior Fly poison rejection are proven | First green macOS security/parity workflow |
+| 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 
 ## Manifest artifact integrity
 
@@ -116,6 +116,28 @@ Inside the container, the local DHT smoke test:
 
 Environment: Linux, Python 3.12, PyTorch 2.6.0+cpu.
 
+## Hosted Apple Silicon macOS
+
+The first native macOS gate passed in
+[GitHub Actions run 32584402263](https://github.com/flujo-app/CommunityAI/actions/runs/32584402263/job/97058493894)
+on 2026-08-22. The Apple Silicon runner used Python 3.12.10, PyTorch 2.6.0,
+Transformers 5.13.0, and passed 141 selected tests, including the real MPS
+block-portability check.
+
+The workflow resolved TinyLlama to commit
+`298338802ab94432b917bcce11382aa151aee50f` and generated float32 manifest digest
+`b59291566c5bcfeefffe29b79c64b658f67b4e24663ba5b936d937a7d7027bbd`. It then
+seeded the 9,251,608-byte `model.safetensors` at byte 2,097,152, requested
+`bytes=2097152-`, received HTTP 206 with
+`Content-Range: bytes 2097152-9251607/9251608`, and verified the completed artifact.
+
+The signed manifested smoke announced all eight blocks in the digest-derived
+namespace, selected route `0:8`, and produced
+`[[1, 16644, 31844, 260, 1496]]`, exactly matching stock Transformers. Client
+embeddings and the language-model head were both confirmed as float32 on CPU, and
+the worker, DHT, and local client shut down without the prior Hivemind destructor
+traceback.
+
 ## Windows CUDA
 
 An isolated `.venv-cuda` used PyTorch 2.6.0+cu124 and the repository's patched
@@ -125,6 +147,14 @@ IDs and decoded output as the stock model.
 
 The ordinary `.venv` remains the CPU environment, so CUDA validation does not
 replace or destabilize the baseline development environment.
+
+The follow-up diagnostic rerun on 2026-08-22 made placement explicit: `--device cuda`
+places the served blocks and stock reference on CUDA, while the distributed client
+intentionally keeps its local embeddings and language-model head on CPU.
+Both client components loaded as float16, the head used the documented chunked
+float32 CPU projection, and distributed output again matched the CUDA stock model
+exactly. The warning now reports the actual float16/CPU placement instead of the
+previous hard-coded bfloat16 description.
 
 ## Private Fly Machines swarm
 
@@ -236,11 +266,10 @@ list was empty.
 2. Extend end-to-end interruption testing to split replacement routes and Gemma 4;
    beam-search recovery needs a reorder-aware activation history before it can be
    enabled safely.
-3. Run the native macOS installer and the same exact-parity smoke test.
-4. Remove harmless Hivemind shutdown destructor warnings caused by querying an
-   already-closed uvloop event loop.
-5. Investigate server warnings about `self_attn.rotary_emb.inv_freq` not being
-   loaded. TinyLlama parity passed, but broader model coverage should not assume
-   that every architecture is unaffected.
-6. Check the CUDA head-device/dtype diagnostic: the FP16 CUDA test passed exact
-   parity, but the language-model-head log still described a bfloat16 CPU path.
+
+Resolved on 2026-08-22: the native hosted macOS security/parity workflow is green;
+Hivemind P2P cleanup no longer queries a closed global uvloop; legacy
+`self_attn.rotary_emb.inv_freq` is recognized narrowly as config-derived
+Transformers compatibility state while other unconsumed checkpoint keys still warn;
+and the CUDA smoke now asserts and reports the client embeddings/head's actual
+device and dtype.
