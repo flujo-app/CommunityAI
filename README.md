@@ -19,13 +19,15 @@ You get the ergonomics of a local `transformers` model (full PyTorch access to l
 **1. Install.** On Linux or macOS:
 
 ```bash
-curl -fsSL https://badideas.cc/drift-llm/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/flujo-app/CommunityAI/main/scripts/install.sh | sh
 ```
 
-On Windows (PowerShell — needs [uv](https://docs.astral.sh/uv/) and [Go](https://go.dev/dl/), since it also builds the `hivemind` wheel):
+On Windows, run this from the revival checkout. It needs
+[uv](https://docs.astral.sh/uv/); the installer downloads a checksum-verified
+portable Go toolchain if Go is absent:
 
 ```powershell
-irm https://badideas.cc/drift-llm/install.ps1 | iex
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
 The installer detects your accelerator and installs a matching PyTorch build. Override it with `DRIFT_DEVICE=cpu|cuda|xpu|mps`.
@@ -157,8 +159,8 @@ The [Quickstart](#quickstart) install scripts (`scripts/install.sh` / `scripts/i
 Requires **Python 3.10+**. The project is managed with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/ApexDevelopment/DRIFT-LLM
-cd DRIFT-LLM
+git clone https://github.com/flujo-app/CommunityAI
+cd CommunityAI
 uv sync --extra dev
 ```
 
@@ -174,12 +176,16 @@ uv pip install (Get-ChildItem .\dist\hivemind-1.1.12-*-win_amd64.whl | Select-Ob
 uv pip install -e .
 ```
 
-The build requires Go on `PATH`; the script compiles `p2pd.exe` and packages it into the wheel. The DRIFT-LLM dependency on PyPI `hivemind` is disabled on Windows, so install the local wheel explicitly after creating or syncing the environment.
+The manual build requires Go on `PATH`; `scripts/install.ps1` instead provisions
+a checksum-verified portable Go toolchain automatically. The build script compiles
+`p2pd.exe` and packages it into the wheel. The DRIFT-LLM dependency on PyPI
+`hivemind` is disabled on Windows, so install the local wheel explicitly after
+creating or syncing the environment.
 
 Or install into an existing environment with pip:
 
 ```bash
-pip install git+https://github.com/ApexDevelopment/DRIFT-LLM
+pip install git+https://github.com/flujo-app/CommunityAI
 ```
 
 For NVIDIA GPUs, install a CUDA build of PyTorch (for example `conda install pytorch pytorch-cuda=12.4 -c pytorch -c nvidia`) before installing. A `Dockerfile` is included for running servers in a container.
@@ -199,7 +205,10 @@ uv pip install --force-reinstall --index-url https://download.pytorch.org/whl/xp
 .\.venv\Scripts\python.exe -u scripts\smoke_tinyllama_local_swarm.py --device xpu --timeout 300 --block-indices 0:8
 ```
 
-The smoke script starts a local DHT peer, serves all eight tiny Llama blocks, connects a distributed client through the local peer address, and generates a few tokens.
+The smoke script starts a local DHT peer, serves all eight tiny Llama blocks,
+connects a distributed client through the local peer address, generates a few
+tokens, and verifies exact token parity with the stock Transformers model. Pass
+`--skip-reference` only when a faster connectivity-only check is sufficient.
 
 ## Supported models
 

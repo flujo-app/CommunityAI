@@ -90,8 +90,8 @@ dev = [
 drift = "drift.cli.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/ApexDevelopment/DRIFT-LLM"
-"Bug Tracker" = "https://github.com/ApexDevelopment/DRIFT-LLM/issues"
+Homepage = "https://github.com/flujo-app/CommunityAI"
+"Bug Tracker" = "https://github.com/flujo-app/CommunityAI/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

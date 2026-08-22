@@ -1,23 +1,55 @@
 # DRIFT-LLM one-line installer for Windows (PowerShell).
 #
-#   irm https://raw.githubusercontent.com/ApexDevelopment/DRIFT-LLM/main/scripts/install.ps1 | iex
+#   powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 #
-# Detects your accelerator, builds the patched hivemind wheel (PyPI ships none for
-# Windows), installs a matching PyTorch build into a local .venv, and installs
-# DRIFT-LLM (the `drift` package). Override the accelerator with
+# Detects your accelerator, provisions a checksum-verified portable Go toolchain
+# when needed, builds the patched hivemind wheel (PyPI ships none for Windows),
+# installs a matching PyTorch build into a local .venv, and installs DRIFT-LLM
+# (the `drift` package). Override the accelerator with
 # $env:DRIFT_DEVICE = 'cpu' | 'cuda' | 'xpu' before running.
 #
-# Requires uv (https://docs.astral.sh/uv/) and Go (https://go.dev/dl/, for the
-# hivemind wheel build). Linux/macOS users: use scripts/install.sh instead.
+# Requires uv (https://docs.astral.sh/uv/). Linux/macOS users: use
+# scripts/install.sh instead.
 $ErrorActionPreference = 'Stop'
 
-$RepoUrl   = if ($env:DRIFT_REPO_URL) { $env:DRIFT_REPO_URL } else { 'https://github.com/ApexDevelopment/DRIFT-LLM' }
+$RepoUrl   = if ($env:DRIFT_REPO_URL) { $env:DRIFT_REPO_URL } else { 'https://github.com/flujo-app/CommunityAI' }
 $Device    = if ($env:DRIFT_DEVICE)   { $env:DRIFT_DEVICE }   else { 'auto' }
 $TorchSpec = 'torch>=2.6,<2.7'
+$GoVersion = '1.27.0'
+$GoArchiveSha256 = 'f0c0a0d33ba94f4d2c5dbc887334ce678b21813504ddb3aafcb06e60a5a667c4'
 
 function Log($msg) { Write-Host "[drift] $msg" -ForegroundColor Cyan }
 function Die($msg) { Write-Host "[drift] error: $msg" -ForegroundColor Red; exit 1 }
 function Has($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
+
+function Enable-PortableGo {
+    if (Has go) {
+        Log "using $(go version)"
+        return
+    }
+
+    $toolRoot = Join-Path (Get-Location) '.tools'
+    $goRoot = Join-Path $toolRoot 'go'
+    $goExe = Join-Path $goRoot 'bin\go.exe'
+    $archive = Join-Path $toolRoot "go$GoVersion.windows-amd64.zip"
+
+    if (-not (Test-Path -LiteralPath $goExe)) {
+        New-Item -ItemType Directory -Path $toolRoot -Force | Out-Null
+        Log "Go was not found; downloading portable Go $GoVersion from go.dev"
+        Invoke-WebRequest -Uri "https://go.dev/dl/go$GoVersion.windows-amd64.zip" -OutFile $archive
+
+        $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne $GoArchiveSha256) {
+            Remove-Item -LiteralPath $archive -Force
+            Die "portable Go checksum mismatch (expected $GoArchiveSha256, got $actualHash)"
+        }
+        Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot -Force
+    }
+
+    $env:Path = (Join-Path $goRoot 'bin') + ';' + $env:Path
+    if (-not (Has go)) { Die 'portable Go was extracted but go.exe is not available' }
+    Log "using portable $(go version)"
+}
 
 # 1. Get the code: reuse the current checkout if we're in one, otherwise clone.
 if ((Test-Path pyproject.toml) -and (Select-String -Path pyproject.toml -Pattern '^name = "drift"' -Quiet)) {
@@ -31,7 +63,7 @@ if ((Test-Path pyproject.toml) -and (Select-String -Path pyproject.toml -Pattern
 
 # 2. Prerequisites.
 if (-not (Has uv)) { Die 'uv is required (https://docs.astral.sh/uv/). Install it and re-run.' }
-if (-not (Has go)) { Die 'Go is required to build the hivemind wheel (https://go.dev/dl/). Install it and re-run.' }
+Enable-PortableGo
 
 # 3. Detect the accelerator (best effort; set $env:DRIFT_DEVICE = 'xpu' for Intel Arc).
 if ($Device -eq 'auto') {
@@ -61,8 +93,8 @@ switch ($Device) {
 }
 
 # 7. Install DRIFT-LLM itself.
-Log 'installing DRIFT-LLM'
-uv pip install -e .
+Log 'installing DRIFT-LLM with the OpenAI-compatible API runtime'
+uv pip install -e '.[api]'
 
 Log 'done.'
 Write-Host "`nStart a swarm on this machine:`n`n    drift up meta-llama/Llama-3.1-8B-Instruct`n" -ForegroundColor Green

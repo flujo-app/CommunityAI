@@ -103,6 +103,8 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-cuda/
+.tools/
 env/
 venv/
 ENV/

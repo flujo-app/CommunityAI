@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # DRIFT-LLM one-line installer for Linux and macOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/ApexDevelopment/DRIFT-LLM/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/flujo-app/CommunityAI/main/scripts/install.sh | sh
 #
 # Detects your OS and accelerator, installs a matching PyTorch build into a local
 # .venv, and installs DRIFT-LLM (the `drift` package). Override the auto-detected
@@ -12,7 +12,7 @@
 # Windows users: use scripts/install.ps1 instead (it also builds the hivemind wheel).
 set -eu
 
-REPO_URL="${DRIFT_REPO_URL:-https://github.com/ApexDevelopment/DRIFT-LLM}"
+REPO_URL="${DRIFT_REPO_URL:-https://github.com/flujo-app/CommunityAI}"
 DEVICE="${DRIFT_DEVICE:-auto}"
 TORCH_SPEC="torch>=2.6,<2.7"
 

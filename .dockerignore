@@ -1,0 +1,14 @@
+.git
+.github
+.pytest_cache
+.tools
+.venv
+.venv-cuda
+dist
+docs
+benchmarks
+examples
+tests/__pycache__
+**/__pycache__
+*.pyc
+*.log

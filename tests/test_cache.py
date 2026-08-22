@@ -57,7 +57,11 @@ async def test_cache_timeout():
             await asyncio.sleep(0.05)  # wait for large alloc to enqueue
             async with cache.allocate_cache(_make_tensor_descriptor(128), timeout=float("inf")):  # exceeds max timeout
                 pass  # this memory should allocate once the background task clears the queue
-            assert 0.2 < time.perf_counter() - t_start < 0.3, "memory should be allocated after background task clears"
+            elapsed = time.perf_counter() - t_start
+            # Windows' waitable timer can resume a few milliseconds before the requested deadline.
+            # Preserve the behavioral assertion (we waited for the queued allocation) without
+            # requiring POSIX-level timer precision from every supported platform.
+            assert 0.15 < elapsed < 0.35, "memory should be allocated after background task clears"
             with pytest.raises(AllocationFailed):
                 await large_alloc_task
 

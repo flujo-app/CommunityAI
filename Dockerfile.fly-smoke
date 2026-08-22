@@ -1,0 +1,37 @@
+FROM python:3.12-slim-bookworm AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/root/.local/bin:/workspace/.venv/bin:${PATH} \
+    UV_LINK_MODE=copy \
+    HF_HOME=/cache/huggingface \
+    DRIFT_CACHE=/cache
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh
+
+WORKDIR /workspace
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY scripts/install.sh ./scripts/install.sh
+
+# Exercise the supported Linux installer itself while building the smoke image.
+RUN DRIFT_DEVICE=cpu sh scripts/install.sh \
+    && rm -rf /root/.cache/uv
+
+FROM python:3.12-slim-bookworm
+
+ENV PATH=/workspace/.venv/bin:${PATH} \
+    HF_HOME=/cache/huggingface \
+    DRIFT_CACHE=/cache
+
+WORKDIR /workspace
+COPY --from=builder /workspace/.venv /workspace/.venv
+COPY --from=builder /workspace/src /workspace/src
+COPY scripts ./scripts
+
+ENTRYPOINT ["python", "-u", "scripts/fly_smoke_node.py"]

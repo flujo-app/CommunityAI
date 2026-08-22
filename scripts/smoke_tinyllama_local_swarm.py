@@ -15,7 +15,7 @@ import torch
 from hivemind import DHT
 from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils.timed_storage import MAX_DHT_TIME_DISCREPANCY_SECONDS
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from drift import AutoDistributedModelForCausalLM
 from drift.constants import DTYPE_MAP
@@ -62,8 +62,14 @@ def main() -> None:
     parser.add_argument("--device", default="xpu")
     parser.add_argument("--timeout", type=float, default=240)
     parser.add_argument("--block-indices", default="0:8")
+    parser.add_argument("--torch-dtype", default="bfloat16", choices=DTYPE_MAP.keys())
     parser.add_argument("--cache", default="contiguous", choices=["contiguous", "paged"])
     parser.add_argument("--page-size", type=int, default=16)
+    parser.add_argument(
+        "--skip-reference",
+        action="store_true",
+        help="skip the stock-model token parity check (faster, but does not verify numerical correctness)",
+    )
     args = parser.parse_args()
 
     faulthandler.dump_traceback_later(args.timeout, exit=True)
@@ -95,7 +101,8 @@ def main() -> None:
         log("loading config")
         block_config = AutoDistributedConfig.from_pretrained(MODEL)
         block_config._attn_implementation = "eager"
-        torch_dtype = resolve_block_dtype(block_config, DTYPE_MAP["bfloat16"])
+        torch_dtype = resolve_block_dtype(block_config, DTYPE_MAP[args.torch_dtype])
+        log(f"torch_dtype={torch_dtype}")
         attn_cache_tokens = 128
         cache_values_per_block = 2 * block_config.hidden_size * attn_cache_tokens
         cache_values_per_block //= block_config.num_key_value_groups
@@ -157,7 +164,7 @@ def main() -> None:
             MODEL,
             dht_prefix=DHT_PREFIX,
             initial_peers=peers,
-            torch_dtype=torch.bfloat16,
+            torch_dtype=torch_dtype,
             request_timeout=60,
         )
 
@@ -167,6 +174,21 @@ def main() -> None:
             outputs = model.generate(inputs, max_new_tokens=3, do_sample=False)
         log(f"output_ids={outputs.tolist()}")
         log(f"decoded={tokenizer.decode(outputs[0])!r}")
+
+        if not args.skip_reference:
+            log("loading stock local model for token parity check")
+            reference_model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=torch_dtype).to(device)
+            reference_model.eval()
+            with torch.inference_mode():
+                reference_outputs = reference_model.generate(inputs.to(device), max_new_tokens=3, do_sample=False).cpu()
+            if not torch.equal(outputs.cpu(), reference_outputs):
+                raise AssertionError(
+                    "distributed output differs from the stock model: "
+                    f"distributed={outputs.tolist()}, reference={reference_outputs.tolist()}"
+                )
+            log(f"reference_output_ids={reference_outputs.tolist()}")
+            log("distributed output matches the stock model exactly")
+
         log("tinyllama local swarm smoke ok")
     finally:
         log("shutting down")
