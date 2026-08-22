@@ -24,6 +24,7 @@ from hivemind.utils.streaming import split_for_streaming
 
 import drift
 from drift.data_structures import CHAIN_DELIMITER, UID_DELIMITER, Handle, ModuleUID
+from drift.protocol_identity import TRANSPORT_SECURITY
 from drift.server.backend import TransformerBackend
 from drift.server.block_functions import iterate_rpc_inference, run_rpc_backward, run_rpc_forward
 from drift.server.task_prioritizer import DummyTaskPrioritizer, TaskPrioritizerBase
@@ -64,6 +65,8 @@ class TransformerConnectionHandler(ConnectionHandler):
         request_timeout: float,
         session_timeout: float,
         step_timeout: float,
+        manifest_digest: Optional[str] = None,
+        identity_key_id: Optional[str] = None,
         task_prioritizer: TaskPrioritizerBase = DummyTaskPrioritizer(),
         quant_type: QuantType,
     ):
@@ -82,8 +85,20 @@ class TransformerConnectionHandler(ConnectionHandler):
         self.inference_max_length = inference_max_length
         self.request_timeout = request_timeout
         self.session_timeout, self.step_timeout = session_timeout, step_timeout
+        self.manifest_digest = manifest_digest
+        self.identity_key_id = identity_key_id
         self._prioritizer = task_prioritizer
         self.quant_type = quant_type
+
+    def _check_manifest_digest(self, metadata: Dict[str, Any]) -> None:
+        """Require manifested clients and servers to agree before executing model blocks."""
+        actual = metadata.get("manifest_digest")
+        if self.manifest_digest is not None and actual != self.manifest_digest:
+            raise ValueError(
+                f"Manifest digest mismatch: client sent {actual!r}, server requires {self.manifest_digest!r}"
+            )
+        if self.manifest_digest is None and actual is not None:
+            raise ValueError(f"Manifest digest mismatch: client requires {actual!r}, server is in legacy mode")
 
     async def add_p2p_handlers(self, *args, **kwargs) -> None:
         if self._listener_task is None:
@@ -144,6 +159,7 @@ class TransformerConnectionHandler(ConnectionHandler):
             self._log_request("rpc_inference.open", requested_uids, context)
             try:
                 metadata = MSGPackSerializer.loads(request.metadata) if request.metadata else {}
+                self._check_manifest_digest(metadata)
                 requested_backends = tuple(self.module_backends[uid] for uid in requested_uids)
                 max_length = metadata.get("max_length")
                 points = metadata.get("points", 0)
@@ -359,6 +375,7 @@ class TransformerConnectionHandler(ConnectionHandler):
 
             requested_backends = tuple(self.module_backends[uid] for uid in requested_uids)
             metadata = MSGPackSerializer.loads(request.metadata) if request.metadata else {}
+            self._check_manifest_digest(metadata)
             active_adapter = self._get_active_adapter(metadata)
             points = metadata.get("points", 0)
             args_structure = metadata.get("args_structure")
@@ -384,6 +401,7 @@ class TransformerConnectionHandler(ConnectionHandler):
         async with timeout(self.request_timeout):
             # Parse requests and prepare backends
             uid_str, flat_inputs, metadata = await self._gather_inputs(requests, context)
+            self._check_manifest_digest(metadata)
             requested_uids = self._check_uids(uid_str)
             self._log_request("rpc_forward_stream", requested_uids, context)
 
@@ -441,6 +459,7 @@ class TransformerConnectionHandler(ConnectionHandler):
 
             requested_backends = tuple(self.module_backends[uid] for uid in requested_uids)
             metadata = MSGPackSerializer.loads(request.metadata) if request.metadata else {}
+            self._check_manifest_digest(metadata)
             active_adapter = self._get_active_adapter(metadata)
             points = metadata.get("points", 0)
             args_structure = metadata.get("args_structure")
@@ -464,6 +483,7 @@ class TransformerConnectionHandler(ConnectionHandler):
     ) -> AsyncIterator[runtime_pb2.ExpertResponse]:
         async with timeout(self.request_timeout):
             uids_header, flat_tensors, metadata = await self._gather_inputs(requests, context)
+            self._check_manifest_digest(metadata)
             requested_uids = self._check_uids(uids_header)
             self._log_request("rpc_backward_stream", requested_uids, context)
 
@@ -586,6 +606,10 @@ class TransformerConnectionHandler(ConnectionHandler):
         backend = self.module_backends[request.uid] if request.uid else next(iter(self.module_backends.values()))
         result = {
             "version": drift.__version__,
+            "manifest_digest": self.manifest_digest,
+            "server_peer_id": self.dht.peer_id.to_base58(),
+            "identity_key_id": self.identity_key_id,
+            "transport_security": TRANSPORT_SECURITY if self.manifest_digest is not None else None,
             "dht_client_mode": self.dht.client_mode,
             CACHE_TOKENS_AVAILABLE: backend.memory_cache.bytes_left // max(backend.cache_bytes_per_token.values()),
         }

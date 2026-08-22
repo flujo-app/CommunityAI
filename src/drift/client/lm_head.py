@@ -42,7 +42,7 @@ class LMHead(nn.Module):
             else:
                 self.use_chunked_forward = True
         self.chunked_forward_step = config.chunked_forward_step
-        self._bf16_warning_shown = False
+        self._chunked_warning_shown = False
 
     def forward(self, hidden_states):
         if (
@@ -63,12 +63,15 @@ class LMHead(nn.Module):
         """
         assert self.chunked_forward_step > 0, "Chunk size for chunked forward must be positive"
 
-        if not self._bf16_warning_shown:
+        if not self._chunked_warning_shown:
+            dtype_name = str(self.weight.dtype).removeprefix("torch.")
             logger.warning(
-                "Running the model in bfloat16 on CPU will be slow since your CPU does not support AVX512. "
-                "To speed it up, load the model in float32 using .from_pretrained(..., torch_dtype=torch.float32)"
+                f"Running the client-side language-model head with {dtype_name} weights on CPU via chunked "
+                "float32 projection. For faster CPU inference, load the client in float32 with "
+                ".from_pretrained(..., torch_dtype=torch.float32), or move its local components to a supported "
+                "accelerator."
             )
-            self._bf16_warning_shown = True
+            self._chunked_warning_shown = True
 
         hidden_states = hidden_states.float()
         output = torch.empty(*hidden_states.shape[:-1], self.out_features)

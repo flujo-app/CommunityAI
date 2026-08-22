@@ -15,6 +15,7 @@ from packaging.version import parse as _parse_version
 from drift.client import *
 from drift.models import *
 from drift.utils import *
+from drift.utils.asyncio import patch_hivemind_task_cleanup as _patch_hivemind_task_cleanup
 from drift.utils.logging import initialize_logs as _initialize_logs
 
 __version__ = "2.3.0.dev2"
@@ -33,3 +34,4 @@ def _override_bfloat16_mode_default():
 
 _initialize_logs()
 _override_bfloat16_mode_default()
+_patch_hivemind_task_cleanup()

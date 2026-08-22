@@ -11,7 +11,9 @@ from hivemind.utils import limits
 from hivemind.utils.logging import get_logger
 from humanfriendly import parse_size
 
+import drift
 from drift.constants import DTYPE_MAP
+from drift.model_manifest import ManifestError, ModelManifest, resolve_manifest_loading
 from drift.server.server import Server
 from drift.utils.convert_block import QuantType
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
@@ -169,6 +171,8 @@ def build_parser() -> configargparse.ArgParser:
     parser.add_argument('--revision', type=str, default=None,
                         help="The specific model version to use. It can be a branch name, a tag name, or a commit id, since we use a git-based system for storing models"
                              "and other artifacts on huggingface.co, so `revision` can be any identifier allowed by git.")
+    parser.add_argument('--model_manifest', type=str, default=None,
+                        help="Path to a ModelManifest v1. Pins revision, execution profile, and DHT namespace")
 
     parser.add_argument('--throughput',
                         type=lambda value: value if value in ['auto', 'eval', 'dry_run'] else float(value),
@@ -205,6 +209,8 @@ def build_parser() -> configargparse.ArgParser:
     parser.add_argument('--custom_module_path', type=str, required=False,
                         help='Path of a file with custom nn.modules, wrapped into special decorator')
     parser.add_argument('--identity_path', type=str, required=False, help='Path to identity file to be used in P2P')
+    parser.add_argument('--revocation_file', action='append', default=[], dest='revocation_files',
+                        help='Signed identity rotation/revocation JSON to enforce (repeatable; manifest mode only)')
 
     parser.add_argument("--balance_quality", type=float, default=0.75,
                         help="Rebalance the swarm if its throughput is worse than this share of the optimal "
@@ -239,6 +245,49 @@ def server_from_args(args: dict) -> Server:
     tie_child_processes_to_this_process()
 
     args["converted_model_name_or_path"] = args.pop("model") or args["converted_model_name_or_path"]
+
+    manifest_path = args.pop("model_manifest")
+    if manifest_path is not None:
+        manifest = ModelManifest.load(manifest_path)
+        manifest.validate_runtime(drift.__version__)
+        args["revision"], args["dht_prefix"] = resolve_manifest_loading(
+            manifest,
+            model_name_or_path=args["converted_model_name_or_path"],
+            revision=args.get("revision"),
+            dht_prefix=args.get("dht_prefix"),
+        )
+
+        profile = manifest.runtime
+        if args["torch_dtype"] == "auto":
+            args["torch_dtype"] = profile.dtype
+        elif args["torch_dtype"] != profile.dtype:
+            raise ManifestError(
+                f"--torch_dtype {args['torch_dtype']!r} conflicts with manifest dtype {profile.dtype!r}"
+            )
+        if args["attn_implementation"] == "auto":
+            args["attn_implementation"] = profile.attention_implementation
+        elif args["attn_implementation"] != profile.attention_implementation:
+            raise ManifestError(
+                f"--attn_implementation {args['attn_implementation']!r} conflicts with manifest setting "
+                f"{profile.attention_implementation!r}"
+            )
+        if args["quant_type"] is None:
+            args["quant_type"] = profile.quantization
+        elif args["quant_type"] != profile.quantization:
+            raise ManifestError(
+                f"--quant_type {args['quant_type']!r} conflicts with manifest quantization {profile.quantization!r}"
+            )
+        if profile.adapter_profile != "none":
+            raise ManifestError("Content-addressed adapter profiles are declared but not executable in this release")
+        if args["adapters"]:
+            raise ManifestError("--adapters conflicts with the manifest's adapter_profile 'none'")
+        args["model_manifest"] = manifest
+        if not args.get("identity_path"):
+            raise ManifestError(
+                "--identity_path is required with --model_manifest so announcements use a stable libp2p signer"
+            )
+    elif args.get("revocation_files"):
+        raise ManifestError("--revocation_file is only valid with --model_manifest")
 
     host_maddrs = args.pop("host_maddrs")
     port = args.pop("port")
@@ -310,7 +359,10 @@ def main():
     args.pop("config", None)
 
     model_name = args.get("model") or args.get("converted_model_name_or_path")
-    server = server_from_args(args)
+    try:
+        server = server_from_args(args)
+    except ManifestError as exc:
+        parser.error(str(exc))
     serve(server, model=model_name)
 
 

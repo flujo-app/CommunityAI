@@ -24,6 +24,15 @@ from transformers import PretrainedConfig
 import drift
 from drift.constants import DTYPE_MAP
 from drift.data_structures import CHAIN_DELIMITER, UID_DELIMITER, ModelInfo, ServerInfo, ServerState, parse_uid
+from drift.model_manifest import ManifestArtifactVerifier, ModelManifest
+from drift.protocol_identity import (
+    MAX_SIGNED_RECORD_TTL_SECONDS,
+    NodeIdentity,
+    ProtocolSecurityError,
+    ReplayGuard,
+    RevocationStore,
+    create_worker_announcement,
+)
 from drift.server import block_selection
 from drift.server.backend import TransformerBackend, merge_inference_pools_inplace
 from drift.server.block_utils import get_block_size, resolve_block_dtype
@@ -99,6 +108,8 @@ class Server:
         torch_dtype: str = "auto",
         attn_implementation: str = "auto",
         revision: Optional[str] = None,
+        model_manifest: Optional[ModelManifest] = None,
+        revocation_files: Sequence[str] = (),
         cache_dir: Optional[str] = None,
         max_disk_space: Optional[int] = None,
         device: Optional[Union[str, torch.device]] = None,
@@ -139,11 +150,46 @@ class Server:
         if custom_module_path is not None:
             add_custom_models_from_file(custom_module_path)
 
+        artifact_verifier = None
+        if model_manifest is not None:
+            model_manifest.validate_runtime(drift.__version__)
+            artifact_verifier = ManifestArtifactVerifier(
+                model_manifest,
+                repository=converted_model_name_or_path,
+                revision=revision,
+                token=token,
+                cache_dir=cache_dir,
+                max_disk_space=max_disk_space,
+            )
+            config_source = artifact_verifier.ensure_startup_metadata()
+        else:
+            config_source = converted_model_name_or_path
+
         self.block_config = AutoDistributedConfig.from_pretrained(
-            converted_model_name_or_path,
+            config_source,
             token=token,
-            revision=revision,
+            revision=None if artifact_verifier is not None else revision,
+            local_files_only=artifact_verifier is not None,
         )
+        if model_manifest is not None:
+            model_manifest.validate_model_config(self.block_config)
+        self.model_manifest = model_manifest
+        self.manifest_execution_profile = model_manifest.runtime.to_dict() if model_manifest is not None else None
+        self.revocations = RevocationStore.from_files(revocation_files)
+        self.announcement_replay_guard = ReplayGuard()
+
+        identity_path = kwargs.get("identity_path")
+        self.protocol_identity = None
+        if model_manifest is not None:
+            if not identity_path:
+                raise ProtocolSecurityError(
+                    "--identity_path is required with --model_manifest so public announcements have a stable signer"
+                )
+            if kwargs.get("tls", True) is not True:
+                raise ProtocolSecurityError("Manifested public swarms require libp2p TLS 1.3 transport security")
+            self.protocol_identity = NodeIdentity.ensure(identity_path)
+            self.revocations.require_active(self.protocol_identity.key_id)
+            kwargs["tls"] = True
 
         # "auto" leaves _attn_implementation unset so each block picks its own correct default
         # (see drift.utils.misc.default_attn_implementation); an explicit choice forces every block.
@@ -152,6 +198,10 @@ class Server:
 
         if dht_prefix is None:
             dht_prefix = self.block_config.dht_prefix
+        if model_manifest is not None and dht_prefix != model_manifest.dht_prefix:
+            raise ProtocolSecurityError(
+                f"Manifested server DHT prefix must be content-derived as {model_manifest.dht_prefix!r}"
+            )
         assert UID_DELIMITER not in dht_prefix and CHAIN_DELIMITER not in dht_prefix, (
             f"DHT prefix should not contain '{UID_DELIMITER}' or '{CHAIN_DELIMITER}'. "
             f"Please specify another --dht_prefix manually when starting a server"
@@ -160,6 +210,13 @@ class Server:
 
         if expiration is None:
             expiration = max(2 * update_period, MAX_DHT_TIME_DISCREPANCY_SECONDS)
+        if model_manifest is not None and (
+            not math.isfinite(expiration) or not 0 < expiration <= MAX_SIGNED_RECORD_TTL_SECONDS
+        ):
+            raise ProtocolSecurityError(
+                f"Manifested announcement lifetime must be finite, positive, and at most "
+                f"{MAX_SIGNED_RECORD_TTL_SECONDS} seconds"
+            )
         self.expiration = expiration
 
         self.request_timeout = request_timeout
@@ -183,6 +240,8 @@ class Server:
             client_mode=reachable_via_relay,
             **kwargs,
         )
+        if self.protocol_identity is not None and self.dht.peer_id != self.protocol_identity.peer_id:
+            raise ProtocolSecurityError("The running libp2p PeerID does not match the announcement signing identity")
         self.reachability_protocol = ReachabilityProtocol.attach_to_dht(self.dht) if not reachable_via_relay else None
 
         visible_maddrs_str = [str(a) for a in self.dht.get_visible_maddrs()]
@@ -302,6 +361,7 @@ class Server:
             state=ServerState.JOINING,
             public_name=public_name,
             version=drift.__version__,
+            manifest_digest=model_manifest.digest if model_manifest is not None else None,
             adapters=tuple(adapters),
             torch_dtype=str(torch_dtype).replace("torch.", ""),
             quant_type=quant_type.name.lower(),
@@ -332,7 +392,15 @@ class Server:
         """
         ours = (self.server_info.torch_dtype, self.server_info.quant_type)
         try:
-            module_infos = get_remote_module_infos(self.dht, self.module_uids, latest=True)
+            module_infos = get_remote_module_infos(
+                self.dht,
+                self.module_uids,
+                manifest_digest=self.server_info.manifest_digest,
+                manifest_execution_profile=self.manifest_execution_profile,
+                revocations=self.revocations,
+                replay_guard=self.announcement_replay_guard,
+                latest=True,
+            )
             others = set()
             for module_info in module_infos:
                 for peer_id, server_info in module_info.servers.items():
@@ -436,6 +504,11 @@ class Server:
                 sender_threads=self.sender_threads,
                 revision=self.revision,
                 token=self.token,
+                model_manifest=self.model_manifest,
+                protocol_identity=self.protocol_identity,
+                manifest_execution_profile=self.manifest_execution_profile,
+                revocations=self.revocations,
+                replay_guard=self.announcement_replay_guard,
                 quant_type=self.quant_type,
                 tensor_parallel_devices=self.tensor_parallel_devices,
                 ready_timeout=self.ready_timeout,
@@ -484,14 +557,30 @@ class Server:
         # If multiple servers (e.g., launched on the same machine by a script) get to this line at the same time,
         # this delay decreases the probability of a race condition while choosing the best blocks to serve.
         time.sleep(random.random() * 2 * self.mean_block_selection_delay)
-        module_infos = get_remote_module_infos(self.dht, self.module_uids, latest=True)
+        module_infos = get_remote_module_infos(
+            self.dht,
+            self.module_uids,
+            manifest_digest=self.server_info.manifest_digest,
+            manifest_execution_profile=self.manifest_execution_profile,
+            revocations=self.revocations,
+            replay_guard=self.announcement_replay_guard,
+            latest=True,
+        )
         return block_selection.choose_best_blocks(self.num_blocks, module_infos)
 
     def _should_choose_other_blocks(self) -> bool:
         if self.strict_block_indices is not None:
             return False
 
-        module_infos = get_remote_module_infos(self.dht, self.module_uids, latest=True)
+        module_infos = get_remote_module_infos(
+            self.dht,
+            self.module_uids,
+            manifest_digest=self.server_info.manifest_digest,
+            manifest_execution_profile=self.manifest_execution_profile,
+            revocations=self.revocations,
+            replay_guard=self.announcement_replay_guard,
+            latest=True,
+        )
         return block_selection.should_choose_other_blocks(self.dht.peer_id, module_infos, self.balance_quality)
 
     def shutdown(self, timeout: Optional[float] = 5):
@@ -536,6 +625,11 @@ class ModuleContainer(threading.Thread):
         expiration: Optional[float],
         revision: Optional[str],
         token: Optional[Union[str, bool]],
+        model_manifest: Optional[ModelManifest] = None,
+        protocol_identity: Optional[NodeIdentity] = None,
+        manifest_execution_profile: Optional[Dict[str, object]] = None,
+        revocations: Optional[RevocationStore] = None,
+        replay_guard: Optional[ReplayGuard] = None,
         quant_type: QuantType,
         tensor_parallel_devices: Sequence[torch.device],
         **kwargs,
@@ -553,6 +647,10 @@ class ModuleContainer(threading.Thread):
             memory_cache=memory_cache,
             update_period=update_period,
             expiration=expiration,
+            protocol_identity=protocol_identity,
+            manifest_execution_profile=manifest_execution_profile,
+            revocations=revocations,
+            replay_guard=replay_guard,
             daemon=True,
         )
         dht_announcer.start()
@@ -562,6 +660,18 @@ class ModuleContainer(threading.Thread):
 
         blocks = {}
         try:
+            artifact_verifier = (
+                ManifestArtifactVerifier(
+                    model_manifest,
+                    repository=converted_model_name_or_path,
+                    revision=revision,
+                    token=token,
+                    cache_dir=cache_dir,
+                    max_disk_space=max_disk_space,
+                )
+                if model_manifest is not None
+                else None
+            )
             for module_uid, block_index in zip(module_uids, block_indices):
                 block = load_pretrained_block(
                     converted_model_name_or_path,
@@ -572,6 +682,7 @@ class ModuleContainer(threading.Thread):
                     token=token,
                     cache_dir=cache_dir,
                     max_disk_space=max_disk_space,
+                    artifact_verifier=artifact_verifier,
                 )
                 block = convert_block(
                     block,
@@ -625,6 +736,7 @@ class ModuleContainer(threading.Thread):
             blocks,
             dht_announcer=dht_announcer,
             server_info=server_info,
+            protocol_identity=protocol_identity,
             update_period=update_period,
             expiration=expiration,
             **kwargs,
@@ -640,6 +752,7 @@ class ModuleContainer(threading.Thread):
         num_handlers: int,
         dht_announcer: ModuleAnnouncerThread,
         server_info: ServerInfo,
+        protocol_identity: Optional[NodeIdentity] = None,
         update_period: float,
         expiration: Optional[float] = None,
         request_timeout: float,
@@ -670,6 +783,8 @@ class ModuleContainer(threading.Thread):
                 request_timeout=request_timeout,
                 session_timeout=session_timeout,
                 step_timeout=step_timeout,
+                manifest_digest=server_info.manifest_digest,
+                identity_key_id=protocol_identity.key_id if protocol_identity is not None else None,
                 quant_type=QuantType[server_info.quant_type.upper()],
             )
             for i in range(num_handlers)
@@ -735,8 +850,10 @@ class ModuleContainer(threading.Thread):
         return self.runtime.ready  # mp.Event that is true if self is ready to process batches
 
     def is_healthy(self) -> bool:
-        return all(handler.is_alive() for handler in self.conn_handlers) and all(
-            pool.is_alive() for pool in self.runtime.pools
+        return (
+            self.dht_announcer.is_alive()
+            and all(handler.is_alive() for handler in self.conn_handlers)
+            and all(pool.is_alive() for pool in self.runtime.pools)
         )
 
     def shutdown(self):
@@ -783,6 +900,10 @@ class ModuleAnnouncerThread(threading.Thread):
         memory_cache: MemoryCache,
         update_period: float,
         expiration: float,
+        protocol_identity: Optional[NodeIdentity] = None,
+        manifest_execution_profile: Optional[Dict[str, object]] = None,
+        revocations: Optional[RevocationStore] = None,
+        replay_guard: Optional[ReplayGuard] = None,
         max_pinged: int = 5,
         **kwargs,
     ):
@@ -798,6 +919,11 @@ class ModuleAnnouncerThread(threading.Thread):
 
         self.update_period = update_period
         self.expiration = expiration
+        self.protocol_identity = protocol_identity
+        self.manifest_execution_profile = manifest_execution_profile
+        self.revocations = revocations
+        self.replay_guard = replay_guard
+        self._announcement_sequence = time.time_ns()
         self.trigger = threading.Event()
 
         self.dht_prefix = parse_uid(module_uids[0])[0]
@@ -820,16 +946,37 @@ class ModuleAnnouncerThread(threading.Thread):
             if self.server_info.state != ServerState.OFFLINE:
                 self._ping_next_servers()
                 self.server_info.next_pings = {
-                    peer_id.to_base58(): rtt for peer_id, rtt in self.ping_aggregator.to_dict().items()
+                    peer_id.to_base58(): rtt
+                    for peer_id, rtt in self.ping_aggregator.to_dict().items()
+                    if math.isfinite(rtt)
                 }
             else:
                 self.server_info.next_pings = None  # No need to ping if we're disconnecting
+
+            expiration_time = get_dht_time() + self.expiration
+            if self.server_info.manifest_digest is not None:
+                if self.protocol_identity is None or self.manifest_execution_profile is None:
+                    raise ProtocolSecurityError("Manifested workers cannot publish unsigned announcements")
+                issued_at = get_dht_time()
+                self._announcement_sequence = max(self._announcement_sequence + 1, time.time_ns())
+                self.server_info.signed_announcement = None
+                announcement = create_worker_announcement(
+                    self.protocol_identity,
+                    dht_prefix=self.dht_prefix,
+                    manifest_digest=self.server_info.manifest_digest,
+                    execution_profile=self.manifest_execution_profile,
+                    server_info=self.server_info.signed_payload(),
+                    issued_at=issued_at,
+                    expires_at=expiration_time,
+                    sequence=self._announcement_sequence,
+                )
+                self.server_info.signed_announcement = announcement.to_dict()
 
             declare_active_modules(
                 self.dht,
                 self.module_uids,
                 self.server_info,
-                expiration_time=get_dht_time() + self.expiration,
+                expiration_time=expiration_time,
             )
             if self.server_info.state == ServerState.OFFLINE:
                 break
@@ -856,7 +1003,15 @@ class ModuleAnnouncerThread(threading.Thread):
             self.join()
 
     def _ping_next_servers(self) -> Dict[PeerID, float]:
-        module_infos = get_remote_module_infos(self.dht, self.next_uids, latest=True)
+        module_infos = get_remote_module_infos(
+            self.dht,
+            self.next_uids,
+            manifest_digest=self.server_info.manifest_digest,
+            manifest_execution_profile=self.manifest_execution_profile,
+            revocations=self.revocations,
+            replay_guard=self.replay_guard,
+            latest=True,
+        )
         middle_servers = {peer_id for info in module_infos[:-1] for peer_id in info.servers}
         pinged_servers = set(sample_up_to(middle_servers, self.max_pinged))
         pinged_servers.discard(self.dht.peer_id)

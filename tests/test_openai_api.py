@@ -151,3 +151,23 @@ def test_api_key_auth():
 def test_rejects_multiple_choices(api):
     response = api.client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}], "n": 2})
     assert response.status_code == 400
+
+
+def test_api_cli_rejects_revocations_outside_manifest_mode(monkeypatch):
+    from drift.cli import run_api
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "drift api",
+            "org/model",
+            "--initial_peers",
+            "/ip4/127.0.0.1/tcp/1/p2p/fake",
+            "--torch_dtype",
+            "float32",
+            "--revocation_file",
+            "revoked.json",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        run_api.main()

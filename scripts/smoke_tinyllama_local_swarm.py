@@ -3,6 +3,9 @@
 This starts one local DHT peer that hosts all blocks for Maykeye/TinyLLama-v0,
 connects a client through that peer's DHT address, and generates a few tokens.
 It is intended for Windows/XPU bring-up but also works on CPU/CUDA with --device.
+``--device`` selects the worker-block and stock-reference device; the distributed
+client's embeddings and language-model head deliberately remain on their default
+local device, whose actual placement is logged and dtype-checked after loading.
 
 With ``--test-failover``, the script instead starts a bootstrap plus two complete
 worker replicas, stops the selected worker inside an active generation session,
@@ -13,7 +16,10 @@ from __future__ import annotations
 
 import argparse
 import faulthandler
+import shutil
+import tempfile
 import time
+from pathlib import Path
 
 import torch
 from hivemind import DHT
@@ -21,9 +27,12 @@ from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils.timed_storage import MAX_DHT_TIME_DISCREPANCY_SECONDS
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+import drift
 from drift import AutoDistributedModelForCausalLM
 from drift.constants import DTYPE_MAP
 from drift.data_structures import UID_DELIMITER, ModelInfo, ServerInfo, ServerState
+from drift.model_manifest import ManifestArtifactVerifier, ModelManifest, resolve_manifest_loading
+from drift.protocol_identity import NodeIdentity
 from drift.server.block_utils import resolve_block_dtype
 from drift.server.server import ModuleContainer
 from drift.utils.auto_config import AutoDistributedConfig
@@ -48,11 +57,37 @@ def parse_block_indices(value: str) -> list[int]:
     return list(range(start_block, end_block))
 
 
-def wait_for_dht_announcement(dht: DHT, block_indices: list[int], timeout: float, *, min_replicas: int = 1) -> None:
-    uids = [f"{DHT_PREFIX}{UID_DELIMITER}{block_index}" for block_index in block_indices]
+def log_local_component_placement(name: str, module: torch.nn.Module, expected_dtype: torch.dtype) -> None:
+    parameters = list(module.parameters())
+    if not parameters:
+        raise AssertionError(f"{name} has no parameters to validate")
+    devices = sorted({str(parameter.device) for parameter in parameters})
+    dtypes = sorted({str(parameter.dtype).removeprefix("torch.") for parameter in parameters})
+    log(f"{name}_placement=devices={devices},dtypes={dtypes}")
+    if any(parameter.dtype != expected_dtype for parameter in parameters):
+        raise AssertionError(f"{name} did not load entirely as {expected_dtype}: observed dtypes={dtypes}")
+
+
+def wait_for_dht_announcement(
+    dht: DHT,
+    dht_prefix: str,
+    block_indices: list[int],
+    timeout: float,
+    *,
+    min_replicas: int = 1,
+    manifest_digest: str | None = None,
+    manifest_execution_profile: dict | None = None,
+) -> None:
+    uids = [f"{dht_prefix}{UID_DELIMITER}{block_index}" for block_index in block_indices]
     deadline = time.time() + timeout
     while time.time() < deadline:
-        module_infos = get_remote_module_infos(dht, uids, latest=True)
+        module_infos = get_remote_module_infos(
+            dht,
+            uids,
+            manifest_digest=manifest_digest,
+            manifest_execution_profile=manifest_execution_profile,
+            latest=True,
+        )
         replicas = [len(module_info.servers) for module_info in module_infos]
         announced = sum(count >= min_replicas for count in replicas)
         log(f"announced_blocks={announced}/{len(uids)} replicas={replicas}")
@@ -64,10 +99,15 @@ def wait_for_dht_announcement(dht: DHT, block_indices: list[int], timeout: float
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="xpu")
+    parser.add_argument(
+        "--device",
+        default="xpu",
+        help="device for served transformer blocks and the stock reference; client embeddings/head stay local",
+    )
     parser.add_argument("--timeout", type=float, default=240)
     parser.add_argument("--block-indices", default="0:8")
-    parser.add_argument("--torch-dtype", default="bfloat16", choices=DTYPE_MAP.keys())
+    parser.add_argument("--torch-dtype", default=None, choices=DTYPE_MAP.keys())
+    parser.add_argument("--model-manifest", help="Run the smoke through a verified ModelManifest v1")
     parser.add_argument("--cache", default="contiguous", choices=["contiguous", "paged"])
     parser.add_argument("--page-size", type=int, default=16)
     parser.add_argument(
@@ -83,6 +123,33 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    manifest = None
+    artifact_verifier = None
+    revision = None
+    dht_prefix = DHT_PREFIX
+    if args.model_manifest:
+        manifest = ModelManifest.load(args.model_manifest)
+        manifest.validate_runtime(drift.__version__)
+        revision, dht_prefix = resolve_manifest_loading(
+            manifest,
+            model_name_or_path=MODEL,
+            revision=None,
+            dht_prefix=None,
+        )
+        if manifest.runtime.quantization != "none":
+            raise ValueError("The TinyLlama smoke currently supports only manifest quantization='none'")
+        if args.torch_dtype is None:
+            args.torch_dtype = manifest.runtime.dtype
+        elif args.torch_dtype != manifest.runtime.dtype:
+            raise ValueError(
+                f"--torch-dtype {args.torch_dtype!r} conflicts with manifest dtype {manifest.runtime.dtype!r}"
+            )
+        artifact_verifier = ManifestArtifactVerifier(manifest, MODEL, revision)
+        config_source = artifact_verifier.ensure_startup_metadata(include_tokenizer=True)
+    else:
+        args.torch_dtype = args.torch_dtype or "bfloat16"
+        config_source = MODEL
+
     faulthandler.dump_traceback_later(args.timeout, exit=True)
 
     device = normalize_device(torch.device(args.device))
@@ -94,6 +161,8 @@ def main() -> None:
 
     block_indices = parse_block_indices(args.block_indices)
     log(f"initializing local DHT for blocks={block_indices}")
+    identity_dir = Path(tempfile.mkdtemp(prefix="drift-smoke-identities-")) if manifest is not None else None
+    bootstrap_identity_path = identity_dir / "bootstrap.key" if identity_dir is not None else None
     dht = DHT(
         initial_peers=[],
         start=True,
@@ -102,6 +171,8 @@ def main() -> None:
         use_auto_relay=False,
         client_mode=False,
         host_maddrs=["/ip4/127.0.0.1/tcp/0"],
+        identity_path=str(bootstrap_identity_path) if bootstrap_identity_path is not None else None,
+        tls=True,
     )
     containers = []
     worker_dhts = []
@@ -111,7 +182,13 @@ def main() -> None:
         log(f"initial_peers={peers}")
 
         log("loading config")
-        block_config = AutoDistributedConfig.from_pretrained(MODEL)
+        block_config = AutoDistributedConfig.from_pretrained(
+            config_source,
+            revision=None if manifest is not None else revision,
+            local_files_only=manifest is not None,
+        )
+        if manifest is not None:
+            manifest.validate_model_config(block_config)
         block_config._attn_implementation = "eager"
         torch_dtype = resolve_block_dtype(block_config, DTYPE_MAP[args.torch_dtype])
         log(f"torch_dtype={torch_dtype}")
@@ -121,10 +198,13 @@ def main() -> None:
         attn_cache_bytes = cache_values_per_block * get_size_in_bytes(torch_dtype) * len(block_indices)
 
         serving_dhts = [dht]
+        serving_identities = [NodeIdentity.load(bootstrap_identity_path)] if bootstrap_identity_path else [None]
         if args.test_failover:
             serving_dhts = []
+            serving_identities = []
             for replica_index in range(2):
                 log(f"starting worker DHT replica={replica_index}")
+                worker_identity_path = identity_dir / f"worker-{replica_index}.key" if identity_dir else None
                 worker_dht = DHT(
                     initial_peers=peers,
                     start=True,
@@ -133,14 +213,18 @@ def main() -> None:
                     use_auto_relay=False,
                     client_mode=False,
                     host_maddrs=["/ip4/127.0.0.1/tcp/0"],
+                    identity_path=str(worker_identity_path) if worker_identity_path is not None else None,
+                    tls=True,
                 )
                 worker_dhts.append(worker_dht)
                 serving_dhts.append(worker_dht)
+                serving_identities.append(NodeIdentity.load(worker_identity_path) if worker_identity_path else None)
 
-        for replica_index, serving_dht in enumerate(serving_dhts):
+        for replica_index, (serving_dht, serving_identity) in enumerate(zip(serving_dhts, serving_identities)):
             server_info = ServerInfo(
                 state=ServerState.JOINING,
                 throughput=1.0,
+                manifest_digest=manifest.digest if manifest is not None else None,
                 torch_dtype=str(torch_dtype).removeprefix("torch."),
                 quant_type=QuantType.NONE.name.lower(),
                 using_relay=False,
@@ -150,7 +234,7 @@ def main() -> None:
             log(f"starting module container replica={replica_index}")
             container = ModuleContainer.create(
                 dht=serving_dht,
-                dht_prefix=DHT_PREFIX,
+                dht_prefix=dht_prefix,
                 converted_model_name_or_path=MODEL,
                 block_config=block_config,
                 attn_cache_bytes=attn_cache_bytes,
@@ -178,8 +262,11 @@ def main() -> None:
                 step_timeout=30,
                 prefetch_batches=1,
                 sender_threads=1,
-                revision=None,
+                revision=revision,
                 token=None,
+                model_manifest=manifest,
+                protocol_identity=serving_identity,
+                manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
                 quant_type=QuantType.NONE,
                 tensor_parallel_devices=(device,),
                 start=True,
@@ -187,14 +274,28 @@ def main() -> None:
             containers.append(container)
             assert container.ready.wait(timeout=30), "module container did not become ready"
 
-        wait_for_dht_announcement(dht, block_indices, timeout=30, min_replicas=2 if args.test_failover else 1)
+        wait_for_dht_announcement(
+            dht,
+            dht_prefix,
+            block_indices,
+            timeout=30,
+            min_replicas=2 if args.test_failover else 1,
+            manifest_digest=manifest.digest if manifest is not None else None,
+            manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
+        )
 
         log("loading client")
-        tokenizer = AutoTokenizer.from_pretrained(MODEL)
-        model = AutoDistributedModelForCausalLM.from_pretrained(
-            MODEL,
-            dht_prefix=DHT_PREFIX,
+        tokenizer = AutoTokenizer.from_pretrained(
+            artifact_verifier.snapshot_root if artifact_verifier is not None else MODEL,
+            revision=None if manifest is not None else revision,
+            local_files_only=manifest is not None,
+        )
+        model_kwargs = dict(
+            dht_prefix=dht_prefix,
             initial_peers=peers,
+            revision=revision,
+            manifest_digest=manifest.digest if manifest is not None else None,
+            manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
             torch_dtype=torch_dtype,
             request_timeout=3 if args.test_failover else 60,
             max_retries=3 if args.test_failover else None,
@@ -202,6 +303,11 @@ def main() -> None:
             max_backoff=1 if args.test_failover else 60,
             update_period=1 if args.test_failover else 60,
         )
+        if artifact_verifier is not None:
+            model_kwargs["artifact_verifier"] = artifact_verifier
+        model = AutoDistributedModelForCausalLM.from_pretrained(MODEL, **model_kwargs)
+        log_local_component_placement("client_input_embeddings", model.get_input_embeddings(), torch_dtype)
+        log_local_component_placement("client_lm_head", model.get_output_embeddings(), torch_dtype)
 
         log("generating")
         inputs = tokenizer("Hello", return_tensors="pt")["input_ids"]
@@ -250,7 +356,9 @@ def main() -> None:
 
         if not args.skip_reference:
             log("loading stock local model for token parity check")
-            reference_model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=torch_dtype).to(device)
+            reference_model = AutoModelForCausalLM.from_pretrained(MODEL, revision=revision, dtype=torch_dtype).to(
+                device
+            )
             reference_model.eval()
             with torch.inference_mode():
                 if args.test_failover:
@@ -285,6 +393,8 @@ def main() -> None:
                 worker_dht.join()
         dht.shutdown()
         dht.join()
+        if identity_dir is not None:
+            shutil.rmtree(identity_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -7,8 +7,9 @@ from contextvars import ContextVar
 from typing import List, Optional, Tuple, Union
 
 from hivemind.utils.logging import get_logger
-from transformers import BloomPreTrainedModel, modeling_utils
+from transformers import BloomPreTrainedModel, configuration_utils, modeling_utils
 
+from drift.model_manifest import ManifestArtifactVerifier
 from drift.utils.version import get_compatible_model_repo
 
 logger = get_logger(__name__)
@@ -24,11 +25,27 @@ class FromPretrainedMixin:
         **kwargs,
     ):
         model_name_or_path = get_compatible_model_repo(model_name_or_path)
+        artifact_verifier = kwargs.pop("artifact_verifier", None)
         if low_cpu_mem_usage is None:
             low_cpu_mem_usage = True
 
-        with ignore_keys(cls._keys_to_ignore_on_load_unexpected):
-            return super().from_pretrained(model_name_or_path, *args, low_cpu_mem_usage=low_cpu_mem_usage, **kwargs)
+        verifier_token = None
+        if artifact_verifier is not None:
+            if not isinstance(artifact_verifier, ManifestArtifactVerifier):
+                raise TypeError("artifact_verifier must be a ManifestArtifactVerifier")
+            artifact_verifier.ensure_startup_metadata()
+            verifier_token = _artifact_verifier.set(artifact_verifier)
+        try:
+            with ignore_keys(cls._keys_to_ignore_on_load_unexpected):
+                return super().from_pretrained(
+                    model_name_or_path,
+                    *args,
+                    low_cpu_mem_usage=low_cpu_mem_usage,
+                    **kwargs,
+                )
+        finally:
+            if verifier_token is not None:
+                _artifact_verifier.reset(verifier_token)
 
     from_pretrained.__doc__ = BloomPreTrainedModel.from_pretrained.__doc__.replace(
         "low_cpu_mem_usage(`bool`, *optional*)",
@@ -40,6 +57,7 @@ class FromPretrainedMixin:
 
 
 _ignored_keys = ContextVar("ignored_keys", default=None)
+_artifact_verifier: ContextVar[Optional[ManifestArtifactVerifier]] = ContextVar("artifact_verifier", default=None)
 
 
 @contextlib.contextmanager
@@ -82,3 +100,25 @@ def patched_get_checkpoint_shard_files(
 
 original_get_checkpoint_shard_files = modeling_utils.get_checkpoint_shard_files
 modeling_utils.get_checkpoint_shard_files = patched_get_checkpoint_shard_files
+
+
+def patched_get_resolved_checkpoint_files(*args, **kwargs):
+    checkpoint_files, sharded_metadata = original_get_resolved_checkpoint_files(*args, **kwargs)
+    verifier = _artifact_verifier.get()
+    if verifier is not None:
+        verifier.verify_checkpoint_files(checkpoint_files or ())
+    return checkpoint_files, sharded_metadata
+
+
+def patched_config_cached_file(*args, **kwargs):
+    resolved = original_config_cached_file(*args, **kwargs)
+    verifier = _artifact_verifier.get()
+    if verifier is not None and resolved is not None:
+        verifier.verify_resolved_file(resolved, allowed_roles={"config"})
+    return resolved
+
+
+original_get_resolved_checkpoint_files = modeling_utils._get_resolved_checkpoint_files
+modeling_utils._get_resolved_checkpoint_files = patched_get_resolved_checkpoint_files
+original_config_cached_file = configuration_utils.cached_file
+configuration_utils.cached_file = patched_config_cached_file

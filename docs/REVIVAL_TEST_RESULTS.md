@@ -11,8 +11,96 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 
 | Milestone | Status | Evidence | Remaining gate |
 | --- | --- | --- | --- |
-| 1. Reproducible execution baseline | Mostly complete | Windows CPU, Docker Linux CPU, and Windows CUDA all served blocks `0:8` and produced exact token parity | Native macOS install and smoke test |
+| 1. Reproducible execution baseline | Complete | Windows CPU, Docker Linux CPU, Windows CUDA, and native hosted Apple Silicon macOS all served blocks `0:8` and produced exact token parity; macOS also passed the MPS block-portability checks | None |
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
+| 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
+
+## Manifest artifact integrity
+
+The manifest generator can resolve a Hub revision to its immutable commit, inventory
+the preferred Transformers checkpoint and referenced shards, and hash a complete
+publisher snapshot. An offline mode produces the same structure from an already
+downloaded snapshot. README and other non-execution files do not affect the identity.
+
+Manifested workers and API clients now verify configuration, tokenizer, standalone
+chat templates, checkpoint indexes, and each requested weight shard by size and
+SHA-256 before parsing or deserialization. Loading remains incremental: workers do
+not download shards outside their selected blocks, and API clients retain the
+existing embeddings/head-only shard selection. Undeclared resolved checkpoint files,
+tampered metadata, and tampered weight shards fail closed. Unit tests exercise both
+the worker and Transformers client resolver boundaries, and checked-in canonical JSON
+plus digest vectors pin the cross-platform identity contract.
+
+On 2026-08-22, the Hub generator resolved `Maykeye/TinyLLama-v0` to commit
+`298338802ab94432b917bcce11382aa151aee50f`, selected and hashed six execution
+artifacts, and produced manifest digest
+`f8bdac56c6532bbd690556f79fdd7e6dd270bb3e7f4efe1f8c753327f11620a1`.
+Every artifact was independently re-verified from the runtime cache. The native
+Windows CPU smoke then served all eight blocks in the derived namespace, routed a
+manifested client through them, and produced token IDs
+`[[1, 16644, 31844, 260, 1496]]`, exactly matching stock Transformers.
+
+A real Fly Machines run in `iad` then used one private bootstrap, one `0:4`
+worker, one `4:8` worker, and an ephemeral client, all on Linux CPU. Both workers
+loaded the exact revision and announced under the manifest-derived namespace. The
+client required matching manifest digests, observed
+`replicas=[1,1,1,1,1,1,1,1]`, and selected the cross-Machine route
+`0:4 -> 4:8`. Eight generated tokens completed in 0.851 seconds and produced
+`[[1, 16644, 31844, 260, 1496, 2789, 3557, 21075, 31843, 1100]]`, exactly
+matching stock Transformers loaded from the independently verified manifest cache.
+
+The same Fly image also ran a deliberately poisoned worker. After downloading the
+pinned `config.json`, the harness changed one byte and attempted ordinary
+`drift server --model_manifest` startup. The Machine exited with code 2, was not
+OOM-killed, and reported `Artifact config.json does not match its declared SHA-256`
+before server startup; the bootstrap continued to report zero DHT keys. The first
+parity runner also exposed that verified metadata and checkpoint files may occupy
+different cache roots, so the harness now explicitly materializes the stock
+reference checkpoint through the verifier. All six temporary Machines were
+destroyed, and the final Fly Machine list was empty.
+
+## Signed public-swarm identity and transport
+
+On 2026-08-22, manifested workers began reusing their persistent libp2p RSA key to
+sign a strict, domain-separated record covering their PeerID, manifest, execution
+profile, complete server metadata, block range, lifetime, replay sequence, and TLS
+transport profile. DHT readers reject unsigned, tampered, expired, replayed,
+equivocating, revoked, wrong-profile, wrong-PeerID, and copied-outside-range records
+before they enter route selection. `rpc_info` repeats the server PeerID and signing
+key ID over the authenticated libp2p TLS 1.3 connection. Dual-signed identity
+rotation, self/successor revocation, signed intent leases, and a user-facing
+`drift identity` CLI use the same envelope. The threat model and wire contract are
+recorded in [`PUBLIC_SWARM_SECURITY_V1.md`](PUBLIC_SWARM_SECURITY_V1.md).
+
+The Windows CPU smoke ran two independently signed full-range workers, selected one,
+stopped it during generation, replayed three cached activation tokens through the
+surviving signed identity, and completed eight generated tokens with exact stock
+parity in 3.188 seconds after interruption. A smaller real-p2pd test round-tripped a
+signed announcement through Hivemind DHT storage. Adversarial tests cover signature
+tampering, PeerID substitution, expiry, replay, equivocation, copied block keys,
+manifest mismatch, unsigned records, non-finite metadata, rotation forks,
+unauthorized revocation, and duplicate JSON keys.
+
+The signed Fly rerun used commit `d528cdf` and image digest
+`sha256:39faf8150963f8f7f1b165bf54247d1c3165225a263641c73f283271cb118b20`
+in `iad`: one private bootstrap, one independently signed `0:4` worker, one
+independently signed `4:8` worker, and an ephemeral client. The client accepted
+`replicas=[1,1,1,1,1,1,1,1]`, selected route
+`0:4 via …R3N3BA => 4:8 via …PrQMCV`, and produced
+`[[1,16644,31844,260,1496,2789,3557,21075,31843,1100]]`, exactly matching stock
+Transformers. Coverage took 4.966 seconds, first-token latency was 0.274 seconds,
+and eight-token generation took 0.352 seconds (22.714 token/s). The client exited
+with code 0 and was not OOM-killed. A 512 MiB bootstrap sizing probe was OOM-killed
+before joining the swarm and immediately destroyed; the validated bootstrap used
+1 GiB. All four successful-run Machines were then destroyed, and the final Machine
+list was empty.
+
+The artifact verifier also gained a locked content-addressed partial cache. A live
+Hub test seeded 2,097,152 bytes of TinyLlama's 9,251,608-byte `model.safetensors`,
+received `206 Content-Range: bytes 2097152-9251607/9251608`, and promoted the file
+only after its declared size and SHA-256 passed. A local fault-injecting HTTP test
+independently proves that a dropped response leaves no usable snapshot file and that
+the next request resumes at the exact byte boundary.
 
 ## Linux CPU
 
@@ -28,6 +116,28 @@ Inside the container, the local DHT smoke test:
 
 Environment: Linux, Python 3.12, PyTorch 2.6.0+cpu.
 
+## Hosted Apple Silicon macOS
+
+The first native macOS gate passed in
+[GitHub Actions run 32584402263](https://github.com/flujo-app/CommunityAI/actions/runs/32584402263/job/97058493894)
+on 2026-08-22. The Apple Silicon runner used Python 3.12.10, PyTorch 2.6.0,
+Transformers 5.13.0, and passed 141 selected tests, including the real MPS
+block-portability check.
+
+The workflow resolved TinyLlama to commit
+`298338802ab94432b917bcce11382aa151aee50f` and generated float32 manifest digest
+`b59291566c5bcfeefffe29b79c64b658f67b4e24663ba5b936d937a7d7027bbd`. It then
+seeded the 9,251,608-byte `model.safetensors` at byte 2,097,152, requested
+`bytes=2097152-`, received HTTP 206 with
+`Content-Range: bytes 2097152-9251607/9251608`, and verified the completed artifact.
+
+The signed manifested smoke announced all eight blocks in the digest-derived
+namespace, selected route `0:8`, and produced
+`[[1, 16644, 31844, 260, 1496]]`, exactly matching stock Transformers. Client
+embeddings and the language-model head were both confirmed as float32 on CPU, and
+the worker, DHT, and local client shut down without the prior Hivemind destructor
+traceback.
+
 ## Windows CUDA
 
 An isolated `.venv-cuda` used PyTorch 2.6.0+cu124 and the repository's patched
@@ -37,6 +147,14 @@ IDs and decoded output as the stock model.
 
 The ordinary `.venv` remains the CPU environment, so CUDA validation does not
 replace or destabilize the baseline development environment.
+
+The follow-up diagnostic rerun on 2026-08-22 made placement explicit: `--device cuda`
+places the served blocks and stock reference on CUDA, while the distributed client
+intentionally keeps its local embeddings and language-model head on CPU.
+Both client components loaded as float16, the head used the documented chunked
+float32 CPU projection, and distributed output again matched the CUDA stock model
+exactly. The warning now reports the actual float16/CPU placement instead of the
+previous hard-coded bfloat16 description.
 
 ## Private Fly Machines swarm
 
@@ -148,11 +266,10 @@ list was empty.
 2. Extend end-to-end interruption testing to split replacement routes and Gemma 4;
    beam-search recovery needs a reorder-aware activation history before it can be
    enabled safely.
-3. Run the native macOS installer and the same exact-parity smoke test.
-4. Remove harmless Hivemind shutdown destructor warnings caused by querying an
-   already-closed uvloop event loop.
-5. Investigate server warnings about `self_attn.rotary_emb.inv_freq` not being
-   loaded. TinyLlama parity passed, but broader model coverage should not assume
-   that every architecture is unaffected.
-6. Check the CUDA head-device/dtype diagnostic: the FP16 CUDA test passed exact
-   parity, but the language-model-head log still described a bfloat16 CPU path.
+
+Resolved on 2026-08-22: the native hosted macOS security/parity workflow is green;
+Hivemind P2P cleanup no longer queries a closed global uvloop; legacy
+`self_attn.rotary_emb.inv_freq` is recognized narrowly as config-derived
+Transformers compatibility state while other unconsumed checkpoint keys still warn;
+and the CUDA smoke now asserts and reports the client embeddings/head's actual
+device and dtype.

@@ -1,0 +1,50 @@
+{
+  "runtime": {
+    "tensor_schema": "hidden-states-v1",
+    "protocol_version": 1,
+    "quantization": "none",
+    "minimum_version": "2.3.0.dev0",
+    "maximum_version_exclusive": "2.4.0",
+    "implementation": "drift",
+    "dtype": "float32",
+    "attention_implementation": "eager",
+    "adapter_profile": "none"
+  },
+  "schema_version": 1,
+  "source": {
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "repository": "org/tiny-test"
+  },
+  "name": "Tiny Test",
+  "model": {
+    "num_blocks": 8,
+    "license": "apache-2.0",
+    "gated": false,
+    "context_length": 2048,
+    "architecture": "LlamaForCausalLM"
+  },
+  "artifacts": [
+    {
+      "size": 3,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "role": "weight",
+      "path": "weights.bin"
+    },
+    {
+      "size": 1,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "role": "config",
+      "path": "config.json"
+    },
+    {
+      "size": 2,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "role": "tokenizer",
+      "path": "tokenizer.json"
+    }
+  ],
+  "aliases": [
+    "tiny-test",
+    "tiny"
+  ]
+}

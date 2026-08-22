@@ -27,15 +27,17 @@ import torch
 from hivemind import DHT
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+import drift
 from drift import AutoDistributedModelForCausalLM
 from drift.data_structures import UID_DELIMITER
+from drift.model_manifest import ManifestArtifactVerifier, ModelManifest, resolve_manifest_loading
 from drift.utils.auto_config import AutoDistributedConfig
 from drift.utils.dht import get_remote_module_infos
 
 MODEL = "Maykeye/TinyLLama-v0"
-DHT_PREFIX = "_fly_tinyllama_v0_smoke"
 NUM_BLOCKS = 8
 PORT = 31337
+DEFAULT_MANIFEST_PATH = "/workspace/model-manifest.json"
 
 
 def log(message: str) -> None:
@@ -65,6 +67,19 @@ def private_ip() -> str:
     raise RuntimeError("could not determine the Fly private IPv6 address")
 
 
+def load_manifest() -> tuple[ModelManifest, str, str]:
+    manifest_path = os.environ.get("FLY_SMOKE_MODEL_MANIFEST", DEFAULT_MANIFEST_PATH)
+    manifest = ModelManifest.load(manifest_path)
+    manifest.validate_runtime(drift.__version__)
+    revision, dht_prefix = resolve_manifest_loading(
+        manifest,
+        model_name_or_path=MODEL,
+        revision=None,
+        dht_prefix=None,
+    )
+    return manifest, revision, dht_prefix
+
+
 def run_bootstrap() -> None:
     ip = private_ip()
     log(f"role=bootstrap private_ip={ip}")
@@ -85,21 +100,23 @@ def run_bootstrap() -> None:
     os.execvp(args[0], args)
 
 
-def run_worker() -> None:
+def worker_args() -> list[str]:
     ip = private_ip()
     initial_peer = required_env("FLY_SMOKE_INITIAL_PEER")
     block_indices = required_env("FLY_SMOKE_BLOCKS")
-    log(f"role=worker blocks={block_indices} private_ip={ip} initial_peer={initial_peer}")
-    args = [
+    manifest_path = os.environ.get("FLY_SMOKE_MODEL_MANIFEST", DEFAULT_MANIFEST_PATH)
+    return [
         "drift",
         "server",
         MODEL,
+        "--model_manifest",
+        manifest_path,
+        "--identity_path",
+        "/tmp/fly-smoke-worker.id",
         "--initial_peers",
         initial_peer,
         "--block_indices",
         block_indices,
-        "--dht_prefix",
-        DHT_PREFIX,
         "--host_maddrs",
         f"/ip6/::/tcp/{PORT}",
         "--announce_maddrs",
@@ -132,14 +149,57 @@ def run_worker() -> None:
         "30",
         "--no_auto_relay",
     ]
+
+
+def run_worker() -> None:
+    manifest, revision, dht_prefix = load_manifest()
+    ip = private_ip()
+    initial_peer = required_env("FLY_SMOKE_INITIAL_PEER")
+    block_indices = required_env("FLY_SMOKE_BLOCKS")
+    log(
+        f"role=worker blocks={block_indices} private_ip={ip} initial_peer={initial_peer} "
+        f"revision={revision} manifest_digest={manifest.digest} dht_prefix={dht_prefix}"
+    )
+    args = worker_args()
     os.execvp(args[0], args)
 
 
-def wait_for_coverage(dht: DHT, timeout: float) -> list[int]:
-    uids = [f"{DHT_PREFIX}{UID_DELIMITER}{index}" for index in range(NUM_BLOCKS)]
+def run_poisoned_worker() -> None:
+    manifest, revision, dht_prefix = load_manifest()
+    verifier = ManifestArtifactVerifier(manifest, MODEL, revision)
+    snapshot_root = verifier.ensure_startup_metadata()
+    config_artifact = manifest.artifacts_for_roles({"config"})[0]
+    config_path = snapshot_root / config_artifact.path
+    poisoned = bytearray(config_path.read_bytes())
+    if not poisoned:
+        raise RuntimeError("cannot poison an empty configuration artifact")
+    poisoned[0] ^= 0x01
+    config_path.write_bytes(poisoned)
+    log(
+        f"role=poisoned-worker corrupted={config_artifact.path} revision={revision} "
+        f"manifest_digest={manifest.digest} dht_prefix={dht_prefix}"
+    )
+    args = worker_args()
+    os.execvp(args[0], args)
+
+
+def wait_for_coverage(
+    dht: DHT,
+    dht_prefix: str,
+    manifest_digest: str,
+    manifest_execution_profile: dict,
+    timeout: float,
+) -> list[int]:
+    uids = [f"{dht_prefix}{UID_DELIMITER}{index}" for index in range(NUM_BLOCKS)]
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        module_infos = get_remote_module_infos(dht, uids, latest=True)
+        module_infos = get_remote_module_infos(
+            dht,
+            uids,
+            manifest_digest=manifest_digest,
+            manifest_execution_profile=manifest_execution_profile,
+            latest=True,
+        )
         replicas = [len(info.servers) for info in module_infos]
         log(f"coverage={sum(count > 0 for count in replicas)}/{NUM_BLOCKS} replicas={replicas}")
         if all(replicas):
@@ -152,31 +212,42 @@ def run_client() -> None:
     initial_peer = required_env("FLY_SMOKE_INITIAL_PEER")
     timeout = float(os.environ.get("FLY_SMOKE_TIMEOUT", "300"))
     max_new_tokens = int(os.environ.get("FLY_SMOKE_TOKENS", "8"))
-    log(f"role=client initial_peer={initial_peer} timeout={timeout}")
+    manifest, revision, dht_prefix = load_manifest()
+    verifier = ManifestArtifactVerifier(manifest, MODEL, revision)
+    config_source = verifier.ensure_startup_metadata(include_tokenizer=True)
+    log(
+        f"role=client initial_peer={initial_peer} timeout={timeout} revision={revision} "
+        f"manifest_digest={manifest.digest} dht_prefix={dht_prefix}"
+    )
 
     started = time.monotonic()
     dht = DHT(initial_peers=[initial_peer], client_mode=True, start=True)
     try:
-        replicas = wait_for_coverage(dht, timeout)
+        replicas = wait_for_coverage(dht, dht_prefix, manifest.digest, manifest.runtime.to_dict(), timeout)
     finally:
         dht.shutdown()
         dht.join()
     coverage_seconds = time.monotonic() - started
 
     config = AutoDistributedConfig.from_pretrained(
-        MODEL,
-        dht_prefix=DHT_PREFIX,
+        config_source,
+        local_files_only=True,
+        dht_prefix=dht_prefix,
         initial_peers=[initial_peer],
+        manifest_digest=manifest.digest,
+        manifest_execution_profile=manifest.runtime.to_dict(),
         request_timeout=float(os.environ.get("FLY_SMOKE_REQUEST_TIMEOUT", "10")),
         max_retries=int(os.environ.get("FLY_SMOKE_MAX_RETRIES", "3")),
         min_backoff=0.1,
         max_backoff=1,
     )
     config._attn_implementation = "eager"
-    tokenizer = AutoTokenizer.from_pretrained(MODEL)
+    tokenizer = AutoTokenizer.from_pretrained(config_source, local_files_only=True)
     model = AutoDistributedModelForCausalLM.from_pretrained(
         MODEL,
         config=config,
+        revision=revision,
+        artifact_verifier=verifier,
         torch_dtype=torch.float32,
     )
     inputs = tokenizer("Hello", return_tensors="pt")["input_ids"]
@@ -200,7 +271,16 @@ def run_client() -> None:
     log("generation_complete")
 
     reference_started = time.monotonic()
-    reference_model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=torch.float32)
+    for artifact in manifest.artifacts_for_roles({"weight", "weight_index", "converted_weight", "quantized_weight"}):
+        verifier.ensure_path(
+            artifact.path,
+            allowed_roles={"weight", "weight_index", "converted_weight", "quantized_weight"},
+        )
+    reference_model = AutoModelForCausalLM.from_pretrained(
+        verifier.snapshot_root,
+        local_files_only=True,
+        dtype=torch.float32,
+    )
     reference_model.eval()
     with torch.inference_mode():
         reference = reference_model.generate(
@@ -218,6 +298,9 @@ def run_client() -> None:
 
     result = {
         "model": MODEL,
+        "revision": revision,
+        "manifest_digest": manifest.digest,
+        "dht_prefix": dht_prefix,
         "platform": sys.platform,
         "python": sys.version.split()[0],
         "torch": torch.__version__,
@@ -251,6 +334,8 @@ def run_local() -> None:
             os.environ.get("FLY_SMOKE_TIMEOUT", "300"),
             "--block-indices",
             "0:8",
+            "--model-manifest",
+            os.environ.get("FLY_SMOKE_MODEL_MANIFEST", DEFAULT_MANIFEST_PATH),
         ],
         check=True,
     )
@@ -261,6 +346,7 @@ def main() -> None:
     roles = {
         "bootstrap": run_bootstrap,
         "worker": run_worker,
+        "poisoned-worker": run_poisoned_worker,
         "client": run_client,
         "local": run_local,
     }

@@ -19,6 +19,7 @@ from pathlib import Path
 from hivemind.utils.logging import get_logger
 
 from drift.cli.run_server import build_parser, serve, server_from_args
+from drift.model_manifest import ManifestError
 from drift.utils.join_token import encode_join_token, parse_join, select_advertisable_maddrs
 
 logger = get_logger(__name__)
@@ -64,7 +65,10 @@ def main():
         args["identity_path"] = str(DEFAULT_IDENTITY_PATH)
 
     is_first_node = bool(args.get("new_swarm"))
-    server = server_from_args(args)
+    try:
+        server = server_from_args(args)
+    except ManifestError as exc:
+        parser.error(str(exc))
 
     def _on_ready(srv):
         if is_first_node:
