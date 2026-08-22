@@ -13,7 +13,7 @@ import drift
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery
-from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key
+from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
 from drift.node.loading import make_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelNotFoundError
 from drift.node.worker_supervisor import WorkerLaunch, WorkerSupervisor
@@ -54,9 +54,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--api_key",
         action="append",
         default=[],
-        help="Bearer key accepted by both APIs (repeatable; otherwise a persistent key is generated)",
+        help="Bearer key accepted by the OpenAI API (repeatable; otherwise a persistent client key is generated)",
     )
     parser.add_argument("--data_dir", type=Path, default=DEFAULT_NODE_DATA_DIR)
+    parser.add_argument(
+        "--control_key_path",
+        type=Path,
+        default=None,
+        help="Private drift_control_ key file for the privileged control API (generated if missing)",
+    )
     parser.add_argument(
         "--max_loaded_models",
         type=int,
@@ -264,8 +270,8 @@ def _build_worker_supervisor(
 def _prepare_api_key_store(data_dir: Path, supplied_keys: list[str]) -> tuple[ApiKeyStore, Path | None, bool]:
     """Import explicit keys or bootstrap only an otherwise keyless store.
 
-    Once control clients have created a replacement and revoked the bootstrap key,
-    the persistent managed-key set is authoritative across node restarts.
+    Once a control client has created a replacement and revoked the bootstrap client
+    key, the persistent managed-key set is authoritative across node restarts.
     """
     key_store = ApiKeyStore(data_dir / "api-keys.json")
     if supplied_keys:
@@ -279,6 +285,13 @@ def _prepare_api_key_store(data_dir: Path, supplied_keys: list[str]) -> tuple[Ap
     key, created = load_or_create_api_key(key_path)
     key_store.ensure_key(key, label="bootstrap")
     return key_store, key_path, created
+
+
+def _prepare_control_key(data_dir: Path, supplied_path: Path | None) -> tuple[str, Path, bool]:
+    """Load or atomically create the credential used only by `/control/v1/*`."""
+    key_path = supplied_path if supplied_path is not None else data_dir / "control-api.key"
+    key, created = load_or_create_control_key(key_path)
+    return key, key_path, created
 
 
 def main() -> None:
@@ -302,6 +315,7 @@ def main() -> None:
 
     try:
         key_store, key_path, created = _prepare_api_key_store(args.data_dir, args.api_key)
+        control_key, control_key_path, control_key_created = _prepare_control_key(args.data_dir, args.control_key_path)
         if key_path is not None:
             if created:
                 logger.info(f"Created the local API key in {key_path}; its value is not written to logs")
@@ -309,6 +323,12 @@ def main() -> None:
                 logger.info(f"Using the local API key from {key_path}")
         elif not args.api_key:
             logger.info(f"Using the active managed API keys in {key_store.path}")
+        if control_key_created:
+            logger.info(
+                f"Created the privileged local control key in {control_key_path}; its value is not written to logs"
+            )
+        else:
+            logger.info(f"Using the privileged local control key from {control_key_path}")
     except (ApiKeyStoreError, OSError, ValueError) as exc:
         parser.error(str(exc))
 
@@ -317,6 +337,7 @@ def main() -> None:
     app = create_node_app(
         manager,
         api_key_store=key_store,
+        control_keys=[control_key],
         host=args.host,
         port=args.port,
         max_concurrent=args.max_concurrent,

@@ -82,22 +82,27 @@ coverage, runtime residency, explicit safe unload, worker controls, and key muta
 now extend `/control/v1` without making the GUI manipulate processes directly.
 Configuration mutation remains a later concern.
 
-`/health` is deliberately unauthenticated and contains only coarse liveness.
-OpenAI endpoints and `/control/v1/*` require the same local bearer-key set in this
-slice. Key classes can be separated later without changing endpoint versions.
+`/health` is deliberately unauthenticated and contains only coarse liveness. The
+initial milestone-4 slice used the same local bearer-key set for OpenAI and control
+requests. The first milestone-5 security follow-up separated those authorities
+without changing endpoint versions: managed OpenAI client keys authorize `/v1/*`,
+while a distinct privileged credential authorizes `/control/v1/*`. Startup rejects
+missing, duplicate, or overlapping control credentials.
 
 ### Binding and local keys
 
 The node binds to loopback by default. A non-loopback host requires the explicit
 `--allow_network` acknowledgement and authentication remains mandatory.
 
-When no key is supplied, the headless node atomically creates a dedicated secret at
-`~/.drift/node/local-api.key`, requests owner-only permissions, and logs only its
-path. It is not stored in ordinary model configuration. Labeled keys are random
-256-bit secrets whose metadata and domain-separated hashes are persisted; creation
-returns plaintext once and revocation applies immediately. The desktop milestone
-will replace bootstrap secret-file storage with native credential storage where
-available and expose the lifecycle in its UI.
+When no client key is supplied, the headless node atomically creates a dedicated
+OpenAI secret at `~/.drift/node/local-api.key`. It independently creates the
+privileged `~/.drift/node/control-api.key`; a headless operator can select another
+private file with `--control_key_path`. Both request owner-only permissions and only
+their paths are logged. Neither belongs in ordinary model configuration. Labeled
+OpenAI keys are random 256-bit secrets whose metadata and domain-separated hashes are
+persisted; creation returns plaintext once and revocation applies immediately. The
+desktop milestone will move the privileged credential into native credential storage
+where available and expose the OpenAI-key lifecycle in its UI.
 
 ## Consequences and implementation status
 

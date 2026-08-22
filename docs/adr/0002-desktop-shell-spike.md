@@ -17,10 +17,11 @@ would leave the most consequential questions unanswered: packaging, signing, bac
 lifecycle, accessibility, native credential storage, update and rollback behavior, and
 crash isolation on Windows, Linux, and macOS.
 
-The current node also authorizes OpenAI inference and privileged `/control/v1/*`
-operations with the same bearer-key set. That was an intentional milestone-4 bridge,
-but it is not an acceptable final desktop boundary: an API key copied into an AI client
-must not authorize worker controls or key administration.
+The milestone-4 node initially authorized OpenAI inference and privileged
+`/control/v1/*` operations with the same bearer-key set. That was an intentional
+bridge, but it is not an acceptable final desktop boundary: an API key copied into
+an AI client must not authorize worker controls or key administration. The first
+milestone-5 security slice below now closes that gap.
 
 ## Spike decision
 
@@ -90,18 +91,21 @@ produced an approximately 125.1 MB onedir bundle; pywebview 6.2.1 produced an ap
 the local measurement environment contained both shell dependencies. The CI matrix builds
 each shell in a clean job and is the decision-grade source for bundle comparisons.
 
-## Security boundary required before productization
+## Security boundary implemented before productization
 
-The prototypes can connect to the milestone-4 API, but the production desktop must first
-separate two authorities:
+The production desktop boundary now separates two authorities:
 
 - a privileged desktop control credential, generated during local installation and kept
   in the native credential store; and
 - revocable OpenAI inference keys that users copy into AI clients.
 
-Only the control credential may call `/control/v1/*`. OpenAI keys may call `/v1/*` and
-nothing else. The desktop must never accept either secret in a command-line argument,
-write it to logs, interpolate it into HTML, or send it to a non-loopback URL.
+The node now enforces this split: only the control credential may call
+`/control/v1/*`, while managed OpenAI keys may call `/v1/*` and nothing else. Startup
+rejects missing, duplicate, or overlapping control credentials. The headless bridge
+uses a private `control-api.key`; the selected desktop will replace that bridge with
+the operating-system credential store. The desktop must never accept either secret
+in a command-line argument, write it to logs, interpolate it into HTML, or send it to
+a non-loopback URL.
 
 ## Non-goals
 

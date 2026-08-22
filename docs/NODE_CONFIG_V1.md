@@ -61,12 +61,17 @@ duplicate manifest paths, empty peer sets, and invalid resource limits. Every
 manifest is loaded and runtime-validated at startup. Names, aliases, and manifest
 digests must be unique case-insensitively across the entire node.
 
-Provider tokens, local API keys, and identity private material are deliberately absent
-from this format. A Hugging Face token may currently be supplied with the process
-secret mechanism or the existing `--token` compatibility option. The generated
-localhost bootstrap key remains in the node's dedicated secret file unless
-explicitly supplied by the operator. Labeled key records are stored beneath the
-node data directory as metadata and domain-separated hashes only.
+Provider tokens, local API keys, control credentials, and identity private material
+are deliberately absent from this format. A Hugging Face token may currently be
+supplied with the process secret mechanism or the existing `--token` compatibility
+option. The generated OpenAI bootstrap key remains in `local-api.key`; the privileged
+control credential is separately generated in `control-api.key` or read from
+`--control_key_path`. Labeled OpenAI key records are stored beneath the node data
+directory as metadata and domain-separated hashes only.
+
+An existing explicit control file must contain the `drift_control_` key class with
+at least 256 bits of URL-safe random material. A client key file cannot be reused as
+the control credential.
 
 ## Runtime residency
 
@@ -80,7 +85,7 @@ An authenticated control client may explicitly unload an idle model:
 
 ```text
 POST /control/v1/models/unload
-Authorization: Bearer <local key>
+Authorization: Bearer <control key>
 Content-Type: application/json
 
 {"model":"configured name, alias, or sha256 digest"}
@@ -109,7 +114,8 @@ the API from serving already loaded models.
 
 ## Worker and key controls
 
-Authenticated control clients can inspect and operate configured workers:
+Control endpoints reject OpenAI client keys. The privileged control credential can
+inspect and operate configured workers:
 
 ```text
 GET  /control/v1/workers
@@ -128,10 +134,12 @@ PATCH  /control/v1/keys/{id}   {"label":"Renamed client"}
 DELETE /control/v1/keys/{id}
 ```
 
-Creation returns the plaintext 256-bit key once. Listing and relabeling never return
-it, and revocation takes effect for subsequent requests immediately. Revoked keys
-remain as labeled audit metadata rather than being silently erased. The last active
-key cannot be revoked, preventing accidental lockout.
+Creation returns the plaintext 256-bit OpenAI client key once. Listing and relabeling
+never return it, and revocation takes effect for subsequent inference requests
+immediately. Revoked keys remain as labeled audit metadata rather than being silently
+erased. The last active client key cannot be revoked, preventing accidental inference
+lockout. A client key cannot call these controls, and the control credential cannot
+call `/v1/*`.
 
 ## Edge measurement
 

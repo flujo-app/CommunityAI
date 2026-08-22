@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from drift.cli.run_node import _validate_args, build_parser
 from drift.model_manifest import ModelManifest
-from drift.node.keys import ApiKeyStore, load_or_create_api_key
+from drift.node.keys import ApiKeyStore, load_or_create_api_key, load_or_create_control_key
 from drift.node.loading import make_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime, ModelState
 from drift.node.server import create_node_app
@@ -50,6 +50,23 @@ def test_local_api_key_rejects_non_file_path(tmp_path):
         load_or_create_api_key(key_path)
 
 
+def test_local_control_key_is_stable_and_uses_a_distinct_key_class(tmp_path):
+    key_path = tmp_path / "secrets" / "control-api.key"
+    first, created = load_or_create_control_key(key_path)
+    second, created_again = load_or_create_control_key(key_path)
+
+    assert created is True
+    assert created_again is False
+    assert first == second
+    assert first.startswith("drift_control_")
+    assert key_path.read_text(encoding="utf-8").strip() == first
+
+    invalid_path = tmp_path / "secrets" / "invalid-control.key"
+    invalid_path.write_text("drift_client-key", encoding="utf-8")
+    with pytest.raises(ValueError, match="drift_control_ key class"):
+        load_or_create_control_key(invalid_path)
+
+
 def test_node_status_requires_auth_and_reports_lazy_model():
     manager = ModelManager(max_loaded_models=1)
     loads = []
@@ -62,12 +79,21 @@ def test_node_status_requires_auth_and_reports_lazy_model():
         ),
         lambda: loads.append(True) or ModelRuntime(FakeModel(), FakeTokenizer()),
     )
-    app = create_node_app(manager, api_keys=["secret"], host="127.0.0.1", port=8080)
+    app = create_node_app(
+        manager,
+        api_keys=["client-secret"],
+        control_keys=["control-secret"],
+        host="127.0.0.1",
+        port=8080,
+    )
 
     with TestClient(app) as client:
         assert client.get("/control/v1/status").status_code == 401
-        headers = {"Authorization": "Bearer secret"}
-        status = client.get("/control/v1/status", headers=headers)
+        client_headers = {"Authorization": "Bearer client-secret"}
+        control_headers = {"Authorization": "Bearer control-secret"}
+        assert client.get("/control/v1/status", headers=client_headers).status_code == 401
+        assert client.get("/v1/models", headers=control_headers).status_code == 401
+        status = client.get("/control/v1/status", headers=control_headers)
         assert status.status_code == 200
         body = status.json()
         assert body["api_version"] == 1
@@ -79,7 +105,7 @@ def test_node_status_requires_auth_and_reports_lazy_model():
 
         response = client.post(
             "/v1/completions",
-            headers=headers,
+            headers=client_headers,
             json={"model": "tiny", "prompt": "hello", "temperature": 0},
         )
         assert response.status_code == 200
@@ -88,7 +114,7 @@ def test_node_status_requires_auth_and_reports_lazy_model():
         assert manager.snapshots()[0].state is ModelState.READY
         assert manager.snapshots()[0].active_requests == 0
 
-        unloaded = client.post("/control/v1/models/unload", headers=headers, json={"model": "tiny"})
+        unloaded = client.post("/control/v1/models/unload", headers=control_headers, json={"model": "tiny"})
         assert unloaded.status_code == 200
         assert unloaded.json() == {"model": "Tiny Test", "unloaded": True}
         assert manager.snapshots()[0].state is ModelState.KNOWN
@@ -99,13 +125,13 @@ def test_node_status_requires_auth_and_reports_lazy_model():
 def test_node_refuses_to_unload_a_model_with_an_active_lease():
     manager = ModelManager(max_loaded_models=1)
     manager.register(ModelDescriptor("model"), lambda: ModelRuntime(FakeModel(), FakeTokenizer()))
-    app = create_node_app(manager, api_keys=["secret"])
+    app = create_node_app(manager, api_keys=["client-secret"], control_keys=["control-secret"])
 
     with TestClient(app) as client:
         lease = manager.load("model")
         response = client.post(
             "/control/v1/models/unload",
-            headers={"Authorization": "Bearer secret"},
+            headers={"Authorization": "Bearer control-secret"},
             json={"model": "model"},
         )
         assert response.status_code == 409
@@ -147,11 +173,17 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
     manager = ModelManager()
     manager.register(ModelDescriptor("model"), lambda: ModelRuntime(FakeModel(), FakeTokenizer()))
     supervisor = FakeSupervisor()
-    app = create_node_app(manager, api_keys=["secret"], worker_supervisor=supervisor)
-    headers = {"Authorization": "Bearer secret"}
+    app = create_node_app(
+        manager,
+        api_keys=["client-secret"],
+        control_keys=["control-secret"],
+        worker_supervisor=supervisor,
+    )
+    headers = {"Authorization": "Bearer control-secret"}
 
     with TestClient(app) as client:
         assert client.get("/control/v1/workers").status_code == 401
+        assert client.get("/control/v1/workers", headers={"Authorization": "Bearer client-secret"}).status_code == 401
         assert client.get("/control/v1/workers", headers=headers).json()["workers"][0]["state"] == "paused"
         for action in ("start", "pause", "restart"):
             response = client.post(f"/control/v1/workers/worker/{action}", headers=headers)
@@ -168,32 +200,59 @@ def test_persistent_key_crud_updates_authentication_immediately(tmp_path):
     first = store.ensure_key(first_secret, label="bootstrap")
     manager = ModelManager()
     manager.register(ModelDescriptor("model"), lambda: ModelRuntime(FakeModel(), FakeTokenizer()))
-    app = create_node_app(manager, api_key_store=store)
+    app = create_node_app(manager, api_key_store=store, control_keys=["drift_control-secret"])
     first_headers = {"Authorization": f"Bearer {first_secret}"}
+    control_headers = {"Authorization": "Bearer drift_control-secret"}
 
     with TestClient(app) as client:
-        listed = client.get("/control/v1/keys", headers=first_headers)
+        assert client.get("/control/v1/keys", headers=first_headers).status_code == 401
+        assert client.get("/v1/models", headers=control_headers).status_code == 401
+        listed = client.get("/control/v1/keys", headers=control_headers)
         assert listed.status_code == 200
         assert listed.json()["keys"] == [first]
         assert "secret_hash" not in listed.text
 
-        created = client.post("/control/v1/keys", headers=first_headers, json={"label": "second client"})
+        created = client.post("/control/v1/keys", headers=control_headers, json={"label": "second client"})
         assert created.status_code == 201
         second_secret = created.json()["secret"]
         second = created.json()["key"]
         second_headers = {"Authorization": f"Bearer {second_secret}"}
         assert client.get("/v1/models", headers=second_headers).status_code == 200
+        assert client.get("/control/v1/status", headers=second_headers).status_code == 401
         renamed = client.patch(
-            f"/control/v1/keys/{second['id']}", headers=second_headers, json={"label": "renamed client"}
+            f"/control/v1/keys/{second['id']}", headers=control_headers, json={"label": "renamed client"}
         )
         assert renamed.status_code == 200
         assert renamed.json()["key"]["label"] == "renamed client"
 
-        revoked = client.delete(f"/control/v1/keys/{first['id']}", headers=second_headers)
+        revoked = client.delete(f"/control/v1/keys/{first['id']}", headers=control_headers)
         assert revoked.status_code == 200
         assert revoked.json()["key"]["revoked_at"] is not None
         assert client.get("/v1/models", headers=first_headers).status_code == 401
-        assert client.delete(f"/control/v1/keys/{second['id']}", headers=second_headers).status_code == 409
+        assert client.delete(f"/control/v1/keys/{second['id']}", headers=control_headers).status_code == 409
+
+
+def test_node_requires_control_credentials_distinct_from_openai_keys(tmp_path):
+    manager = ModelManager()
+    manager.register(ModelDescriptor("model"), lambda: ModelRuntime(FakeModel(), FakeTokenizer()))
+
+    with pytest.raises(ValueError, match="requires at least one non-empty control key"):
+        create_node_app(manager, api_keys=["client-secret"])
+    with pytest.raises(ValueError, match="distinct from OpenAI API keys"):
+        create_node_app(manager, api_keys=["same-secret"], control_keys=["same-secret"])
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        create_node_app(manager, api_keys=["client-secret"], control_keys=["control-secret", "control-secret"])
+
+    store = ApiKeyStore(tmp_path / "api-keys.json")
+    store.ensure_key("stored-secret", label="client")
+    with pytest.raises(ValueError, match="distinct from OpenAI API keys"):
+        create_node_app(manager, api_key_store=store, control_keys=["stored-secret"])
+
+    store.ensure_key("second-secret", label="second client")
+    stored_id = next(item["id"] for item in store.list() if item["label"] == "client")
+    store.revoke(stored_id)
+    with pytest.raises(ValueError, match="distinct from OpenAI API keys"):
+        create_node_app(manager, api_key_store=store, control_keys=["stored-secret"])
 
 
 def test_node_parser_requires_explicit_network_opt_in():
@@ -208,8 +267,9 @@ def test_node_parser_requires_explicit_network_opt_in():
 
 def test_node_parser_accepts_config_mode_and_rejects_ambiguous_model_options():
     parser = build_parser()
-    config_args = parser.parse_args(["--config", "node.json"])
+    config_args = parser.parse_args(["--config", "node.json", "--control_key_path", "private/control.key"])
     _validate_args(parser, config_args)
+    assert config_args.control_key_path.as_posix() == "private/control.key"
 
     both = parser.parse_args(
         [

@@ -437,6 +437,7 @@ def run_multi_node_client() -> None:
     prompt = "Hello"
     max_new_tokens = 3
     api_key = f"drift_{secrets.token_urlsafe(32)}"
+    control_key = f"drift_control_{secrets.token_urlsafe(32)}"
 
     config = NodeConfig(
         schema_version=1,
@@ -482,13 +483,30 @@ def run_multi_node_client() -> None:
 
     def run_node_once(*, exercise_both: bool) -> dict:
         manager, _, discovery = _build_model_manager(config, token=None)
-        app = create_node_app(manager, api_key_store=ApiKeyStore(key_path), host="127.0.0.1", port=0)
+        app = create_node_app(
+            manager,
+            api_key_store=ApiKeyStore(key_path),
+            control_keys=[control_key],
+            host="127.0.0.1",
+            port=0,
+        )
         discovery.start()
         try:
             with live_uvicorn(app) as origin:
-                headers = {"Authorization": f"Bearer {api_key}"}
-                control = httpx.Client(base_url=origin, headers=headers, timeout=30)
+                control_headers = {"Authorization": f"Bearer {control_key}"}
+                control = httpx.Client(base_url=origin, headers=control_headers, timeout=30)
                 sdk = OpenAI(api_key=api_key, base_url=f"{origin}/v1", max_retries=0, timeout=60)
+                if (
+                    httpx.get(
+                        f"{origin}/control/v1/status",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=30,
+                    ).status_code
+                    != 401
+                ):
+                    raise AssertionError("OpenAI client key unexpectedly authorized the control API")
+                if control.get("/v1/models").status_code != 401:
+                    raise AssertionError("control key unexpectedly authorized the OpenAI API")
                 status_before = wait_for_node_routes(control, model_ids, timeout)
                 listed = sorted(model.id for model in sdk.models.list().data)
                 if listed != sorted(model_ids):
@@ -531,6 +549,7 @@ def run_multi_node_client() -> None:
                     "states_after_first": states_after_first,
                     "second_stream": second_text,
                     "states_after_second": states_after_second,
+                    "authorization_domains_separate": True,
                 }
         finally:
             manager.shutdown()

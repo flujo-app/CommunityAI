@@ -389,6 +389,13 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    [`ADR 0002`](adr/0002-desktop-shell-spike.md). The checked-in prototypes keep
    both UI processes outside the model runtime and package each alternative in a
    clean environment so their measurements remain comparable.
+
+   The first production security prerequisite is implemented: managed OpenAI client
+   keys authorize only `/v1/*`, while a distinct privileged control credential
+   authorizes only `/control/v1/*`. Headless nodes generate separate private files,
+   startup rejects overlaps, and upgraded installations retain their existing client
+   key while receiving a new control key. Native credential-store ownership remains
+   part of the selected desktop implementation.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and
    LAN discovery; define threshold-signed, forkable catalogs; publish privacy-safe

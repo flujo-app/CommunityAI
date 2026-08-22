@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional, Tuple
 API_KEY_STORE_SCHEMA_VERSION = 1
 _KEY_HASH_DOMAIN = b"drift-local-api-key-v1\0"
 _KEY_ID_RE = re.compile(r"^key_[0-9a-f]{16}$")
+_CONTROL_KEY_RE = re.compile(r"^drift_control_[A-Za-z0-9_-]{43,}$")
 
 
 class ApiKeyStoreError(ValueError):
@@ -203,6 +204,14 @@ class ApiKeyStore:
                 matches = matches or active_match
             return matches
 
+    def contains(self, candidate: str) -> bool:
+        """Return whether the secret exists, including as a revoked record."""
+        if not isinstance(candidate, str) or not candidate:
+            return False
+        candidate_hash = _key_hash(candidate)
+        with self._lock:
+            return any(secrets.compare_digest(record.secret_hash, candidate_hash) for record in self._records.values())
+
     def list(self) -> Tuple[Dict[str, Any], ...]:
         with self._lock:
             return tuple(record.metadata() for record in sorted(self._records.values(), key=lambda item: item.key_id))
@@ -240,13 +249,15 @@ class ApiKeyStore:
             return record.metadata()
 
 
-def load_or_create_api_key(path: Path) -> Tuple[str, bool]:
+def _load_or_create_secret(path: Path, *, prefix: str) -> Tuple[str, bool]:
     """Load a dedicated secret file or create it atomically with private permissions.
 
     Native credential-store integration belongs to the desktop milestone. This
     headless bootstrap keeps the secret separate from ordinary JSON/TOML config and
     never writes it to application logs.
     """
+    if not isinstance(prefix, str) or not prefix:
+        raise ValueError("secret prefix must not be empty")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -265,7 +276,7 @@ def load_or_create_api_key(path: Path) -> Tuple[str, bool]:
     if path.exists() or path.is_symlink():
         return read_existing()
 
-    key = f"drift_{secrets.token_urlsafe(32)}"
+    key = f"{prefix}{secrets.token_urlsafe(32)}"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     try:
         descriptor = os.open(path, flags, 0o600)
@@ -289,3 +300,16 @@ def load_or_create_api_key(path: Path) -> Tuple[str, bool]:
     except OSError:
         pass
     return key, True
+
+
+def load_or_create_api_key(path: Path) -> Tuple[str, bool]:
+    """Load or create a headless OpenAI client key."""
+    return _load_or_create_secret(path, prefix="drift_")
+
+
+def load_or_create_control_key(path: Path) -> Tuple[str, bool]:
+    """Load or create the privileged local control credential."""
+    key, created = _load_or_create_secret(path, prefix="drift_control_")
+    if _CONTROL_KEY_RE.fullmatch(key) is None:
+        raise ValueError("control key must use the drift_control_ key class with at least 256 bits of entropy")
+    return key, created

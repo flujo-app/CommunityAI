@@ -15,6 +15,23 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 fixes the PySide/webview experiment; both Windows source and packaged UI smokes pass; OpenAI inference keys and the privileged control credential are now separate authorities | Clean cross-platform shell evidence, native credential storage, contribution policies and budgets, lifecycle integration, signing, updates, rollback, accessibility, and installer gates remain |
+
+## Desktop milestone: control authority separation
+
+The first milestone-5 production prerequisite separates the local authorization
+domains without changing endpoint versions. Managed, labeled OpenAI keys authorize
+only `/v1/*`; a distinct privileged key authorizes only `/control/v1/*`. The node
+rejects startup with a missing, duplicate, or overlapping control key. Key creation,
+relabeling, and revocation remain control operations, and newly created client keys
+cannot use those controls.
+
+The headless migration preserves `~/.drift/node/local-api.key` as an OpenAI client
+key and creates `~/.drift/node/control-api.key` on first upgraded startup. An explicit
+private path can be supplied with `--control_key_path`; putting the privileged secret
+itself on the command line is not supported. The desktop spike already reads this
+credential through a private-file bridge and will move it into the native OS store
+after the shell decision.
 
 ## Unified local node: first vertical slice
 
@@ -62,8 +79,9 @@ versioned JSON result and refuses a nonempty cache unless explicitly acknowledge
 The current bootstrap secret file remains the documented headless fallback; moving
 secrets into native OS credential stores belongs to milestone 5.
 
-The completed broad offline matrix passed with 201 tests and 7 platform/device
-skips. The repository's top-level external-swarm fixtures still require
+After the milestone-5 control-credential split, the broad offline matrix passed
+with 204 tests and 7 platform/device skips. The repository's top-level
+external-swarm fixtures still require
 `INITIAL_PEERS`, so the offline CI file list is run explicitly and the real swarm is
 validated separately.
 

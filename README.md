@@ -175,15 +175,21 @@ drift node --config ./community-node.json
 ```
 
 The default OpenAI URL is `http://127.0.0.1:8080/v1`. If `--api_key` is omitted,
-the command creates a persistent key in `~/.drift/node/local-api.key` and logs only
-that path. The same bearer key authenticates the versioned local status endpoint:
+the command creates a persistent client key in `~/.drift/node/local-api.key` and
+logs only that path. It separately creates the privileged local control credential
+in `~/.drift/node/control-api.key`:
 
 ```bash
-curl -H "Authorization: Bearer $(cat ~/.drift/node/local-api.key)" \
+curl -H "Authorization: Bearer $(cat ~/.drift/node/control-api.key)" \
     http://127.0.0.1:8080/control/v1/status
 ```
 
-Binding beyond loopback requires both an API key and the explicit
+OpenAI client keys authorize only `/v1/*`; the control credential authorizes only
+`/control/v1/*`. An existing installation keeps its `local-api.key` for AI clients
+and receives the separate control key on its first upgraded start. A headless
+operator may select another private control file with `--control_key_path`.
+
+Binding beyond loopback requires both key classes and the explicit
 `--allow_network` acknowledgement. Authenticated status includes model lifecycle,
 runtime-budget, active-request, and loaded-route coverage data; idle models can be
 unloaded through the control API. The boundary and deferred work are recorded in

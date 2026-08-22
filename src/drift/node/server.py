@@ -41,6 +41,7 @@ def create_node_app(
     *,
     api_keys: Optional[List[str]] = None,
     api_key_store: Optional[ApiKeyStore] = None,
+    control_keys: Optional[List[str]] = None,
     host: str = "127.0.0.1",
     port: int = 8080,
     max_concurrent: int = 1,
@@ -49,9 +50,22 @@ def create_node_app(
 ):
     """Compose the OpenAI API and authenticated local control surface."""
     if api_key_store is None and (not api_keys or any(not isinstance(key, str) or not key for key in api_keys)):
-        raise ValueError("the node control API requires an API key store or at least one non-empty API key")
+        raise ValueError("the node OpenAI API requires an API key store or at least one non-empty API key")
     if api_key_store is not None and api_keys:
         raise ValueError("pass either api_key_store or api_keys, not both")
+    if not control_keys or any(not isinstance(key, str) or not key for key in control_keys):
+        raise ValueError("the node control API requires at least one non-empty control key")
+    if len(set(control_keys)) != len(control_keys):
+        raise ValueError("control keys must not contain duplicates")
+    if api_key_store is not None:
+        overlaps = any(api_key_store.contains(key) for key in control_keys)
+    else:
+        overlaps = any(
+            secrets.compare_digest(control_key, api_key) for control_key in control_keys for api_key in api_keys
+        )
+    if overlaps:
+        raise ValueError("control keys must be distinct from OpenAI API keys")
+    control_keys = tuple(control_keys)
     app = create_app(
         model_manager=model_manager,
         api_keys=api_keys,
@@ -61,20 +75,16 @@ def create_node_app(
     )
     started_at = int(time.time())
 
-    def check_auth(request: Request) -> None:
+    def check_control_auth(request: Request) -> None:
         auth = request.headers.get("authorization", "")
         candidate = auth[len("Bearer ") :] if auth.startswith("Bearer ") else ""
-        valid = (
-            api_key_store.verify(candidate)
-            if api_key_store is not None
-            else any(secrets.compare_digest(candidate, key) for key in api_keys)
-        )
+        valid = any(secrets.compare_digest(candidate, key) for key in control_keys)
         if not valid:
-            raise HTTPException(status_code=401, detail="Invalid API key")
+            raise HTTPException(status_code=401, detail="Invalid control key")
 
     @app.get("/control/v1/status")
     async def node_status(request: Request):
-        check_auth(request)
+        check_control_auth(request)
         return {
             "api_version": CONTROL_API_VERSION,
             "status": "stopping" if model_manager.closed else "running",
@@ -87,7 +97,7 @@ def create_node_app(
 
     @app.post("/control/v1/models/unload")
     async def unload_model(body: ModelUnloadRequest, request: Request):
-        check_auth(request)
+        check_control_auth(request)
         if not body.model.strip():
             raise HTTPException(status_code=422, detail="model must be a non-empty string")
         try:
@@ -106,7 +116,7 @@ def create_node_app(
 
     @app.get("/control/v1/workers")
     async def list_workers(request: Request):
-        check_auth(request)
+        check_control_auth(request)
         return {"workers": list(worker_supervisor.snapshots()) if worker_supervisor is not None else []}
 
     def require_key_store() -> ApiKeyStore:
@@ -116,12 +126,12 @@ def create_node_app(
 
     @app.get("/control/v1/keys")
     async def list_api_keys(request: Request):
-        check_auth(request)
+        check_control_auth(request)
         return {"keys": list(require_key_store().list())}
 
     @app.post("/control/v1/keys", status_code=201)
     async def create_api_key(body: ApiKeyCreateRequest, request: Request):
-        check_auth(request)
+        check_control_auth(request)
         try:
             metadata, secret = require_key_store().create(label=body.label)
         except ApiKeyStoreError as exc:
@@ -130,7 +140,7 @@ def create_node_app(
 
     @app.delete("/control/v1/keys/{key_id}")
     async def revoke_api_key(key_id: str, request: Request):
-        check_auth(request)
+        check_control_auth(request)
         try:
             metadata = require_key_store().revoke(key_id)
         except ApiKeyNotFoundError as exc:
@@ -141,7 +151,7 @@ def create_node_app(
 
     @app.patch("/control/v1/keys/{key_id}")
     async def update_api_key(key_id: str, body: ApiKeyUpdateRequest, request: Request):
-        check_auth(request)
+        check_control_auth(request)
         try:
             metadata = require_key_store().update_label(key_id, label=body.label)
         except ApiKeyNotFoundError as exc:
@@ -170,17 +180,17 @@ def create_node_app(
 
     @app.post("/control/v1/workers/{worker_id}/start")
     async def start_worker(worker_id: str, request: Request):
-        check_auth(request)
+        check_control_auth(request)
         return await worker_action(worker_id, "start")
 
     @app.post("/control/v1/workers/{worker_id}/pause")
     async def pause_worker(worker_id: str, request: Request):
-        check_auth(request)
+        check_control_auth(request)
         return await worker_action(worker_id, "pause")
 
     @app.post("/control/v1/workers/{worker_id}/restart")
     async def restart_worker(worker_id: str, request: Request):
-        check_auth(request)
+        check_control_auth(request)
         return await worker_action(worker_id, "restart")
 
     if worker_supervisor is not None:

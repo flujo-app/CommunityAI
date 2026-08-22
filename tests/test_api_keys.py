@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from drift.cli.run_node import _prepare_api_key_store
+from drift.cli.run_node import _prepare_api_key_store, _prepare_control_key
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, LastActiveKeyError
 
 
@@ -25,6 +25,7 @@ def test_labeled_api_keys_persist_as_hashes_and_revoke(tmp_path):
     reopened.revoke(bootstrap_metadata["id"])
     renamed = reopened.update_label(bootstrap_metadata["id"], label="retired bootstrap")
     assert not reopened.verify(bootstrap)
+    assert reopened.contains(bootstrap)
     assert reopened.verify(created_secret)
     assert renamed["label"] == "retired bootstrap"
     assert reopened.list()[0]["fingerprint"]
@@ -47,6 +48,26 @@ def test_restart_does_not_reimport_a_revoked_bootstrap_key(tmp_path):
     assert reopened.verify(replacement_secret)
     assert next(item for item in reopened.list() if item["id"] == bootstrap["id"])["revoked_at"] is not None
     assert next(item for item in reopened.list() if item["id"] == replacement["id"])["revoked_at"] is None
+
+
+def test_control_key_is_stable_separate_and_supports_an_explicit_path(tmp_path):
+    api_store, api_path, _ = _prepare_api_key_store(tmp_path, [])
+    control_key, control_path, created = _prepare_control_key(tmp_path, None)
+    reopened, reopened_path, created_again = _prepare_control_key(tmp_path, None)
+
+    assert created is True
+    assert created_again is False
+    assert control_path == reopened_path == tmp_path / "control-api.key"
+    assert control_key == reopened
+    assert control_key.startswith("drift_control_")
+    assert not api_store.verify(control_key)
+    assert api_path.read_text(encoding="utf-8").strip() != control_key
+
+    custom_path = tmp_path / "native-bridge" / "control.key"
+    custom, selected_path, custom_created = _prepare_control_key(tmp_path, custom_path)
+    assert custom_created is True
+    assert selected_path == custom_path
+    assert custom_path.read_text(encoding="utf-8").strip() == custom
 
 
 def test_key_store_rejects_duplicate_json_keys(tmp_path):
