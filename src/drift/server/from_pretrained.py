@@ -37,6 +37,26 @@ from drift.utils.weight_conversion import maybe_convert_block_state_dict
 
 logger = get_logger(__name__)
 
+# Older Transformers checkpoints may persist rotary frequencies below the attention module.
+# Transformers 5 derives these values from the pinned config at the model level instead, and the
+# DRIFT wrappers mirror that layout as ``block.rotary_emb``.  Treat only these exact legacy buffer
+# names as derived compatibility state; every other unconsumed key remains a correctness warning.
+_LEGACY_DERIVED_ROTARY_BUFFER = re.compile(
+    r"^(?:self_attn|self_attention)\.rotary_emb\.(?:inv_freq|original_inv_freq)$"
+)
+
+
+def _find_unconsumed_checkpoint_keys(block: nn.Module, state_dict: "StateDict") -> list[str]:
+    ignored = [re.compile(pattern) for pattern in getattr(block, "_keys_to_ignore_on_load_unexpected", None) or []]
+    module_tensor_names = {name for name, _ in block.named_parameters()} | {name for name, _ in block.named_buffers()}
+    return sorted(
+        key
+        for key in state_dict
+        if key not in module_tensor_names
+        and not _LEGACY_DERIVED_ROTARY_BUFFER.fullmatch(key)
+        and not any(pattern.search(key) for pattern in ignored)
+    )
+
 
 def load_pretrained_block(
     model_name: str,
@@ -105,11 +125,7 @@ def load_pretrained_block(
     # is trained state being silently dropped (how Gemma 4's layer_scalar went missing) -- unless
     # the block declares it ignored by design (e.g. the k/v projections checkpoints ship for
     # KV-shared consumer layers, which the module intentionally does not have).
-    ignored = [re.compile(p) for p in getattr(block, "_keys_to_ignore_on_load_unexpected", None) or []]
-    module_tensor_names = {name for name, _ in block.named_parameters()} | {name for name, _ in block.named_buffers()}
-    leftover = sorted(
-        key for key in state_dict if key not in module_tensor_names and not any(p.search(key) for p in ignored)
-    )
+    leftover = _find_unconsumed_checkpoint_keys(block, state_dict)
     if leftover:
         logger.warning(
             f"Block {block_index}: checkpoint keys were not loaded into {type(block).__name__}: {leftover}. "

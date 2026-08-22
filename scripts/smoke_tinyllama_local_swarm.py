@@ -3,6 +3,9 @@
 This starts one local DHT peer that hosts all blocks for Maykeye/TinyLLama-v0,
 connects a client through that peer's DHT address, and generates a few tokens.
 It is intended for Windows/XPU bring-up but also works on CPU/CUDA with --device.
+``--device`` selects the worker-block and stock-reference device; the distributed
+client's embeddings and language-model head deliberately remain on their default
+local device, whose actual placement is logged and dtype-checked after loading.
 
 With ``--test-failover``, the script instead starts a bootstrap plus two complete
 worker replicas, stops the selected worker inside an active generation session,
@@ -54,6 +57,17 @@ def parse_block_indices(value: str) -> list[int]:
     return list(range(start_block, end_block))
 
 
+def log_local_component_placement(name: str, module: torch.nn.Module, expected_dtype: torch.dtype) -> None:
+    parameters = list(module.parameters())
+    if not parameters:
+        raise AssertionError(f"{name} has no parameters to validate")
+    devices = sorted({str(parameter.device) for parameter in parameters})
+    dtypes = sorted({str(parameter.dtype).removeprefix("torch.") for parameter in parameters})
+    log(f"{name}_placement=devices={devices},dtypes={dtypes}")
+    if any(parameter.dtype != expected_dtype for parameter in parameters):
+        raise AssertionError(f"{name} did not load entirely as {expected_dtype}: observed dtypes={dtypes}")
+
+
 def wait_for_dht_announcement(
     dht: DHT,
     dht_prefix: str,
@@ -85,7 +99,11 @@ def wait_for_dht_announcement(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="xpu")
+    parser.add_argument(
+        "--device",
+        default="xpu",
+        help="device for served transformer blocks and the stock reference; client embeddings/head stay local",
+    )
     parser.add_argument("--timeout", type=float, default=240)
     parser.add_argument("--block-indices", default="0:8")
     parser.add_argument("--torch-dtype", default=None, choices=DTYPE_MAP.keys())
@@ -288,6 +306,8 @@ def main() -> None:
         if artifact_verifier is not None:
             model_kwargs["artifact_verifier"] = artifact_verifier
         model = AutoDistributedModelForCausalLM.from_pretrained(MODEL, **model_kwargs)
+        log_local_component_placement("client_input_embeddings", model.get_input_embeddings(), torch_dtype)
+        log_local_component_placement("client_lm_head", model.get_output_embeddings(), torch_dtype)
 
         log("generating")
         inputs = tokenizer("Hello", return_tensors="pt")["input_ids"]

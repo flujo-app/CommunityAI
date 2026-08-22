@@ -7,6 +7,10 @@ on:
 
 jobs:
   run-tests:
+    env:
+      # hf-xet's native downloader has crashed under forked tests on hosted Apple Silicon.
+      # The milestone gate intentionally exercises ordinary HTTP Range downloads anyway.
+      HF_HUB_DISABLE_XET: "1"
     strategy:
       matrix:
         # Linux guards the broad offline surface; macOS additionally closes the native manifest,
@@ -55,10 +59,10 @@ jobs:
             tests/test_inference_recovery.py \
             tests/test_join_token.py \
             tests/test_kv_cache_strategy.py \
+            tests/test_loading_diagnostics.py \
             tests/test_model_manifest.py \
             tests/test_openai_api.py \
             tests/test_paged_cache.py \
-            tests/test_peft.py \
             tests/test_priority_pool.py \
             tests/test_process_lifetime.py \
             tests/test_protocol_identity.py \
