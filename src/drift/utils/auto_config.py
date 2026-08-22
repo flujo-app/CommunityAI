@@ -32,7 +32,12 @@ class _AutoDistributedBase:
 
     @classmethod
     def from_pretrained(cls, model_name_or_path: Union[str, os.PathLike, None], *args, **kwargs) -> PretrainedConfig:
-        config = AutoConfig.from_pretrained(model_name_or_path, *args, **kwargs)
+        artifact_verifier = kwargs.get("artifact_verifier")
+        if artifact_verifier is not None:
+            config_source = artifact_verifier.ensure_startup_metadata()
+            config = AutoConfig.from_pretrained(config_source, local_files_only=True)
+        else:
+            config = AutoConfig.from_pretrained(model_name_or_path, *args, **kwargs)
         model_type = config.model_type
         if model_type not in _CLASS_MAPPING:
             # Multimodal wrappers (e.g. Gemma4ForConditionalGeneration) carry the language model in a

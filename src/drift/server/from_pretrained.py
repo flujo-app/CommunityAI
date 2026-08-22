@@ -23,6 +23,7 @@ from huggingface_hub.utils import EntryNotFoundError
 from transformers import PretrainedConfig, PreTrainedModel
 
 from drift.constants import DTYPE_MAP
+from drift.model_manifest import ManifestArtifactVerifier, ManifestError
 from drift.server.block_utils import get_model_block, resolve_block_dtype
 from drift.utils.auto_config import AutoDistributedConfig
 from drift.utils.disk_cache import (
@@ -47,9 +48,16 @@ def load_pretrained_block(
     token: Optional[Union[str, bool]] = None,
     cache_dir: Optional[str] = None,
     max_disk_space: Optional[int] = None,
+    artifact_verifier: Optional[ManifestArtifactVerifier] = None,
 ) -> nn.Module:
     if config is None:
-        config = AutoDistributedConfig.from_pretrained(model_name, token=token)
+        config_source = artifact_verifier.ensure_startup_metadata() if artifact_verifier is not None else model_name
+        config = AutoDistributedConfig.from_pretrained(
+            config_source,
+            token=token,
+            revision=None if artifact_verifier is not None else revision,
+            local_files_only=artifact_verifier is not None,
+        )
     if cache_dir is None:
         cache_dir = DEFAULT_CACHE_DIR
 
@@ -67,6 +75,7 @@ def load_pretrained_block(
         token=token,
         cache_dir=cache_dir,
         max_disk_space=max_disk_space,
+        artifact_verifier=artifact_verifier,
     )
 
     # transformers >=5.0 may restructure weights when loading (e.g. Mixtral fuses per-expert
@@ -122,10 +131,27 @@ def _load_state_dict_from_repo(
     token: Optional[Union[str, bool]] = None,
     cache_dir: str,
     max_disk_space: Optional[int] = None,
+    artifact_verifier: Optional[ManifestArtifactVerifier] = None,
 ) -> StateDict:
-    index_file = _find_index_file(model_name, revision=revision, token=token, cache_dir=cache_dir)
+    index_file = _find_index_file(
+        model_name,
+        revision=revision,
+        token=token,
+        cache_dir=cache_dir,
+        artifact_verifier=artifact_verifier,
+    )
     if index_file.endswith(".index.json"):  # Sharded model
-        path = get_file_from_repo(model_name, filename=index_file, use_auth_token=token, cache_dir=cache_dir)
+        path = (
+            str(artifact_verifier.ensure_path(index_file, allowed_roles={"weight_index"}))
+            if artifact_verifier is not None
+            else get_file_from_repo(
+                model_name,
+                filename=index_file,
+                revision=revision,
+                use_auth_token=token,
+                cache_dir=cache_dir,
+            )
+        )
         if path is None:
             # _find_index_file() told that a file exists but we can't get it (e.g., it just disappeared)
             raise ValueError(f"Failed to get file {index_file}")
@@ -151,6 +177,7 @@ def _load_state_dict_from_repo(
             token=token,
             cache_dir=cache_dir,
             max_disk_space=max_disk_space,
+            artifact_verifier=artifact_verifier,
         )
         shard_state_dict = {
             param_name[len(block_prefix) :]: param
@@ -165,8 +192,34 @@ INDEX_FILES = ["model.safetensors.index.json", "model.safetensors", "pytorch_mod
 
 
 def _find_index_file(
-    model_name: str, *, revision: Optional[str] = None, token: Optional[Union[str, bool]] = None, cache_dir: str
+    model_name: str,
+    *,
+    revision: Optional[str] = None,
+    token: Optional[Union[str, bool]] = None,
+    cache_dir: str,
+    artifact_verifier: Optional[ManifestArtifactVerifier] = None,
 ) -> str:
+    if artifact_verifier is not None:
+        indices = artifact_verifier.manifest.artifacts_for_roles({"weight_index"})
+        if len(indices) > 1:
+            raise ManifestError("Manifest declares more than one checkpoint index")
+        if indices:
+            artifact_verifier.ensure_path(indices[0].path, allowed_roles={"weight_index"})
+            return indices[0].path
+        checkpoints = {
+            artifact.path: artifact
+            for artifact in artifact_verifier.manifest.artifacts_for_roles(
+                {"weight", "converted_weight", "quantized_weight"}
+            )
+        }
+        for filename in INDEX_FILES:
+            if filename in checkpoints:
+                artifact_verifier.ensure_path(
+                    filename, allowed_roles={"weight", "converted_weight", "quantized_weight"}
+                )
+                return filename
+        raise ManifestError("Manifest does not declare a checkpoint format supported by the block loader")
+
     # If we have cached weights (e.g., Pickle from older DRIFT-LLM versions), reuse them
     for filename in INDEX_FILES:
         path = get_file_from_repo(
@@ -202,7 +255,17 @@ def _load_state_dict_from_repo_file(
     cache_dir: str,
     max_disk_space: Optional[int] = None,
     delay: float = 30,
+    artifact_verifier: Optional[ManifestArtifactVerifier] = None,
 ) -> StateDict:
+    if artifact_verifier is not None:
+        path = artifact_verifier.ensure_path(filename, allowed_roles={"weight", "converted_weight", "quantized_weight"})
+        with allow_cache_reads(cache_dir):
+            # Re-check after acquiring the shared cache lock, then keep the artifact alive through deserialization.
+            path = artifact_verifier.ensure_path(
+                filename, allowed_roles={"weight", "converted_weight", "quantized_weight"}
+            )
+            return _load_state_dict_from_local_file(str(path), block_prefix=block_prefix)
+
     # First, try to find the weights locally
     try:
         with allow_cache_reads(cache_dir):

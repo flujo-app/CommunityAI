@@ -24,7 +24,7 @@ from transformers import PretrainedConfig
 import drift
 from drift.constants import DTYPE_MAP
 from drift.data_structures import CHAIN_DELIMITER, UID_DELIMITER, ModelInfo, ServerInfo, ServerState, parse_uid
-from drift.model_manifest import ModelManifest
+from drift.model_manifest import ManifestArtifactVerifier, ModelManifest
 from drift.server import block_selection
 from drift.server.backend import TransformerBackend, merge_inference_pools_inplace
 from drift.server.block_utils import get_block_size, resolve_block_dtype
@@ -141,14 +141,30 @@ class Server:
         if custom_module_path is not None:
             add_custom_models_from_file(custom_module_path)
 
-        self.block_config = AutoDistributedConfig.from_pretrained(
-            converted_model_name_or_path,
-            token=token,
-            revision=revision,
-        )
+        artifact_verifier = None
         if model_manifest is not None:
             model_manifest.validate_runtime(drift.__version__)
+            artifact_verifier = ManifestArtifactVerifier(
+                model_manifest,
+                repository=converted_model_name_or_path,
+                revision=revision,
+                token=token,
+                cache_dir=cache_dir,
+                max_disk_space=max_disk_space,
+            )
+            config_source = artifact_verifier.ensure_startup_metadata()
+        else:
+            config_source = converted_model_name_or_path
+
+        self.block_config = AutoDistributedConfig.from_pretrained(
+            config_source,
+            token=token,
+            revision=None if artifact_verifier is not None else revision,
+            local_files_only=artifact_verifier is not None,
+        )
+        if model_manifest is not None:
             model_manifest.validate_model_config(self.block_config)
+        self.model_manifest = model_manifest
 
         # "auto" leaves _attn_implementation unset so each block picks its own correct default
         # (see drift.utils.misc.default_attn_implementation); an explicit choice forces every block.
@@ -442,6 +458,7 @@ class Server:
                 sender_threads=self.sender_threads,
                 revision=self.revision,
                 token=self.token,
+                model_manifest=self.model_manifest,
                 quant_type=self.quant_type,
                 tensor_parallel_devices=self.tensor_parallel_devices,
                 ready_timeout=self.ready_timeout,
@@ -542,6 +559,7 @@ class ModuleContainer(threading.Thread):
         expiration: Optional[float],
         revision: Optional[str],
         token: Optional[Union[str, bool]],
+        model_manifest: Optional[ModelManifest] = None,
         quant_type: QuantType,
         tensor_parallel_devices: Sequence[torch.device],
         **kwargs,
@@ -568,6 +586,18 @@ class ModuleContainer(threading.Thread):
 
         blocks = {}
         try:
+            artifact_verifier = (
+                ManifestArtifactVerifier(
+                    model_manifest,
+                    repository=converted_model_name_or_path,
+                    revision=revision,
+                    token=token,
+                    cache_dir=cache_dir,
+                    max_disk_space=max_disk_space,
+                )
+                if model_manifest is not None
+                else None
+            )
             for module_uid, block_index in zip(module_uids, block_indices):
                 block = load_pretrained_block(
                     converted_model_name_or_path,
@@ -578,6 +608,7 @@ class ModuleContainer(threading.Thread):
                     token=token,
                     cache_dir=cache_dir,
                     max_disk_space=max_disk_space,
+                    artifact_verifier=artifact_verifier,
                 )
                 block = convert_block(
                     block,

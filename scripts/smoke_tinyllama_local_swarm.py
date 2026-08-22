@@ -21,9 +21,11 @@ from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils.timed_storage import MAX_DHT_TIME_DISCREPANCY_SECONDS
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+import drift
 from drift import AutoDistributedModelForCausalLM
 from drift.constants import DTYPE_MAP
 from drift.data_structures import UID_DELIMITER, ModelInfo, ServerInfo, ServerState
+from drift.model_manifest import ManifestArtifactVerifier, ModelManifest, resolve_manifest_loading
 from drift.server.block_utils import resolve_block_dtype
 from drift.server.server import ModuleContainer
 from drift.utils.auto_config import AutoDistributedConfig
@@ -48,11 +50,19 @@ def parse_block_indices(value: str) -> list[int]:
     return list(range(start_block, end_block))
 
 
-def wait_for_dht_announcement(dht: DHT, block_indices: list[int], timeout: float, *, min_replicas: int = 1) -> None:
-    uids = [f"{DHT_PREFIX}{UID_DELIMITER}{block_index}" for block_index in block_indices]
+def wait_for_dht_announcement(
+    dht: DHT,
+    dht_prefix: str,
+    block_indices: list[int],
+    timeout: float,
+    *,
+    min_replicas: int = 1,
+    manifest_digest: str | None = None,
+) -> None:
+    uids = [f"{dht_prefix}{UID_DELIMITER}{block_index}" for block_index in block_indices]
     deadline = time.time() + timeout
     while time.time() < deadline:
-        module_infos = get_remote_module_infos(dht, uids, latest=True)
+        module_infos = get_remote_module_infos(dht, uids, manifest_digest=manifest_digest, latest=True)
         replicas = [len(module_info.servers) for module_info in module_infos]
         announced = sum(count >= min_replicas for count in replicas)
         log(f"announced_blocks={announced}/{len(uids)} replicas={replicas}")
@@ -67,7 +77,8 @@ def main() -> None:
     parser.add_argument("--device", default="xpu")
     parser.add_argument("--timeout", type=float, default=240)
     parser.add_argument("--block-indices", default="0:8")
-    parser.add_argument("--torch-dtype", default="bfloat16", choices=DTYPE_MAP.keys())
+    parser.add_argument("--torch-dtype", default=None, choices=DTYPE_MAP.keys())
+    parser.add_argument("--model-manifest", help="Run the smoke through a verified ModelManifest v1")
     parser.add_argument("--cache", default="contiguous", choices=["contiguous", "paged"])
     parser.add_argument("--page-size", type=int, default=16)
     parser.add_argument(
@@ -82,6 +93,33 @@ def main() -> None:
         help="skip the stock-model token parity check (faster, but does not verify numerical correctness)",
     )
     args = parser.parse_args()
+
+    manifest = None
+    artifact_verifier = None
+    revision = None
+    dht_prefix = DHT_PREFIX
+    if args.model_manifest:
+        manifest = ModelManifest.load(args.model_manifest)
+        manifest.validate_runtime(drift.__version__)
+        revision, dht_prefix = resolve_manifest_loading(
+            manifest,
+            model_name_or_path=MODEL,
+            revision=None,
+            dht_prefix=None,
+        )
+        if manifest.runtime.quantization != "none":
+            raise ValueError("The TinyLlama smoke currently supports only manifest quantization='none'")
+        if args.torch_dtype is None:
+            args.torch_dtype = manifest.runtime.dtype
+        elif args.torch_dtype != manifest.runtime.dtype:
+            raise ValueError(
+                f"--torch-dtype {args.torch_dtype!r} conflicts with manifest dtype {manifest.runtime.dtype!r}"
+            )
+        artifact_verifier = ManifestArtifactVerifier(manifest, MODEL, revision)
+        config_source = artifact_verifier.ensure_startup_metadata(include_tokenizer=True)
+    else:
+        args.torch_dtype = args.torch_dtype or "bfloat16"
+        config_source = MODEL
 
     faulthandler.dump_traceback_later(args.timeout, exit=True)
 
@@ -111,7 +149,13 @@ def main() -> None:
         log(f"initial_peers={peers}")
 
         log("loading config")
-        block_config = AutoDistributedConfig.from_pretrained(MODEL)
+        block_config = AutoDistributedConfig.from_pretrained(
+            config_source,
+            revision=None if manifest is not None else revision,
+            local_files_only=manifest is not None,
+        )
+        if manifest is not None:
+            manifest.validate_model_config(block_config)
         block_config._attn_implementation = "eager"
         torch_dtype = resolve_block_dtype(block_config, DTYPE_MAP[args.torch_dtype])
         log(f"torch_dtype={torch_dtype}")
@@ -141,6 +185,7 @@ def main() -> None:
             server_info = ServerInfo(
                 state=ServerState.JOINING,
                 throughput=1.0,
+                manifest_digest=manifest.digest if manifest is not None else None,
                 torch_dtype=str(torch_dtype).removeprefix("torch."),
                 quant_type=QuantType.NONE.name.lower(),
                 using_relay=False,
@@ -150,7 +195,7 @@ def main() -> None:
             log(f"starting module container replica={replica_index}")
             container = ModuleContainer.create(
                 dht=serving_dht,
-                dht_prefix=DHT_PREFIX,
+                dht_prefix=dht_prefix,
                 converted_model_name_or_path=MODEL,
                 block_config=block_config,
                 attn_cache_bytes=attn_cache_bytes,
@@ -178,8 +223,9 @@ def main() -> None:
                 step_timeout=30,
                 prefetch_batches=1,
                 sender_threads=1,
-                revision=None,
+                revision=revision,
                 token=None,
+                model_manifest=manifest,
                 quant_type=QuantType.NONE,
                 tensor_parallel_devices=(device,),
                 start=True,
@@ -187,14 +233,26 @@ def main() -> None:
             containers.append(container)
             assert container.ready.wait(timeout=30), "module container did not become ready"
 
-        wait_for_dht_announcement(dht, block_indices, timeout=30, min_replicas=2 if args.test_failover else 1)
+        wait_for_dht_announcement(
+            dht,
+            dht_prefix,
+            block_indices,
+            timeout=30,
+            min_replicas=2 if args.test_failover else 1,
+            manifest_digest=manifest.digest if manifest is not None else None,
+        )
 
         log("loading client")
-        tokenizer = AutoTokenizer.from_pretrained(MODEL)
-        model = AutoDistributedModelForCausalLM.from_pretrained(
-            MODEL,
-            dht_prefix=DHT_PREFIX,
+        tokenizer = AutoTokenizer.from_pretrained(
+            artifact_verifier.snapshot_root if artifact_verifier is not None else MODEL,
+            revision=None if manifest is not None else revision,
+            local_files_only=manifest is not None,
+        )
+        model_kwargs = dict(
+            dht_prefix=dht_prefix,
             initial_peers=peers,
+            revision=revision,
+            manifest_digest=manifest.digest if manifest is not None else None,
             torch_dtype=torch_dtype,
             request_timeout=3 if args.test_failover else 60,
             max_retries=3 if args.test_failover else None,
@@ -202,6 +260,9 @@ def main() -> None:
             max_backoff=1 if args.test_failover else 60,
             update_period=1 if args.test_failover else 60,
         )
+        if artifact_verifier is not None:
+            model_kwargs["artifact_verifier"] = artifact_verifier
+        model = AutoDistributedModelForCausalLM.from_pretrained(MODEL, **model_kwargs)
 
         log("generating")
         inputs = tokenizer("Hello", return_tensors="pt")["input_ids"]
@@ -250,7 +311,9 @@ def main() -> None:
 
         if not args.skip_reference:
             log("loading stock local model for token parity check")
-            reference_model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=torch_dtype).to(device)
+            reference_model = AutoModelForCausalLM.from_pretrained(MODEL, revision=revision, dtype=torch_dtype).to(
+                device
+            )
             reference_model.eval()
             with torch.inference_mode():
                 if args.test_failover:

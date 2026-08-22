@@ -13,6 +13,51 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | --- | --- | --- | --- |
 | 1. Reproducible execution baseline | Mostly complete | Windows CPU, Docker Linux CPU, and Windows CUDA all served blocks `0:8` and produced exact token parity | Native macOS install and smoke test |
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
+| 3. Public protocol identity and content integrity | In progress | `ModelManifest v1` pins content-derived namespaces and execution profiles; deterministic generation, incremental artifact enforcement, canonical digest vectors, manifested Windows/Linux loading, and real Fly poison rejection are proven | Native macOS manifested loading, real resumed-download tests, signed announcements, authenticated transport, rotation, and revocation |
+
+## Manifest artifact integrity
+
+The manifest generator can resolve a Hub revision to its immutable commit, inventory
+the preferred Transformers checkpoint and referenced shards, and hash a complete
+publisher snapshot. An offline mode produces the same structure from an already
+downloaded snapshot. README and other non-execution files do not affect the identity.
+
+Manifested workers and API clients now verify configuration, tokenizer, standalone
+chat templates, checkpoint indexes, and each requested weight shard by size and
+SHA-256 before parsing or deserialization. Loading remains incremental: workers do
+not download shards outside their selected blocks, and API clients retain the
+existing embeddings/head-only shard selection. Undeclared resolved checkpoint files,
+tampered metadata, and tampered weight shards fail closed. Unit tests exercise both
+the worker and Transformers client resolver boundaries, and checked-in canonical JSON
+plus digest vectors pin the cross-platform identity contract.
+
+On 2026-08-22, the Hub generator resolved `Maykeye/TinyLLama-v0` to commit
+`298338802ab94432b917bcce11382aa151aee50f`, selected and hashed six execution
+artifacts, and produced manifest digest
+`f8bdac56c6532bbd690556f79fdd7e6dd270bb3e7f4efe1f8c753327f11620a1`.
+Every artifact was independently re-verified from the runtime cache. The native
+Windows CPU smoke then served all eight blocks in the derived namespace, routed a
+manifested client through them, and produced token IDs
+`[[1, 16644, 31844, 260, 1496]]`, exactly matching stock Transformers.
+
+A real Fly Machines run in `iad` then used one private bootstrap, one `0:4`
+worker, one `4:8` worker, and an ephemeral client, all on Linux CPU. Both workers
+loaded the exact revision and announced under the manifest-derived namespace. The
+client required matching manifest digests, observed
+`replicas=[1,1,1,1,1,1,1,1]`, and selected the cross-Machine route
+`0:4 -> 4:8`. Eight generated tokens completed in 0.851 seconds and produced
+`[[1, 16644, 31844, 260, 1496, 2789, 3557, 21075, 31843, 1100]]`, exactly
+matching stock Transformers loaded from the independently verified manifest cache.
+
+The same Fly image also ran a deliberately poisoned worker. After downloading the
+pinned `config.json`, the harness changed one byte and attempted ordinary
+`drift server --model_manifest` startup. The Machine exited with code 2, was not
+OOM-killed, and reported `Artifact config.json does not match its declared SHA-256`
+before server startup; the bootstrap continued to report zero DHT keys. The first
+parity runner also exposed that verified metadata and checkpoint files may occupy
+different cache roots, so the harness now explicitly materializes the stock
+reference checkpoint through the verifier. All six temporary Machines were
+destroyed, and the final Fly Machine list was empty.
 
 ## Linux CPU
 

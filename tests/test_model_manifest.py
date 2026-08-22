@@ -1,10 +1,17 @@
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from drift.model_manifest import ManifestError, ModelManifest, resolve_manifest_loading
+from drift.model_manifest import (
+    ManifestArtifactVerifier,
+    ManifestError,
+    ModelManifest,
+    create_manifest_from_snapshot,
+    resolve_manifest_loading,
+)
 from drift.server.handler import TransformerConnectionHandler
 
 
@@ -41,6 +48,52 @@ def manifest_dict():
             {"role": "config", "path": "config.json", "sha256": "1" * 64, "size": 1},
         ],
     }
+
+
+def write_test_snapshot(root: Path) -> None:
+    files = {
+        "config.json": json.dumps(
+            {
+                "architectures": ["LlamaForCausalLM"],
+                "model_type": "llama",
+                "num_hidden_layers": 8,
+                "max_position_embeddings": 2048,
+            },
+            sort_keys=True,
+        ).encode(),
+        "tokenizer.json": b'{"version":"1.0"}',
+        "tokenizer_config.json": b'{"tokenizer_class":"LlamaTokenizerFast"}',
+        "model-00001-of-00002.safetensors": b"first shard",
+        "model-00002-of-00002.safetensors": b"second shard",
+        "README.md": b"not an execution artifact",
+    }
+    files["model.safetensors.index.json"] = json.dumps(
+        {
+            "weight_map": {
+                "model.embed_tokens.weight": "model-00001-of-00002.safetensors",
+                "model.layers.0.weight": "model-00002-of-00002.safetensors",
+            }
+        },
+        sort_keys=True,
+    ).encode()
+    for path, content in files.items():
+        candidate = root / path
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_bytes(content)
+
+
+def create_test_snapshot_manifest(root: Path) -> ModelManifest:
+    return create_manifest_from_snapshot(
+        repository="org/tiny-test",
+        revision="a" * 40,
+        artifact_root=root,
+        name="Tiny Test",
+        aliases=("tiny", "tiny-test"),
+        license_name="apache-2.0",
+        gated=False,
+        attention_implementation="eager",
+        dtype="float32",
+    )
 
 
 def test_digest_and_namespace_are_canonical_and_order_independent():
@@ -134,6 +187,149 @@ def test_artifact_verification(tmp_path):
     (tmp_path / "weights.bin").write_bytes(b"bad")
     with pytest.raises(ManifestError, match="does not match"):
         manifest.verify_artifacts(tmp_path)
+
+
+def test_snapshot_generator_is_deterministic_and_excludes_non_execution_files(tmp_path):
+    write_test_snapshot(tmp_path)
+    first = create_test_snapshot_manifest(tmp_path)
+    second = create_test_snapshot_manifest(tmp_path)
+
+    assert first.canonical_json() == second.canonical_json()
+    assert {artifact.path for artifact in first.artifacts} == {
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    }
+    assert "README.md" not in {artifact.path for artifact in first.artifacts}
+    assert {artifact.role for artifact in first.artifacts} == {"config", "tokenizer", "weight_index", "weight"}
+    first.verify_artifacts(tmp_path)
+
+
+def test_manifest_generate_cli_from_local_snapshot(tmp_path, capsys):
+    from drift.cli.run_manifest import _generate
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    write_test_snapshot(snapshot)
+    output = tmp_path / "manifest.json"
+    _generate(
+        [
+            "org/tiny-test",
+            "--revision",
+            "a" * 40,
+            "--artifact_root",
+            str(snapshot),
+            "--license",
+            "apache-2.0",
+            "--no-gated",
+            "--dtype",
+            "float32",
+            "--output",
+            str(output),
+        ]
+    )
+
+    generated = ModelManifest.load(output)
+    assert generated.source.revision == "a" * 40
+    assert generated.model.license == "apache-2.0"
+    assert generated.runtime.dtype == "float32"
+    assert generated.digest_id in capsys.readouterr().out
+
+
+def test_incremental_verifier_hashes_metadata_and_requested_shards(tmp_path):
+    write_test_snapshot(tmp_path)
+    manifest = create_test_snapshot_manifest(tmp_path)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        repository=manifest.source.repository,
+        revision=manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+
+    assert verifier.ensure_startup_metadata(include_tokenizer=True) == tmp_path.absolute()
+    shard = verifier.ensure_path(
+        "model-00001-of-00002.safetensors",
+        allowed_roles={"weight"},
+    )
+    assert shard.read_bytes() == b"first shard"
+
+    (tmp_path / "model-00002-of-00002.safetensors").write_bytes(b"poisoned shard")
+    with pytest.raises(ManifestError, match="size .* expected|declared SHA-256"):
+        verifier.ensure_path("model-00002-of-00002.safetensors", allowed_roles={"weight"})
+
+    with pytest.raises(ManifestError, match="not declared"):
+        verifier.ensure_path("README.md")
+
+
+def test_server_weight_loader_rejects_tampering_before_deserialization(tmp_path, monkeypatch):
+    from drift.server import from_pretrained
+
+    write_test_snapshot(tmp_path)
+    manifest = create_test_snapshot_manifest(tmp_path)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        repository=manifest.source.repository,
+        revision=manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+    (tmp_path / "model-00001-of-00002.safetensors").write_bytes(b"bad payload")
+    deserialized = False
+
+    def fail_if_deserialized(*args, **kwargs):
+        nonlocal deserialized
+        deserialized = True
+
+    monkeypatch.setattr(from_pretrained, "_load_state_dict_from_local_file", fail_if_deserialized)
+    with pytest.raises(ManifestError, match="declared SHA-256"):
+        from_pretrained._load_state_dict_from_repo_file(
+            manifest.source.repository,
+            "model-00001-of-00002.safetensors",
+            revision=manifest.source.revision,
+            cache_dir=str(tmp_path),
+            artifact_verifier=verifier,
+        )
+    assert not deserialized
+
+
+def test_client_checkpoint_resolver_rejects_tampering_before_model_load(tmp_path, monkeypatch):
+    from drift.client import from_pretrained
+
+    write_test_snapshot(tmp_path)
+    manifest = create_test_snapshot_manifest(tmp_path)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        repository=manifest.source.repository,
+        revision=manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+    poisoned = tmp_path / "model-00001-of-00002.safetensors"
+    poisoned.write_bytes(b"bad payload")
+    monkeypatch.setattr(
+        from_pretrained,
+        "original_get_resolved_checkpoint_files",
+        lambda *args, **kwargs: ([str(poisoned)], {"all_checkpoint_keys": []}),
+    )
+    token = from_pretrained._artifact_verifier.set(verifier)
+    try:
+        with pytest.raises(ManifestError, match="declared SHA-256"):
+            from_pretrained.patched_get_resolved_checkpoint_files()
+    finally:
+        from_pretrained._artifact_verifier.reset(token)
+
+
+def test_checked_in_canonical_manifest_vector():
+    vector_dir = Path(__file__).parent / "data"
+    manifest = ModelManifest.load(vector_dir / "model_manifest_v1_vector.json")
+    expected_canonical = (
+        (vector_dir / "model_manifest_v1_vector.canonical.json").read_text(encoding="utf-8").rstrip("\r\n")
+    )
+    expected_digest = (vector_dir / "model_manifest_v1_vector.sha256").read_text(encoding="ascii").strip()
+
+    assert manifest.canonical_json() == expected_canonical
+    assert manifest.digest == expected_digest
 
 
 def test_json_loader_wraps_parse_errors():

@@ -1,6 +1,6 @@
 # ModelManifest v1
 
-Status: implemented protocol foundation; not yet approved for public-network use.
+Status: implemented identity and artifact-integrity foundation; not yet approved for public-network use.
 
 `ModelManifest v1` gives one model execution profile a content-derived identity. A
 manifest pins the upstream commit, model shape, runtime compatibility, tensor and
@@ -8,9 +8,10 @@ attention behavior, dtype, quantization, adapter profile, and the size and SHA-2
 of every artifact needed by that profile. Changing any of those values creates a
 different digest and therefore a different swarm.
 
-This solves namespace ambiguity; it does not prove who authored or approved a
-manifest. Signed catalogs, worker signatures, key rotation, revocation, artifact
-download enforcement, and transport authentication remain milestone 3 work.
+This solves namespace ambiguity and binds the manifested loading path to verified
+artifact bytes. It does not prove who authored or approved a manifest. Signed
+catalogs, worker signatures, key rotation, revocation, and transport authentication
+remain milestone 3 work.
 
 ## Schema
 
@@ -126,6 +127,9 @@ Both worker and API processes accept `--model_manifest <path>`. Manifest mode:
 - applies and checks the manifested dtype, quantization, attention selection, and
   runtime version range;
 - checks architecture, block count, and context length after loading `config.json`;
+- accepts only declared artifacts from the manifest's exact revision and verifies
+  their byte size and SHA-256 before a config, tokenizer, checkpoint index, or
+  weight shard is parsed or deserialized;
 - includes the digest in worker DHT announcements and filters mismatched records on
   the client; and
 - compares the digest in `rpc_info` and on every forward, backward, or inference
@@ -134,14 +138,23 @@ Both worker and API processes accept `--model_manifest <path>`. Manifest mode:
 A legacy or differently manifested peer that reports its identity truthfully is
 rejected before compute. A malicious worker can still claim the expected digest in
 unsigned DHT and RPC metadata while running other code or weights. Worker signatures,
-automatic artifact verification, authenticated transport, and any required runtime
-attestation are still needed to bind the digest to a durable identity and actual
-execution.
+authenticated transport, and any required runtime attestation are still needed to
+bind the digest to a durable identity and actual execution.
 
 Legacy/private mode remains explicit: if `--model_manifest` is absent, existing
 model-derived or manually supplied prefixes keep working and requests carry no
 manifest digest. A manifested client and a legacy worker reject each other even if
 an operator deliberately gives them the same DHT prefix.
+
+Artifact verification preserves partial checkpoint loading. An API client downloads
+and verifies the tokenizer plus only the checkpoint shards selected for its local
+embeddings, final normalization, and language-model head. A worker verifies only the
+shards needed by its chosen blocks. A worker verifies configuration and checkpoint
+metadata before starting its DHT, advertises block ranges as `JOINING` while their
+shards load, and cannot advertise them as usable until every loaded shard passes.
+Files resolved by Transformers that are not declared with a compatible artifact
+role are rejected. A failed integrity check is fatal instead of entering the legacy
+download retry loop.
 
 Validate a manifest without network access:
 
@@ -157,10 +170,40 @@ drift manifest path/to/manifest.json --artifact_root path/to/snapshot
 
 `--canonical` prints the exact JSON used for digest computation.
 
+Generate a manifest from a Hub revision:
+
+```text
+drift manifest generate org/model --revision main --alias model --output model-manifest.json
+```
+
+The generator resolves the requested revision to a full commit SHA, selects the
+configuration, tokenizer, standalone chat templates, preferred Transformers weight
+index and every referenced shard, downloads that complete publisher snapshot, and
+hashes the actual bytes. Generating a manifest can therefore require downloading the
+full checkpoint; ordinary clients and workers retain partial downloads. If the model
+card has no license, `--license` is required.
+
+An already downloaded snapshot can be processed without Hub metadata:
+
+```text
+drift manifest generate org/model \
+  --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --artifact_root path/to/snapshot --license apache-2.0 --no-gated \
+  --output model-manifest.json
+```
+
+Checked-in v1 vectors record a deliberately non-canonical input, its exact canonical
+UTF-8 JSON, and the expected SHA-256. They are exercised by the normal test suite so
+Windows, Linux, and macOS CI use the same identity contract.
+
 ## Remaining v1 completion work
 
-Before a manifest is accepted from a public catalog, the loader must verify each
-downloaded cache artifact automatically, including resumed and converted files;
-published manifests need reproducible generation tooling; and cross-platform test
-vectors must prove identical digests. The manifest then becomes the signed payload
-for catalog approval, worker announcements, intent leases, and revocation records.
+Before a manifest is accepted from a public catalog, CI must execute the canonical
+vectors and manifested loading tests on all three target operating systems, and real
+published-model tests must cover interrupted/resumed Hub downloads plus every
+supported converted or pre-quantized artifact format. Native Windows and a real
+multi-Machine Fly Linux swarm have passed manifested loading with exact parity, and
+the Fly run rejected a deliberately corrupted artifact before server startup; native
+macOS remains outstanding. The manifest then becomes the signed payload for catalog
+approval, worker announcements, intent leases, and revocation records. Signatures,
+authenticated transport, rotation, and revocation remain separate milestone 3 slices.

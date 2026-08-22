@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from packaging.version import InvalidVersion, Version
 
@@ -35,6 +36,21 @@ _ARTIFACT_ROLES = {
 _DTYPES = {"bfloat16", "float16", "float32"}
 _QUANTIZATIONS = {"int8", "nf4", "none"}
 _ATTENTION_IMPLEMENTATIONS = {"auto", "eager", "sdpa"}
+_CHECKPOINT_ROLES = {"converted_weight", "quantized_weight", "weight"}
+_TOKENIZER_FILENAMES = {
+    "added_tokens.json",
+    "merges.txt",
+    "sentencepiece.bpe.model",
+    "special_tokens_map.json",
+    "spiece.model",
+    "tokenizer.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "vocab.json",
+    "vocab.txt",
+}
+_CHECKPOINT_INDEX_PREFERENCE = ("model.safetensors.index.json", "pytorch_model.bin.index.json")
+_CHECKPOINT_PREFERENCE = ("model.safetensors", "pytorch_model.bin")
 
 
 class ManifestError(ValueError):
@@ -372,28 +388,19 @@ class ModelManifest:
 
     def verify_artifacts(self, root: Path | str) -> None:
         """Verify every declared artifact below ``root`` by both size and SHA-256."""
-        root = Path(root).resolve()
         for artifact in self.artifacts:
-            candidate = root.joinpath(*PurePosixPath(artifact.path).parts).resolve()
-            try:
-                candidate.relative_to(root)
-            except ValueError as exc:
-                raise ManifestError(f"Artifact escapes verification root: {artifact.path}") from exc
-            try:
-                size = candidate.stat().st_size
-            except OSError as exc:
-                raise ManifestError(f"Could not read artifact {artifact.path}: {exc}") from exc
-            if size != artifact.size:
-                raise ManifestError(f"Artifact {artifact.path} has size {size}, expected {artifact.size}")
-            digest = hashlib.sha256()
-            try:
-                with candidate.open("rb") as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        digest.update(chunk)
-            except OSError as exc:
-                raise ManifestError(f"Could not read artifact {artifact.path}: {exc}") from exc
-            if digest.hexdigest() != artifact.sha256:
-                raise ManifestError(f"Artifact {artifact.path} does not match its declared SHA-256")
+            _verify_artifact_file(artifact, _artifact_path_below_root(root, artifact.path))
+
+    def get_artifact(self, path: str) -> ManifestArtifact:
+        normalized = PurePosixPath(path).as_posix()
+        for artifact in self.artifacts:
+            if artifact.path == normalized:
+                return artifact
+        raise ManifestError(f"Artifact {normalized!r} is not declared by manifest {self.digest_id}")
+
+    def artifacts_for_roles(self, roles: Iterable[str]) -> Tuple[ManifestArtifact, ...]:
+        requested = set(roles)
+        return tuple(artifact for artifact in self.artifacts if artifact.role in requested)
 
     def validate_runtime(self, version: str) -> None:
         if not self.runtime.supports(version):
@@ -436,3 +443,310 @@ def resolve_manifest_loading(
     if dht_prefix is not None and dht_prefix != manifest.dht_prefix:
         raise ManifestError(f"--dht_prefix {dht_prefix!r} conflicts with manifest namespace {manifest.dht_prefix!r}")
     return manifest.source.revision, manifest.dht_prefix
+
+
+def _artifact_path_below_root(root: Path | str, relative_path: str) -> Path:
+    # Keep Hub snapshot symlinks lexical: resolving them would jump into the shared blob store even though
+    # the declared path itself is safely below the snapshot directory.
+    root = Path(root).absolute()
+    candidate = root.joinpath(*PurePosixPath(relative_path).parts).absolute()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ManifestError(f"Artifact escapes verification root: {relative_path}") from exc
+    return candidate
+
+
+def _verify_artifact_file(artifact: ManifestArtifact, candidate: Path) -> os.stat_result:
+    try:
+        stat_result = candidate.stat()
+    except OSError as exc:
+        raise ManifestError(f"Could not read artifact {artifact.path}: {exc}") from exc
+    if not candidate.is_file():
+        raise ManifestError(f"Artifact {artifact.path} is not a regular file")
+    if stat_result.st_size != artifact.size:
+        raise ManifestError(f"Artifact {artifact.path} has size {stat_result.st_size}, expected {artifact.size}")
+
+    digest = hashlib.sha256()
+    try:
+        with candidate.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise ManifestError(f"Could not read artifact {artifact.path}: {exc}") from exc
+    if digest.hexdigest() != artifact.sha256:
+        raise ManifestError(f"Artifact {artifact.path} does not match its declared SHA-256")
+    return stat_result
+
+
+@dataclass
+class ManifestArtifactVerifier:
+    """Download declared artifacts at the pinned revision and verify them before use.
+
+    A verifier deliberately materializes only requested files. This preserves Petals' partial-checkpoint
+    behavior: a worker verifies the shards containing its assigned blocks, while an API client verifies the
+    tokenizer and the shards containing its local embeddings/head. Successful hashes are cached only while
+    the resolved path, size, and modification timestamp remain unchanged.
+    """
+
+    manifest: ModelManifest
+    repository: str
+    revision: str
+    token: Optional[Union[str, bool]] = None
+    cache_dir: Optional[Union[str, os.PathLike]] = None
+    max_disk_space: Optional[int] = None
+    artifact_root: Optional[Union[str, os.PathLike]] = None
+    _verified: Dict[Tuple[str, int, int, str], bool] = field(default_factory=dict, init=False, repr=False)
+    _snapshot_root: Optional[Path] = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.repository != self.manifest.source.repository:
+            raise ManifestError(
+                f"Artifact verifier repository is {self.repository!r}, expected {self.manifest.source.repository!r}"
+            )
+        if self.revision != self.manifest.source.revision:
+            raise ManifestError(
+                f"Artifact verifier revision is {self.revision!r}, expected {self.manifest.source.revision!r}"
+            )
+        if self.artifact_root is not None:
+            self._snapshot_root = Path(self.artifact_root).absolute()
+        elif self.cache_dir is None:
+            from drift.utils.disk_cache import DEFAULT_CACHE_DIR
+
+            self.cache_dir = DEFAULT_CACHE_DIR
+
+    @property
+    def snapshot_root(self) -> Path:
+        if self._snapshot_root is None:
+            raise ManifestError("No manifest artifacts have been materialized yet")
+        return self._snapshot_root
+
+    def ensure_startup_metadata(self, *, include_tokenizer: bool = False) -> Path:
+        roles: Set[str] = {"config", "weight_index"}
+        if include_tokenizer:
+            roles.update(("chat_template", "tokenizer"))
+        artifacts = self.manifest.artifacts_for_roles(roles)
+        if not any(artifact.role == "config" for artifact in artifacts):
+            raise ManifestError("Manifest has no configuration artifact")
+        for artifact in artifacts:
+            self.ensure_path(artifact.path, allowed_roles=roles)
+        return self.snapshot_root
+
+    def ensure_path(self, path: str, *, allowed_roles: Optional[Iterable[str]] = None) -> Path:
+        artifact = self.manifest.get_artifact(path)
+        if allowed_roles is not None and artifact.role not in set(allowed_roles):
+            raise ManifestError(
+                f"Artifact {artifact.path!r} has role {artifact.role!r}, expected one of {sorted(set(allowed_roles))}"
+            )
+
+        candidate = None
+        if self._snapshot_root is not None:
+            candidate = _artifact_path_below_root(self._snapshot_root, artifact.path)
+        if candidate is None or (not candidate.exists() and self.artifact_root is None):
+            try:
+                from huggingface_hub import hf_hub_download
+                from huggingface_hub.utils import LocalEntryNotFoundError
+
+                try:
+                    resolved = hf_hub_download(
+                        self.repository,
+                        artifact.path,
+                        revision=self.revision,
+                        token=self.token,
+                        cache_dir=self.cache_dir,
+                        local_files_only=True,
+                    )
+                except LocalEntryNotFoundError:
+                    resolved = None
+
+                if resolved is None:
+                    from drift.utils.disk_cache import allow_cache_writes, free_disk_space_for
+
+                    Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
+                    with allow_cache_writes(self.cache_dir):
+                        free_disk_space_for(
+                            artifact.size,
+                            cache_dir=self.cache_dir,
+                            max_disk_space=self.max_disk_space,
+                        )
+                        resolved = hf_hub_download(
+                            self.repository,
+                            artifact.path,
+                            revision=self.revision,
+                            token=self.token,
+                            cache_dir=self.cache_dir,
+                        )
+            except Exception as exc:
+                raise ManifestError(
+                    f"Could not materialize declared artifact {artifact.path} from "
+                    f"{self.repository}@{self.revision}: {exc}"
+                ) from exc
+            candidate = Path(resolved).absolute()
+            self._snapshot_root = candidate
+            for _ in PurePosixPath(artifact.path).parts:
+                self._snapshot_root = self._snapshot_root.parent
+
+        self._verify(artifact, candidate)
+        return candidate
+
+    def verify_resolved_file(
+        self, path: Union[str, os.PathLike], *, allowed_roles: Optional[Iterable[str]] = None
+    ) -> Path:
+        candidate = Path(path).absolute()
+        matches = []
+        candidate_parts = candidate.parts
+        for artifact in self.manifest.artifacts:
+            artifact_parts = PurePosixPath(artifact.path).parts
+            if len(candidate_parts) >= len(artifact_parts) and tuple(candidate_parts[-len(artifact_parts) :]) == tuple(
+                artifact_parts
+            ):
+                matches.append(artifact)
+        if len(matches) != 1:
+            raise ManifestError(
+                f"Resolved checkpoint file {candidate} does not map uniquely to a declared manifest artifact"
+            )
+        artifact = matches[0]
+        if allowed_roles is not None and artifact.role not in set(allowed_roles):
+            raise ManifestError(
+                f"Resolved file {artifact.path!r} has role {artifact.role!r}, expected one of "
+                f"{sorted(set(allowed_roles))}"
+            )
+        self._verify(artifact, candidate)
+        return candidate
+
+    def verify_checkpoint_files(self, paths: Sequence[Union[str, os.PathLike]]) -> None:
+        if not paths:
+            raise ManifestError("Model loader resolved no checkpoint artifacts")
+        for path in paths:
+            self.verify_resolved_file(path, allowed_roles=_CHECKPOINT_ROLES)
+
+    def _verify(self, artifact: ManifestArtifact, candidate: Path) -> None:
+        try:
+            stat_result = candidate.stat()
+        except OSError as exc:
+            raise ManifestError(f"Could not read artifact {artifact.path}: {exc}") from exc
+        cache_key = (str(candidate), stat_result.st_size, stat_result.st_mtime_ns, artifact.sha256)
+        if cache_key in self._verified:
+            return
+        _verify_artifact_file(artifact, candidate)
+        self._verified = {key: value for key, value in self._verified.items() if key[0] != str(candidate)}
+        self._verified[cache_key] = True
+
+
+def _select_snapshot_artifacts(files: Iterable[str], root: Path | str) -> Dict[str, str]:
+    """Select the deterministic Transformers artifact set from one local Hub snapshot."""
+    root = Path(root)
+    normalized_files = {PurePosixPath(path).as_posix() for path in files}
+    if "config.json" not in normalized_files:
+        raise ManifestError("Snapshot does not contain config.json")
+
+    selected = {"config.json": "config"}
+    for path in sorted(normalized_files):
+        pure_path = PurePosixPath(path)
+        if pure_path.name in _TOKENIZER_FILENAMES:
+            selected[path] = "tokenizer"
+        elif (path == "chat_template.jinja" or path.startswith("chat_templates/")) and path.endswith(".jinja"):
+            selected[path] = "chat_template"
+    if "tokenizer" not in set(selected.values()):
+        raise ManifestError("Snapshot does not contain a recognized tokenizer artifact")
+
+    index_path = next((path for path in _CHECKPOINT_INDEX_PREFERENCE if path in normalized_files), None)
+    if index_path is not None:
+        selected[index_path] = "weight_index"
+        try:
+            index = json.loads(_artifact_path_below_root(root, index_path).read_text(encoding="utf-8"))
+            weight_map = index["weight_map"]
+        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise ManifestError(f"Could not read checkpoint index {index_path}: {exc}") from exc
+        if not isinstance(weight_map, dict) or not weight_map:
+            raise ManifestError(f"Checkpoint index {index_path} has no non-empty weight_map")
+        weight_paths = set(weight_map.values())
+        if any(not isinstance(path, str) for path in weight_paths):
+            raise ManifestError(f"Checkpoint index {index_path} contains a non-string shard path")
+        weight_paths = sorted(weight_paths)
+        missing = set(weight_paths) - normalized_files
+        if missing:
+            raise ManifestError(f"Checkpoint index {index_path} references missing shards: {sorted(missing)}")
+        selected.update((path, "weight") for path in weight_paths)
+    else:
+        checkpoint_path = next((path for path in _CHECKPOINT_PREFERENCE if path in normalized_files), None)
+        if checkpoint_path is None:
+            raise ManifestError(
+                "Snapshot contains no supported checkpoint; expected safetensors or PyTorch weights/index"
+            )
+        selected[checkpoint_path] = "weight"
+    return selected
+
+
+def create_manifest_from_snapshot(
+    *,
+    repository: str,
+    revision: str,
+    artifact_root: Path | str,
+    name: str,
+    aliases: Sequence[str],
+    license_name: str,
+    gated: bool,
+    minimum_version: str = "2.3.0.dev0",
+    maximum_version_exclusive: str = "2.4.0",
+    attention_implementation: str = "auto",
+    dtype: str = "bfloat16",
+    quantization: str = "none",
+) -> ModelManifest:
+    """Create a deterministic v1 manifest from a complete, immutable local Hub snapshot."""
+    artifact_root = Path(artifact_root).resolve()
+    files = sorted(path.relative_to(artifact_root).as_posix() for path in artifact_root.rglob("*") if path.is_file())
+    selected = _select_snapshot_artifacts(files, artifact_root)
+
+    try:
+        config = json.loads(_artifact_path_below_root(artifact_root, "config.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ManifestError(f"Could not read config.json: {exc}") from exc
+    text_config = config.get("text_config", config)
+    architectures = text_config.get("architectures") or config.get("architectures")
+    architecture = architectures[0] if isinstance(architectures, list) and architectures else None
+    num_blocks = text_config.get("num_hidden_layers")
+    context_length = text_config.get("max_position_embeddings")
+    if not isinstance(architecture, str) or not architecture:
+        raise ManifestError("config.json does not declare a usable architectures[0]")
+    if isinstance(num_blocks, bool) or not isinstance(num_blocks, int) or num_blocks < 1:
+        raise ManifestError("config.json does not declare a positive num_hidden_layers")
+    if isinstance(context_length, bool) or not isinstance(context_length, int) or context_length < 1:
+        raise ManifestError("config.json does not declare a positive max_position_embeddings")
+
+    artifacts = []
+    for path, role in sorted(selected.items()):
+        candidate = _artifact_path_below_root(artifact_root, path)
+        digest = hashlib.sha256()
+        with candidate.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        artifacts.append({"role": role, "path": path, "sha256": digest.hexdigest(), "size": candidate.stat().st_size})
+
+    return ModelManifest.from_dict(
+        {
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "name": name,
+            "aliases": list(aliases),
+            "source": {"repository": repository, "revision": revision},
+            "model": {
+                "architecture": architecture,
+                "num_blocks": num_blocks,
+                "context_length": context_length,
+                "license": license_name,
+                "gated": gated,
+            },
+            "runtime": {
+                "implementation": "drift",
+                "minimum_version": minimum_version,
+                "maximum_version_exclusive": maximum_version_exclusive,
+                "protocol_version": MANIFEST_PROTOCOL_VERSION,
+                "tensor_schema": "hidden-states-v1",
+                "attention_implementation": attention_implementation,
+                "dtype": dtype,
+                "quantization": quantization,
+                "adapter_profile": "none",
+            },
+            "artifacts": artifacts,
+        }
+    )

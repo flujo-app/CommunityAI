@@ -313,9 +313,15 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    identities and content-derived DHT namespaces; worker and API loading pin the
    repository revision and execution profile; clients filter mismatched DHT records;
    and both sides compare the digest during RPC setup and compute requests. Legacy
-   private prefixes remain available when no manifest is supplied. Automatic cache
-   artifact enforcement, reproducible manifest generation, signatures, authenticated
-   transport, rotation, and revocation remain open.
+   private prefixes remain available when no manifest is supplied. The artifact
+   integrity slice is also implemented: reproducible generation resolves Hub revisions
+   to full commits; API and worker loading verify declared config, tokenizer, index and
+   only the checkpoint shards they actually need before parsing or deserialization;
+   undeclared or poisoned files fail closed; and checked-in canonical vectors pin the
+   digest contract. Native Windows and a real multi-Machine Fly Linux swarm have both
+   passed manifested exact-parity loading, and a poisoned Fly worker was rejected
+   before it could announce blocks. Native macOS and real resumed-download validation,
+   signatures, authenticated transport, rotation, and revocation remain open.
 4. **Unified local node and multi-model OpenAI API.** Introduce the persistent node
    daemon, worker supervision, a versioned local control API, multi-model discovery
    and lazy client loading, a stable localhost OpenAI endpoint, local API-key

@@ -10,7 +10,7 @@ import argparse
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 
 import drift
-from drift.model_manifest import ManifestError, ModelManifest, resolve_manifest_loading
+from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest, resolve_manifest_loading
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
 use_hivemind_log_handler("in_root_logger")
@@ -27,6 +27,8 @@ def main():
     parser.add_argument("--initial_peers", nargs="+", required=True, help="Multiaddrs of swarm peers to join via")
     parser.add_argument("--dht_prefix", default=None, help="DHT prefix the swarm's servers announce under")
     parser.add_argument("--revision", default=None, help="Exact model revision to load for legacy/private swarms")
+    parser.add_argument("--token", default=None, help="Hugging Face token for gated model artifacts")
+    parser.add_argument("--cache_dir", default=None, help="Hugging Face cache directory")
     parser.add_argument(
         "--model_manifest",
         default=None,
@@ -71,6 +73,7 @@ def main():
         parser.error("--max_retries must be at least 1")
 
     manifest = None
+    artifact_verifier = None
     if args.model_manifest is not None:
         try:
             manifest = ModelManifest.load(args.model_manifest)
@@ -91,6 +94,14 @@ def main():
                 raise ManifestError(
                     "Content-addressed adapter profiles are declared but not executable in this release"
                 )
+            artifact_verifier = ManifestArtifactVerifier(
+                manifest,
+                repository=args.model,
+                revision=args.revision,
+                token=args.token,
+                cache_dir=args.cache_dir,
+            )
+            artifact_verifier.ensure_startup_metadata(include_tokenizer=True)
         except ManifestError as exc:
             parser.error(str(exc))
     elif args.torch_dtype is None:
@@ -114,18 +125,30 @@ def main():
     from drift import AutoDistributedModelForCausalLM
 
     logger.info(f"Loading tokenizer and client-side weights for {args.model}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.revision)
-    model = AutoDistributedModelForCausalLM.from_pretrained(
-        args.model,
+    if artifact_verifier is not None:
+        tokenizer = AutoTokenizer.from_pretrained(artifact_verifier.snapshot_root, local_files_only=True)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model,
+            revision=args.revision,
+            token=args.token,
+            cache_dir=args.cache_dir,
+        )
+    model_kwargs = dict(
         initial_peers=args.initial_peers,
         dht_prefix=args.dht_prefix,
         revision=args.revision,
         manifest_digest=manifest.digest if manifest is not None else None,
         torch_dtype=getattr(torch, args.torch_dtype),
+        token=args.token,
+        cache_dir=args.cache_dir,
         request_timeout=args.request_timeout,
         max_retries=args.max_retries,
         max_backoff=5,
     )
+    if artifact_verifier is not None:
+        model_kwargs["artifact_verifier"] = artifact_verifier
+    model = AutoDistributedModelForCausalLM.from_pretrained(args.model, **model_kwargs)
 
     app = create_app(
         model,
