@@ -15,6 +15,30 @@ following remotes are configured in the local revival checkout:
 - `nakshatra`: an active, independent llama.cpp/GGUF distributed-inference effort
   that we will track for discovery, transport, and reliability ideas.
 
+## Current status (2026-08-22)
+
+Milestones 1 through 4 are complete. The revival has exact cross-platform inference
+parity, real multi-machine failure recovery, signed manifest and artifact integrity,
+and a persistent multi-model local node with an authenticated OpenAI-compatible API,
+supervised contribution workers, and measured edge behavior.
+
+Milestone 5 is active. Its architectural foundation is now fixed:
+
+- PySide 6 is the selected product shell; both spike alternatives passed packaged UI
+  smokes on Windows, Linux, and macOS before the decision was recorded in
+  [`ADR 0002`](adr/0002-desktop-shell-spike.md).
+- The desktop remains a client and lifecycle supervisor of the standalone local node;
+  model, DHT, and worker runtimes do not move into the GUI process.
+- Privileged control credentials and revocable OpenAI client keys are separate
+  authorization domains. An inference key cannot manage workers or keys, and the
+  control credential cannot perform inference.
+
+The immediate objective is to promote the shared spike client and acceptance contract
+into the production PySide application, then complete native credential ownership,
+onboarding and process lifecycle, contribution policies and budgets, accessibility and
+resource measurements, and signed installer/update/rollback validation. Milestones 6
+through 8 remain planned after this desktop foundation.
+
 ## Scope and product destination
 
 Inference is the product. Distributed training and fine-tuning are compatibility
@@ -375,29 +399,37 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    used 16,384,000 bytes for local embedding/head parameters and 11,773,110 bytes of
    cold cache growth; this model fits the current local-logits edge design, while
    larger selectable models still require their own published measurements.
-5. **Desktop application and contribution controls.** Ship signed installers for
-   Windows, Linux, and macOS; complete first-run onboarding; manage keys in native
-   credential stores; show endpoint, model, route and contribution health; enforce
-   VRAM/storage/bandwidth/power/schedule budgets; implement model allow/prefer/deny
-   policy; pause safely; integrate background startup and updates; and clearly
-   disclose prompt visibility. Perform a short implementation spike before choosing
-   between a Python-native Qt/PySide shell and a webview shell with a Python sidecar.
-   The decision must consider GPU-process isolation, installer/update signing, tray
-   and service integration, accessibility, bundle size, and cross-platform CI.
+5. **Desktop application and contribution controls — in progress.** Build the selected
+   PySide desktop and ship signed installers for Windows, Linux, and macOS; complete
+   first-run onboarding; manage keys in native credential stores; show endpoint, model,
+   route and contribution health; enforce VRAM/storage/bandwidth/power/schedule budgets;
+   implement model allow/prefer/deny policy; pause safely; integrate background startup
+   and updates; and clearly disclose prompt visibility. The completed implementation
+   spike compared a Python-native Qt/PySide shell with a webview shell and considered
+   process isolation, installer/update signing, tray and service integration,
+   accessibility, bundle size, and cross-platform CI.
 
-   The shell comparison and its fixed acceptance criteria are tracked in
-   [`ADR 0002`](adr/0002-desktop-shell-spike.md). All six clean Windows, Linux, and
-   macOS package/UI-smoke jobs passed; PySide 6 is selected for product implementation
-   because it has the more consistent cross-platform runtime and avoids pywebview's
-   948 MB Linux Qt bundle and additional JavaScript bridge. The shared protocol client
-   and acceptance contract will be promoted from the spike.
+   **Completed foundation.** The shell comparison and its fixed acceptance criteria
+   are tracked in [`ADR 0002`](adr/0002-desktop-shell-spike.md). All six clean Windows,
+   Linux, and macOS package/UI-smoke jobs passed. PySide 6 is selected for product
+   implementation because it has the more consistent cross-platform runtime and avoids
+   pywebview's 948 MB Linux Qt bundle and additional JavaScript bridge. The pywebview
+   prototype remains evidence, not a second product frontend.
 
-   The first production security prerequisite is implemented: managed OpenAI client
+   The first production security prerequisite is also complete: managed OpenAI client
    keys authorize only `/v1/*`, while a distinct privileged control credential
    authorizes only `/control/v1/*`. Headless nodes generate separate private files,
-   startup rejects overlaps, and upgraded installations retain their existing client
-   key while receiving a new control key. Native credential-store ownership remains
-   part of the selected desktop implementation.
+   startup rejects missing, duplicate, or overlapping control keys, and upgraded
+   installations retain their existing client key while receiving a new control key.
+
+   **Next implementation sequence.** Promote the shell-neutral node client and
+   acceptance contract into a production PySide package; move the control credential
+   from the private-file bridge into native OS credential stores; add first-run setup,
+   single-instance behavior, node supervision, login startup, reconnect, and clean
+   shutdown; enforce contribution budgets and allow/prefer/deny policy in the node rather
+   than only in the GUI; then measure startup/RSS and crash isolation and complete
+   keyboard/screen-reader, signed installer, upgrade, rollback, uninstall, and retained-
+   data gates on all three operating systems.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and
    LAN discovery; define threshold-signed, forkable catalogs; publish privacy-safe
@@ -427,7 +459,7 @@ Detailed baseline evidence and the remaining gates are recorded in
 The following questions require written architecture decisions and prototypes; they
 must not be settled accidentally by the first GUI implementation:
 
-| Decision | Starting hypothesis | Evidence required |
+| Decision | Current position | Evidence required |
 | --- | --- | --- |
 | Desktop shell | Resolved in ADR 0002: implement the product shell in PySide 6 while preserving the standalone node boundary. | Signed installer prototypes on all three OSes, upgrade/rollback, tray/service behavior, accessibility, crash isolation, and startup/RSS measurements remain release gates. |
 | Thin edge | Keep embeddings/head local where affordable; add remote ingress/egress roles only for devices that miss published budgets. | Per-model RAM/disk/latency data, token parity, logits/sampling trade-offs, privacy analysis, and failover tests. |
