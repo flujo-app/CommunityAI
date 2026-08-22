@@ -26,6 +26,7 @@ from drift.client.config import ClientConfig
 from drift.client.routing.sequence_info import RemoteSequenceInfo
 from drift.client.routing.spending_policy import NoSpendingPolicy
 from drift.data_structures import ModuleUID, RemoteSpanInfo, ServerState
+from drift.protocol_identity import TRANSPORT_SECURITY, ReplayGuard, RevocationStore, SignedRecord
 from drift.server.handler import TransformerConnectionHandler
 from drift.utils.dht import get_remote_module_infos
 from drift.utils.ping import PingAggregator
@@ -84,6 +85,11 @@ class RemoteSequenceManager:
         assert len(block_uids) > 0, "Sequences must contain at least one block"
 
         self.config = config
+        if config.manifest_digest is None:
+            if config.manifest_execution_profile is not None or config.revocation_files:
+                raise ValueError("Manifest execution profiles and revocations require manifest_digest")
+        elif config.manifest_execution_profile is None:
+            raise ValueError("Manifested clients require the exact manifest execution profile")
         if state is None:
             state = SequenceManagerState()
         self.state = state
@@ -99,9 +105,12 @@ class RemoteSequenceManager:
                     num_workers=32,
                     startup_timeout=config.daemon_startup_timeout,
                     start=True,
+                    tls=True,
                 )
         assert isinstance(dht, DHT) and dht.is_alive(), "`dht` must be a running hivemind.DHT instance"
         self.dht = dht
+        self.revocations = RevocationStore.from_files(config.revocation_files)
+        self.announcement_replay_guard = ReplayGuard()
 
         if state.p2p is None:
             state.p2p = RemoteExpertWorker.run_coroutine(dht.replicate_p2p())
@@ -352,6 +361,9 @@ class RemoteSequenceManager:
             self.block_uids,
             active_adapter=self.config.active_adapter,
             manifest_digest=self.config.manifest_digest,
+            manifest_execution_profile=self.config.manifest_execution_profile,
+            revocations=self.revocations,
+            replay_guard=self.announcement_replay_guard,
             latest=True,
         )
 
@@ -470,6 +482,15 @@ class RemoteSequenceManager:
                         f"Server {peer_id} returned manifest digest {actual_digest!r}; "
                         f"expected {self.config.manifest_digest!r}"
                     )
+                if self.config.manifest_digest is not None:
+                    server_info = self.state.sequence_info.block_infos[0].servers[peer_id]
+                    announcement = SignedRecord.from_dict(server_info.signed_announcement)
+                    if self.state.rpc_info.get("server_peer_id") != peer_id.to_base58():
+                        raise RuntimeError(f"Server {peer_id} returned a different authenticated PeerID")
+                    if self.state.rpc_info.get("identity_key_id") != announcement.key_id:
+                        raise RuntimeError(f"Server {peer_id} RPC identity differs from its signed announcement")
+                    if self.state.rpc_info.get("transport_security") != TRANSPORT_SECURITY:
+                        raise RuntimeError(f"Server {peer_id} did not confirm authenticated encrypted transport")
                 self.on_request_success(peer_id)
                 break
             except Exception as e:

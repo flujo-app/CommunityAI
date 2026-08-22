@@ -6,6 +6,7 @@
     drift dht ...                   A standalone lightweight DHT bootstrap peer
     drift api <model> ...           An OpenAI-compatible HTTP API backed by the swarm
     drift manifest <file>           Validate and inspect a ModelManifest v1
+    drift identity ...              Manage public-swarm identities and trust records
 
 Each subcommand owns its own argument parsing; this shim just strips the subcommand
 name and delegates. Also runnable as ``python -m drift.cli``.
@@ -13,7 +14,7 @@ name and delegates. Also runnable as ``python -m drift.cli``.
 
 import sys
 
-_COMMANDS = ("up", "down", "server", "dht", "api", "manifest")
+_COMMANDS = ("up", "down", "server", "dht", "api", "manifest", "identity")
 
 _USAGE = """usage: drift <command> [options]
 
@@ -26,6 +27,7 @@ commands:
   dht       Run a standalone DHT bootstrap peer
   api       Serve an OpenAI-compatible HTTP API backed by the swarm (requires drift[api])
   manifest  Validate and inspect a content-addressed ModelManifest v1
+  identity  Create, inspect, rotate, revoke, and verify public-swarm identities
 
 Run `drift <command> --help` for command-specific options.
 """
@@ -54,6 +56,8 @@ def main() -> int:
         from drift.cli.run_api import main as run
     elif command == "manifest":
         from drift.cli.run_manifest import main as run
+    elif command == "identity":
+        from drift.cli.run_identity import main as run
     else:  # dht
         from drift.cli.run_dht import main as run
 

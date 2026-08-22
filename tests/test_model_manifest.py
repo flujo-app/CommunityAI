@@ -264,6 +264,122 @@ def test_incremental_verifier_hashes_metadata_and_requested_shards(tmp_path):
         verifier.ensure_path("README.md")
 
 
+def test_interrupted_download_can_resume_and_is_reverified(tmp_path, monkeypatch):
+    """A real interrupted HTTP response resumes with Range and stays hidden until verified."""
+    import socket
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from huggingface_hub.utils import LocalEntryNotFoundError
+
+    resumed_payload = b"x" * (1024 * 1024) + b"verified tail"
+    files = {"config.json": b"c", "tokenizer.json": b"tt", "weights.bin": resumed_payload}
+    source = manifest_dict()
+    for artifact in source["artifacts"]:
+        content = files[artifact["path"]]
+        artifact["size"] = len(content)
+        artifact["sha256"] = hashlib.sha256(content).hexdigest()
+    manifest = ModelManifest.from_dict(source)
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=tmp_path
+    )
+
+    class InterruptOnceHandler(BaseHTTPRequestHandler):
+        requests = []
+
+        def do_GET(self):
+            range_header = self.headers.get("Range")
+            self.requests.append(range_header)
+            if range_header is None:
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(resumed_payload)))
+                self.end_headers()
+                self.wfile.write(resumed_payload[: 1024 * 1024])
+                self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.connection.close()
+                return
+
+            offset = int(range_header.removeprefix("bytes=").removesuffix("-"))
+            self.send_response(206)
+            self.send_header("Content-Length", str(len(resumed_payload) - offset))
+            self.send_header("Content-Range", f"bytes {offset}-{len(resumed_payload) - 1}/{len(resumed_payload)}")
+            self.end_headers()
+            self.wfile.write(resumed_payload[offset:])
+
+        def log_message(self, format, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), InterruptOnceHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def cache_miss(*args, **kwargs):
+        raise LocalEntryNotFoundError("not cached")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", cache_miss)
+    monkeypatch.setattr(
+        "huggingface_hub.hf_hub_url", lambda *args, **kwargs: f"http://127.0.0.1:{server.server_port}/weights.bin"
+    )
+    monkeypatch.setattr("drift.utils.disk_cache.free_disk_space_for", lambda *args, **kwargs: None)
+    try:
+        with pytest.raises(ManifestError, match="Interrupted download"):
+            verifier.ensure_path("weights.bin", allowed_roles={"weight"})
+        partial, final, _ = verifier._resumable_paths(manifest.get_artifact("weights.bin"))
+        assert partial.stat().st_size == 1024 * 1024
+        assert not final.exists()
+
+        assert verifier.ensure_path("weights.bin", allowed_roles={"weight"}) == final.absolute()
+        assert final.read_bytes() == resumed_payload
+        assert InterruptOnceHandler.requests == [None, f"bytes={1024 * 1024}-"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_mixed_cached_and_downloaded_artifacts_share_one_snapshot_root(tmp_path, monkeypatch):
+    from huggingface_hub.utils import LocalEntryNotFoundError
+
+    files = {"config.json": b"c", "tokenizer.json": b"tt", "weights.bin": b"www"}
+    source = manifest_dict()
+    for artifact in source["artifacts"]:
+        content = files[artifact["path"]]
+        artifact["size"] = len(content)
+        artifact["sha256"] = hashlib.sha256(content).hexdigest()
+    manifest = ModelManifest.from_dict(source)
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=tmp_path / "drift-cache"
+    )
+    hub_snapshot = tmp_path / "hub-cache" / "snapshots" / manifest.source.revision
+    hub_snapshot.mkdir(parents=True)
+    (hub_snapshot / "tokenizer.json").write_bytes(files["tokenizer.json"])
+
+    def local_download(repository, filename, **kwargs):
+        if filename == "tokenizer.json":
+            return str(hub_snapshot / filename)
+        raise LocalEntryNotFoundError("not cached")
+
+    def resumed_download(artifact, *, destination=None):
+        _, default_final, _ = verifier._resumable_paths(artifact)
+        final = default_final if destination is None else destination
+        final.parent.mkdir(parents=True, exist_ok=True)
+        final.write_bytes(files[artifact.path])
+        return str(final)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", local_download)
+    monkeypatch.setattr(verifier, "_resumable_hub_download", resumed_download)
+    monkeypatch.setattr("drift.utils.disk_cache.free_disk_space_for", lambda *args, **kwargs: None)
+
+    config_path = verifier.ensure_path("config.json", allowed_roles={"config"})
+    tokenizer_path = verifier.ensure_path("tokenizer.json", allowed_roles={"tokenizer"})
+
+    assert config_path.parent == tokenizer_path.parent == verifier.snapshot_root
+    assert config_path.read_bytes() == files["config.json"]
+    assert tokenizer_path.read_bytes() == files["tokenizer.json"]
+    assert tokenizer_path != hub_snapshot / "tokenizer.json"
+
+
 def test_server_weight_loader_rejects_tampering_before_deserialization(tmp_path, monkeypatch):
     from drift.server import from_pretrained
 
@@ -366,7 +482,16 @@ def test_server_cli_applies_manifest_profile(tmp_path, monkeypatch):
     path.write_text(json.dumps(manifest_dict()), encoding="utf-8")
     args = vars(
         run_server.build_parser().parse_args(
-            ["org/tiny-test", "--new_swarm", "--model_manifest", str(path), "--increase_file_limit", "0"]
+            [
+                "org/tiny-test",
+                "--new_swarm",
+                "--model_manifest",
+                str(path),
+                "--identity_path",
+                str(tmp_path / "worker.key"),
+                "--increase_file_limit",
+                "0",
+            ]
         )
     )
     args.pop("config", None)
@@ -382,3 +507,16 @@ def test_server_cli_applies_manifest_profile(tmp_path, monkeypatch):
     assert resolved["attn_implementation"] == "eager"
     assert resolved["quant_type"] is QuantType.NONE
     assert resolved["model_manifest"].digest == resolved["dht_prefix"].removeprefix("drift-m1-")
+
+
+def test_manifested_server_requires_persistent_identity(tmp_path, monkeypatch):
+    from drift.cli import run_server
+
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest_dict()), encoding="utf-8")
+    args = vars(run_server.build_parser().parse_args(["org/tiny-test", "--new_swarm", "--model_manifest", str(path)]))
+    args.pop("config", None)
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+
+    with pytest.raises(ManifestError, match="identity_path"):
+        run_server.server_from_args(args)

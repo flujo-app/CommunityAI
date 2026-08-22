@@ -35,6 +35,12 @@ def main():
         help="Path to a ModelManifest v1. Pins revision, runtime compatibility, and DHT namespace",
     )
     parser.add_argument(
+        "--revocation_file",
+        action="append",
+        default=[],
+        help="Signed identity rotation/revocation JSON to enforce (repeatable; manifest mode only)",
+    )
+    parser.add_argument(
         "--torch_dtype",
         default=None,
         choices=["float32", "float16", "bfloat16"],
@@ -104,6 +110,8 @@ def main():
             artifact_verifier.ensure_startup_metadata(include_tokenizer=True)
         except ManifestError as exc:
             parser.error(str(exc))
+    elif args.revocation_file:
+        parser.error("--revocation_file is only valid with --model_manifest")
     elif args.torch_dtype is None:
         args.torch_dtype = "bfloat16"
 
@@ -139,6 +147,8 @@ def main():
         dht_prefix=args.dht_prefix,
         revision=args.revision,
         manifest_digest=manifest.digest if manifest is not None else None,
+        manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
+        revocation_files=args.revocation_file,
         torch_dtype=getattr(torch, args.torch_dtype),
         token=args.token,
         cache_dir=args.cache_dir,

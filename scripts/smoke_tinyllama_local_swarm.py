@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import argparse
 import faulthandler
+import shutil
+import tempfile
 import time
+from pathlib import Path
 
 import torch
 from hivemind import DHT
@@ -26,6 +29,7 @@ from drift import AutoDistributedModelForCausalLM
 from drift.constants import DTYPE_MAP
 from drift.data_structures import UID_DELIMITER, ModelInfo, ServerInfo, ServerState
 from drift.model_manifest import ManifestArtifactVerifier, ModelManifest, resolve_manifest_loading
+from drift.protocol_identity import NodeIdentity
 from drift.server.block_utils import resolve_block_dtype
 from drift.server.server import ModuleContainer
 from drift.utils.auto_config import AutoDistributedConfig
@@ -58,11 +62,18 @@ def wait_for_dht_announcement(
     *,
     min_replicas: int = 1,
     manifest_digest: str | None = None,
+    manifest_execution_profile: dict | None = None,
 ) -> None:
     uids = [f"{dht_prefix}{UID_DELIMITER}{block_index}" for block_index in block_indices]
     deadline = time.time() + timeout
     while time.time() < deadline:
-        module_infos = get_remote_module_infos(dht, uids, manifest_digest=manifest_digest, latest=True)
+        module_infos = get_remote_module_infos(
+            dht,
+            uids,
+            manifest_digest=manifest_digest,
+            manifest_execution_profile=manifest_execution_profile,
+            latest=True,
+        )
         replicas = [len(module_info.servers) for module_info in module_infos]
         announced = sum(count >= min_replicas for count in replicas)
         log(f"announced_blocks={announced}/{len(uids)} replicas={replicas}")
@@ -132,6 +143,8 @@ def main() -> None:
 
     block_indices = parse_block_indices(args.block_indices)
     log(f"initializing local DHT for blocks={block_indices}")
+    identity_dir = Path(tempfile.mkdtemp(prefix="drift-smoke-identities-")) if manifest is not None else None
+    bootstrap_identity_path = identity_dir / "bootstrap.key" if identity_dir is not None else None
     dht = DHT(
         initial_peers=[],
         start=True,
@@ -140,6 +153,8 @@ def main() -> None:
         use_auto_relay=False,
         client_mode=False,
         host_maddrs=["/ip4/127.0.0.1/tcp/0"],
+        identity_path=str(bootstrap_identity_path) if bootstrap_identity_path is not None else None,
+        tls=True,
     )
     containers = []
     worker_dhts = []
@@ -165,10 +180,13 @@ def main() -> None:
         attn_cache_bytes = cache_values_per_block * get_size_in_bytes(torch_dtype) * len(block_indices)
 
         serving_dhts = [dht]
+        serving_identities = [NodeIdentity.load(bootstrap_identity_path)] if bootstrap_identity_path else [None]
         if args.test_failover:
             serving_dhts = []
+            serving_identities = []
             for replica_index in range(2):
                 log(f"starting worker DHT replica={replica_index}")
+                worker_identity_path = identity_dir / f"worker-{replica_index}.key" if identity_dir else None
                 worker_dht = DHT(
                     initial_peers=peers,
                     start=True,
@@ -177,11 +195,14 @@ def main() -> None:
                     use_auto_relay=False,
                     client_mode=False,
                     host_maddrs=["/ip4/127.0.0.1/tcp/0"],
+                    identity_path=str(worker_identity_path) if worker_identity_path is not None else None,
+                    tls=True,
                 )
                 worker_dhts.append(worker_dht)
                 serving_dhts.append(worker_dht)
+                serving_identities.append(NodeIdentity.load(worker_identity_path) if worker_identity_path else None)
 
-        for replica_index, serving_dht in enumerate(serving_dhts):
+        for replica_index, (serving_dht, serving_identity) in enumerate(zip(serving_dhts, serving_identities)):
             server_info = ServerInfo(
                 state=ServerState.JOINING,
                 throughput=1.0,
@@ -226,6 +247,8 @@ def main() -> None:
                 revision=revision,
                 token=None,
                 model_manifest=manifest,
+                protocol_identity=serving_identity,
+                manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
                 quant_type=QuantType.NONE,
                 tensor_parallel_devices=(device,),
                 start=True,
@@ -240,6 +263,7 @@ def main() -> None:
             timeout=30,
             min_replicas=2 if args.test_failover else 1,
             manifest_digest=manifest.digest if manifest is not None else None,
+            manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
         )
 
         log("loading client")
@@ -253,6 +277,7 @@ def main() -> None:
             initial_peers=peers,
             revision=revision,
             manifest_digest=manifest.digest if manifest is not None else None,
+            manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
             torch_dtype=torch_dtype,
             request_timeout=3 if args.test_failover else 60,
             max_retries=3 if args.test_failover else None,
@@ -348,6 +373,8 @@ def main() -> None:
                 worker_dht.join()
         dht.shutdown()
         dht.join()
+        if identity_dir is not None:
+            shutil.rmtree(identity_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

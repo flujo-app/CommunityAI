@@ -24,6 +24,7 @@ from hivemind.utils.streaming import split_for_streaming
 
 import drift
 from drift.data_structures import CHAIN_DELIMITER, UID_DELIMITER, Handle, ModuleUID
+from drift.protocol_identity import TRANSPORT_SECURITY
 from drift.server.backend import TransformerBackend
 from drift.server.block_functions import iterate_rpc_inference, run_rpc_backward, run_rpc_forward
 from drift.server.task_prioritizer import DummyTaskPrioritizer, TaskPrioritizerBase
@@ -65,6 +66,7 @@ class TransformerConnectionHandler(ConnectionHandler):
         session_timeout: float,
         step_timeout: float,
         manifest_digest: Optional[str] = None,
+        identity_key_id: Optional[str] = None,
         task_prioritizer: TaskPrioritizerBase = DummyTaskPrioritizer(),
         quant_type: QuantType,
     ):
@@ -84,6 +86,7 @@ class TransformerConnectionHandler(ConnectionHandler):
         self.request_timeout = request_timeout
         self.session_timeout, self.step_timeout = session_timeout, step_timeout
         self.manifest_digest = manifest_digest
+        self.identity_key_id = identity_key_id
         self._prioritizer = task_prioritizer
         self.quant_type = quant_type
 
@@ -604,6 +607,9 @@ class TransformerConnectionHandler(ConnectionHandler):
         result = {
             "version": drift.__version__,
             "manifest_digest": self.manifest_digest,
+            "server_peer_id": self.dht.peer_id.to_base58(),
+            "identity_key_id": self.identity_key_id,
+            "transport_security": TRANSPORT_SECURITY if self.manifest_digest is not None else None,
             "dht_client_mode": self.dht.client_mode,
             CACHE_TOKENS_AVAILABLE: backend.memory_cache.bytes_left // max(backend.cache_bytes_per_token.values()),
         }

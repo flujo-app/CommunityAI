@@ -9,10 +9,11 @@ jobs:
   run-tests:
     strategy:
       matrix:
-        # A single lightweight leg. This fork is validated end-to-end on real hardware by the
-        # maintainer, so CI is a cheap regression guard rather than a full compatibility matrix.
+        # Linux guards the broad offline surface; macOS additionally closes the native manifest,
+        # identity, artifact-resume, and exact-parity gate required by revival milestone 3.
         include:
           - { os: 'ubuntu', python-version: '3.12' }
+          - { os: 'macos', python-version: '3.12' }
       fail-fast: false
     runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 20
@@ -54,11 +55,40 @@ jobs:
             tests/test_inference_recovery.py \
             tests/test_join_token.py \
             tests/test_kv_cache_strategy.py \
+            tests/test_model_manifest.py \
             tests/test_openai_api.py \
             tests/test_paged_cache.py \
             tests/test_peft.py \
             tests/test_priority_pool.py \
             tests/test_process_lifetime.py \
+            tests/test_protocol_identity.py \
             tests/test_server_registry.py \
             tests/test_startup_guard.py \
             tests/test_tied_embeddings_from_pretrained.py
+
+      - name: Generate pinned TinyLlama manifest (macOS gate)
+        if: matrix.os == 'macos'
+        run: |
+          source .venv/bin/activate
+          drift manifest generate Maykeye/TinyLLama-v0 \
+            --revision main \
+            --alias tinyllama \
+            --dtype float32 \
+            --attention_implementation eager \
+            --output "$RUNNER_TEMP/tinyllama-manifest.json"
+
+      - name: Validate real Hub Range resume (macOS gate)
+        if: matrix.os == 'macos'
+        run: |
+          source .venv/bin/activate
+          python scripts/validate_manifest_resume.py "$RUNNER_TEMP/tinyllama-manifest.json"
+
+      - name: Run signed manifested exact-parity swarm (macOS gate)
+        if: matrix.os == 'macos'
+        run: |
+          source .venv/bin/activate
+          python scripts/smoke_tinyllama_local_swarm.py \
+            --device cpu \
+            --torch-dtype float32 \
+            --model-manifest "$RUNNER_TEMP/tinyllama-manifest.json" \
+            --timeout 300

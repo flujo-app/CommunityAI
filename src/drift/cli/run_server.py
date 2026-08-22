@@ -209,6 +209,8 @@ def build_parser() -> configargparse.ArgParser:
     parser.add_argument('--custom_module_path', type=str, required=False,
                         help='Path of a file with custom nn.modules, wrapped into special decorator')
     parser.add_argument('--identity_path', type=str, required=False, help='Path to identity file to be used in P2P')
+    parser.add_argument('--revocation_file', action='append', default=[], dest='revocation_files',
+                        help='Signed identity rotation/revocation JSON to enforce (repeatable; manifest mode only)')
 
     parser.add_argument("--balance_quality", type=float, default=0.75,
                         help="Rebalance the swarm if its throughput is worse than this share of the optimal "
@@ -280,6 +282,12 @@ def server_from_args(args: dict) -> Server:
         if args["adapters"]:
             raise ManifestError("--adapters conflicts with the manifest's adapter_profile 'none'")
         args["model_manifest"] = manifest
+        if not args.get("identity_path"):
+            raise ManifestError(
+                "--identity_path is required with --model_manifest so announcements use a stable libp2p signer"
+            )
+    elif args.get("revocation_files"):
+        raise ManifestError("--revocation_file is only valid with --model_manifest")
 
     host_maddrs = args.pop("host_maddrs")
     port = args.pop("port")

@@ -51,6 +51,7 @@ class ServerInfo:
     public_name: Optional[str] = None
     version: Optional[str] = None
     manifest_digest: Optional[str] = None
+    signed_announcement: Optional[Dict[str, Any]] = None
 
     network_rps: Optional[RPS] = None
     forward_rps: Optional[RPS] = None
@@ -62,6 +63,13 @@ class ServerInfo:
     using_relay: Optional[bool] = None
     cache_tokens_left: Optional[pydantic.conint(ge=0, strict=True)] = None
     next_pings: Optional[Dict[str, pydantic.confloat(ge=0, strict=True)]] = None
+
+    def signed_payload(self) -> dict:
+        """Return exactly the server metadata covered by a public-swarm signature."""
+        payload = dataclasses.asdict(self)
+        payload.pop("signed_announcement")
+        payload["state"] = self.state.value
+        return payload
 
     def to_tuple(self) -> Tuple[int, float, dict]:
         extra_info = dataclasses.asdict(self)

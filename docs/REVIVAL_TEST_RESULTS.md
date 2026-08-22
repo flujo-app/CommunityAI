@@ -13,7 +13,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | --- | --- | --- | --- |
 | 1. Reproducible execution baseline | Mostly complete | Windows CPU, Docker Linux CPU, and Windows CUDA all served blocks `0:8` and produced exact token parity | Native macOS install and smoke test |
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
-| 3. Public protocol identity and content integrity | In progress | `ModelManifest v1` pins content-derived namespaces and execution profiles; deterministic generation, incremental artifact enforcement, canonical digest vectors, manifested Windows/Linux loading, and real Fly poison rejection are proven | Native macOS manifested loading, real resumed-download tests, signed announcements, authenticated transport, rotation, and revocation |
+| 3. Public protocol identity and content integrity | Implementation complete; validation pending | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, a real Hub HTTP 206 resume, signed Windows parity/failover, and prior Fly poison rejection are proven | First green macOS security/parity workflow and signed Fly multi-machine rerun |
 
 ## Manifest artifact integrity
 
@@ -58,6 +58,35 @@ parity runner also exposed that verified metadata and checkpoint files may occup
 different cache roots, so the harness now explicitly materializes the stock
 reference checkpoint through the verifier. All six temporary Machines were
 destroyed, and the final Fly Machine list was empty.
+
+## Signed public-swarm identity and transport
+
+On 2026-08-22, manifested workers began reusing their persistent libp2p RSA key to
+sign a strict, domain-separated record covering their PeerID, manifest, execution
+profile, complete server metadata, block range, lifetime, replay sequence, and TLS
+transport profile. DHT readers reject unsigned, tampered, expired, replayed,
+equivocating, revoked, wrong-profile, wrong-PeerID, and copied-outside-range records
+before they enter route selection. `rpc_info` repeats the server PeerID and signing
+key ID over the authenticated libp2p TLS 1.3 connection. Dual-signed identity
+rotation, self/successor revocation, signed intent leases, and a user-facing
+`drift identity` CLI use the same envelope. The threat model and wire contract are
+recorded in [`PUBLIC_SWARM_SECURITY_V1.md`](PUBLIC_SWARM_SECURITY_V1.md).
+
+The Windows CPU smoke ran two independently signed full-range workers, selected one,
+stopped it during generation, replayed three cached activation tokens through the
+surviving signed identity, and completed eight generated tokens with exact stock
+parity in 3.188 seconds after interruption. A smaller real-p2pd test round-tripped a
+signed announcement through Hivemind DHT storage. Adversarial tests cover signature
+tampering, PeerID substitution, expiry, replay, equivocation, copied block keys,
+manifest mismatch, unsigned records, non-finite metadata, rotation forks,
+unauthorized revocation, and duplicate JSON keys.
+
+The artifact verifier also gained a locked content-addressed partial cache. A live
+Hub test seeded 2,097,152 bytes of TinyLlama's 9,251,608-byte `model.safetensors`,
+received `206 Content-Range: bytes 2097152-9251607/9251608`, and promoted the file
+only after its declared size and SHA-256 passed. A local fault-injecting HTTP test
+independently proves that a dropped response leaves no usable snapshot file and that
+the next request resumes at the exact byte boundary.
 
 ## Linux CPU
 

@@ -300,7 +300,7 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    client excluded its stale route, replayed 249 cached activation tokens through
    the duplicate in bounded chunks, and completed with exact stock-model parity. A
    subsequent request confirmed that the survivor's attention cache was released.
-3. **Public protocol identity and content integrity — in progress.** Specify `ModelManifest v1`
+3. **Public protocol identity and content integrity — implementation complete; validation pending.** Specify `ModelManifest v1`
    and content-derived DHT namespaces; pin exact model revisions; sign and validate
    worker identity, announcements, intent leases, and execution profiles; reject
    manifest mismatches; authenticate and encrypt transport; define key rotation and
@@ -320,8 +320,18 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    undeclared or poisoned files fail closed; and checked-in canonical vectors pin the
    digest contract. Native Windows and a real multi-Machine Fly Linux swarm have both
    passed manifested exact-parity loading, and a poisoned Fly worker was rejected
-   before it could announce blocks. Native macOS and real resumed-download validation,
-   signatures, authenticated transport, rotation, and revocation remain open.
+   before it could announce blocks. The security slice is now implemented as
+   specified in [`PUBLIC_SWARM_SECURITY_V1.md`](PUBLIC_SWARM_SECURITY_V1.md):
+   persistent libp2p identities sign complete, expiring worker announcements;
+   clients bind their manifest, execution profile, block range, revocation state,
+   replay order, and RPC PeerID to that signature; manifested transport explicitly
+   requires libp2p TLS 1.3; and signed intent leases, dual-signed rotation, and
+   successor revocation share the same strict envelope. Interrupted artifacts resume
+   into a locked private partial and are atomically promoted only after size and
+   SHA-256 verification. A real Hub test resumed TinyLlama at byte 2,097,152 with
+   HTTP 206, and signed Windows CPU parity plus in-generation failover passed. The
+   macOS gate is now in CI and the Fly harness uses persistent signing identities;
+   their first green/rerun evidence is still required before public-network approval.
 4. **Unified local node and multi-model OpenAI API.** Introduce the persistent node
    daemon, worker supervision, a versioned local control API, multi-model discovery
    and lazy client loading, a stable localhost OpenAI endpoint, local API-key

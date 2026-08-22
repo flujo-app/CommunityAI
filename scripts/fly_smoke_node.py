@@ -111,6 +111,8 @@ def worker_args() -> list[str]:
         MODEL,
         "--model_manifest",
         manifest_path,
+        "--identity_path",
+        "/tmp/fly-smoke-worker.id",
         "--initial_peers",
         initial_peer,
         "--block_indices",
@@ -185,12 +187,19 @@ def wait_for_coverage(
     dht: DHT,
     dht_prefix: str,
     manifest_digest: str,
+    manifest_execution_profile: dict,
     timeout: float,
 ) -> list[int]:
     uids = [f"{dht_prefix}{UID_DELIMITER}{index}" for index in range(NUM_BLOCKS)]
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        module_infos = get_remote_module_infos(dht, uids, manifest_digest=manifest_digest, latest=True)
+        module_infos = get_remote_module_infos(
+            dht,
+            uids,
+            manifest_digest=manifest_digest,
+            manifest_execution_profile=manifest_execution_profile,
+            latest=True,
+        )
         replicas = [len(info.servers) for info in module_infos]
         log(f"coverage={sum(count > 0 for count in replicas)}/{NUM_BLOCKS} replicas={replicas}")
         if all(replicas):
@@ -214,7 +223,7 @@ def run_client() -> None:
     started = time.monotonic()
     dht = DHT(initial_peers=[initial_peer], client_mode=True, start=True)
     try:
-        replicas = wait_for_coverage(dht, dht_prefix, manifest.digest, timeout)
+        replicas = wait_for_coverage(dht, dht_prefix, manifest.digest, manifest.runtime.to_dict(), timeout)
     finally:
         dht.shutdown()
         dht.join()
@@ -226,6 +235,7 @@ def run_client() -> None:
         dht_prefix=dht_prefix,
         initial_peers=[initial_peer],
         manifest_digest=manifest.digest,
+        manifest_execution_profile=manifest.runtime.to_dict(),
         request_timeout=float(os.environ.get("FLY_SMOKE_REQUEST_TIMEOUT", "10")),
         max_retries=int(os.environ.get("FLY_SMOKE_MAX_RETRIES", "3")),
         min_backoff=0.1,

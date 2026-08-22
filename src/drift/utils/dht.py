@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import math
 from functools import partial
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from hivemind.dht import DHT, DHTNode, DHTValue
 from hivemind.p2p import PeerID
@@ -21,6 +21,7 @@ from drift.data_structures import (
     ServerState,
     parse_uid,
 )
+from drift.protocol_identity import ReplayGuard, RevocationStore, verify_worker_announcement
 
 logger = get_logger(__name__)
 
@@ -77,16 +78,26 @@ def get_remote_module_infos(
     expiration_time: Optional[DHTExpiration] = None,
     active_adapter: Optional[str] = None,
     manifest_digest: Optional[str] = None,
+    manifest_execution_profile: Optional[Mapping[str, Any]] = None,
+    revocations: Optional[RevocationStore] = None,
+    replay_guard: Optional[ReplayGuard] = None,
     *,
     latest: bool = False,
     return_future: bool = False,
 ) -> Union[List[RemoteModuleInfo], MPFuture]:
+    if manifest_digest is not None and manifest_execution_profile is None:
+        raise ValueError("Manifested DHT reads require the exact manifest execution profile")
+    if manifest_digest is None and manifest_execution_profile is not None:
+        raise ValueError("manifest_execution_profile is only valid with manifest_digest")
     return dht.run_coroutine(
         partial(
             _get_remote_module_infos,
             uids=uids,
             active_adapter=active_adapter,
             manifest_digest=manifest_digest,
+            manifest_execution_profile=manifest_execution_profile,
+            revocations=revocations,
+            replay_guard=replay_guard,
             expiration_time=expiration_time,
             latest=latest,
         ),
@@ -100,6 +111,9 @@ async def _get_remote_module_infos(
     uids: List[ModuleUID],
     active_adapter: Optional[str],
     manifest_digest: Optional[str],
+    manifest_execution_profile: Optional[Mapping[str, Any]],
+    revocations: Optional[RevocationStore],
+    replay_guard: Optional[ReplayGuard],
     expiration_time: Optional[DHTExpiration],
     latest: bool,
 ) -> List[RemoteModuleInfo]:
@@ -134,6 +148,27 @@ async def _get_remote_module_infos(
                         f"{server_info.manifest_digest!r} does not match {manifest_digest!r}"
                     )
                     continue
+                if manifest_digest is not None:
+                    if server_info.signed_announcement is None:
+                        raise ValueError("manifested server announcement is unsigned")
+                    dht_prefix, _ = parse_uid(module_info.uid)
+                    verify_worker_announcement(
+                        server_info.signed_announcement,
+                        expected_peer_id=peer_id,
+                        expected_dht_prefix=dht_prefix,
+                        expected_manifest_digest=manifest_digest,
+                        expected_server_info=server_info.signed_payload(),
+                        expected_execution_profile=manifest_execution_profile,
+                        revocations=revocations,
+                        replay_guard=replay_guard,
+                    )
+                    _, block_index = parse_uid(module_info.uid)
+                    if (
+                        server_info.start_block is None
+                        or server_info.end_block is None
+                        or not server_info.start_block <= block_index < server_info.end_block
+                    ):
+                        raise ValueError("signed worker announcement does not cover this DHT block key")
 
                 module_info.servers[peer_id] = server_info
             except (TypeError, ValueError) as e:

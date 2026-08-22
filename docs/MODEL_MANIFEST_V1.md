@@ -1,6 +1,7 @@
 # ModelManifest v1
 
-Status: implemented identity and artifact-integrity foundation; not yet approved for public-network use.
+Status: implementation complete, including signed worker identity and resumable artifact integrity;
+public-network approval awaits the macOS and signed multi-machine validation runs.
 
 `ModelManifest v1` gives one model execution profile a content-derived identity. A
 manifest pins the upstream commit, model shape, runtime compatibility, tensor and
@@ -9,9 +10,13 @@ of every artifact needed by that profile. Changing any of those values creates a
 different digest and therefore a different swarm.
 
 This solves namespace ambiguity and binds the manifested loading path to verified
-artifact bytes. It does not prove who authored or approved a manifest. Signed
-catalogs, worker signatures, key rotation, revocation, and transport authentication
-remain milestone 3 work.
+artifact bytes. Workers now sign their complete announcements with the persistent
+RSA key that derives their libp2p PeerID, and clients validate identity, lifetime,
+replay order, execution profile, block range, local revocations, and the authenticated
+TLS 1.3 RPC identity before routing. This still does not prove who authored or
+approved a manifest or attest honest execution; signed catalogs and optional runtime
+attestation remain later public-network work. The exact protocol is specified in
+[`PUBLIC_SWARM_SECURITY_V1.md`](PUBLIC_SWARM_SECURITY_V1.md).
 
 ## Schema
 
@@ -135,11 +140,11 @@ Both worker and API processes accept `--model_manifest <path>`. Manifest mode:
 - compares the digest in `rpc_info` and on every forward, backward, or inference
   request before executing a block.
 
-A legacy or differently manifested peer that reports its identity truthfully is
-rejected before compute. A malicious worker can still claim the expected digest in
-unsigned DHT and RPC metadata while running other code or weights. Worker signatures,
-authenticated transport, and any required runtime attestation are still needed to
-bind the digest to a durable identity and actual execution.
+A legacy or differently manifested peer is rejected before compute. A malicious
+worker cannot impersonate another worker or alter that worker's signed metadata, but
+it can sign false claims about software or weights it controls. The signature binds
+the manifest claim to a durable transport identity; it is not remote attestation of
+actual execution.
 
 Legacy/private mode remains explicit: if `--model_manifest` is absent, existing
 model-derived or manually supplied prefixes keep working and requests carry no
@@ -196,14 +201,15 @@ Checked-in v1 vectors record a deliberately non-canonical input, its exact canon
 UTF-8 JSON, and the expected SHA-256. They are exercised by the normal test suite so
 Windows, Linux, and macOS CI use the same identity contract.
 
-## Remaining v1 completion work
+## Remaining public-approval work
 
-Before a manifest is accepted from a public catalog, CI must execute the canonical
-vectors and manifested loading tests on all three target operating systems, and real
-published-model tests must cover interrupted/resumed Hub downloads plus every
-supported converted or pre-quantized artifact format. Native Windows and a real
-multi-Machine Fly Linux swarm have passed manifested loading with exact parity, and
-the Fly run rejected a deliberately corrupted artifact before server startup; native
-macOS remains outstanding. The manifest then becomes the signed payload for catalog
-approval, worker announcements, intent leases, and revocation records. Signatures,
-authenticated transport, rotation, and revocation remain separate milestone 3 slices.
+The implementation now includes worker signatures, authenticated encrypted
+transport binding, signed intent-lease primitives, dual-signed rotation, successor
+revocation, replay/expiry enforcement, deterministic interrupted-download tests, and
+a successful real Hub HTTP 206 resume followed by SHA-256 promotion. Native Windows
+has passed signed manifested exact parity and in-generation failover locally. The
+macOS workflow runs canonical vectors, adversarial identity tests, a real Hub resume,
+and manifested exact parity, but its first hosted run still has to complete. The Fly
+harness is updated for persistent worker identities; rerun it before approving public
+deployment. Converted and pre-quantized formats still require model-specific release
+qualification even though the v1 verifier treats them as declared content.

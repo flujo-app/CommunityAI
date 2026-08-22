@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -569,25 +570,147 @@ class ManifestArtifactVerifier:
                             cache_dir=self.cache_dir,
                             max_disk_space=self.max_disk_space,
                         )
-                        resolved = hf_hub_download(
-                            self.repository,
-                            artifact.path,
-                            revision=self.revision,
-                            token=self.token,
-                            cache_dir=self.cache_dir,
-                        )
+                        resolved = self._resumable_hub_download(artifact, destination=candidate)
             except Exception as exc:
                 raise ManifestError(
                     f"Could not materialize declared artifact {artifact.path} from "
                     f"{self.repository}@{self.revision}: {exc}"
                 ) from exc
-            candidate = Path(resolved).absolute()
-            self._snapshot_root = candidate
+            resolved_candidate = Path(resolved).absolute()
+            resolved_root = resolved_candidate
             for _ in PurePosixPath(artifact.path).parts:
-                self._snapshot_root = self._snapshot_root.parent
+                resolved_root = resolved_root.parent
+            if self._snapshot_root is None:
+                candidate = resolved_candidate
+                self._snapshot_root = resolved_root
+            else:
+                if candidate is None:  # pragma: no cover - maintained by the snapshot-root invariant
+                    raise ManifestError("Manifest verifier lost its snapshot root")
+                if resolved_candidate != candidate:
+                    self._promote_cached_artifact(artifact, resolved_candidate, candidate)
 
         self._verify(artifact, candidate)
         return candidate
+
+    def _promote_cached_artifact(self, artifact: ManifestArtifact, source: Path, destination: Path) -> None:
+        """Materialize a verified cached file into the verifier's single snapshot root."""
+        from drift.utils.file_lock import file_lock
+
+        _, _, lock = self._resumable_paths(artifact)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(f".{destination.name}.{artifact.sha256[:12]}.tmp")
+        with file_lock(lock, exclusive=True):
+            if destination.exists():
+                _verify_artifact_file(artifact, destination)
+                return
+            _verify_artifact_file(artifact, source)
+            if temporary.exists():
+                temporary.unlink()
+            try:
+                try:
+                    os.link(source, temporary)
+                except OSError:
+                    with source.open("rb") as input_stream, temporary.open("xb") as output_stream:
+                        shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
+                        output_stream.flush()
+                        os.fsync(output_stream.fileno())
+                _verify_artifact_file(artifact, temporary)
+                os.replace(temporary, destination)
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
+
+    def _resumable_paths(self, artifact: ManifestArtifact) -> Tuple[Path, Path, Path]:
+        """Return deterministic partial, final, and lock paths for one manifested artifact."""
+        cache_root = Path(self.cache_dir).absolute()
+        manifest_root = cache_root / "manifest-artifacts" / self.manifest.digest
+        name_digest = hashlib.sha256(artifact.path.encode("utf-8")).hexdigest()
+        partial = manifest_root / "partial" / f"{name_digest}.part"
+        final = _artifact_path_below_root(manifest_root / "snapshot", artifact.path)
+        lock = manifest_root / "locks" / f"{name_digest}.lock"
+        return partial, final, lock
+
+    def _resumable_hub_download(self, artifact: ManifestArtifact, *, destination: Optional[Path] = None) -> str:
+        """Download one immutable Hub artifact with verified HTTP Range resumption.
+
+        huggingface_hub 1.x deliberately deletes process-unique partial files after an
+        interrupted transfer, so the manifest path owns a small content-addressed cache.
+        A partial is never exposed to Transformers.  It is atomically promoted only after
+        its exact declared size and SHA-256 pass.
+        """
+        import requests
+        from huggingface_hub import hf_hub_url
+        from huggingface_hub.utils import build_hf_headers
+
+        from drift.utils.file_lock import file_lock
+
+        partial, default_final, lock = self._resumable_paths(artifact)
+        final = default_final if destination is None else destination.absolute()
+        partial.parent.mkdir(parents=True, exist_ok=True)
+        final.parent.mkdir(parents=True, exist_ok=True)
+
+        with file_lock(lock, exclusive=True):
+            if final.exists():
+                _verify_artifact_file(artifact, final)
+                return str(final)
+
+            if partial.exists() and partial.stat().st_size > artifact.size:
+                partial.unlink()
+            offset = partial.stat().st_size if partial.exists() else 0
+            if offset == artifact.size:
+                try:
+                    _verify_artifact_file(artifact, partial)
+                except ManifestError:
+                    partial.unlink()
+                    offset = 0
+                else:
+                    os.replace(partial, final)
+                    return str(final)
+
+            url = hf_hub_url(self.repository, artifact.path, revision=self.revision)
+            headers = build_hf_headers(token=self.token, library_name="drift", library_version="2")
+            if offset:
+                headers["Range"] = f"bytes={offset}-"
+
+            try:
+                response = requests.get(url, headers=headers, stream=True, allow_redirects=True, timeout=(10, 60))
+                response.raise_for_status()
+                if offset and response.status_code == 206:
+                    content_range = response.headers.get("Content-Range", "")
+                    if not content_range.startswith(f"bytes {offset}-"):
+                        raise ManifestError(
+                            f"Hub returned an invalid Content-Range while resuming {artifact.path}: {content_range!r}"
+                        )
+                    mode = "ab"
+                else:
+                    # A 200 response means the origin ignored Range; restart safely instead of appending.
+                    offset = 0
+                    mode = "wb"
+
+                with partial.open(mode) as stream:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            stream.write(chunk)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except (OSError, requests.RequestException) as exc:
+                # Keep a bounded partial for a later Range request, but never expose it as a model file.
+                if partial.exists() and partial.stat().st_size > artifact.size:
+                    partial.unlink()
+                raise ManifestError(f"Interrupted download of {artifact.path} at byte {offset}: {exc}") from exc
+            finally:
+                if "response" in locals():
+                    response.close()
+
+            try:
+                _verify_artifact_file(artifact, partial)
+            except ManifestError:
+                # A completed but invalid transfer must not poison all later retries.
+                if partial.exists() and partial.stat().st_size >= artifact.size:
+                    partial.unlink()
+                raise
+            os.replace(partial, final)
+            return str(final)
 
     def verify_resolved_file(
         self, path: Union[str, os.PathLike], *, allowed_roles: Optional[Iterable[str]] = None
