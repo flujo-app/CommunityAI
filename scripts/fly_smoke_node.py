@@ -6,6 +6,8 @@ Roles are selected with ``FLY_SMOKE_ROLE``:
 * ``worker`` serves the explicit range in ``FLY_SMOKE_BLOCKS``;
 * ``client`` waits for complete coverage, generates tokens, checks exact parity,
   and emits a machine-readable ``FLY_SMOKE_RESULT=...`` line;
+* ``multi-node-client`` validates two manifested routes through the official
+  OpenAI client, node restart, LRU residency, and the edge benchmark; and
 * ``local`` runs the one-process Linux CPU smoke test inside the image.
 
 All networking stays on Fly's organization-private IPv6 network. The bootstrap
@@ -17,10 +19,14 @@ from __future__ import annotations
 import json
 import os
 import resource
+import secrets
 import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import torch
@@ -38,6 +44,8 @@ MODEL = "Maykeye/TinyLLama-v0"
 NUM_BLOCKS = 8
 PORT = 31337
 DEFAULT_MANIFEST_PATH = "/workspace/model-manifest.json"
+MULTI_MANIFEST_A_PATH = "/workspace/model-a.json"
+MULTI_MANIFEST_B_PATH = "/workspace/model-b.json"
 
 
 def log(message: str) -> None:
@@ -341,6 +349,220 @@ def run_local() -> None:
     )
 
 
+@contextmanager
+def live_uvicorn(app):
+    import uvicorn
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not server.started:
+        server.should_exit = True
+        thread.join(timeout=5)
+        listener.close()
+        raise RuntimeError("the multi-model node HTTP server did not start")
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+        if thread.is_alive():
+            raise RuntimeError("the multi-model node HTTP server did not stop")
+
+
+def wait_for_node_routes(client, model_ids: list[str], timeout: float) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = client.get("/control/v1/status").json()
+        routes = {item["id"]: item.get("route") for item in status["models"]}
+        log(f"node_routes={json.dumps(routes, sort_keys=True)}")
+        if all(routes.get(model_id, {}).get("status") == "complete" for model_id in model_ids):
+            return status
+        time.sleep(1)
+    raise TimeoutError("the multi-model node did not discover complete routes")
+
+
+def reference_completion(manifest: ModelManifest, prompt: str, max_new_tokens: int) -> str:
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        manifest.source.repository,
+        manifest.source.revision,
+        cache_dir="/tmp/multi-model-node-cache",
+    )
+    source = verifier.ensure_startup_metadata(include_tokenizer=True)
+    tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        manifest.source.repository,
+        revision=manifest.source.revision,
+        cache_dir="/tmp/multi-model-node-cache",
+        dtype=getattr(torch, manifest.runtime.dtype),
+        attn_implementation=manifest.runtime.attention_implementation,
+    )
+    model.eval()
+    input_ids = tokenizer(prompt, return_tensors="pt")["input_ids"]
+    with torch.inference_mode():
+        output_ids = model.generate(input_ids, max_new_tokens=max_new_tokens, do_sample=False)
+    return tokenizer.decode(output_ids[0, input_ids.shape[1] :], skip_special_tokens=True)
+
+
+def run_multi_node_client() -> None:
+    import httpx
+    from openai import OpenAI
+
+    from drift.cli.run_node import _build_model_manager
+    from drift.node.config import NodeConfig, NodeModelConfig
+    from drift.node.edge_benchmark import benchmark_client_runtime
+    from drift.node.keys import ApiKeyStore
+    from drift.node.loading import make_manifest_loader
+    from drift.node.server import create_node_app
+
+    initial_peer = required_env("FLY_SMOKE_INITIAL_PEER")
+    timeout = float(os.environ.get("FLY_SMOKE_TIMEOUT", "300"))
+    manifest_paths = [
+        Path(os.environ.get("FLY_SMOKE_MANIFEST_A", MULTI_MANIFEST_A_PATH)),
+        Path(os.environ.get("FLY_SMOKE_MANIFEST_B", MULTI_MANIFEST_B_PATH)),
+    ]
+    manifests = [ModelManifest.load(path) for path in manifest_paths]
+    if manifests[0].digest == manifests[1].digest:
+        raise ValueError("multi-model validation requires two distinct manifest digests")
+    model_ids = [manifest.name for manifest in manifests]
+    prompt = "Hello"
+    max_new_tokens = 3
+    api_key = f"drift_{secrets.token_urlsafe(32)}"
+    control_key = f"drift_control_{secrets.token_urlsafe(32)}"
+
+    config = NodeConfig(
+        schema_version=1,
+        max_loaded_models=1,
+        discovery_update_period=1,
+        discovery_startup_timeout=15,
+        models=tuple(
+            NodeModelConfig(
+                manifest_path=path,
+                initial_peers=(initial_peer,),
+                cache_dir=Path("/tmp/multi-model-node-cache"),
+                request_timeout=30,
+                max_retries=3,
+            )
+            for path in manifest_paths
+        ),
+    )
+    data_dir = Path(tempfile.mkdtemp(prefix="drift-fly-multi-node-"))
+    key_path = data_dir / "api-keys.json"
+    key_store = ApiKeyStore(key_path)
+    key_store.ensure_key(api_key, label="fly-validation")
+    edge_cache = Path("/tmp/edge-benchmark-cache")
+    edge_measurement = benchmark_client_runtime(
+        manifests[0],
+        make_manifest_loader(
+            manifests[0],
+            initial_peers=(initial_peer,),
+            cache_dir=str(edge_cache),
+            request_timeout=30,
+            max_retries=3,
+        ),
+        cache_dir=edge_cache,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+    )
+    expected = reference_completion(manifests[0], prompt, max_new_tokens)
+    result = {
+        "models": model_ids,
+        "manifest_digests": [manifest.digest_id for manifest in manifests],
+        "expected": expected,
+        "edge_benchmark": edge_measurement,
+    }
+
+    def run_node_once(*, exercise_both: bool) -> dict:
+        manager, _, discovery = _build_model_manager(config, token=None)
+        app = create_node_app(
+            manager,
+            api_key_store=ApiKeyStore(key_path),
+            control_keys=[control_key],
+            host="127.0.0.1",
+            port=0,
+        )
+        discovery.start()
+        try:
+            with live_uvicorn(app) as origin:
+                control_headers = {"Authorization": f"Bearer {control_key}"}
+                control = httpx.Client(base_url=origin, headers=control_headers, timeout=30)
+                sdk = OpenAI(api_key=api_key, base_url=f"{origin}/v1", max_retries=0, timeout=60)
+                if (
+                    httpx.get(
+                        f"{origin}/control/v1/status",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=30,
+                    ).status_code
+                    != 401
+                ):
+                    raise AssertionError("OpenAI client key unexpectedly authorized the control API")
+                if control.get("/v1/models").status_code != 401:
+                    raise AssertionError("control key unexpectedly authorized the OpenAI API")
+                status_before = wait_for_node_routes(control, model_ids, timeout)
+                listed = sorted(model.id for model in sdk.models.list().data)
+                if listed != sorted(model_ids):
+                    raise AssertionError(f"official SDK listed {listed}, expected {sorted(model_ids)}")
+
+                first = sdk.completions.create(
+                    model=model_ids[0], prompt=prompt, max_tokens=max_new_tokens, temperature=0
+                )
+                if first.choices[0].text != expected:
+                    raise AssertionError(f"first model output {first.choices[0].text!r} != {expected!r}")
+                first_status = control.get("/control/v1/status").json()
+                states_after_first = {item["id"]: item["state"] for item in first_status["models"]}
+
+                second_text = None
+                states_after_second = None
+                if exercise_both:
+                    stream = sdk.completions.create(
+                        model=model_ids[1],
+                        prompt=prompt,
+                        max_tokens=max_new_tokens,
+                        temperature=0,
+                        stream=True,
+                    )
+                    second_text = "".join(chunk.choices[0].text or "" for chunk in stream if chunk.choices)
+                    if second_text != expected:
+                        raise AssertionError(f"second model output {second_text!r} != {expected!r}")
+                    second_status = control.get("/control/v1/status").json()
+                    states_after_second = {item["id"]: item["state"] for item in second_status["models"]}
+                    if states_after_second[model_ids[0]] != "known" or states_after_second[model_ids[1]] not in {
+                        "ready",
+                        "degraded",
+                    }:
+                        raise AssertionError(f"LRU residency did not move to the second model: {states_after_second}")
+                sdk.close()
+                control.close()
+                return {
+                    "routes_before_load": {item["id"]: item["route"] for item in status_before["models"]},
+                    "listed": listed,
+                    "first_completion": first.choices[0].text,
+                    "states_after_first": states_after_first,
+                    "second_stream": second_text,
+                    "states_after_second": states_after_second,
+                    "authorization_domains_separate": True,
+                }
+        finally:
+            manager.shutdown()
+
+    result["first_node"] = run_node_once(exercise_both=True)
+    result["restarted_node"] = run_node_once(exercise_both=False)
+    result["persistent_key_reused"] = ApiKeyStore(key_path).verify(api_key)
+    result["exact_completion_parity"] = result["first_node"]["first_completion"] == expected
+    result["restart_completion_parity"] = result["restarted_node"]["first_completion"] == expected
+    result["client_max_rss_kib"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    print(f"FLY_MULTI_NODE_RESULT={json.dumps(result, sort_keys=True)}", flush=True)
+
+
 def main() -> None:
     role = os.environ.get("FLY_SMOKE_ROLE", "local")
     roles = {
@@ -348,6 +570,7 @@ def main() -> None:
         "worker": run_worker,
         "poisoned-worker": run_poisoned_worker,
         "client": run_client,
+        "multi-node-client": run_multi_node_client,
         "local": run_local,
     }
     try:

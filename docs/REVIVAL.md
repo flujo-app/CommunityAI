@@ -15,6 +15,30 @@ following remotes are configured in the local revival checkout:
 - `nakshatra`: an active, independent llama.cpp/GGUF distributed-inference effort
   that we will track for discovery, transport, and reliability ideas.
 
+## Current status (2026-08-22)
+
+Milestones 1 through 4 are complete. The revival has exact cross-platform inference
+parity, real multi-machine failure recovery, signed manifest and artifact integrity,
+and a persistent multi-model local node with an authenticated OpenAI-compatible API,
+supervised contribution workers, and measured edge behavior.
+
+Milestone 5 is active. Its architectural foundation is now fixed:
+
+- PySide 6 is the selected product shell; both spike alternatives passed packaged UI
+  smokes on Windows, Linux, and macOS before the decision was recorded in
+  [`ADR 0002`](adr/0002-desktop-shell-spike.md).
+- The desktop remains a client and lifecycle supervisor of the standalone local node;
+  model, DHT, and worker runtimes do not move into the GUI process.
+- Privileged control credentials and revocable OpenAI client keys are separate
+  authorization domains. An inference key cannot manage workers or keys, and the
+  control credential cannot perform inference.
+
+The immediate objective is to promote the shared spike client and acceptance contract
+into the production PySide application, then complete native credential ownership,
+onboarding and process lifecycle, contribution policies and budgets, accessibility and
+resource measurements, and signed installer/update/rollback validation. Milestones 6
+through 8 remain planned after this desktop foundation.
+
 ## Scope and product destination
 
 Inference is the product. Distributed training and fine-tuning are compatibility
@@ -336,21 +360,76 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    manifest, resumed a real Hub artifact at byte 2,097,152 with HTTP 206, served all
    eight blocks through a signed manifested identity, and matched the stock token
    output exactly. This closes the milestone's cross-platform validation gate.
-4. **Unified local node and multi-model OpenAI API.** Introduce the persistent node
+4. **Unified local node and multi-model OpenAI API — complete.** Introduce the persistent node
    daemon, worker supervision, a versioned local control API, multi-model discovery
    and lazy client loading, a stable localhost OpenAI endpoint, local API-key
    lifecycle, route/coverage status, bounded concurrency, and clean shutdown. Measure
    the current client-side embedding/head cost and decide the thin-edge protocol.
    Validate compatibility with representative OpenAI clients before adding a GUI.
-5. **Desktop application and contribution controls.** Ship signed installers for
-   Windows, Linux, and macOS; complete first-run onboarding; manage keys in native
-   credential stores; show endpoint, model, route and contribution health; enforce
-   VRAM/storage/bandwidth/power/schedule budgets; implement model allow/prefer/deny
-   policy; pause safely; integrate background startup and updates; and clearly
-   disclose prompt visibility. Perform a short implementation spike before choosing
-   between a Python-native Qt/PySide shell and a webview shell with a Python sidecar.
-   The decision must consider GPU-process isolation, installer/update signing, tray
-   and service integration, accessibility, bundle size, and cross-platform CI.
+
+   The first vertical slice is implemented according to
+   [`ADR 0001`](adr/0001-unified-local-node.md): `drift node` owns a stable,
+   authenticated loopback API; registers one exact manifest; lazily and safely loads
+   its client runtime through a thread-safe model manager; resolves manifest names,
+   API aliases, and digests without fallback; reports versioned authenticated status;
+   generates a persistent local key when needed; refuses accidental non-loopback
+   binding; and cleans up the client route manager and DHT on shutdown. The existing
+   single-model `drift api` surface now uses the same selection path and rejects a
+   mismatched request model.
+
+   The second slice adds strict secret-free
+   [`NodeConfig v1`](NODE_CONFIG_V1.md), bounded
+   runtime residency, request-scoped leases, least-recently-used idle eviction,
+   authenticated safe unload, and coverage observations from loaded route managers.
+   An HTTP cancellation cannot release or evict a runtime while its executor thread
+   is still generating.
+
+   The final slice adds artifact-free, manifest-bound coverage discovery for every
+   configured model; isolated contribution-worker processes with observable restart
+   backoff and authenticated start, pause, and restart controls; persistent labeled
+   API-key creation, listing, relabeling, and revocation with hash-only storage; and a
+   reproducible cold-client benchmark for cache growth, local embedding/head
+   weights, process-tree RAM/accelerator use, load time, first-token latency, and
+   decode rate. A real Fly
+   swarm exposed two distinct manifests through one restarted node. The official
+   OpenAI Python client listed and generated from both, streamed a completion, reused
+   the persistent key after restart, and proved one-runtime LRU eviction plus exact
+   stock-model token parity. Unloaded discovery observed complete `8:8` external
+   routes without loading either client runtime. The measured TinyLlama CPU client
+   used 16,384,000 bytes for local embedding/head parameters and 11,773,110 bytes of
+   cold cache growth; this model fits the current local-logits edge design, while
+   larger selectable models still require their own published measurements.
+5. **Desktop application and contribution controls — in progress.** Build the selected
+   PySide desktop and ship signed installers for Windows, Linux, and macOS; complete
+   first-run onboarding; manage keys in native credential stores; show endpoint, model,
+   route and contribution health; enforce VRAM/storage/bandwidth/power/schedule budgets;
+   implement model allow/prefer/deny policy; pause safely; integrate background startup
+   and updates; and clearly disclose prompt visibility. The completed implementation
+   spike compared a Python-native Qt/PySide shell with a webview shell and considered
+   process isolation, installer/update signing, tray and service integration,
+   accessibility, bundle size, and cross-platform CI.
+
+   **Completed foundation.** The shell comparison and its fixed acceptance criteria
+   are tracked in [`ADR 0002`](adr/0002-desktop-shell-spike.md). All six clean Windows,
+   Linux, and macOS package/UI-smoke jobs passed. PySide 6 is selected for product
+   implementation because it has the more consistent cross-platform runtime and avoids
+   pywebview's 948 MB Linux Qt bundle and additional JavaScript bridge. The pywebview
+   prototype remains evidence, not a second product frontend.
+
+   The first production security prerequisite is also complete: managed OpenAI client
+   keys authorize only `/v1/*`, while a distinct privileged control credential
+   authorizes only `/control/v1/*`. Headless nodes generate separate private files,
+   startup rejects missing, duplicate, or overlapping control keys, and upgraded
+   installations retain their existing client key while receiving a new control key.
+
+   **Next implementation sequence.** Promote the shell-neutral node client and
+   acceptance contract into a production PySide package; move the control credential
+   from the private-file bridge into native OS credential stores; add first-run setup,
+   single-instance behavior, node supervision, login startup, reconnect, and clean
+   shutdown; enforce contribution budgets and allow/prefer/deny policy in the node rather
+   than only in the GUI; then measure startup/RSS and crash isolation and complete
+   keyboard/screen-reader, signed installer, upgrade, rollback, uninstall, and retained-
+   data gates on all three operating systems.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and
    LAN discovery; define threshold-signed, forkable catalogs; publish privacy-safe
@@ -380,9 +459,9 @@ Detailed baseline evidence and the remaining gates are recorded in
 The following questions require written architecture decisions and prototypes; they
 must not be settled accidentally by the first GUI implementation:
 
-| Decision | Starting hypothesis | Evidence required |
+| Decision | Current position | Evidence required |
 | --- | --- | --- |
-| Desktop shell | Prefer the smallest design that can reuse the Python core while preserving process isolation; compare PySide with a sidecar-based shell. | Signed installer prototypes on all three OSes, upgrade/rollback, tray/service behavior, accessibility, crash isolation, and package size. |
+| Desktop shell | Resolved in ADR 0002: implement the product shell in PySide 6 while preserving the standalone node boundary. | Signed installer prototypes on all three OSes, upgrade/rollback, tray/service behavior, accessibility, crash isolation, and startup/RSS measurements remain release gates. |
 | Thin edge | Keep embeddings/head local where affordable; add remote ingress/egress roles only for devices that miss published budgets. | Per-model RAM/disk/latency data, token parity, logits/sampling trade-offs, privacy analysis, and failover tests. |
 | Catalog governance | Threshold-signed and forkable catalogs, with trust roots selected by each installation. | Key compromise/rotation drill, rollback protection, alternative-catalog interoperability, and malicious-manifest rejection. |
 | Demand signal | Coarse signed aggregates and observed route pressure, never request contents. | Sybil/spam simulation, privacy review, convergence under bursty demand, and proof that one attacker cannot trigger a network-wide download storm. |

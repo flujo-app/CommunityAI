@@ -153,6 +153,48 @@ print(client.chat.completions.create(
 
 Generation is serialized (`--max_concurrent`, default 1) since each in-flight request holds a server-side attention cache. API requests use finite failover by default: each swarm RPC waits at most 30 seconds and each step gets at most three route attempts. Operators can tune `--request_timeout` and `--max_retries` for slower hardware.
 
+### 5. Persistent local node (milestone 4 preview)
+
+`drift node` keeps a stable authenticated API on loopback, registers exact
+`ModelManifest v1` identities, and lazily loads tokenizer and client-side weights
+on first use. A manifest name, declared API alias, or full `sha256:<digest>` selects
+that exact swarm; an unknown `model` is rejected instead of being silently
+substituted.
+
+```bash
+drift node ./tinyllama-manifest.json \
+    --initial_peers /ip4/203.0.113.10/tcp/31337/p2p/QmXXX...
+```
+
+For multiple models, use the strict, secret-free
+[`NodeConfig v1`](docs/NODE_CONFIG_V1.md). It registers every model without eager
+artifact downloads and enforces a hard `max_loaded_models` residency limit:
+
+```bash
+drift node --config ./community-node.json
+```
+
+The default OpenAI URL is `http://127.0.0.1:8080/v1`. If `--api_key` is omitted,
+the command creates a persistent client key in `~/.drift/node/local-api.key` and
+logs only that path. It separately creates the privileged local control credential
+in `~/.drift/node/control-api.key`:
+
+```bash
+curl -H "Authorization: Bearer $(cat ~/.drift/node/control-api.key)" \
+    http://127.0.0.1:8080/control/v1/status
+```
+
+OpenAI client keys authorize only `/v1/*`; the control credential authorizes only
+`/control/v1/*`. An existing installation keeps its `local-api.key` for AI clients
+and receives the separate control key on its first upgraded start. A headless
+operator may select another private control file with `--control_key_path`.
+
+Binding beyond loopback requires both key classes and the explicit
+`--allow_network` acknowledgement. Authenticated status includes model lifecycle,
+runtime-budget, active-request, and loaded-route coverage data; idle models can be
+unloaded through the control API. The boundary and deferred work are recorded in
+[`docs/adr/0001-unified-local-node.md`](docs/adr/0001-unified-local-node.md).
+
 ## Installation
 
 The [Quickstart](#quickstart) install scripts (`scripts/install.sh` / `scripts/install.ps1`) are the easiest path — they detect your accelerator, install a matching PyTorch build, and provide the `drift` command. The rest of this section covers installing manually.
@@ -165,7 +207,7 @@ cd CommunityAI
 uv sync --extra dev
 ```
 
-This installs the `drift` command (`drift up`, `drift server`, `drift dht`, `drift api`); each is also runnable as `python -m drift.cli <command>`.
+This installs the `drift` command (`drift up`, `drift server`, `drift dht`, `drift api`, `drift node`); each is also runnable as `python -m drift.cli <command>`.
 
 ### Windows native setup
 

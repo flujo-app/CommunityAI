@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "communityai-desktop-spike"
+version = "0.1.0"
+description = "Isolated desktop shell comparison for CommunityAI"
+requires-python = ">=3.10"
+dependencies = [
+    "keyring>=25,<27",
+]
+
+[project.optional-dependencies]
+pyside = [
+    "PySide6>=6.8,<7",
+]
+webview = [
+    "pywebview>=5.4,<7; sys_platform != 'linux'",
+    "pywebview[qt]>=5.4,<7; sys_platform == 'linux'",
+]
+dev = [
+    "pyinstaller>=6.11,<7",
+]
+
+[project.scripts]
+communityai-desktop-spike = "communityai_desktop_spike.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+communityai_desktop_spike = ["webview.html"]
+
+[tool.black]
+line-length = 120
+required-version = "22.3.0"
+
+[tool.isort]
+profile = "black"
+line_length = 120

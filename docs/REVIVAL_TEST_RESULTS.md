@@ -14,6 +14,127 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 1. Reproducible execution baseline | Complete | Windows CPU, Docker Linux CPU, Windows CUDA, and native hosted Apple Silicon macOS all served blocks `0:8` and produced exact token parity; macOS also passed the MPS block-portability checks | None |
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
+| 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6 after all six clean Windows/Linux/macOS package and UI-smoke jobs passed; OpenAI inference keys and the privileged control credential are separate authorities | Native credential storage, contribution policies and budgets, lifecycle integration, startup/RSS and crash-isolation measurements, signing, updates, rollback, accessibility, and installer gates remain |
+
+## Desktop milestone: control authority separation
+
+The first milestone-5 production prerequisite separates the local authorization
+domains without changing endpoint versions. Managed, labeled OpenAI keys authorize
+only `/v1/*`; a distinct privileged key authorizes only `/control/v1/*`. The node
+rejects startup with a missing, duplicate, or overlapping control key. Key creation,
+relabeling, and revocation remain control operations, and newly created client keys
+cannot use those controls.
+
+The headless migration preserves `~/.drift/node/local-api.key` as an OpenAI client
+key and creates `~/.drift/node/control-api.key` on first upgraded startup. An explicit
+private path can be supplied with `--control_key_path`; putting the privileged secret
+itself on the command line is not supported. The desktop spike already reads this
+credential through a private-file bridge and will move it into the native OS store
+during the selected PySide product implementation.
+
+## Desktop milestone: shell decision
+
+The clean cross-platform matrix built PySide 6.11.2 and pywebview 6.2.1 independently,
+verified the collected framework, and completed the same packaged authenticated UI smoke
+against an isolated fake node. All six package jobs passed.
+
+| Platform | PySide bundle | pywebview bundle |
+| --- | ---: | ---: |
+| Windows x64 | 128,862,316 bytes / 236 files | 29,234,555 bytes / 215 files |
+| Linux x64 | 324,323,392 bytes / 367 files | 948,268,266 bytes / 1,942 files |
+| macOS arm64 | 210,278,876 bytes / 268 files | 43,560,981 bytes / 106 files |
+
+ADR 0002 therefore selects PySide 6 for product implementation. Pywebview's Windows and
+macOS size advantage does not offset its 948 MB Linux Qt bundle, larger backend variance,
+and additional JavaScript bridge. The unsigned CI artifacts prove clean packaging and UI
+startup only; native credential stores, accessibility, lifecycle, crash isolation,
+startup/RSS, signed installers, upgrades, rollback, and uninstall remain open release gates.
+
+## Unified local node: first vertical slice
+
+On 2026-08-22, the initial milestone 4 service boundary was implemented in
+[`ADR 0001`](adr/0001-unified-local-node.md). The existing OpenAI facade now routes
+requests through a model manager. It rejects unknown requested models, requires an
+explicit model when more than one is registered, and preserves the single-model
+compatibility behavior. The manager serializes concurrent first loads, publishes
+observable lifecycle and error state, retries failed lazy loads, and closes each
+loaded runtime once during shutdown.
+
+`drift node` registers pinned manifests without downloading their client artifacts
+at startup, binds to `127.0.0.1:8080` by default, authenticates the OpenAI and
+`/control/v1/status` surfaces, and requires `--allow_network` for a non-loopback
+listener. With no explicit key it atomically creates a dedicated local secret file
+and never logs the value. The first focused verification covers the manager, API,
+manifest-pinned loader, control endpoint, key persistence, argument guard, and
+shutdown lifecycle.
+
+The second slice added [`NodeConfig v1`](NODE_CONFIG_V1.md), with strict duplicate
+and unknown-field rejection, paths relative to the config, per-model peer/cache/
+revocation/retry inputs, and no provider or API secret fields. A configurable hard
+runtime limit now leases models for the full request, waits rather than evicting an
+active model, evicts only the least-recently-used idle model, closes its routing
+resources synchronously, and exposes authenticated explicit unload. Cancellation
+tests prove that an executor-backed load or generation cannot strand or prematurely
+release a lease. Loaded route managers expose their existing verified coverage view
+without status-triggered DHT activity.
+
+The final slice completes the milestone. One client-mode TLS DHT is shared by
+models with the same seed set, while each query independently enforces its exact
+manifest digest, execution profile, signed-announcement replay order, and
+revocations. It reports unloaded coverage without constructing tokenizers or model
+weights and degrades to observable `unknown` state if discovery is unavailable.
+Configured contribution workers run in isolated child processes with explicit
+start, pause, restart, crash state, bounded log capture, and configured restart
+delay. The control API now creates, lists, relabels, and revokes 256-bit local keys;
+only domain-separated hashes are persisted, and the plaintext secret is returned
+once. Revoking the final active key is refused.
+
+`drift edge-benchmark` measures a dedicated cold cache, the unique parameter
+storage used by the client embeddings/head, process-tree RSS, available accelerator
+allocations, runtime load, first token, and post-first-token decode. It writes a
+versioned JSON result and refuses a nonempty cache unless explicitly acknowledged.
+The current bootstrap secret file remains the documented headless fallback; moving
+secrets into native OS credential stores belongs to milestone 5.
+
+After the milestone-5 control-credential split, the broad offline matrix passed
+with 204 tests and 7 platform/device skips. The repository's top-level
+external-swarm fixtures still require
+`INITIAL_PEERS`, so the offline CI file list is run explicitly and the real swarm is
+validated separately.
+
+## Unified local node: external multi-model validation
+
+On 2026-08-22, image
+`sha256:aafb9c9a168e4d7838ddea576e5777833f3a603239b1d5af27bcce1c721fe121`
+ran in Fly region `iad` with one bootstrap, one external full-range worker for each
+of two distinct manifested namespaces, and one client node. Both manifests pinned
+TinyLlama commit `298338802ab94432b917bcce11382aa151aee50f` but had different
+exact DHT identities. Artifact-free discovery observed complete `8:8` routes with
+two peer announcements per model before either client runtime was loaded.
+
+The official OpenAI Python SDK 2.54.0 connected over a real localhost TCP listener.
+It listed both models, generated from each, and streamed a completion. Alpha and
+Beta each produced `", a little"`, matching an independently loaded stock model.
+With `max_loaded_models=1`, status showed Alpha evicted when Beta loaded. The entire
+node then restarted, accepted the same persistent local key, lazily loaded Alpha,
+and repeated exact parity. During this run the API regression test also caught and
+fixed a Transformers 5 compatibility bug: the tokenizer generation argument is now
+sent only when stop strings require it.
+
+The dedicated cold benchmark against the external Alpha worker recorded:
+
+- 11,773,110 bytes of cache download/growth;
+- 16,384,000 unique bytes of local embedding/head parameters on CPU;
+- 445,968,384 bytes baseline, 1,073,139,712 bytes loaded, and 1,082,388,480
+  bytes peak process-tree RSS, for a 636,420,096-byte peak delta;
+- 9.872 seconds to load and 0.237 seconds to first token; and
+- 21.360 post-first-token token/s for a three-token generation, producing IDs
+  `[1,16644,31844,260,1496]` and decoded text `<s> Hello, a little`.
+
+The benchmark used Python 3.12.14, PyTorch 2.6.0 CPU, and Linux. Every temporary
+Fly Machine was destroyed after validation; the final application Machine list was
+empty.
 
 ## Manifest artifact integrity
 

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <title>CommunityAI desktop shell spike</title>
+  <style>
+    :root { color-scheme: light dark; font: 15px/1.45 system-ui, sans-serif; }
+    body { margin: 0; background: Canvas; color: CanvasText; }
+    main { max-width: 980px; margin: auto; padding: 24px; }
+    h1 { margin: 0 0 4px; font-size: 1.55rem; }
+    h2 { font-size: 1rem; margin-top: 0; }
+    .muted { opacity: .75; }
+    .card { border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); border-radius: 10px; padding: 16px; margin: 16px 0; }
+    .endpoint, .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    code { user-select: all; overflow-wrap: anywhere; }
+    button, input, select { font: inherit; min-height: 36px; }
+    button { padding: 6px 12px; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .55; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); padding: 8px; text-align: left; }
+    th { font-weight: 600; }
+    #error { color: #c33; white-space: pre-wrap; }
+    .disclosure { border-left: 4px solid #d88b19; padding-left: 12px; }
+    dialog { max-width: min(620px, 90vw); }
+    textarea { box-sizing: border-box; width: 100%; min-height: 90px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>CommunityAI</h1>
+  <div class="muted">Webview implementation spike</div>
+
+  <section class="card" aria-labelledby="endpoint-heading">
+    <h2 id="endpoint-heading">Local OpenAI endpoint</h2>
+    <div class="endpoint"><code id="endpoint">Connecting…</code><button id="copy-endpoint">Copy endpoint</button></div>
+    <p id="node-state" role="status">Connecting to the local node…</p>
+    <div id="error" role="alert"></div>
+  </section>
+
+  <section class="card" aria-labelledby="models-heading">
+    <h2 id="models-heading">Community models</h2>
+    <table><thead><tr><th>Model</th><th>State</th><th>Route coverage</th><th>Active requests</th></tr></thead><tbody id="models"></tbody></table>
+  </section>
+
+  <section class="card" aria-labelledby="workers-heading">
+    <h2 id="workers-heading">Contribution</h2>
+    <table><thead><tr><th>Worker</th><th>Model</th><th>State</th><th>Restarts</th></tr></thead><tbody id="workers"></tbody></table>
+    <div class="actions">
+      <label for="worker-choice">Worker</label><select id="worker-choice"></select>
+      <button data-action="start">Start</button><button data-action="pause">Pause</button><button data-action="restart">Restart</button>
+    </div>
+  </section>
+
+  <div class="actions"><button id="refresh">Refresh</button><button id="create-key">Create client API key</button></div>
+  <p class="disclosure"><strong>Privacy:</strong> volunteer workers process request-derived data and may be able to observe or retain it.</p>
+</main>
+
+<dialog id="key-dialog">
+  <h2>Client API key created</h2>
+  <p>This secret is shown only once. Copy it into the AI client now.</p>
+  <textarea id="new-key" readonly aria-label="New client API key"></textarea>
+  <div class="actions"><button id="copy-key">Copy key</button><button id="close-key">Close</button></div>
+</dialog>
+
+<script>
+  const byId = id => document.getElementById(id);
+  const buttons = () => [...document.querySelectorAll('button')];
+
+  function cell(row, value) {
+    const item = document.createElement('td');
+    item.textContent = String(value ?? '');
+    row.appendChild(item);
+  }
+
+  function renderRows(target, rows, fields) {
+    target.replaceChildren();
+    for (const source of rows) {
+      const row = document.createElement('tr');
+      fields.forEach(field => cell(row, source[field]));
+      target.appendChild(row);
+    }
+  }
+
+  function setBusy(busy) { buttons().forEach(button => { button.disabled = busy; }); }
+  function fail(message) { byId('error').textContent = message; byId('node-state').textContent = 'Disconnected'; }
+
+  async function call(operation) {
+    setBusy(true); byId('error').textContent = '';
+    try {
+      const result = await operation();
+      if (!result.ok) throw new Error(result.error || 'Unknown local node error');
+      return result.value;
+    } catch (error) {
+      fail(String(error));
+      return null;
+    } finally { setBusy(false); }
+  }
+
+  async function refresh() {
+    const snapshot = await call(() => window.pywebview.api.snapshot());
+    if (!snapshot) return;
+    byId('node-state').textContent = `Node: ${snapshot.node_status}`;
+    byId('endpoint').textContent = snapshot.openai_base_url;
+    renderRows(byId('models'), snapshot.models, ['id', 'state', 'coverage', 'active_requests']);
+    renderRows(byId('workers'), snapshot.workers, ['id', 'model', 'state', 'restart_count']);
+    const choice = byId('worker-choice');
+    const selected = choice.value;
+    choice.replaceChildren();
+    snapshot.workers.forEach(worker => {
+      const option = document.createElement('option'); option.value = worker.id; option.textContent = worker.id; choice.appendChild(option);
+    });
+    if ([...choice.options].some(option => option.value === selected)) choice.value = selected;
+  }
+
+  window.addEventListener('pywebviewready', () => {
+    byId('refresh').addEventListener('click', refresh);
+    byId('copy-endpoint').addEventListener('click', () => navigator.clipboard.writeText(byId('endpoint').textContent));
+    document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', async () => {
+      const worker = byId('worker-choice').value;
+      if (worker && await call(() => window.pywebview.api.worker_action(worker, button.dataset.action))) await refresh();
+    }));
+    byId('create-key').addEventListener('click', async () => {
+      const label = window.prompt('Label for this AI client');
+      if (!label || !label.trim()) return;
+      const created = await call(() => window.pywebview.api.create_client_key(label.trim()));
+      if (created) { byId('new-key').value = created.secret; byId('key-dialog').showModal(); }
+    });
+    byId('copy-key').addEventListener('click', () => navigator.clipboard.writeText(byId('new-key').value));
+    byId('close-key').addEventListener('click', () => { byId('new-key').value = ''; byId('key-dialog').close(); });
+    refresh(); setInterval(refresh, 10000);
+  });
+</script>
+</body>
+</html>

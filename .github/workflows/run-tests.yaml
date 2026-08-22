@@ -42,16 +42,20 @@ jobs:
           # Free-tier runners have ~2 vCPUs, which cannot sustain a live inference swarm: the
           # upstream suite launched multiple servers (some running a --throughput auto benchmark),
           # starved the CPU, and the client tests retried for many minutes and effectively hung.
-          # The tests below are pure, synthetic, single-process bit-exact checks -- no DHT, no
-          # server, no model download, no network -- so they finish in seconds and still guard the
+          # The tests below are offline synthetic checks -- no live DHT, model download, or
+          # external network. The node gates additionally use a loopback-only HTTP listener and
+          # short isolated sleeper/crash subprocesses. They still finish quickly and guard the
           # parts of this fork most likely to regress (KV cache, paged cache, per-arch blocks,
           # attention wiring, join tokens, device portability). The swarm/network tests
           # (test_full_model, test_remote_sequential, ...) require MODEL_NAME/INITIAL_PEERS and a
           # running swarm; the maintainer exercises those on real hardware.
           pytest -v --durations=0 --durations-min=1.0 \
             tests/test_attn_implementation.py \
+            tests/test_api_keys.py \
             tests/test_cache.py \
             tests/test_deepseek_v3.py \
+            tests/test_discovery.py \
+            tests/test_edge_benchmark.py \
             tests/test_device_portability.py \
             tests/test_gemma4_block.py \
             tests/test_gemma4_multimodal_loading.py \
@@ -60,15 +64,21 @@ jobs:
             tests/test_join_token.py \
             tests/test_kv_cache_strategy.py \
             tests/test_loading_diagnostics.py \
+            tests/test_model_manager.py \
             tests/test_model_manifest.py \
+            tests/test_node_config.py \
+            tests/test_node.py \
             tests/test_openai_api.py \
+            tests/test_official_openai_client.py \
             tests/test_paged_cache.py \
             tests/test_priority_pool.py \
             tests/test_process_lifetime.py \
             tests/test_protocol_identity.py \
+            tests/test_route_health.py \
             tests/test_server_registry.py \
             tests/test_startup_guard.py \
-            tests/test_tied_embeddings_from_pretrained.py
+            tests/test_tied_embeddings_from_pretrained.py \
+            tests/test_worker_supervisor.py
 
       - name: Generate pinned TinyLlama manifest (macOS gate)
         if: matrix.os == 'macos'
