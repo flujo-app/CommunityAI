@@ -11,7 +11,9 @@ from hivemind.utils import limits
 from hivemind.utils.logging import get_logger
 from humanfriendly import parse_size
 
+import drift
 from drift.constants import DTYPE_MAP
+from drift.model_manifest import ManifestError, ModelManifest, resolve_manifest_loading
 from drift.server.server import Server
 from drift.utils.convert_block import QuantType
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
@@ -169,6 +171,8 @@ def build_parser() -> configargparse.ArgParser:
     parser.add_argument('--revision', type=str, default=None,
                         help="The specific model version to use. It can be a branch name, a tag name, or a commit id, since we use a git-based system for storing models"
                              "and other artifacts on huggingface.co, so `revision` can be any identifier allowed by git.")
+    parser.add_argument('--model_manifest', type=str, default=None,
+                        help="Path to a ModelManifest v1. Pins revision, execution profile, and DHT namespace")
 
     parser.add_argument('--throughput',
                         type=lambda value: value if value in ['auto', 'eval', 'dry_run'] else float(value),
@@ -240,6 +244,43 @@ def server_from_args(args: dict) -> Server:
 
     args["converted_model_name_or_path"] = args.pop("model") or args["converted_model_name_or_path"]
 
+    manifest_path = args.pop("model_manifest")
+    if manifest_path is not None:
+        manifest = ModelManifest.load(manifest_path)
+        manifest.validate_runtime(drift.__version__)
+        args["revision"], args["dht_prefix"] = resolve_manifest_loading(
+            manifest,
+            model_name_or_path=args["converted_model_name_or_path"],
+            revision=args.get("revision"),
+            dht_prefix=args.get("dht_prefix"),
+        )
+
+        profile = manifest.runtime
+        if args["torch_dtype"] == "auto":
+            args["torch_dtype"] = profile.dtype
+        elif args["torch_dtype"] != profile.dtype:
+            raise ManifestError(
+                f"--torch_dtype {args['torch_dtype']!r} conflicts with manifest dtype {profile.dtype!r}"
+            )
+        if args["attn_implementation"] == "auto":
+            args["attn_implementation"] = profile.attention_implementation
+        elif args["attn_implementation"] != profile.attention_implementation:
+            raise ManifestError(
+                f"--attn_implementation {args['attn_implementation']!r} conflicts with manifest setting "
+                f"{profile.attention_implementation!r}"
+            )
+        if args["quant_type"] is None:
+            args["quant_type"] = profile.quantization
+        elif args["quant_type"] != profile.quantization:
+            raise ManifestError(
+                f"--quant_type {args['quant_type']!r} conflicts with manifest quantization {profile.quantization!r}"
+            )
+        if profile.adapter_profile != "none":
+            raise ManifestError("Content-addressed adapter profiles are declared but not executable in this release")
+        if args["adapters"]:
+            raise ManifestError("--adapters conflicts with the manifest's adapter_profile 'none'")
+        args["model_manifest"] = manifest
+
     host_maddrs = args.pop("host_maddrs")
     port = args.pop("port")
     if port is not None:
@@ -310,7 +351,10 @@ def main():
     args.pop("config", None)
 
     model_name = args.get("model") or args.get("converted_model_name_or_path")
-    server = server_from_args(args)
+    try:
+        server = server_from_args(args)
+    except ManifestError as exc:
+        parser.error(str(exc))
     serve(server, model=model_name)
 
 

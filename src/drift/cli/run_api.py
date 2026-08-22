@@ -9,6 +9,8 @@ import argparse
 
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 
+import drift
+from drift.model_manifest import ManifestError, ModelManifest, resolve_manifest_loading
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
 use_hivemind_log_handler("in_root_logger")
@@ -24,11 +26,17 @@ def main():
     parser.add_argument("model", help="HF repo or local path of the model the swarm is serving")
     parser.add_argument("--initial_peers", nargs="+", required=True, help="Multiaddrs of swarm peers to join via")
     parser.add_argument("--dht_prefix", default=None, help="DHT prefix the swarm's servers announce under")
+    parser.add_argument("--revision", default=None, help="Exact model revision to load for legacy/private swarms")
+    parser.add_argument(
+        "--model_manifest",
+        default=None,
+        help="Path to a ModelManifest v1. Pins revision, runtime compatibility, and DHT namespace",
+    )
     parser.add_argument(
         "--torch_dtype",
-        default="bfloat16",
+        default=None,
         choices=["float32", "float16", "bfloat16"],
-        help="dtype for the local embeddings/lm_head (match the servers' dtype)",
+        help="dtype for the local embeddings/lm_head (default: manifest dtype, otherwise bfloat16)",
     )
     parser.add_argument("--host", default="127.0.0.1", help="Interface to bind (0.0.0.0 to expose on the network)")
     parser.add_argument("--port", type=int, default=8080)
@@ -62,6 +70,32 @@ def main():
     if args.max_retries < 1:
         parser.error("--max_retries must be at least 1")
 
+    manifest = None
+    if args.model_manifest is not None:
+        try:
+            manifest = ModelManifest.load(args.model_manifest)
+            manifest.validate_runtime(drift.__version__)
+            args.revision, args.dht_prefix = resolve_manifest_loading(
+                manifest,
+                model_name_or_path=args.model,
+                revision=args.revision,
+                dht_prefix=args.dht_prefix,
+            )
+            if args.torch_dtype is None:
+                args.torch_dtype = manifest.runtime.dtype
+            elif args.torch_dtype != manifest.runtime.dtype:
+                raise ManifestError(
+                    f"--torch_dtype {args.torch_dtype!r} conflicts with manifest dtype {manifest.runtime.dtype!r}"
+                )
+            if manifest.runtime.adapter_profile != "none":
+                raise ManifestError(
+                    "Content-addressed adapter profiles are declared but not executable in this release"
+                )
+        except ManifestError as exc:
+            parser.error(str(exc))
+    elif args.torch_dtype is None:
+        args.torch_dtype = "bfloat16"
+
     try:
         import uvicorn
 
@@ -80,11 +114,13 @@ def main():
     from drift import AutoDistributedModelForCausalLM
 
     logger.info(f"Loading tokenizer and client-side weights for {args.model}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.revision)
     model = AutoDistributedModelForCausalLM.from_pretrained(
         args.model,
         initial_peers=args.initial_peers,
         dht_prefix=args.dht_prefix,
+        revision=args.revision,
+        manifest_digest=manifest.digest if manifest is not None else None,
         torch_dtype=getattr(torch, args.torch_dtype),
         request_timeout=args.request_timeout,
         max_retries=args.max_retries,

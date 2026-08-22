@@ -12,6 +12,7 @@ DEFAULT_MAX_RETRIES = int(_max_retries) if isinstance(_max_retries, str) else No
 class ClientConfig:
     initial_peers: Sequence[str] = ()  # multiaddrs of DHT peers from the swarm to join
     dht_prefix: Optional[str] = None  # a prefix for all dht keys that correspond to this model (default: model name)
+    manifest_digest: Optional[str] = None  # exact ModelManifest SHA-256 required from every public-swarm server
     daemon_startup_timeout: int = 60  # timeout for the libp2p daemon connecting to initial peers
 
     show_route: Union[str, bool] = "inference"  # show chosen route through servers. one of [False, "inference", True]

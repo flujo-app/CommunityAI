@@ -76,6 +76,7 @@ def get_remote_module_infos(
     uids: Sequence[ModuleUID],
     expiration_time: Optional[DHTExpiration] = None,
     active_adapter: Optional[str] = None,
+    manifest_digest: Optional[str] = None,
     *,
     latest: bool = False,
     return_future: bool = False,
@@ -85,6 +86,7 @@ def get_remote_module_infos(
             _get_remote_module_infos,
             uids=uids,
             active_adapter=active_adapter,
+            manifest_digest=manifest_digest,
             expiration_time=expiration_time,
             latest=latest,
         ),
@@ -97,6 +99,7 @@ async def _get_remote_module_infos(
     node: DHTNode,
     uids: List[ModuleUID],
     active_adapter: Optional[str],
+    manifest_digest: Optional[str],
     expiration_time: Optional[DHTExpiration],
     latest: bool,
 ) -> List[RemoteModuleInfo]:
@@ -123,6 +126,13 @@ async def _get_remote_module_infos(
 
                 if active_adapter and active_adapter not in server_info.adapters:
                     logger.debug(f"Skipped server {peer_id} since it does not have adapter {active_adapter}")
+                    continue
+
+                if manifest_digest is not None and server_info.manifest_digest != manifest_digest:
+                    logger.warning(
+                        f"Skipped server {peer_id} for {module_info.uid}: manifest digest "
+                        f"{server_info.manifest_digest!r} does not match {manifest_digest!r}"
+                    )
                     continue
 
                 module_info.servers[peer_id] = server_info

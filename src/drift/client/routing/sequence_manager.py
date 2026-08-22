@@ -348,7 +348,11 @@ class RemoteSequenceManager:
         """Perform an immediate and synchronous refresh, may take time"""
 
         new_block_infos = get_remote_module_infos(
-            self.dht, self.block_uids, active_adapter=self.config.active_adapter, latest=True
+            self.dht,
+            self.block_uids,
+            active_adapter=self.config.active_adapter,
+            manifest_digest=self.config.manifest_digest,
+            latest=True,
         )
 
         for block_info in new_block_infos:
@@ -456,6 +460,16 @@ class RemoteSequenceManager:
                     stub.rpc_info(runtime_pb2.ExpertUID(uid=self.block_uids[0]), timeout=self.config.request_timeout)
                 )
                 self.state.rpc_info = MSGPackSerializer.loads(outputs.serialized_info)
+                if (
+                    self.config.manifest_digest is not None
+                    and self.state.rpc_info.get("manifest_digest") != self.config.manifest_digest
+                ):
+                    actual_digest = self.state.rpc_info.get("manifest_digest")
+                    self.state.rpc_info = None
+                    raise RuntimeError(
+                        f"Server {peer_id} returned manifest digest {actual_digest!r}; "
+                        f"expected {self.config.manifest_digest!r}"
+                    )
                 self.on_request_success(peer_id)
                 break
             except Exception as e:
@@ -487,11 +501,14 @@ class RemoteSequenceManager:
         :param kwargs: additional request context, such as remote peer ID
         :returns: msgpack-serialized metadata dict that will be passed alongside a given request
         """
-        return dict(
+        metadata = dict(
             points=self.policy.get_points(protocol, *args, **kwargs),
             active_adapter=self.config.active_adapter,
             args_structure=args_structure,
         )
+        if self.config.manifest_digest is not None:
+            metadata["manifest_digest"] = self.config.manifest_digest
+        return metadata
 
     def shutdown(self):
         self._thread.shutdown()

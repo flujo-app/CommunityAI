@@ -24,6 +24,7 @@ from transformers import PretrainedConfig
 import drift
 from drift.constants import DTYPE_MAP
 from drift.data_structures import CHAIN_DELIMITER, UID_DELIMITER, ModelInfo, ServerInfo, ServerState, parse_uid
+from drift.model_manifest import ModelManifest
 from drift.server import block_selection
 from drift.server.backend import TransformerBackend, merge_inference_pools_inplace
 from drift.server.block_utils import get_block_size, resolve_block_dtype
@@ -99,6 +100,7 @@ class Server:
         torch_dtype: str = "auto",
         attn_implementation: str = "auto",
         revision: Optional[str] = None,
+        model_manifest: Optional[ModelManifest] = None,
         cache_dir: Optional[str] = None,
         max_disk_space: Optional[int] = None,
         device: Optional[Union[str, torch.device]] = None,
@@ -144,6 +146,9 @@ class Server:
             token=token,
             revision=revision,
         )
+        if model_manifest is not None:
+            model_manifest.validate_runtime(drift.__version__)
+            model_manifest.validate_model_config(self.block_config)
 
         # "auto" leaves _attn_implementation unset so each block picks its own correct default
         # (see drift.utils.misc.default_attn_implementation); an explicit choice forces every block.
@@ -302,6 +307,7 @@ class Server:
             state=ServerState.JOINING,
             public_name=public_name,
             version=drift.__version__,
+            manifest_digest=model_manifest.digest if model_manifest is not None else None,
             adapters=tuple(adapters),
             torch_dtype=str(torch_dtype).replace("torch.", ""),
             quant_type=quant_type.name.lower(),
@@ -670,6 +676,7 @@ class ModuleContainer(threading.Thread):
                 request_timeout=request_timeout,
                 session_timeout=session_timeout,
                 step_timeout=step_timeout,
+                manifest_digest=server_info.manifest_digest,
                 quant_type=QuantType[server_info.quant_type.upper()],
             )
             for i in range(num_handlers)

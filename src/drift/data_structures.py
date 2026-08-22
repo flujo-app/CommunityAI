@@ -50,6 +50,7 @@ class ServerInfo:
 
     public_name: Optional[str] = None
     version: Optional[str] = None
+    manifest_digest: Optional[str] = None
 
     network_rps: Optional[RPS] = None
     forward_rps: Optional[RPS] = None

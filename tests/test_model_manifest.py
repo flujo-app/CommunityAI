@@ -1,0 +1,188 @@
+import hashlib
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from drift.model_manifest import ManifestError, ModelManifest, resolve_manifest_loading
+from drift.server.handler import TransformerConnectionHandler
+
+
+def manifest_dict():
+    return {
+        "schema_version": 1,
+        "name": "Tiny Test",
+        "aliases": ["tiny-test", "tiny"],
+        "source": {
+            "repository": "org/tiny-test",
+            "revision": "a" * 40,
+        },
+        "model": {
+            "architecture": "LlamaForCausalLM",
+            "num_blocks": 8,
+            "context_length": 2048,
+            "license": "apache-2.0",
+            "gated": False,
+        },
+        "runtime": {
+            "implementation": "drift",
+            "minimum_version": "2.3.0.dev0",
+            "maximum_version_exclusive": "2.4.0",
+            "protocol_version": 1,
+            "tensor_schema": "hidden-states-v1",
+            "attention_implementation": "eager",
+            "dtype": "float32",
+            "quantization": "none",
+            "adapter_profile": "none",
+        },
+        "artifacts": [
+            {"role": "weight", "path": "weights.bin", "sha256": "3" * 64, "size": 3},
+            {"role": "tokenizer", "path": "tokenizer.json", "sha256": "2" * 64, "size": 2},
+            {"role": "config", "path": "config.json", "sha256": "1" * 64, "size": 1},
+        ],
+    }
+
+
+def test_digest_and_namespace_are_canonical_and_order_independent():
+    source = manifest_dict()
+    first = ModelManifest.from_dict(source)
+
+    source["aliases"].reverse()
+    source["artifacts"].reverse()
+    second = ModelManifest.from_dict(source)
+
+    assert first.canonical_json() == second.canonical_json()
+    assert first.digest == hashlib.sha256(first.canonical_json().encode()).hexdigest()
+    assert first.digest_id == f"sha256:{first.digest}"
+    assert first.dht_prefix == f"drift-m1-{first.digest}"
+
+
+@pytest.mark.parametrize(
+    "change,match",
+    [
+        (lambda value: value.update(extra=True), "unknown field"),
+        (lambda value: value["source"].update(revision="main"), "full 40-character"),
+        (lambda value: value["runtime"].update(dtype="auto"), "runtime.dtype"),
+        (lambda value: value["artifacts"].pop(), "missing required role"),
+        (lambda value: value["artifacts"][0].update(path="../weights.bin"), "normalized relative"),
+        (lambda value: value["artifacts"][0].update(path="dir\\weights.bin"), "normalized relative"),
+    ],
+)
+def test_strict_validation(change, match):
+    source = manifest_dict()
+    change(source)
+    with pytest.raises(ManifestError, match=match):
+        ModelManifest.from_dict(source)
+
+
+def test_loading_resolution_rejects_mutable_identity_inputs():
+    manifest = ModelManifest.from_dict(manifest_dict())
+    assert resolve_manifest_loading(
+        manifest,
+        model_name_or_path="org/tiny-test",
+        revision=None,
+        dht_prefix=None,
+    ) == ("a" * 40, manifest.dht_prefix)
+
+    with pytest.raises(ManifestError, match="requested model"):
+        resolve_manifest_loading(manifest, model_name_or_path="other/model", revision=None, dht_prefix=None)
+    with pytest.raises(ManifestError, match="conflicts with manifest revision"):
+        resolve_manifest_loading(manifest, model_name_or_path="org/tiny-test", revision="b" * 40, dht_prefix=None)
+    with pytest.raises(ManifestError, match="conflicts with manifest namespace"):
+        resolve_manifest_loading(manifest, model_name_or_path="org/tiny-test", revision=None, dht_prefix="legacy")
+
+
+def test_runtime_and_downloaded_config_validation():
+    manifest = ModelManifest.from_dict(manifest_dict())
+    manifest.validate_runtime("2.3.0.dev2")
+    manifest.validate_model_config(
+        SimpleNamespace(
+            architectures=["LlamaForCausalLM"],
+            num_hidden_layers=8,
+            max_position_embeddings=2048,
+        )
+    )
+    with pytest.raises(ManifestError, match="local version"):
+        manifest.validate_runtime("2.4.0")
+    with pytest.raises(ManifestError, match="declares 8 blocks"):
+        manifest.validate_model_config(
+            SimpleNamespace(
+                architectures=["LlamaForCausalLM"],
+                num_hidden_layers=7,
+                max_position_embeddings=2048,
+            )
+        )
+
+
+def test_artifact_verification(tmp_path):
+    files = {
+        "config.json": b"c",
+        "tokenizer.json": b"tt",
+        "weights.bin": b"www",
+    }
+    for path, content in files.items():
+        (tmp_path / path).write_bytes(content)
+
+    source = manifest_dict()
+    for artifact in source["artifacts"]:
+        content = files[artifact["path"]]
+        artifact["size"] = len(content)
+        artifact["sha256"] = hashlib.sha256(content).hexdigest()
+    manifest = ModelManifest.from_dict(source)
+    manifest.verify_artifacts(tmp_path)
+
+    (tmp_path / "weights.bin").write_bytes(b"bad")
+    with pytest.raises(ManifestError, match="does not match"):
+        manifest.verify_artifacts(tmp_path)
+
+
+def test_json_loader_wraps_parse_errors():
+    with pytest.raises(ManifestError, match="Invalid manifest JSON"):
+        ModelManifest.from_json(json.dumps(manifest_dict())[:-1])
+
+
+def test_json_loader_rejects_duplicate_keys():
+    with pytest.raises(ManifestError, match="duplicate object key"):
+        ModelManifest.from_json('{"schema_version":1,"schema_version":1}')
+
+
+def test_server_rejects_legacy_and_mismatched_clients_before_compute():
+    handler = object.__new__(TransformerConnectionHandler)
+    handler.manifest_digest = "a" * 64
+    handler._check_manifest_digest({"manifest_digest": "a" * 64})
+
+    with pytest.raises(ValueError, match="client sent None"):
+        handler._check_manifest_digest({})
+    with pytest.raises(ValueError, match="client sent"):
+        handler._check_manifest_digest({"manifest_digest": "b" * 64})
+
+    handler.manifest_digest = None
+    handler._check_manifest_digest({})
+    with pytest.raises(ValueError, match="server is in legacy mode"):
+        handler._check_manifest_digest({"manifest_digest": "a" * 64})
+
+
+def test_server_cli_applies_manifest_profile(tmp_path, monkeypatch):
+    from drift.cli import run_server
+    from drift.utils.convert_block import QuantType
+
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest_dict()), encoding="utf-8")
+    args = vars(
+        run_server.build_parser().parse_args(
+            ["org/tiny-test", "--new_swarm", "--model_manifest", str(path), "--increase_file_limit", "0"]
+        )
+    )
+    args.pop("config", None)
+
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+    monkeypatch.setattr(run_server, "log_version", lambda: None)
+    monkeypatch.setattr(run_server, "Server", lambda **kwargs: kwargs)
+    resolved = run_server.server_from_args(args)
+
+    assert resolved["revision"] == "a" * 40
+    assert resolved["dht_prefix"].startswith("drift-m1-")
+    assert resolved["torch_dtype"] == "float32"
+    assert resolved["attn_implementation"] == "eager"
+    assert resolved["quant_type"] is QuantType.NONE
+    assert resolved["model_manifest"].digest == resolved["dht_prefix"].removeprefix("drift-m1-")
