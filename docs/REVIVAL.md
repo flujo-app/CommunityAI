@@ -384,6 +384,11 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    between a Python-native Qt/PySide shell and a webview shell with a Python sidecar.
    The decision must consider GPU-process isolation, installer/update signing, tray
    and service integration, accessibility, bundle size, and cross-platform CI.
+
+   The shell comparison and its fixed acceptance criteria are tracked in
+   [`ADR 0002`](adr/0002-desktop-shell-spike.md). The checked-in prototypes keep
+   both UI processes outside the model runtime and package each alternative in a
+   clean environment so their measurements remain comparable.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and
    LAN discovery; define threshold-signed, forkable catalogs; publish privacy-safe
