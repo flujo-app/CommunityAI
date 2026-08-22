@@ -137,7 +137,8 @@ Larger models simply need more machines (or bigger GPUs) among the servers; the 
 ```bash
 drift api meta-llama/Llama-3.1-8B-Instruct \
     --initial_peers /ip4/203.0.113.10/tcp/31337/p2p/QmXXX... \
-    --host 0.0.0.0 --port 8080 --api_key my-secret-key
+    --host 0.0.0.0 --port 8080 --api_key my-secret-key \
+    --request_timeout 30 --max_retries 3
 ```
 
 ```python
@@ -150,7 +151,7 @@ print(client.chat.completions.create(
 ).choices[0].message.content)
 ```
 
-Generation is serialized (`--max_concurrent`, default 1) since each in-flight request holds a server-side attention cache.
+Generation is serialized (`--max_concurrent`, default 1) since each in-flight request holds a server-side attention cache. API requests use finite failover by default: each swarm RPC waits at most 30 seconds and each step gets at most three route attempts. Operators can tune `--request_timeout` and `--max_retries` for slower hardware.
 
 ## Installation
 
@@ -209,6 +210,16 @@ The smoke script starts a local DHT peer, serves all eight tiny Llama blocks,
 connects a distributed client through the local peer address, generates a few
 tokens, and verifies exact token parity with the stock Transformers model. Pass
 `--skip-reference` only when a faster connectivity-only check is sufficient.
+
+To exercise in-generation worker replacement, start two complete local worker
+replicas, stop the selected worker inside the active session, replay its cached
+activation prefix on the survivor, and verify exact parity:
+
+```powershell
+.\.venv\Scripts\python.exe -u scripts\smoke_tinyllama_local_swarm.py `
+    --device cpu --torch-dtype float32 --block-indices 0:8 `
+    --test-failover --failover-tokens 8
+```
 
 ## Supported models
 

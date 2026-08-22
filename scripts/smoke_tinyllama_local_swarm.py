@@ -3,6 +3,10 @@
 This starts one local DHT peer that hosts all blocks for Maykeye/TinyLLama-v0,
 connects a client through that peer's DHT address, and generates a few tokens.
 It is intended for Windows/XPU bring-up but also works on CPU/CUDA with --device.
+
+With ``--test-failover``, the script instead starts a bootstrap plus two complete
+worker replicas, stops the selected worker inside an active generation session,
+and verifies that replay on the surviving worker preserves exact token parity.
 """
 
 from __future__ import annotations
@@ -44,16 +48,17 @@ def parse_block_indices(value: str) -> list[int]:
     return list(range(start_block, end_block))
 
 
-def wait_for_dht_announcement(dht: DHT, block_indices: list[int], timeout: float) -> None:
+def wait_for_dht_announcement(dht: DHT, block_indices: list[int], timeout: float, *, min_replicas: int = 1) -> None:
     uids = [f"{DHT_PREFIX}{UID_DELIMITER}{block_index}" for block_index in block_indices]
     deadline = time.time() + timeout
     while time.time() < deadline:
         module_infos = get_remote_module_infos(dht, uids, latest=True)
-        announced = sum(bool(module_info.servers) for module_info in module_infos)
-        log(f"announced_blocks={announced}/{len(uids)}")
+        replicas = [len(module_info.servers) for module_info in module_infos]
+        announced = sum(count >= min_replicas for count in replicas)
+        log(f"announced_blocks={announced}/{len(uids)} replicas={replicas}")
         if announced == len(uids):
             return
-        time.sleep(1)
+        time.sleep(0.5)
     raise TimeoutError("hosted blocks were not announced in the local DHT")
 
 
@@ -65,6 +70,12 @@ def main() -> None:
     parser.add_argument("--torch-dtype", default="bfloat16", choices=DTYPE_MAP.keys())
     parser.add_argument("--cache", default="contiguous", choices=["contiguous", "paged"])
     parser.add_argument("--page-size", type=int, default=16)
+    parser.add_argument(
+        "--test-failover",
+        action="store_true",
+        help="start two worker replicas, stop the selected worker during generation, and verify recovery",
+    )
+    parser.add_argument("--failover-tokens", type=int, default=8)
     parser.add_argument(
         "--skip-reference",
         action="store_true",
@@ -92,7 +103,8 @@ def main() -> None:
         client_mode=False,
         host_maddrs=["/ip4/127.0.0.1/tcp/0"],
     )
-    container = None
+    containers = []
+    worker_dhts = []
 
     try:
         peers = [str(addr) for addr in dht.get_visible_maddrs()]
@@ -108,55 +120,74 @@ def main() -> None:
         cache_values_per_block //= block_config.num_key_value_groups
         attn_cache_bytes = cache_values_per_block * get_size_in_bytes(torch_dtype) * len(block_indices)
 
-        server_info = ServerInfo(
-            state=ServerState.JOINING,
-            throughput=1.0,
-            torch_dtype="bfloat16",
-            quant_type=QuantType.NONE.name.lower(),
-            using_relay=False,
-        )
-        model_info = ModelInfo(num_blocks=block_config.num_hidden_layers, repository=MODEL)
+        serving_dhts = [dht]
+        if args.test_failover:
+            serving_dhts = []
+            for replica_index in range(2):
+                log(f"starting worker DHT replica={replica_index}")
+                worker_dht = DHT(
+                    initial_peers=peers,
+                    start=True,
+                    num_workers=len(block_indices),
+                    use_relay=False,
+                    use_auto_relay=False,
+                    client_mode=False,
+                    host_maddrs=["/ip4/127.0.0.1/tcp/0"],
+                )
+                worker_dhts.append(worker_dht)
+                serving_dhts.append(worker_dht)
 
-        log("starting module container")
-        container = ModuleContainer.create(
-            dht=dht,
-            dht_prefix=DHT_PREFIX,
-            converted_model_name_or_path=MODEL,
-            block_config=block_config,
-            attn_cache_bytes=attn_cache_bytes,
-            server_info=server_info,
-            model_info=model_info,
-            block_indices=block_indices,
-            num_handlers=1,
-            min_batch_size=1,
-            max_batch_size=64,
-            max_chunk_size_bytes=16 * 1024 * 1024,
-            max_alloc_timeout=30,
-            paged_cache=args.cache == "paged",
-            page_size=args.page_size,
-            inference_max_length=64,
-            torch_dtype=torch_dtype,
-            cache_dir=None,
-            max_disk_space=None,
-            device=device,
-            compression=CompressionType.NONE,
-            stats_report_interval=None,
-            update_period=5,
-            expiration=max(10, MAX_DHT_TIME_DISCREPANCY_SECONDS),
-            request_timeout=60,
-            session_timeout=60,
-            step_timeout=30,
-            prefetch_batches=1,
-            sender_threads=1,
-            revision=None,
-            token=None,
-            quant_type=QuantType.NONE,
-            tensor_parallel_devices=(device,),
-            start=True,
-        )
-        assert container.ready.wait(timeout=30), "module container did not become ready"
+        for replica_index, serving_dht in enumerate(serving_dhts):
+            server_info = ServerInfo(
+                state=ServerState.JOINING,
+                throughput=1.0,
+                torch_dtype=str(torch_dtype).removeprefix("torch."),
+                quant_type=QuantType.NONE.name.lower(),
+                using_relay=False,
+            )
+            model_info = ModelInfo(num_blocks=block_config.num_hidden_layers, repository=MODEL)
 
-        wait_for_dht_announcement(dht, block_indices, timeout=30)
+            log(f"starting module container replica={replica_index}")
+            container = ModuleContainer.create(
+                dht=serving_dht,
+                dht_prefix=DHT_PREFIX,
+                converted_model_name_or_path=MODEL,
+                block_config=block_config,
+                attn_cache_bytes=attn_cache_bytes,
+                server_info=server_info,
+                model_info=model_info,
+                block_indices=block_indices,
+                num_handlers=1,
+                min_batch_size=1,
+                max_batch_size=64,
+                max_chunk_size_bytes=16 * 1024 * 1024,
+                max_alloc_timeout=30,
+                paged_cache=args.cache == "paged",
+                page_size=args.page_size,
+                inference_max_length=64,
+                torch_dtype=torch_dtype,
+                cache_dir=None,
+                max_disk_space=None,
+                device=device,
+                compression=CompressionType.NONE,
+                stats_report_interval=None,
+                update_period=2 if args.test_failover else 5,
+                expiration=max(10, MAX_DHT_TIME_DISCREPANCY_SECONDS),
+                request_timeout=3 if args.test_failover else 60,
+                session_timeout=60,
+                step_timeout=30,
+                prefetch_batches=1,
+                sender_threads=1,
+                revision=None,
+                token=None,
+                quant_type=QuantType.NONE,
+                tensor_parallel_devices=(device,),
+                start=True,
+            )
+            containers.append(container)
+            assert container.ready.wait(timeout=30), "module container did not become ready"
+
+        wait_for_dht_announcement(dht, block_indices, timeout=30, min_replicas=2 if args.test_failover else 1)
 
         log("loading client")
         tokenizer = AutoTokenizer.from_pretrained(MODEL)
@@ -165,13 +196,55 @@ def main() -> None:
             dht_prefix=DHT_PREFIX,
             initial_peers=peers,
             torch_dtype=torch_dtype,
-            request_timeout=60,
+            request_timeout=3 if args.test_failover else 60,
+            max_retries=3 if args.test_failover else None,
+            min_backoff=0.1 if args.test_failover else 1,
+            max_backoff=1 if args.test_failover else 60,
+            update_period=1 if args.test_failover else 60,
         )
 
         log("generating")
         inputs = tokenizer("Hello", return_tensors="pt")["input_ids"]
-        with torch.inference_mode():
-            outputs = model.generate(inputs, max_new_tokens=3, do_sample=False)
+        generated_tokens = args.failover_tokens if args.test_failover else 3
+        if args.test_failover:
+            if generated_tokens < 2:
+                raise ValueError("--failover-tokens must be at least 2")
+            with torch.inference_mode(), model.inference_session(
+                max_length=inputs.shape[1] + generated_tokens
+            ) as inference_session:
+                first_outputs = model.generate(
+                    inputs,
+                    max_new_tokens=1,
+                    min_new_tokens=1,
+                    do_sample=False,
+                )
+                assert len(inference_session._server_sessions) == 1, (
+                    "the failover smoke requires one full-range selected worker, got "
+                    f"{[server_session.span for server_session in inference_session._server_sessions]}"
+                )
+                selected_peer = inference_session._server_sessions[0].span.peer_id
+                selected_index = next(
+                    index for index, worker_dht in enumerate(worker_dhts) if worker_dht.peer_id == selected_peer
+                )
+                log(f"interrupting selected worker replica={selected_index} peer={selected_peer}")
+                recovery_started = time.monotonic()
+                containers[selected_index].shutdown()
+                containers[selected_index].join(timeout=10)
+                worker_dhts[selected_index].shutdown()
+                worker_dhts[selected_index].join()
+
+                remaining_outputs = model.generate(
+                    None,
+                    max_new_tokens=generated_tokens - 1,
+                    min_new_tokens=generated_tokens - 1,
+                    do_sample=False,
+                )
+                recovery_seconds = time.monotonic() - recovery_started
+                outputs = torch.cat([first_outputs, remaining_outputs], dim=1)
+                log(f"failover_recovery_seconds={recovery_seconds:.3f}")
+        else:
+            with torch.inference_mode():
+                outputs = model.generate(inputs, max_new_tokens=generated_tokens, do_sample=False)
         log(f"output_ids={outputs.tolist()}")
         log(f"decoded={tokenizer.decode(outputs[0])!r}")
 
@@ -180,7 +253,17 @@ def main() -> None:
             reference_model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=torch_dtype).to(device)
             reference_model.eval()
             with torch.inference_mode():
-                reference_outputs = reference_model.generate(inputs.to(device), max_new_tokens=3, do_sample=False).cpu()
+                if args.test_failover:
+                    reference_outputs = reference_model.generate(
+                        inputs.to(device),
+                        max_new_tokens=generated_tokens,
+                        min_new_tokens=generated_tokens,
+                        do_sample=False,
+                    ).cpu()
+                else:
+                    reference_outputs = reference_model.generate(
+                        inputs.to(device), max_new_tokens=generated_tokens, do_sample=False
+                    ).cpu()
             if not torch.equal(outputs.cpu(), reference_outputs):
                 raise AssertionError(
                     "distributed output differs from the stock model: "
@@ -192,9 +275,14 @@ def main() -> None:
         log("tinyllama local swarm smoke ok")
     finally:
         log("shutting down")
-        if container is not None:
-            container.shutdown()
-            container.join(timeout=10)
+        for container in reversed(containers):
+            if container.is_alive():
+                container.shutdown()
+                container.join(timeout=10)
+        for worker_dht in reversed(worker_dhts):
+            if worker_dht.is_alive():
+                worker_dht.shutdown()
+                worker_dht.join()
         dht.shutdown()
         dht.join()
 

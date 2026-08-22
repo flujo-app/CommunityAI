@@ -31,9 +31,10 @@ responses.
 2. **Real multi-machine swarm.** Two or more machines, explicit block coverage,
    restart testing, disconnect recovery, and latency/throughput measurements. A
    private Fly Machines swarm has proven coverage, redundancy, exact parity,
-   measurements, and restart recovery. In-generation disconnect recovery is the
-   remaining blocker: a replacement worker does not inherit or replay the failed
-   worker's attention-cache state.
+   measurements, and restart recovery. Exact full-prefix activation replay now
+   recovers an interrupted local two-replica swarm with token parity. Repeating
+   the original in-generation SIGKILL test on a rebuilt Fly swarm is the remaining
+   Milestone 2 confirmation.
 3. **Safe public pilot.** Signed worker identity and announcements, admission and
    rate limits, health/coverage monitoring, abuse controls, and documented prompt
    visibility. A private/VPN swarm remains the default until these gates pass.

@@ -58,6 +58,9 @@ class _ServerInferenceSession:
 
         self._position = 0
         self.history = None  # Used in case of server failures to regenerate attention caches on new servers
+        self.per_layer_history = None
+        self.replay_prompts = None
+        self._replay_target_position = None
         self.next_session = None
 
     @classmethod
@@ -91,12 +94,36 @@ class _ServerInferenceSession:
     def position(self):
         return self._position
 
+    @property
+    def needs_replay(self) -> bool:
+        return self._replay_target_position is not None
+
     @position.setter
     def position(self, start_from_position: int):
         assert start_from_position <= self._position
         self._position = start_from_position
         if self.history is not None and self.history.shape[1] >= start_from_position:
             self.history = self.history[:, :start_from_position, :] if start_from_position > 0 else None
+        if self.per_layer_history is not None and self.per_layer_history.shape[2] >= start_from_position:
+            self.per_layer_history = (
+                self.per_layer_history[:, :, :start_from_position, :] if start_from_position > 0 else None
+            )
+
+    def prepare_for_replay(
+        self,
+        *,
+        history: Optional[torch.Tensor],
+        per_layer_history: Optional[torch.Tensor],
+        prompts: Optional[torch.Tensor],
+        target_position: int,
+    ) -> None:
+        """Prepare a fresh server session to rebuild its attention cache from client-side history."""
+        assert not self.stepped and self._position == 0
+        assert target_position > 0
+        self.history = history
+        self.per_layer_history = per_layer_history
+        self.replay_prompts = prompts
+        self._replay_target_position = target_position
 
     def step(
         self,
@@ -122,24 +149,94 @@ class _ServerInferenceSession:
             raise Exception("Session is closed, cannot perform step")
 
         n_input_tokens = inputs.shape[1]
-        if self.history is None:
-            self.history = inputs
-        elif self.history.shape[1] == self._position:
-            self.history = torch.cat([self.history, inputs[:, -n_input_tokens:]], dim=1)
-        assert self.history.shape[1] == self._position + n_input_tokens, (
-            f"Broken input cache: span={self.span} shape={self.history.shape} "
-            f"position={self._position} n_input_tokens={n_input_tokens}"
-        )
+        if self.needs_replay:
+            if not is_dummy(hypo_ids):
+                raise NotImplementedError(
+                    "Attention-cache replay after a worker failure is not implemented for beam search"
+                )
 
-        if not self.stepped:
-            inputs = self.history  # Pass full inputs including prefix
+            target_position = self._replay_target_position
+            assert self._position == 0 and target_position is not None
+            if self.history is None:
+                self.history = inputs
+            elif self.history.shape[1] < target_position:
+                missing_tokens = target_position - self.history.shape[1]
+                if missing_tokens > n_input_tokens:
+                    raise RuntimeError(
+                        f"Cannot restore span {self.span}: activation history is missing {missing_tokens} tokens, "
+                        f"but the current step contains only {n_input_tokens}"
+                    )
+                self.history = torch.cat([self.history, inputs[:, -missing_tokens:]], dim=1)
+            if self.history.shape[1] != target_position:
+                raise RuntimeError(
+                    f"Cannot restore span {self.span}: activation history has {self.history.shape[1]} tokens, "
+                    f"expected {target_position}"
+                )
+            inputs = self.history
+            n_input_tokens = target_position
         else:
-            inputs = inputs[:, -n_input_tokens:]  # No need to pass prefix further
+            if self.history is None:
+                self.history = inputs
+            elif self.history.shape[1] == self._position:
+                self.history = torch.cat([self.history, inputs[:, -n_input_tokens:]], dim=1)
+            assert self.history.shape[1] == self._position + n_input_tokens, (
+                f"Broken input cache: span={self.span} shape={self.history.shape} "
+                f"position={self._position} n_input_tokens={n_input_tokens}"
+            )
+
+            if not self.stepped:
+                inputs = self.history  # Pass full inputs including prefix
+            else:
+                inputs = inputs[:, -n_input_tokens:]  # No need to pass prefix further
+
+        has_per_layer_inputs = per_layer_inputs is not None and not is_dummy(per_layer_inputs)
+        if self.needs_replay:
+            target_position = self._replay_target_position
+            assert target_position is not None
+            if self.per_layer_history is not None:
+                if self.per_layer_history.shape[2] < target_position:
+                    missing_tokens = target_position - self.per_layer_history.shape[2]
+                    if not has_per_layer_inputs or missing_tokens > per_layer_inputs.shape[2]:
+                        raise RuntimeError(
+                            f"Cannot restore per-layer inputs for span {self.span}: missing {missing_tokens} tokens"
+                        )
+                    self.per_layer_history = torch.cat(
+                        [self.per_layer_history, per_layer_inputs[:, :, -missing_tokens:, :]], dim=2
+                    )
+                if self.per_layer_history.shape[2] != target_position:
+                    raise RuntimeError(
+                        f"Cannot restore per-layer inputs for span {self.span}: history has "
+                        f"{self.per_layer_history.shape[2]} tokens, expected {target_position}"
+                    )
+                per_layer_inputs = self.per_layer_history
+                has_per_layer_inputs = True
+            elif has_per_layer_inputs:
+                if per_layer_inputs.shape[2] != target_position:
+                    raise RuntimeError(
+                        f"Cannot restore per-layer inputs for span {self.span}: received "
+                        f"{per_layer_inputs.shape[2]} tokens, expected {target_position}"
+                    )
+                self.per_layer_history = per_layer_inputs
+        elif has_per_layer_inputs:
+            if self.per_layer_history is None:
+                self.per_layer_history = per_layer_inputs
+            elif self.per_layer_history.shape[2] == self._position:
+                self.per_layer_history = torch.cat(
+                    [self.per_layer_history, per_layer_inputs[:, :, -n_input_tokens:, :]], dim=2
+                )
+            assert self.per_layer_history.shape[2] == self._position + n_input_tokens, (
+                f"Broken per-layer input cache: span={self.span} shape={self.per_layer_history.shape} "
+                f"position={self._position} n_input_tokens={n_input_tokens}"
+            )
+
+        if self.needs_replay and self.replay_prompts is not None:
+            prompts = self.replay_prompts
+        elif not is_dummy(prompts):
+            self.replay_prompts = prompts
 
         # serialize inputs and put them into the queue. Gemma 4 appends the per-layer inputs as a
         # fourth tensor and, when a KV-sharing donor lives upstream, its keys/values as further
         # tensors; other models keep the original 3-tensor layout for wire compatibility.
-        has_per_layer_inputs = per_layer_inputs is not None and not is_dummy(per_layer_inputs)
         has_shared_kv = bool(shared_kv_states)
         extra_tensors = []
         if has_per_layer_inputs:
@@ -200,6 +297,7 @@ class _ServerInferenceSession:
         produced_shared_kv = unflatten_shared_kv(produced_keys, outputs[1 : 1 + 2 * len(produced_keys)])
 
         self._position += n_input_tokens
+        self._replay_target_position = None
 
         return outputs[0], produced_shared_kv
 
@@ -370,16 +468,29 @@ class InferenceSession:
 
         server_idx = 0
         block_idx = 0
+        recovery_until: Optional[int] = None
         while block_idx < self.num_blocks:
             for attempt_no in itertools.count():
                 logger.debug(f"Inference: block {block_idx}, attempt {attempt_no}")
                 server_session = None
                 try:
                     if not self._server_sessions or attempt_no >= 1:
-                        self._update_sequence(server_idx, block_idx, attempt_no)
+                        replay_until = self._update_sequence(
+                            server_idx,
+                            block_idx,
+                            attempt_no,
+                            target_position=self._position + n_input_tokens,
+                        )
+                        if replay_until is not None:
+                            recovery_until = (
+                                replay_until if recovery_until is None else max(recovery_until, replay_until)
+                            )
 
                     server_session = self._server_sessions[server_idx]
-                    assert server_session.position == self.position, f"{server_session.position} and {self.position}"
+                    expected_position = 0 if server_session.needs_replay else self.position
+                    assert (
+                        server_session.position == expected_position
+                    ), f"{server_session.position} and {expected_position}"
                     span_per_layer_inputs = (
                         per_layer_inputs
                         if is_dummy(per_layer_inputs)
@@ -397,9 +508,15 @@ class InferenceSession:
 
                     server_idx += 1
                     block_idx = server_session.span.end
+                    if recovery_until is not None and block_idx >= recovery_until:
+                        assert block_idx == recovery_until
+                        inputs = inputs[:, -n_input_tokens:]
+                        recovery_until = None
                     self._sequence_manager.on_request_success(server_session.span.peer_id)
                     break
                 except Exception as e:
+                    if isinstance(e, NotImplementedError):
+                        raise
                     self._sequence_manager.on_request_failure(
                         server_session.span.peer_id if server_session is not None else None
                     )
@@ -418,12 +535,16 @@ class InferenceSession:
         outputs = outputs.to(device=inputs_device, dtype=inputs_dtype)
         return outputs
 
-    def _update_sequence(self, server_idx: int, block_idx: int, attempt_no: int) -> int:
+    def _update_sequence(
+        self, server_idx: int, block_idx: int, attempt_no: int, *, target_position: int
+    ) -> Optional[int]:
         # If there is a failed server session, this code closes it
+        n_prev_spans = len(self._server_sessions)
+        previous_session = self._server_sessions[server_idx] if server_idx < n_prev_spans else None
+        previous_span = previous_session.span if previous_session is not None else None
         self._exit_server_sessions(self._server_sessions[server_idx : server_idx + 1])
 
-        n_prev_spans = len(self._server_sessions)
-        update_end = self._server_sessions[server_idx].span.end if server_idx < n_prev_spans else self.num_blocks
+        update_end = previous_span.end if previous_span is not None else self.num_blocks
         if attempt_no >= 1:
             logger.debug(
                 f"Due to a server failure, remote attention caches "
@@ -439,13 +560,57 @@ class InferenceSession:
         logger.debug(f"Found path from block {block_idx} to {update_end} via {len(updated_spans)} servers")
 
         # If there is a failed span, this code replaces it, otherwise it just adds new ones
-        if server_idx < n_prev_spans:
-            updated_sessions[0].history = self._server_sessions[server_idx].history
+        replay_until = None
+        if previous_session is not None and previous_session.history is not None and target_position > 0:
+            assert previous_span is not None
+            history_tokens = previous_session.history.shape[1]
+            if not self._position <= history_tokens <= target_position:
+                raise RuntimeError(
+                    f"Cannot restore failed span {previous_span}: activation history has {history_tokens} tokens, "
+                    f"expected between {self._position} and {target_position}"
+                )
+
+            try:
+                for updated_index, updated_session in enumerate(updated_sessions):
+                    assert (
+                        previous_span.start
+                        <= updated_session.span.start
+                        < updated_session.span.end
+                        <= previous_span.end
+                    )
+                    relative_start = updated_session.span.start - previous_span.start
+                    relative_end = updated_session.span.end - previous_span.start
+                    per_layer_history = (
+                        previous_session.per_layer_history[relative_start:relative_end]
+                        if previous_session.per_layer_history is not None
+                        else None
+                    )
+                    replay_prompts = (
+                        previous_session.replay_prompts[relative_start:relative_end]
+                        if previous_session.replay_prompts is not None
+                        else None
+                    )
+                    updated_session.prepare_for_replay(
+                        history=previous_session.history if updated_index == 0 else None,
+                        per_layer_history=per_layer_history,
+                        prompts=replay_prompts,
+                        target_position=target_position,
+                    )
+            except Exception:
+                self._exit_server_sessions(updated_sessions)
+                raise
+            replay_until = update_end
+            logger.info(
+                f"Replaying {target_position} cached activation tokens through replacement blocks "
+                f"{block_idx}:{update_end}"
+            )
         self._server_sessions[server_idx : server_idx + 1] = updated_sessions
 
         # Update links to the next server session for direct server-to-server communication via rpc_push()
         for i in range(max(server_idx - 1, 0), min(server_idx + len(updated_spans), len(self._server_sessions) - 1)):
             self._server_sessions[i].next_session = self._server_sessions[i + 1]
+
+        return replay_until
 
     def close(self, *exc_details):
         """Finish a given inference session, close the underlying connection"""

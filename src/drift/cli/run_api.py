@@ -42,9 +42,25 @@ def main():
         help="Max simultaneous generations (each holds a server-side attention cache)",
     )
     parser.add_argument(
+        "--request_timeout",
+        type=float,
+        default=30,
+        help="Max seconds to wait for one swarm RPC before trying a replacement route",
+    )
+    parser.add_argument(
+        "--max_retries",
+        type=int,
+        default=3,
+        help="Max attempts for one swarm step, including the original route",
+    )
+    parser.add_argument(
         "--default_max_tokens", type=int, default=512, help="max_tokens used when a request does not specify one"
     )
     args = parser.parse_args()
+    if args.request_timeout <= 0:
+        parser.error("--request_timeout must be positive")
+    if args.max_retries < 1:
+        parser.error("--max_retries must be at least 1")
 
     try:
         import uvicorn
@@ -70,6 +86,9 @@ def main():
         initial_peers=args.initial_peers,
         dht_prefix=args.dht_prefix,
         torch_dtype=getattr(torch, args.torch_dtype),
+        request_timeout=args.request_timeout,
+        max_retries=args.max_retries,
+        max_backoff=5,
     )
 
     app = create_app(

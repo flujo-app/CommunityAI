@@ -12,7 +12,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | Milestone | Status | Evidence | Remaining gate |
 | --- | --- | --- | --- |
 | 1. Reproducible execution baseline | Mostly complete | Windows CPU, Docker Linux CPU, and Windows CUDA all served blocks `0:8` and produced exact token parity | Native macOS install and smoke test |
-| 2. Real multi-machine swarm | In progress | Private Fly swarm reached explicit `0:8` coverage, two replicas per block, exact parity, measured generation, and restart recovery | Preserve or reconstruct attention-cache state after an in-flight worker loss |
+| 2. Real multi-machine swarm | In progress | Private Fly swarm reached explicit `0:8` coverage, two replicas per block, exact parity, measured generation, and restart recovery; local two-replica interruption recovery now passes exact parity | Repeat the in-flight SIGKILL test on a rebuilt Fly swarm and verify cache cleanup |
 
 ## Linux CPU
 
@@ -59,7 +59,7 @@ single request crossed independent `0:4` and `4:8` workers. Representative runs:
 
 Peak client RSS was approximately 498-500 MiB in these runs.
 
-## In-generation disconnect finding
+## Original in-generation disconnect finding
 
 A 512-token request began with two replicas for every block. After the request
 had opened its route, the selected `4:8` Machine was killed with SIGKILL while the
@@ -84,16 +84,45 @@ example by replaying the full cached activation prefix or by
 replicating/checkpointing session cache state. A bounded replay window is exact
 only for architectures whose attention semantics impose the same bound.
 
+## Local interruption recovery
+
+The client now keeps enough per-span replay state to open a replacement session
+at server position zero and send the exact cached activation prefix before
+continuing. Replay is carried across replacement routes that split the failed
+span into multiple servers; outputs are reduced back to the current token before
+entering an already-warm downstream span. Gemma 4 per-layer input history and
+deep prompts are preserved alongside the activations. Beam-search replay is
+rejected explicitly because the existing activation history does not encode
+historical beam reordering.
+
+The native Windows CPU failover smoke used a local bootstrap plus two independent
+worker DHT peers, each serving blocks `0:8`. After the client generated its first
+token, the selected worker was stopped inside the active inference session. The
+failed RPC hit its configured three-second deadline, the client selected the
+surviving replica, replayed three cached activation tokens from position zero,
+and completed eight generated tokens in the same session.
+
+- recovery completed in 3.110 seconds;
+- the recovered output IDs were
+  `[[1, 16644, 31844, 260, 1496, 2789, 3557, 21075, 31843, 1100]]`;
+- the recovered output exactly matched stock Transformers generation; and
+- the smoke used a finite three-attempt retry budget.
+
+This proves the replay path over real DHT/RPC/cache handling on one machine. The
+original Fly SIGKILL scenario remains the real multi-machine release gate.
+
 ## Follow-up issues
 
-1. Design and test exact full-prefix activation replay or cache replication for
-   an in-flight route replacement. Reduce the 60-second failed-RPC delay once
-   correctness is established.
-2. Run the native macOS installer and the same exact-parity smoke test.
-3. Remove harmless Hivemind shutdown destructor warnings caused by querying an
+1. Rebuild the temporary Fly swarm and repeat the 512-token in-generation SIGKILL
+   test with exact parity, bounded recovery time, and cache-cleanup checks.
+2. Extend end-to-end interruption testing to split block routes and Gemma 4;
+   beam-search recovery needs a reorder-aware activation history before it can be
+   enabled safely.
+3. Run the native macOS installer and the same exact-parity smoke test.
+4. Remove harmless Hivemind shutdown destructor warnings caused by querying an
    already-closed uvloop event loop.
-4. Investigate server warnings about `self_attn.rotary_emb.inv_freq` not being
+5. Investigate server warnings about `self_attn.rotary_emb.inv_freq` not being
    loaded. TinyLlama parity passed, but broader model coverage should not assume
    that every architecture is unaffected.
-5. Check the CUDA head-device/dtype diagnostic: the FP16 CUDA test passed exact
+6. Check the CUDA head-device/dtype diagnostic: the FP16 CUDA test passed exact
    parity, but the language-model-head log still described a bfloat16 CPU path.

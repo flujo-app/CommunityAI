@@ -167,7 +167,10 @@ def run_client() -> None:
         MODEL,
         dht_prefix=DHT_PREFIX,
         initial_peers=[initial_peer],
-        request_timeout=60,
+        request_timeout=float(os.environ.get("FLY_SMOKE_REQUEST_TIMEOUT", "10")),
+        max_retries=int(os.environ.get("FLY_SMOKE_MAX_RETRIES", "3")),
+        min_backoff=0.1,
+        max_backoff=1,
     )
     config._attn_implementation = "eager"
     tokenizer = AutoTokenizer.from_pretrained(MODEL)

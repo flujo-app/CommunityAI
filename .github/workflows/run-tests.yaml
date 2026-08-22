@@ -51,6 +51,7 @@ jobs:
             tests/test_gemma4_block.py \
             tests/test_gemma4_multimodal_loading.py \
             tests/test_gemma4_unified.py \
+            tests/test_inference_recovery.py \
             tests/test_join_token.py \
             tests/test_kv_cache_strategy.py \
             tests/test_openai_api.py \

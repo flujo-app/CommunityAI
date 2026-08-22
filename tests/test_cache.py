@@ -36,7 +36,9 @@ async def test_cache_timeout():
                 with pytest.raises(AllocationFailed):
                     async with cache.allocate_cache(_make_tensor_descriptor(768), timeout=0.1):
                         pass
-                assert 0.1 < time.perf_counter() - t_start < 0.2, "wait time exceeds alloc timeout"
+                elapsed = time.perf_counter() - t_start
+                # Windows waitable timers can resume roughly one scheduler tick before the deadline.
+                assert 0.075 < elapsed < 0.2, "wait time exceeds alloc timeout"
                 async with cache.allocate_cache(_make_tensor_descriptor(128), timeout=float("inf")):
                     pass
 
@@ -44,7 +46,7 @@ async def test_cache_timeout():
                 with pytest.raises(AllocationFailed):
                     async with cache.allocate_cache(_make_tensor_descriptor(384), timeout=1.0):  # exceeds max timeout
                         pass
-                assert 0.5 < time.perf_counter() - t_start < 0.6, "wait time exceeds max alloc timeout"
+                assert 0.45 < time.perf_counter() - t_start < 0.65, "wait time exceeds max alloc timeout"
 
             # test memory allocation when another task frees the memory
             async def _klog_the_cache():
@@ -91,7 +93,8 @@ async def test_unlimited_timeout():
     await asyncio.sleep(0.1)
     async with cache.allocate_cache(_make_tensor_descriptor(768), timeout=float("inf")):
         await alloc_task
-    assert 0.5 < time.perf_counter() - t_start < 0.6, "memory should be allocated after background task clears"
+    elapsed = time.perf_counter() - t_start
+    assert 0.45 < elapsed < 0.65, "memory should be allocated after background task clears"
 
 
 @pytest.mark.skipif(
