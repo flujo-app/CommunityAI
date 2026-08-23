@@ -70,6 +70,24 @@ def test_control_key_is_stable_separate_and_supports_an_explicit_path(tmp_path):
     assert custom_path.read_text(encoding="utf-8").strip() == custom
 
 
+def test_control_key_can_come_from_the_native_store_without_a_file(monkeypatch, tmp_path):
+    native_key = "drift_control_" + "K" * 43
+    monkeypatch.setattr("drift.cli.run_node.load_native_control_key", lambda location: native_key)
+
+    loaded, selected_path, created = _prepare_control_key(
+        tmp_path,
+        None,
+        source="native",
+        credential_service="service",
+        credential_account="account",
+    )
+
+    assert loaded == native_key
+    assert selected_path is None
+    assert created is False
+    assert not (tmp_path / "control-api.key").exists()
+
+
 def test_key_store_rejects_duplicate_json_keys(tmp_path):
     path = tmp_path / "api-keys.json"
     path.write_text('{"schema_version":1,"schema_version":1,"keys":[]}', encoding="utf-8")

@@ -19,6 +19,12 @@ from communityai_desktop.credentials import (
     CredentialError,
     NativeCredentialStore,
 )
+from communityai_desktop.lifecycle import (
+    DEFAULT_NODE_CONFIG_PATH,
+    DEFAULT_NODE_DATA_DIR,
+    NodeLifecycleError,
+    NodeLifecycleSupervisor,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--credential-service", default=DEFAULT_CREDENTIAL_SERVICE, help=argparse.SUPPRESS)
     parser.add_argument("--credential-account", default=DEFAULT_CREDENTIAL_ACCOUNT, help=argparse.SUPPRESS)
+    parser.add_argument("--node-config", type=Path, default=DEFAULT_NODE_CONFIG_PATH, help=argparse.SUPPRESS)
+    parser.add_argument("--node-data-dir", type=Path, default=DEFAULT_NODE_DATA_DIR, help=argparse.SUPPRESS)
+    parser.add_argument("--no-manage-node", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--capture-page", type=int, default=0, help=argparse.SUPPRESS)
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--store-control-key", action="store_true")
@@ -107,21 +116,42 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # Validate the destination before opening the credential store.
         node_url = normalize_loopback_url(args.node_url)
         credential_store = _credential_store(args)
+        lifecycle = (
+            None
+            if args.no_manage_node
+            else NodeLifecycleSupervisor(
+                node_url,
+                credential_store,
+                config_path=args.node_config,
+                data_dir=args.node_data_dir,
+                client_timeout=args.timeout,
+            )
+        )
 
         def connect() -> DesktopController:
+            if lifecycle is not None:
+                return DesktopController(lifecycle.ensure_client())
             token = credential_store.get_or_migrate()
             return DesktopController(NodeClient(node_url, token, timeout=args.timeout))
 
         if args.probe_only:
-            _write_json(connect().snapshot())
-            return 0
+            try:
+                _write_json(connect().snapshot())
+                return 0
+            finally:
+                if lifecycle is not None:
+                    lifecycle.close()
 
         from communityai_desktop.pyside_shell import run
 
         # Credential and connection errors belong in the window for normal desktop
         # startup. Existing headless installations migrate automatically.
-        return int(run(connect=connect) or 0)
-    except (CredentialError, NodeClientError, ValueError) as exc:
+        try:
+            return int(run(connect=connect) or 0)
+        finally:
+            if lifecycle is not None:
+                lifecycle.close()
+    except (CredentialError, NodeClientError, NodeLifecycleError, ValueError) as exc:
         parser.exit(2, f"communityai-desktop: {exc}\n")
 
 

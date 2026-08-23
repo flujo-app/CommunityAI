@@ -66,6 +66,7 @@ jobs:
             tests/test_loading_diagnostics.py \
             tests/test_model_manager.py \
             tests/test_model_manifest.py \
+            tests/test_native_credentials.py \
             tests/test_node_config.py \
             tests/test_node.py \
             tests/test_openai_api.py \

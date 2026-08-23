@@ -22,7 +22,7 @@ journal. The private identity file must never leave the VM.
 - VM: `communityai-bootstrap-1` in `us-central1-a`
 - Public IPv4: `35.209.21.129`
 - Peer address: `/ip4/35.209.21.129/tcp/31337/p2p/QmZhGcSVR6qPLZTq3TJPZEi734GbMkouv3kPxQLdDY2qUo`
-- Proposed DNS: `bootstrap.communityai.flujo.com.co` (`A` record to `35.209.21.129`)
+- Published DNS: `bootstrap.communityai.flujo.com.co` (`A` record to `35.209.21.129`)
 
 The VM has no service account. SSH is allowed only through Google IAP; TCP
 31337 is the only application port exposed publicly.

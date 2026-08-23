@@ -67,6 +67,8 @@ api = [
     # plain clients don't drag in a web stack.
     "fastapi>=0.115",
     "uvicorn>=0.30",
+    # Desktop-owned nodes read their privileged control credential from the native OS store.
+    "keyring>=25,<27",
 ]
 benchmark = [
     # Process-tree peak RSS sampling for `drift edge-benchmark`.
@@ -90,6 +92,8 @@ dev = [
     "httpx>=0.27",
     # Representative compatibility gate for the documented localhost OpenAI endpoint.
     "openai>=2,<3",
+    # Native credential source tests run in the broad offline matrix.
+    "keyring>=25,<27",
 ]
 
 [project.scripts]

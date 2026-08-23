@@ -66,8 +66,11 @@ are deliberately absent from this format. A Hugging Face token may currently be
 supplied with the process secret mechanism or the existing `--token` compatibility
 option. The generated OpenAI bootstrap key remains in `local-api.key`; the privileged
 control credential is separately generated in `control-api.key` or read from
-`--control_key_path`. Labeled OpenAI key records are stored beneath the node data
-directory as metadata and domain-separated hashes only.
+`--control_key_path` for headless use. A desktop-owned node instead uses
+`--control_key_source native`, which requires an existing `drift_control_` key in
+the configured native credential service/account and never falls back to an
+ordinary file. Labeled OpenAI key records are stored beneath the node data directory
+as metadata and domain-separated hashes only.
 
 An existing explicit control file must contain the `drift_control_` key class with
 at least 256 bits of URL-safe random material. A client key file cannot be reused as
