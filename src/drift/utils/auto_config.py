@@ -39,12 +39,14 @@ class _AutoDistributedBase:
         else:
             config = AutoConfig.from_pretrained(model_name_or_path, *args, **kwargs)
         model_type = config.model_type
+        source_architectures = None
         if model_type not in _CLASS_MAPPING:
             # Multimodal wrappers (e.g. Gemma4ForConditionalGeneration) carry the language model in a
             # nested text_config; fall back to it so we serve the text tower of a multimodal checkpoint.
             text_config = config.get_text_config() if hasattr(config, "get_text_config") else config
             if text_config is not config and text_config.model_type in _CLASS_MAPPING:
                 model_type = text_config.model_type
+                source_architectures = tuple(getattr(config, "architectures", ()) or ())
             else:
                 raise ValueError(f"DRIFT-LLM does not support model type {config.model_type}")
 
@@ -52,7 +54,11 @@ class _AutoDistributedBase:
         if proper_cls is None:
             raise ValueError(f"DRIFT-LLM does not have {cls.__name__} for model type {config.model_type}")
 
-        return proper_cls.from_pretrained(model_name_or_path, *args, **kwargs)
+        result = proper_cls.from_pretrained(model_name_or_path, *args, **kwargs)
+        if cls._mapping_field == "config" and source_architectures:
+            loaded_config = result[0] if isinstance(result, tuple) else result
+            loaded_config._source_architectures = source_architectures
+        return result
 
 
 class DefaultRevisionMixin:

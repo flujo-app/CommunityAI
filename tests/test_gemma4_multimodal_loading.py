@@ -130,6 +130,7 @@ def test_config_dispatch_uses_nested_text_config(wrapper_checkpoint):
     cfg = AutoDistributedConfig.from_pretrained(path)
     assert type(cfg).__name__ == "DistributedGemma4Config"
     assert cfg.model_type == "gemma4_text"  # dispatched onto the nested text config
+    assert cfg._source_architectures == ("Gemma4ForConditionalGeneration",)
     assert cfg.num_hidden_layers == 6 and cfg.num_kv_shared_layers == 2
     assert cfg.block_prefix == "model.language_model.layers"
 

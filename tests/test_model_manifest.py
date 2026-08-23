@@ -190,6 +190,24 @@ def test_runtime_and_downloaded_config_validation():
         )
 
 
+def test_wrapper_manifest_validation_uses_preserved_source_architecture():
+    source = manifest_dict()
+    source["model"].update(
+        architecture="Qwen3_5ForConditionalGeneration",
+        num_blocks=24,
+        context_length=262144,
+    )
+    manifest = ModelManifest.from_dict(source)
+    manifest.validate_model_config(
+        SimpleNamespace(
+            architectures=None,
+            _source_architectures=("Qwen3_5ForConditionalGeneration",),
+            num_hidden_layers=24,
+            max_position_embeddings=262144,
+        )
+    )
+
+
 def test_artifact_verification(tmp_path):
     files = {
         "config.json": b"c",

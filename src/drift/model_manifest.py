@@ -412,7 +412,9 @@ class ModelManifest:
 
     def validate_model_config(self, config: Any) -> None:
         """Reject a downloaded config that does not describe the manifested model shape."""
-        architectures = tuple(getattr(config, "architectures", ()) or ())
+        architectures = tuple(
+            getattr(config, "_source_architectures", None) or getattr(config, "architectures", ()) or ()
+        )
         if self.model.architecture not in architectures:
             raise ManifestError(
                 f"Manifest architecture {self.model.architecture!r} does not match config architectures {architectures!r}"

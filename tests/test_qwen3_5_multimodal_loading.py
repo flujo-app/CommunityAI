@@ -98,6 +98,7 @@ def test_qwen3_5_wrapper_detection_and_dispatch(wrapper_checkpoint, text_only_ch
     config = AutoDistributedConfig.from_pretrained(path)
     assert type(config).__name__ == "DistributedQwen3_5Config"
     assert config.model_type == "qwen3_5_text"
+    assert config._source_architectures == ("Qwen3_5ForConditionalGeneration",)
     assert config.block_prefix == "model.language_model.layers"
     assert AutoDistributedConfig.from_pretrained(text_only_checkpoint).block_prefix == "model.layers"
 
