@@ -69,6 +69,7 @@ def main():
         server = server_from_args(args)
     except ManifestError as exc:
         parser.error(str(exc))
+    model_name = server.converted_model_name_or_path
 
     def _on_ready(srv):
         if is_first_node:

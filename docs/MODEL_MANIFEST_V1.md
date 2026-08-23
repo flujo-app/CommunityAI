@@ -125,7 +125,8 @@ document. The full 256 bits are retained in the DHT prefix.
 
 Both worker and API processes accept `--model_manifest <path>`. Manifest mode:
 
-- requires the requested repository to match `source.repository`;
+- derives the repository from `source.repository` when the worker command omits it,
+  and rejects a conflicting explicitly requested repository;
 - replaces an omitted revision with the pinned commit and rejects a conflicting
   `--revision`;
 - derives the DHT prefix and rejects a conflicting `--dht_prefix`;

@@ -532,6 +532,46 @@ def test_server_cli_applies_manifest_profile(tmp_path, monkeypatch):
     assert resolved["model_manifest"].digest == resolved["dht_prefix"].removeprefix("drift-m1-")
 
 
+def test_server_cli_derives_repository_from_manifest(tmp_path, monkeypatch):
+    from drift.cli import run_server
+
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest_dict()), encoding="utf-8")
+    args = vars(
+        run_server.build_parser().parse_args(
+            [
+                "--new_swarm",
+                "--model_manifest",
+                str(path),
+                "--identity_path",
+                str(tmp_path / "worker.key"),
+                "--increase_file_limit",
+                "0",
+            ]
+        )
+    )
+    args.pop("config", None)
+
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+    monkeypatch.setattr(run_server, "log_version", lambda: None)
+    monkeypatch.setattr(run_server, "Server", lambda **kwargs: kwargs)
+    resolved = run_server.server_from_args(args)
+
+    assert resolved["converted_model_name_or_path"] == "org/tiny-test"
+    assert resolved["revision"] == "a" * 40
+
+
+def test_server_cli_requires_model_without_manifest(monkeypatch):
+    from drift.cli import run_server
+
+    args = vars(run_server.build_parser().parse_args(["--new_swarm", "--increase_file_limit", "0"]))
+    args.pop("config", None)
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+
+    with pytest.raises(ManifestError, match="model is required unless --model_manifest"):
+        run_server.server_from_args(args)
+
+
 def test_manifested_server_requires_persistent_identity(tmp_path, monkeypatch):
     from drift.cli import run_server
 

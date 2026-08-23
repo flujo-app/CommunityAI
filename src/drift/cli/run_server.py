@@ -66,7 +66,7 @@ def build_parser() -> configargparse.ArgParser:
                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add('-c', '--config', required=False, is_config_file=True, help='config file path')
 
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--converted_model_name_or_path', type=str, default=None,
                        help="path or name of a pretrained model, converted with cli/convert_model.py")
     group.add_argument('model', nargs='?', type=str, help="same as --converted_model_name_or_path")
@@ -244,12 +244,14 @@ def server_from_args(args: dict) -> Server:
     # Arm this before anything can spawn a p2pd, so a hard-killed server does not orphan its daemons
     tie_child_processes_to_this_process()
 
-    args["converted_model_name_or_path"] = args.pop("model") or args["converted_model_name_or_path"]
-
+    requested_model = args.pop("model") or args["converted_model_name_or_path"]
     manifest_path = args.pop("model_manifest")
     if manifest_path is not None:
         manifest = ModelManifest.load(manifest_path)
         manifest.validate_runtime(drift.__version__)
+        if requested_model is None:
+            requested_model = manifest.source.repository
+        args["converted_model_name_or_path"] = requested_model
         args["revision"], args["dht_prefix"] = resolve_manifest_loading(
             manifest,
             model_name_or_path=args["converted_model_name_or_path"],
@@ -286,8 +288,12 @@ def server_from_args(args: dict) -> Server:
             raise ManifestError(
                 "--identity_path is required with --model_manifest so announcements use a stable libp2p signer"
             )
-    elif args.get("revocation_files"):
-        raise ManifestError("--revocation_file is only valid with --model_manifest")
+    else:
+        if requested_model is None:
+            raise ManifestError("a model is required unless --model_manifest supplies its exact repository")
+        args["converted_model_name_or_path"] = requested_model
+        if args.get("revocation_files"):
+            raise ManifestError("--revocation_file is only valid with --model_manifest")
 
     host_maddrs = args.pop("host_maddrs")
     port = args.pop("port")
@@ -358,12 +364,11 @@ def main():
     args = vars(parser.parse_args())
     args.pop("config", None)
 
-    model_name = args.get("model") or args.get("converted_model_name_or_path")
     try:
         server = server_from_args(args)
     except ManifestError as exc:
         parser.error(str(exc))
-    serve(server, model=model_name)
+    serve(server, model=server.converted_model_name_or_path)
 
 
 if __name__ == "__main__":
