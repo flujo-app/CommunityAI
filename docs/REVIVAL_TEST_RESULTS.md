@@ -159,14 +159,23 @@ Windows CPU, and produced `[[9707,25,358,2776]]`, exactly matching the stock eag
 model. A two-replica run interrupted the selected worker, recovered in 4.484 seconds,
 and preserved the same exact IDs.
 
+A separate cold-client Windows CPU run connected to one full-range signed worker and
+completed the Qwen edge benchmark from an empty cache. After the 4,079,422,995
+declared artifact bytes were verified, the cache had grown by 4,079,449,800 bytes.
+The client loaded 622,329,856 unique bytes for the tied local embedding/head,
+measured a 1,040,101,376-byte process-tree peak RSS delta, reached first token in
+2.079 seconds after the cold load, and decoded subsequent tokens at 1.738 tokens per
+second. The bounded JSON evidence is retained in
+[`qwen3-1.7b-bfloat16-eager-windows-cpu-edge.json`](evidence/qwen3-1.7b-bfloat16-eager-windows-cpu-edge.json).
+
 The first Qwen load also found and fixed a larger-model Windows defect: same-dtype
 block tensors kept their complete safetensors shard mapping, accumulating one 3.44 GB
 mapping per block until the process failed while loading block 25. The loader now
 copies only the selected block tensors into owned CPU storage before closing the file
 mapping. A regression test checks storage independence, and the TinyLlama parity plus
 focused loader/model suites passed before the full Qwen rerun. The candidate manifest
-is still not catalog approval: multi-machine, cross-platform, edge, and public-route
-evidence plus the first-rung standby qualification remain open.
+is still not catalog approval: multi-machine, cross-platform, remaining device-class
+edge, and public-route evidence plus the first-rung standby qualification remain open.
 
 ## Desktop milestone: shell decision
 

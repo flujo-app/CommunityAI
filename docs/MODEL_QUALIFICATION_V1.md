@@ -3,9 +3,10 @@
 Status: the model-agnostic single-machine harness is implemented. The first-rung
 primary candidate is pinned in
 [`manifests/candidates/qwen3-1.7b-bfloat16-eager.json`](../manifests/candidates/qwen3-1.7b-bfloat16-eager.json),
-and has passed full-artifact audit, local Windows CPU parity, and selected-worker
-interruption recovery. A candidate manifest is not catalog approval. The remaining
-evidence below must be attached before its digest enters a signed production catalog.
+and has passed full-artifact audit, local Windows CPU parity, selected-worker
+interruption recovery, and the Windows CPU cold-client edge envelope. A candidate
+manifest is not catalog approval. The remaining evidence below must be attached before
+its digest enters a signed production catalog.
 
 ## Candidate identity
 
@@ -59,6 +60,23 @@ seconds, and produced the same exact stock IDs. Before inference, the runner has
 4,079,422,995 declared bytes. It inferred the Hub cache root from the audited immutable
 snapshot and recorded that provenance in the report.
 
+A separate Windows CPU edge run at source commit
+`fe49406a2daaf3b864f77296e4669a2608e572e8` used DRIFT 2.3.0.dev2,
+Transformers 5.13.0, Torch 2.6.0+cpu, an empty dedicated client cache, and one
+full-range manifested worker with PeerID
+`QmUybXtFVfJzBejSEJ3wTRe9rV9TnuQaXsAdguyQxXHihy`. After all 4,079,422,995
+declared artifact bytes were verified, the dedicated cache had grown by
+4,079,449,800 bytes. The client loaded 622,329,856 unique bytes for the tied input
+embeddings and output head and measured a 1,040,101,376-byte process-tree peak RSS
+delta. The cold load took 2,574.943 seconds at the available network rate;
+after load, first token took 2.079 seconds and the remaining decode ran at 1.738
+tokens per second. Eight generated tokens completed through route `0:28`. The
+bounded result is retained in
+[`qwen3-1.7b-bfloat16-eager-windows-cpu-edge.json`](evidence/qwen3-1.7b-bfloat16-eager-windows-cpu-edge.json).
+The client closed its DHT and the separately owned worker process tree was stopped;
+its loopback port was verified closed. This is Windows CPU evidence only and does
+not claim the remaining device or platform envelopes.
+
 The first full-model attempt exposed that same-dtype block tensors returned by
 `safetensors.safe_open` retained a mapping of the complete 3.44 GB shard for every
 loaded block. Windows exhausted commit/virtual memory and the native process failed
@@ -84,7 +102,7 @@ machine cannot prove the public release gates.
 | Local interruption recovery | Two complete signed replicas, selected-worker stop, activation replay, exact stock parity | Implemented as `--with-failover` |
 | Multi-machine parity and recovery | Split route and redundant route on separate machines; selected process killed during generation | External run required |
 | Cross-platform execution | Claimed CPU/CUDA/MPS profiles tested without silently changing dtype or attention | External matrix required |
-| Edge envelope | Cold cache growth, local embedding/head bytes, RSS/accelerator peaks, load/first-token/decode timing | `drift edge-benchmark` run required |
+| Edge envelope | Cold cache growth, local embedding/head bytes, RSS/accelerator peaks, load/first-token/decode timing | Windows CPU complete; other claimed device classes require external runs |
 | Public availability | Target bottleneck replicas, independent complete routes, largest-peer-loss survival, fresh measurements and soak | Public workers required |
 | Catalog approval | Primary and standby qualified, threshold signatures, mirrors and release bootstrap published | Release process required |
 
