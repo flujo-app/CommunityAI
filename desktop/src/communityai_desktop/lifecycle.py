@@ -17,6 +17,8 @@ from communityai_desktop.credentials import NativeCredentialStore
 
 DEFAULT_NODE_DATA_DIR = Path.home() / ".drift" / "node"
 DEFAULT_NODE_CONFIG_PATH = DEFAULT_NODE_DATA_DIR / "node-config.json"
+PACKAGED_NODE_DIRECTORY = "node"
+PACKAGED_NODE_NAME = "CommunityAI-Node"
 
 
 class NodeLifecycleError(RuntimeError):
@@ -26,7 +28,8 @@ class NodeLifecycleError(RuntimeError):
 def _default_node_command() -> tuple[str, ...]:
     if getattr(sys, "frozen", False):
         suffix = ".exe" if os.name == "nt" else ""
-        return (str(Path(sys.executable).resolve().with_name(f"CommunityAI-Node{suffix}")),)
+        executable = Path(sys.executable).resolve().parent / PACKAGED_NODE_DIRECTORY / f"{PACKAGED_NODE_NAME}{suffix}"
+        return (str(executable),)
     return (sys.executable, "-m", "drift.cli", "node")
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import socket
 import sys
@@ -27,6 +28,20 @@ def _unused_loopback_port() -> int:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--node-command",
+        type=Path,
+        help="Packaged CommunityAI-Node executable to supervise instead of the source drift command",
+    )
+    args = parser.parse_args()
+    node_command = None
+    if args.node_command is not None:
+        executable = args.node_command.expanduser().resolve()
+        if not executable.is_file():
+            parser.error(f"node executable does not exist: {executable}")
+        node_command = (str(executable),)
+
     service = f"org.communityai.desktop.smoke.{uuid.uuid4().hex}"
     account = "local-node-control-v1"
     store = NativeCredentialStore(service, account)
@@ -61,6 +76,7 @@ def main() -> int:
             store,
             config_path=config_path,
             data_dir=root / "data",
+            node_command=node_command,
             startup_timeout=45,
         )
         try:

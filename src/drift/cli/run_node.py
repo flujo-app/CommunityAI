@@ -7,8 +7,6 @@ import math
 import sys
 from pathlib import Path
 
-from hivemind.utils.logging import get_logger, use_hivemind_log_handler
-
 import drift
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
@@ -24,6 +22,7 @@ from drift.node.native_credentials import (
 )
 from drift.node.worker_supervisor import WorkerLaunch, WorkerSupervisor
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
+from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 
 use_hivemind_log_handler("in_root_logger")
 logger = get_logger(__name__)
@@ -238,11 +237,14 @@ def _build_worker_supervisor(
         if worker.public_ip is not None and worker.port is None:
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
 
+        if getattr(sys, "frozen", False):
+            # desktop/launch_node.py dispatches this mode inside the packaged
+            # sidecar; a frozen executable cannot be reinvoked with ``-m``.
+            server_command = [sys.executable, "server"]
+        else:
+            server_command = [sys.executable, "-m", "drift.cli", "server"]
         command = [
-            sys.executable,
-            "-m",
-            "drift.cli",
-            "server",
+            *server_command,
             manifest.source.repository,
             "--model_manifest",
             str(model_config.manifest_path),
@@ -340,7 +342,6 @@ def main() -> None:
 
     try:
         import uvicorn
-
         from drift.node.server import create_node_app
     except ImportError as exc:
         raise SystemExit(f"drift node requires the 'api' extra: pip install drift[api] ({exc})") from exc

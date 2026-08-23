@@ -38,11 +38,14 @@ package. Its source and packaged smokes enforce the GUI/node boundary, strict lo
 control traffic, key lifecycle, and worker controls without importing model runtimes.
 The node and desktop now share the native credential store directly, and the desktop
 has source-level ownership for node startup, authenticated readiness, bounded crash
-backoff, reconnect, and shutdown. The first signed-catalog foundation now provides
+backoff, reconnect, and shutdown. The production builder now also stages a separately
+frozen node runtime and smokes its node and contribution-worker entry points; a packaged
+Windows run joined the published DNS seed with a native credential and completed owned
+shutdown. The first signed-catalog foundation now provides
 independent Ed25519 keys, threshold verification, expiry, rollback protection, and an
 elastic capacity-ladder selector; the signed catalog distribution and first qualified
-manifest set are not yet published. The immediate objective is to bundle the standalone
-node sidecar, consume that catalog safely, and ship automatic public seed configuration.
+manifest set are not yet published. The immediate objective is to generate first-install
+configuration, consume that catalog safely, and ship automatic public seed configuration.
 Contribution policies and budgets, accessibility and resource measurements, and signed
 installer/update/rollback validation follow. Milestones 6 through 8 remain planned
 after this desktop foundation.
@@ -584,12 +587,15 @@ implementation.
    The shell-neutral supervisor detects occupied ports without replacing their process,
    starts the node with no secret in arguments or environment, waits for authenticated
    readiness, applies bounded crash backoff, reconnects after a failed status refresh, and
-   stops only its owned process. The GUI bundle does not yet contain the actual model/DHT
-   sidecar or a signed catalog, so packaged end-to-end lifecycle promotion remains open.
-   A real source-level Windows smoke nevertheless provisioned Credential Manager, launched
+   stops only its owned process. The production product bundle now contains a separately
+   frozen model/DHT sidecar while the GUI executable continues to exclude those runtimes.
+   The builder smokes both the frozen node and contribution-worker entry points. A signed
+   catalog and first-install configuration are not yet bundled, so clean-install inference
+   remains open. A real source-level Windows smoke provisioned Credential Manager, launched
    `drift node` on an isolated loopback port, joined through the published DNS seed,
    authenticated the control API without creating `control-api.key`, and shut down the
-   owned node cleanly.
+   owned node cleanly. The packaged Windows sidecar then passed that same native-credential,
+   public-seed, authenticated-readiness, and owned-shutdown path.
 
    The strict signed-catalog foundation is now implemented separately from worker
    identity: offline Ed25519 roots enforce configurable signature thresholds, expiry,
@@ -598,8 +604,8 @@ implementation.
    bottleneck coverage, independent routes, largest-peer-loss survival, soak, latency,
    and throughput. It does not yet fetch catalogs or drive workers.
 
-   **Next implementation sequence.** Bundle the standalone node sidecar, ship the
-   published DNS peer as an automatic replaceable seed, publish and consume the initial
+   **Next implementation sequence.** Generate the first-install node configuration, ship
+   the published DNS peer as an automatic replaceable seed, publish and consume the initial
    signed model catalog plus verified worker manifests so model selection represents
    real usable swarms. Prove the native credential and owned-process path against real
    packaged Windows, Linux, and macOS credential backends. After that, add single-instance

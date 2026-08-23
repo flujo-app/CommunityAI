@@ -15,7 +15,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the node can read the desktop's native credential directly; source-level lifecycle tests cover startup, authenticated readiness, collisions, backoff, reconnect, migration retirement, and owned shutdown; and the strict signed-catalog foundation covers independent signing keys, thresholds, expiry, rollback, exact manifests, and elastic-rung promotion gates | The real node sidecar and catalog are not bundled or remotely fetched; qualified public manifests, real native-store package integration, contribution policies and budgets, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build now stages an independently frozen node sidecar and smokes its node and worker entry points; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; and the strict signed-catalog foundation covers independent signing keys, thresholds, expiry, rollback, exact manifests, and elastic-rung promotion gates | The initial catalog is not bundled or remotely fetched; first-install configuration, qualified public manifests, cross-platform native-store package promotion, contribution policies and budgets, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
 
 ## Desktop milestone: control authority separation
 
@@ -77,10 +77,12 @@ The source supervisor checks the configured loopback port before spawning, refus
 replace an unknown service, launches the standalone node with native-store identifiers
 but no secret, waits for authenticated readiness, applies exponential backoff capped at
 30 seconds, and terminates only its owned process. A failed periodic status refresh now
-drops the stale client so the next refresh re-enters lifecycle recovery. Twenty-one
-desktop tests and twenty-five focused node/key tests pass. The package still excludes
-model, DHT, and worker runtimes and does not yet stage a node sidecar, so this is not a
-claim that a clean packaged installation can run inference.
+drops the stale client so the next refresh re-enters lifecycle recovery. Twenty-two
+desktop tests and the focused node/key tests pass. The package still excludes model,
+DHT, and worker runtimes from the GUI executable itself. Its product bundle now stages
+those dependencies in a separate frozen node directory and verifies the node and worker
+entry points. The missing signed catalog and first-install configuration mean this is
+still not a claim that a clean packaged installation can run inference.
 
 The real Windows source smoke used a disposable Credential Manager service/account and
 an isolated loopback port. The desktop launched the installed `drift node`, the node
@@ -89,6 +91,16 @@ loaded the same native key, joined via
 and returned authenticated API version 1 status for one manifest. No
 `control-api.key` appeared in the temporary data directory. The supervisor then stopped
 its owned process and deleted the disposable native credential.
+
+The subsequent Windows product build created a 1,841,600,397-byte, 4,810-file frozen
+node directory inside a 1,967,229,026-byte, 5,154-file unsigned product bundle. Its
+runtime contract imported DRIFT 2.3.0.dev2, Torch 2.6.0 CPU, Transformers 5.13.0,
+Hivemind 1.1.12, FastAPI, Uvicorn, the Windows keyring backend, and the packaged
+`p2pd.exe`; both `node` and frozen contribution-worker dispatch passed. The same
+disposable native-credential smoke then launched the packaged executable, joined the
+published DNS seed, authenticated API version 1 with one configured manifest, wrote no
+`control-api.key`, and shut down the owned process. Clean-runner Linux/macOS sidecar
+results and GPU-specific bundle policy remain open.
 
 ## Desktop milestone: shell decision
 

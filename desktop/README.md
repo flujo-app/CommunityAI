@@ -22,21 +22,33 @@ the secret in its command, environment, logs, or ordinary configuration. A migra
 private file is removed only after a desktop-owned native-key node authenticates. File
 mode remains the default for explicitly headless `drift node` use.
 
-The current PyInstaller artifact still contains only the GUI client: the real model/DHT
-node sidecar and initial signed catalog have not been added to that bundle. Until those
-arrive, source runs can supervise an installed node when
-`~/.drift/node/node-config.json` exists, while a fresh packaged install renders a
-model-catalog or missing-sidecar state in the window. Contribution budgets, login
-startup, accessibility validation, signed installers, and update/rollback behavior
-remain later milestone-5 slices.
+The PyInstaller product bundle now contains the GUI plus a separately built
+`node/CommunityAI-Node` runtime. The node bundle retains Torch, Transformers,
+Hivemind, the platform keyring backend, and `p2pd`, while the GUI executable continues
+to exclude those packages. The build smokes both the node and contribution-worker
+entry points. A packaged Windows lifecycle smoke has also launched that sidecar with a
+native Credential Manager key, joined the published DNS seed, authenticated readiness,
+and shut down the owned process without writing a control-key file.
+
+The initial signed catalog, verified model manifests, and first-install node
+configuration have not been added yet. Until those arrive, source or packaged runs can
+supervise the node when `~/.drift/node/node-config.json` exists, while a fresh install
+renders the missing-catalog state in the window. Cross-platform packaged native-store
+promotion, contribution budgets, login startup, accessibility validation, signed
+installers, and update/rollback behavior remain later milestone-5 slices.
 
 ## Development
 
 Create a disposable environment and install the package:
 
 ```shell
+python -m pip install -e "..[api]"
 python -m pip install -e ".[dev]"
 ```
+
+On Windows, install the repository's patched Hivemind wheel first as described in the
+root README. The desktop source tests need only the desktop package; producing the node
+sidecar requires the full root runtime.
 
 Run the headless protocol and source-boundary tests:
 
@@ -74,8 +86,8 @@ python generate_assets.py  # only needed after changing the product icon
 python build_desktop.py
 ```
 
-On Windows the build uses the GUI subsystem, so double-clicking the executable does not
-open a terminal. The build runs the packaged runtime check, headless control-API contract,
-connected UI smoke, and automatic-reconnect smoke. It also writes a size and
-runtime manifest to `dist/desktop`. These bundles are CI evidence, not signed installers
-or release candidates.
+On Windows the GUI build uses the GUI subsystem, so double-clicking the application does
+not open a terminal. The build runs the packaged GUI runtime check, headless control-API
+contract, connected UI smoke, automatic-reconnect smoke, and the frozen node/worker
+runtime checks. It also writes GUI and sidecar size/runtime evidence to `dist/desktop`.
+These bundles are CI evidence, not signed installers or release candidates.

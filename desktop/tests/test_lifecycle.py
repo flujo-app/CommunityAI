@@ -3,7 +3,9 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
+import communityai_desktop.lifecycle as lifecycle
 from communityai_desktop.client import NodeApiError
 from communityai_desktop.credentials import CredentialProvision
 from communityai_desktop.lifecycle import NodeLifecycleError, NodeLifecycleSupervisor
@@ -91,6 +93,19 @@ class PortSequence:
 
 
 class NodeLifecycleTests(unittest.TestCase):
+    def test_frozen_desktop_resolves_nested_node_sidecar(self):
+        executable = Path.cwd() / "product" / ("CommunityAI.exe" if lifecycle.os.name == "nt" else "CommunityAI")
+        suffix = ".exe" if lifecycle.os.name == "nt" else ""
+        with mock.patch.object(lifecycle.sys, "frozen", True, create=True), mock.patch.object(
+            lifecycle.sys, "executable", str(executable)
+        ):
+            command = lifecycle._default_node_command()
+
+        self.assertEqual(
+            command,
+            (str(executable.resolve().parent / "node" / f"CommunityAI-Node{suffix}"),),
+        )
+
     def _supervisor(self, directory, store, **kwargs):
         root = Path(directory)
         config = root / "node-config.json"
