@@ -49,7 +49,7 @@ jobs:
           # attention wiring, join tokens, device portability). The swarm/network tests
           # (test_full_model, test_remote_sequential, ...) require MODEL_NAME/INITIAL_PEERS and a
           # running swarm; the maintainer exercises those on real hardware.
-          pytest -v --durations=0 --durations-min=1.0 \
+          python -m pytest -v --durations=0 --durations-min=1.0 \
             tests/test_attn_implementation.py \
             tests/test_api_keys.py \
             tests/test_cache.py \
