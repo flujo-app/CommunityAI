@@ -33,11 +33,21 @@ Milestone 5 is active. Its architectural foundation is now fixed:
   authorization domains. An inference key cannot manage workers or keys, and the
   control credential cannot perform inference.
 
-The immediate objective is to promote the shared spike client and acceptance contract
-into the production PySide application, then complete native credential ownership,
+The shared client and acceptance contract now live in a standalone production PySide
+package. Its source and packaged smokes enforce the GUI/node boundary, strict loopback
+control traffic, key lifecycle, and worker controls without importing model runtimes.
+The immediate objective is now end-to-end native credential ownership, followed by
 onboarding and process lifecycle, contribution policies and budgets, accessibility and
 resource measurements, and signed installer/update/rollback validation. Milestones 6
 through 8 remain planned after this desktop foundation.
+
+The first always-on public discovery peer is now deployed as milestone 6 pilot
+infrastructure. A separate Windows client reached its public IPv4 address, completed a
+real Hivemind join and DHT query, and observed the same peer identity after service
+restarts. This removes the immediate need for users to operate the first node, but it
+does not complete decentralized discovery and does not by itself make the desktop
+usable: the application still needs to start and own its local node automatically,
+ship the trusted seed and model catalog, and find actual model workers.
 
 ## Scope and product destination
 
@@ -97,8 +107,10 @@ yet an autonomous public community:
   reads those records and chooses its own latency- or throughput-aware route. The
   bootstrap peer is an entry point, not a scheduler.
 - The friendly `drift up` flow normally gives newcomers one first-node join address.
-  Multiple initial peers are supported, but redundant community discovery and
-  recovery from all shipped seeds being unavailable are not yet productized.
+  One public pilot seed now supplies that first address, and multiple initial peers
+  are supported, but the application does not yet ship the seed automatically.
+  Redundant independent discovery, remembered peers, and recovery when every shipped
+  seed is unavailable are not yet productized.
 - `drift api` already binds to `127.0.0.1` by default and performs client-side swarm
   routing, but it serves one model per process and is separate from `drift up`.
 - A worker operator chooses the model out of band. DRIFT automatically chooses the
@@ -158,6 +170,42 @@ The target design is:
 No single bootstrap, catalog mirror, health dashboard, hosted API, or credit node
 may have unilateral control over inference. Catalog signing and credit settlement
 are separate trust domains and stay off the token-generation critical path.
+
+## Pilot discovery deployment
+
+The first operator-owned bootstrap is running in Google Cloud project
+`community-ai-506321`. It is deliberately a lightweight discovery peer: it introduces
+Hivemind participants and supports reachability checks, but it serves no model blocks,
+receives no prompts, selects no routes, and has no Google Cloud API identity.
+
+| Property | Deployed value |
+| --- | --- |
+| VM | `communityai-bootstrap-1`, `e2-micro`, `us-central1-a` |
+| Storage | 20 GB standard persistent disk with 2 GB local swap |
+| Network | Dedicated VPC, Standard Tier, static IPv4 `35.209.21.129` |
+| Public ingress | TCP 31337 only; SSH is restricted to Google IAP |
+| Peer address | `/ip4/35.209.21.129/tcp/31337/p2p/QmZhGcSVR6qPLZTq3TJPZEi734GbMkouv3kPxQLdDY2qUo` |
+| Planned DNS | `bootstrap.communityai.flujo.com.co` A record to `35.209.21.129` |
+
+The static IPv4 makes dynamic DNS unnecessary and keeps the peer reachable by
+IPv4-only contributors. The VM and disk fit the Google Cloud Free Tier when that
+billing account's monthly allowance is otherwise unused. The in-use IPv4 is billed
+at USD 0.005 per hour, or about USD 3.65 for a 730-hour month, and outbound traffic
+beyond the applicable free allowance is also billable. Current limits and prices are
+defined by the [Google Cloud Free Program](https://docs.cloud.google.com/free/docs/free-cloud-features)
+and [VPC network pricing](https://cloud.google.com/vpc/network-pricing).
+
+On 2026-08-22, external validation proved TCP reachability from a residential IPv4
+connection and a real Hivemind client join and query. The systemd service starts at
+boot, runs as an unprivileged user, preserves its private identity with owner-only
+permissions, and retained the PeerID above across restarts. Reproducible deployment
+sources and the live inventory are in [`deploy/gcp/`](../deploy/gcp/README.md).
+
+This node is a bootstrap dependency, not a centralized inference service. The next
+deployment gate is the DNS record and automatic desktop seed configuration. Before a
+public release, at least one independently operated seed must be added and the fresh-
+install, cached-peer, seed-loss, partition, and recovery paths must pass without this
+Google VM being a single point of failure.
 
 ## Autonomous community model placement
 
@@ -310,6 +358,70 @@ Credits are for contribution and access accounting. They are not votes over whic
 model a user's machine must host, and the roadmap does not introduce mining,
 proof-of-work, staking, or blockchain consensus into inference routing.
 
+### Compute marketplace and provider payouts
+
+The commercial objective is a marketplace for verified compute, not an exchange
+for a speculative network currency. Buyers may purchase the right to consume
+compute, contributors may earn money for independently validated useful work, and
+the marketplace may retain a disclosed fee from each settled transaction. The
+initial product must not permit users to trade a floating-price credit among
+themselves or present credits as an investment.
+
+Keep economically different balances separate even if the GUI presents them in one
+account view:
+
+- **Compute credits** are purchased by a buyer and spendable only on network
+  inference. They are not withdrawable or transferable between users.
+- **Provider earnings** arise only from settled receipts for useful work funded by a
+  valid buyer authorization. They may become withdrawable after fraud, dispute, and
+  chargeback holds.
+- **Promotional credits** are grants, test funds, or incentives. They are never
+  transferable, withdrawable, or convertible into provider earnings through a
+  related account.
+
+The intended flow is buyer funding, bounded spend authorization, routed inference,
+signed per-worker receipts, independent validation, settlement, division into
+provider earnings and a marketplace fee, and batched payout. A single request may
+cross several workers, so the system aggregates micro-settlements rather than
+attempting a card, bank, or chain transaction for every block invocation. Quotes and
+authorizations bind the model manifest, measured work unit, price, currency, service
+quality terms, expiry, settlement domain, and fee schedule. A nominal credit must
+not imply that unlike work across different models, hardware profiles, or service
+levels has identical cost.
+
+Settlement uses an auditable double-entry ledger with explicit entries for buyer
+funding, authorization holds, receipt settlement, provider payables, marketplace
+revenue, reserves, refunds, disputes, chargebacks, withdrawals, and reconciliation.
+Payment credentials and legal identity remain outside the inference protocol and
+are not revealed to serving peers. Inference already in flight does not depend on a
+payment processor or marketplace being online.
+
+No provider earns withdrawable value for uptime, advertised capacity, self-reported
+throughput, or an unvalidated client signature. Validation must detect fabricated
+jobs, replay, circular spending, related-account cash-out, Sybil farming, collusion,
+and wash activity. Buyer funds must be final enough for the applicable risk policy
+before provider payout, and new or anomalous accounts may require limits, reserves,
+delayed withdrawals, or additional verification. Promotional activity must be
+excluded from cash settlement by construction.
+
+The official marketplace is a replaceable service built on the open receipt and
+settlement protocols, not a mandatory toll in peer discovery or inference routing.
+Nodes may select another compatible settlement domain, and a marketplace earns its
+fee by providing buyer access, matching, reputation, validation, dispute handling,
+and payouts. An unavoidable operator fee embedded in every network interaction
+would create a central control point and would not be credible in a forkable system.
+
+Before accepting fiat or enabling withdrawals, resolve merchant-of-record and loss
+liability, seller onboarding and identity verification, sanctions and abuse checks,
+tax reporting, refunds and chargebacks, privacy, and the money-transmission,
+stored-value, labor, and crypto-asset classifications in every launch jurisdiction.
+Use a licensed marketplace payment and payout provider for the first production
+version where available; do not custody customer fiat or improvise cross-border
+payouts in the node software. Freely transferable or externally tradable credits,
+an order book, and any public token require a separate architecture decision,
+specialist legal review, adversarial economic analysis, and an independently audited
+implementation.
+
 ## Milestones
 
 1. **Reproducible execution baseline — complete.** Native Windows, Linux,
@@ -422,14 +534,33 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    startup rejects missing, duplicate, or overlapping control keys, and upgraded
    installations retain their existing client key while receiving a new control key.
 
-   **Next implementation sequence.** Promote the shell-neutral node client and
-   acceptance contract into a production PySide package; move the control credential
-   from the private-file bridge into native OS credential stores; add first-run setup,
-   single-instance behavior, node supervision, login startup, reconnect, and clean
-   shutdown; enforce contribution budgets and allow/prefer/deny policy in the node rather
-   than only in the GUI; then measure startup/RSS and crash isolation and complete
-   keyboard/screen-reader, signed installer, upgrade, rollback, uninstall, and retained-
-   data gates on all three operating systems.
+   The first product slice is also complete in [`desktop/`](../desktop/README.md). It
+   promotes the shell-neutral client and acceptance contract into a PySide-only package,
+   adds create/relabel/revoke key management, preserves worker controls and privacy
+   disclosure, disables redirects and environment HTTP proxies for privileged control
+   traffic, and has an automated source gate forbidding `drift`, Torch, Transformers,
+   Hivemind, and Accelerate imports. The redesigned product surface now has Home, Models,
+   Sharing, and API-access views; peer and optional region summaries; direct model
+   selection; a saved GPU-memory target; and plain-language status and privacy copy.
+   Existing headless credentials migrate into the native store automatically, missing
+   credentials and node failures render inside the application instead of terminating
+   before Qt starts, and the Windows build uses the GUI subsystem without a console
+   window. An unsigned Windows bundle passed the
+   packaged runtime, authenticated contract, connected UI, and onboarding UI smokes; the
+   three-platform production workflow is now checked in but must pass remotely before
+   cross-platform promotion is claimed.
+
+   **Next implementation sequence.** Publish the pending
+   `bootstrap.communityai.flujo.com.co` DNS record and ship that peer as an automatic,
+   replaceable seed; make the packaged desktop start, supervise, and stop its bundled
+   local node without a setup button; and make the node and desktop share native
+   credential ownership directly so the one-time private-file migration can be retired.
+   Then ship the initial signed model catalog and verified worker manifests so model
+   selection represents real usable swarms. After that, add single-instance and login
+   startup behavior, feed privacy-safe peer-region observations into the region view,
+   enforce contribution budgets and model policy in the node rather than only in the
+   GUI, and complete resource, accessibility, signed installer, upgrade, rollback,
+   uninstall, and retained-data gates on all three operating systems.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and
    LAN discovery; define threshold-signed, forkable catalogs; publish privacy-safe
@@ -437,19 +568,31 @@ proof-of-work, staking, or blockchain consensus into inference routing.
    policy; extend block balancing for demand and redundancy; and pass simulated plus
    real-swarm churn, partition, herd, downgrade and malicious-signal tests. No
    operator-owned gateway or scheduler participates in normal localhost inference.
+
+   **Pilot evidence.** The first GCP `e2-micro` bootstrap is live on a stable public
+   IPv4 address, preserves its identity, and has passed an off-host DHT connection.
+   This is the first seed, not milestone completion: DNS publication, desktop wiring,
+   independent operators, additional seeds and relays, cached-peer recovery, signed
+   catalog distribution, observability, and failure drills remain open.
 7. **Safe public pilot and shadow credits.** Add admission and rate limits, abuse
    controls, health and coverage monitoring without a single required dashboard,
    signed accounting receipts, pending/settled UI states, contributor explanations,
    privacy review, and a documented Sybil/collusion threat model. Select and prototype
-   the settlement model, but keep credits non-spendable until independent audit and
-   reconciliation tests pass.
-8. **Community service and redeemable contributor access.** Demonstrate redundant
+   the settlement model; simulate buyer funding, spend authorization, fee splits,
+   provider payables, disputes, and reconciliation, but keep credits non-spendable
+   and disable fiat payouts until independent audit and reconciliation tests pass.
+8. **Community service, redeemable access, and optional compute marketplace.**
+   Demonstrate redundant
    model coverage and discovery across independent operators, production SLOs,
    capacity-aware routing, bounded offline credit authorization, audited settlement,
-   content-addressed artifact mirrors, and a usable thin-edge path if milestone 4
-   found it necessary. At this point an ordinary user installs one application,
-   selects a community model in the GUI, connects an AI client to localhost, and may
-   contribute within hard local limits without choosing blocks or tracking peers.
+   marketplace payment onboarding and batched provider payouts where legally
+   supported, content-addressed artifact mirrors, and a usable thin-edge path if
+   milestone 4 found it necessary. At this point an ordinary user installs one
+   application, selects a community model in the GUI, connects an AI client to
+   localhost, and may buy compute or contribute within hard local limits without
+   choosing blocks or tracking peers. Cash withdrawal is optional and available
+   only in supported jurisdictions; contribution-for-access remains usable without
+   it.
 
 Detailed baseline evidence and the remaining gates are recorded in
 [`REVIVAL_TEST_RESULTS.md`](REVIVAL_TEST_RESULTS.md).
@@ -466,6 +609,7 @@ must not be settled accidentally by the first GUI implementation:
 | Catalog governance | Threshold-signed and forkable catalogs, with trust roots selected by each installation. | Key compromise/rotation drill, rollback protection, alternative-catalog interoperability, and malicious-manifest rejection. |
 | Demand signal | Coarse signed aggregates and observed route pressure, never request contents. | Sybil/spam simulation, privacy review, convergence under bursty demand, and proof that one attacker cannot trigger a network-wide download storm. |
 | Credit settlement | Prototype federated notaries before considering a permissionless ledger. | Double-spend, replay, partition, collusion, privacy, audit, recovery, and sustained-outage tests with explicit trust and governance costs. |
+| Compute marketplace | Sell verified compute through replaceable marketplaces; keep buyer credits, provider earnings, and promotions separate, and do not launch a freely traded token. | Unit economics, useful-work and related-account fraud tests, double-entry audit, payment-provider and jurisdiction review, chargeback/reconciliation drills, and proof that marketplace failure cannot stop inference. |
 | Artifact distribution | Start with immutable Hub revisions and verified local caches, then add interchangeable mirrors and peer-assisted delivery. | Full-hash verification, poisoned-mirror rejection, resume behavior, gated-model licensing, bandwidth limits, and origin outage tests. |
 
 ## Nakshatra relationship
