@@ -30,7 +30,7 @@ import torch
 from hivemind import DHT
 from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils.timed_storage import MAX_DHT_TIME_DISCREPANCY_SECONDS
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 import drift
 from drift import AutoDistributedModelForCausalLM
@@ -45,6 +45,7 @@ from drift.utils.convert_block import QuantType
 from drift.utils.dht import get_remote_module_infos
 from drift.utils.hardware import normalize_device
 from drift.utils.misc import get_size_in_bytes
+from drift.utils.reference_model import load_reference_model_for_causal_lm
 
 DEFAULT_MODEL = "Maykeye/TinyLLama-v0"
 DEFAULT_DHT_PREFIX = "_windows_xpu_tinyllama_v0_smoke"
@@ -443,7 +444,7 @@ def main(argv=None) -> None:
             }
             if manifest is not None and manifest.runtime.attention_implementation != "auto":
                 reference_kwargs["attn_implementation"] = manifest.runtime.attention_implementation
-            reference_model = AutoModelForCausalLM.from_pretrained(
+            reference_model = load_reference_model_for_causal_lm(
                 artifact_verifier.snapshot_root if artifact_verifier is not None else model_name,
                 **reference_kwargs,
             ).to(device)

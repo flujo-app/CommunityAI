@@ -31,7 +31,7 @@ from pathlib import Path
 
 import torch
 from hivemind import DHT
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 import drift
 from drift import AutoDistributedModelForCausalLM
@@ -39,6 +39,7 @@ from drift.data_structures import UID_DELIMITER
 from drift.model_manifest import ManifestArtifactVerifier, ModelManifest, resolve_manifest_loading
 from drift.utils.auto_config import AutoDistributedConfig
 from drift.utils.dht import get_remote_module_infos
+from drift.utils.reference_model import load_reference_model_for_causal_lm
 
 MODEL = "Maykeye/TinyLLama-v0"
 NUM_BLOCKS = 8
@@ -284,7 +285,7 @@ def run_client() -> None:
             artifact.path,
             allowed_roles={"weight", "weight_index", "converted_weight", "quantized_weight"},
         )
-    reference_model = AutoModelForCausalLM.from_pretrained(
+    reference_model = load_reference_model_for_causal_lm(
         verifier.snapshot_root,
         local_files_only=True,
         dtype=torch.float32,
@@ -399,7 +400,7 @@ def reference_completion(manifest: ModelManifest, prompt: str, max_new_tokens: i
     )
     source = verifier.ensure_startup_metadata(include_tokenizer=True)
     tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True)
-    model = AutoModelForCausalLM.from_pretrained(
+    model = load_reference_model_for_causal_lm(
         manifest.source.repository,
         revision=manifest.source.revision,
         cache_dir="/tmp/multi-model-node-cache",

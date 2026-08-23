@@ -16,6 +16,7 @@ from drift.server.from_pretrained import load_pretrained_block
 from drift.server.server import ModuleContainer
 from drift.utils.auto_config import AutoDistributedConfig
 from drift.utils.convert_block import QuantType
+from drift.utils.reference_model import load_reference_model_for_causal_lm
 
 ATOL = 3e-5
 _WRAPPER_KEY_MAPPING = {r"^model\.language_model\.": "model."}
@@ -159,11 +160,11 @@ def test_qwen3_5_wrapper_key_mapping_loads_local_text_weights(wrapper_checkpoint
     from transformers.models.qwen3_5 import Qwen3_5ForCausalLM
 
     path, reference = wrapper_checkpoint
-    loaded = Qwen3_5ForCausalLM.from_pretrained(
+    loaded = load_reference_model_for_causal_lm(
         path,
-        key_mapping=_WRAPPER_KEY_MAPPING,
         torch_dtype=torch.float32,
     )
+    assert isinstance(loaded, Qwen3_5ForCausalLM)
     assert torch.equal(loaded.model.embed_tokens.weight, reference.model.embed_tokens.weight)
     assert torch.equal(loaded.model.norm.weight, reference.model.norm.weight)
     assert torch.equal(loaded.lm_head.weight, reference.lm_head.weight)

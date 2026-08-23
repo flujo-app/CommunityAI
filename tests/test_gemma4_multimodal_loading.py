@@ -23,6 +23,7 @@ from drift.models.gemma4.config import DistributedGemma4Config, is_multimodal_wr
 from drift.models.gemma4.model import _Gemma4WrapperLoadMixin
 from drift.server.from_pretrained import load_pretrained_block
 from drift.utils.auto_config import AutoDistributedConfig
+from drift.utils.reference_model import load_reference_model_for_causal_lm
 
 ATOL = 3e-5
 _WRAPPER_KEY_MAPPING = {r"^model\.language_model\.": "model."}
@@ -257,7 +258,8 @@ def test_wrapper_key_mapping_loads_text_tower(wrapper_checkpoint):
     from transformers.models.gemma4 import Gemma4ForCausalLM
 
     path, text_model = wrapper_checkpoint
-    ref = Gemma4ForCausalLM.from_pretrained(path, key_mapping=_WRAPPER_KEY_MAPPING, torch_dtype=torch.float32)
+    ref = load_reference_model_for_causal_lm(path, torch_dtype=torch.float32)
+    assert isinstance(ref, Gemma4ForCausalLM)
     assert torch.equal(ref.model.embed_tokens.weight, text_model.embed_tokens.weight)
     assert torch.equal(ref.model.norm.weight, text_model.norm.weight)
     assert torch.equal(ref.model.per_layer_model_projection.weight, text_model.per_layer_model_projection.weight)
