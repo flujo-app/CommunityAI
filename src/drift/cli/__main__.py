@@ -6,6 +6,7 @@
     drift dht ...                   A standalone lightweight DHT bootstrap peer
     drift api <model> ...           An OpenAI-compatible HTTP API backed by the swarm
     drift node <manifest> ...       A persistent authenticated localhost gateway
+    drift bootstrap <config>        Install a verified first-run model catalog
     drift edge-benchmark <manifest> Measure client-only edge resource use
     drift manifest <file>           Validate and inspect a ModelManifest v1
     drift catalog ...               Create and verify signed model catalogs
@@ -17,7 +18,19 @@ name and delegates. Also runnable as ``python -m drift.cli``.
 
 import sys
 
-_COMMANDS = ("up", "down", "server", "dht", "api", "node", "edge-benchmark", "manifest", "catalog", "identity")
+_COMMANDS = (
+    "up",
+    "down",
+    "server",
+    "dht",
+    "api",
+    "node",
+    "bootstrap",
+    "edge-benchmark",
+    "manifest",
+    "catalog",
+    "identity",
+)
 
 _USAGE = """usage: drift <command> [options]
 
@@ -30,6 +43,7 @@ commands:
   dht       Run a standalone DHT bootstrap peer
   api       Serve an OpenAI-compatible HTTP API backed by the swarm (requires drift[api])
   node      Run a persistent authenticated localhost gateway (requires drift[api])
+  bootstrap Install a threshold-signed catalog as a first-run node configuration
   edge-benchmark
             Measure manifested client storage, memory, and generation latency (requires drift[benchmark])
   manifest  Validate and inspect a content-addressed ModelManifest v1
@@ -63,6 +77,8 @@ def main() -> int:
         from drift.cli.run_api import main as run
     elif command == "node":
         from drift.cli.run_node import main as run
+    elif command == "bootstrap":
+        from drift.cli.run_bootstrap import main as run
     elif command == "edge-benchmark":
         from drift.cli.run_edge_benchmark import main as run
     elif command == "manifest":

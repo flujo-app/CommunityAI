@@ -22,6 +22,7 @@ from drift.model_catalog import (
     SignedModelCatalog,
     _load_strict_json,
 )
+from drift.node.catalog_bootstrap import CatalogBootstrapConfig, CatalogBootstrapError
 
 
 def _write_json(path: str, value: Mapping[str, Any], *, force: bool) -> None:
@@ -109,6 +110,20 @@ def build_parser() -> argparse.ArgumentParser:
     sign.add_argument("--output", required=True)
     sign.add_argument("--force", action="store_true")
 
+    bootstrap = commands.add_parser(
+        "bootstrap-config", help="Build the trusted release input for first-install catalog fetching"
+    )
+    bootstrap.add_argument("--root", required=True, help="Catalog trust-root JSON")
+    bootstrap.add_argument(
+        "--catalog-mirror", action="append", required=True, help="HTTPS signed-catalog URL; repeat for mirrors"
+    )
+    bootstrap.add_argument(
+        "--initial-peer", action="append", required=True, help="Public libp2p seed multiaddress; repeat for seeds"
+    )
+    bootstrap.add_argument("--max-loaded-models", type=int, default=1)
+    bootstrap.add_argument("--output", required=True)
+    bootstrap.add_argument("--force", action="store_true")
+
     verify = commands.add_parser("verify", help="Verify signatures, expiry, and optional rollback state")
     verify.add_argument("catalog")
     verify.add_argument("--root", required=True)
@@ -168,6 +183,19 @@ def main() -> None:
             envelope = envelope.add_signature(CatalogSigningKey.load(args.key))
             _write_json(args.output, envelope.to_dict(), force=args.force)
             _write_status(f"signed catalog sequence {envelope.signed.sequence}", json_output=args.output)
+        elif args.catalog_command == "bootstrap-config":
+            _require_distinct_paths(("trust root", args.root), ("bootstrap output", args.output))
+            bootstrap = CatalogBootstrapConfig.from_dict(
+                {
+                    "schema_version": 1,
+                    "trust_root": CatalogTrustRoot.load(args.root).to_dict(),
+                    "catalog_mirrors": args.catalog_mirror,
+                    "initial_peers": args.initial_peer,
+                    "max_loaded_models": args.max_loaded_models,
+                }
+            )
+            _write_json(args.output, bootstrap.to_dict(), force=args.force)
+            _write_status(f"created catalog bootstrap for {bootstrap.trust_root.catalog_id}", json_output=args.output)
         else:
             if args.state:
                 _require_distinct_paths(
@@ -183,7 +211,7 @@ def main() -> None:
                 f"valid catalog {catalog.catalog_id} sequence {catalog.sequence}: "
                 f"{len(catalog.rungs)} rung(s), {len(catalog.models)} model(s), digest {catalog.digest}"
             )
-    except ModelCatalogError as exc:
+    except (ModelCatalogError, CatalogBootstrapError) as exc:
         parser.error(str(exc))
 
 

@@ -1,7 +1,8 @@
 # Public swarm security v1
 
-Status: implemented; public deployment remains gated on the macOS CI run and the
-broader public-safety release gates in `REVIVAL.md`.
+Status: implemented; the hosted Apple Silicon macOS identity, resume, and parity run
+passed. Public deployment remains gated on the broader public-safety release gates in
+`REVIVAL.md`.
 
 This protocol completes the identity and transport portion of revival milestone 3.
 It makes the DHT an untrusted carrier: clients validate a worker record locally and

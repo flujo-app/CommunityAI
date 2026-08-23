@@ -238,11 +238,14 @@ def _build_worker_supervisor(
         if worker.public_ip is not None and worker.port is None:
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
 
+        if getattr(sys, "frozen", False):
+            # desktop/launch_node.py dispatches this mode inside the packaged
+            # sidecar; a frozen executable cannot be reinvoked with ``-m``.
+            server_command = [sys.executable, "server"]
+        else:
+            server_command = [sys.executable, "-m", "drift.cli", "server"]
         command = [
-            sys.executable,
-            "-m",
-            "drift.cli",
-            "server",
+            *server_command,
             manifest.source.repository,
             "--model_manifest",
             str(model_config.manifest_path),

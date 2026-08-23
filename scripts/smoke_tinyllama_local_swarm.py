@@ -1,8 +1,12 @@
-"""Run a one-machine TinyLlama private swarm smoke test.
+"""Run a one-machine manifested-model private swarm qualification smoke.
 
-This starts one local DHT peer that hosts all blocks for Maykeye/TinyLLama-v0,
-connects a client through that peer's DHT address, and generates a few tokens.
-It is intended for Windows/XPU bring-up but also works on CPU/CUDA with --device.
+With ``--model-manifest``, the repository, immutable revision, block count, runtime
+profile, and DHT namespace all come from the manifest. Without a manifest the script
+retains its historical Maykeye/TinyLLama-v0 bring-up default.
+
+The smoke starts one local DHT peer that hosts the requested blocks, connects a client
+through that peer's DHT address, and generates a few tokens. It is intended for
+Windows/XPU bring-up but also works on CPU/CUDA with --device.
 ``--device`` selects the worker-block and stock-reference device; the distributed
 client's embeddings and language-model head deliberately remain on their default
 local device, whose actual placement is logged and dtype-checked after loading.
@@ -16,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import faulthandler
+import gc
 import shutil
 import tempfile
 import time
@@ -41,8 +46,8 @@ from drift.utils.dht import get_remote_module_infos
 from drift.utils.hardware import normalize_device
 from drift.utils.misc import get_size_in_bytes
 
-MODEL = "Maykeye/TinyLLama-v0"
-DHT_PREFIX = "_windows_xpu_tinyllama_v0_smoke"
+DEFAULT_MODEL = "Maykeye/TinyLLama-v0"
+DEFAULT_DHT_PREFIX = "_windows_xpu_tinyllama_v0_smoke"
 
 
 def log(message: str) -> None:
@@ -54,6 +59,8 @@ def parse_block_indices(value: str) -> list[int]:
         start_block, end_block = [int(index.strip()) for index in value.split(":")]
     except Exception as exc:
         raise ValueError("--block-indices must be start:end, e.g. 0:8") from exc
+    if start_block < 0 or end_block <= start_block:
+        raise ValueError("--block-indices must name a non-empty, non-negative start:end range")
     return list(range(start_block, end_block))
 
 
@@ -66,6 +73,34 @@ def log_local_component_placement(name: str, module: torch.nn.Module, expected_d
     log(f"{name}_placement=devices={devices},dtypes={dtypes}")
     if any(parameter.dtype != expected_dtype for parameter in parameters):
         raise AssertionError(f"{name} did not load entirely as {expected_dtype}: observed dtypes={dtypes}")
+
+
+def close_distributed_client(model) -> None:
+    if model is None:
+        return
+    try:
+        sequence_manager = model.transformer.h.sequence_manager
+    except AttributeError:
+        return
+    try:
+        sequence_manager.shutdown()
+    finally:
+        client_dht = getattr(sequence_manager, "dht", None)
+        if client_dht is not None and client_dht.is_alive():
+            client_dht.shutdown()
+
+
+def stop_workers(containers: list, worker_dhts: list) -> None:
+    for container in reversed(containers):
+        if container.is_alive():
+            container.shutdown()
+            container.join(timeout=10)
+    containers.clear()
+    for worker_dht in reversed(worker_dhts):
+        if worker_dht.is_alive():
+            worker_dht.shutdown()
+            worker_dht.join()
+    worker_dhts.clear()
 
 
 def wait_for_dht_announcement(
@@ -97,17 +132,27 @@ def wait_for_dht_announcement(
     raise TimeoutError("hosted blocks were not announced in the local DHT")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
+def main(argv=None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Qualify one exact manifested model through a local distributed route and stock parity"
+    )
     parser.add_argument(
         "--device",
         default="xpu",
         help="device for served transformer blocks and the stock reference; client embeddings/head stay local",
     )
     parser.add_argument("--timeout", type=float, default=240)
-    parser.add_argument("--block-indices", default="0:8")
+    parser.add_argument(
+        "--block-indices",
+        default=None,
+        help="contiguous start:end range to serve; defaults to every manifested transformer block",
+    )
     parser.add_argument("--torch-dtype", default=None, choices=DTYPE_MAP.keys())
     parser.add_argument("--model-manifest", help="Run the smoke through a verified ModelManifest v1")
+    parser.add_argument("--artifact-root", help="Use and verify a complete local publisher snapshot")
+    parser.add_argument("--cache-dir", help="Hugging Face/manifest cache used by workers, client, and reference")
+    parser.add_argument("--prompt", default="Hello")
+    parser.add_argument("--new-tokens", type=int, default=3)
     parser.add_argument("--cache", default="contiguous", choices=["contiguous", "paged"])
     parser.add_argument("--page-size", type=int, default=16)
     parser.add_argument(
@@ -121,34 +166,47 @@ def main() -> None:
         action="store_true",
         help="skip the stock-model token parity check (faster, but does not verify numerical correctness)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     manifest = None
     artifact_verifier = None
     revision = None
-    dht_prefix = DHT_PREFIX
+    model_name = DEFAULT_MODEL
+    dht_prefix = DEFAULT_DHT_PREFIX
     if args.model_manifest:
         manifest = ModelManifest.load(args.model_manifest)
         manifest.validate_runtime(drift.__version__)
+        model_name = manifest.source.repository
         revision, dht_prefix = resolve_manifest_loading(
             manifest,
-            model_name_or_path=MODEL,
+            model_name_or_path=model_name,
             revision=None,
             dht_prefix=None,
         )
         if manifest.runtime.quantization != "none":
-            raise ValueError("The TinyLlama smoke currently supports only manifest quantization='none'")
+            raise ValueError("The local qualification smoke currently supports only manifest quantization='none'")
         if args.torch_dtype is None:
             args.torch_dtype = manifest.runtime.dtype
         elif args.torch_dtype != manifest.runtime.dtype:
             raise ValueError(
                 f"--torch-dtype {args.torch_dtype!r} conflicts with manifest dtype {manifest.runtime.dtype!r}"
             )
-        artifact_verifier = ManifestArtifactVerifier(manifest, MODEL, revision)
+        artifact_verifier = ManifestArtifactVerifier(
+            manifest,
+            model_name,
+            revision,
+            artifact_root=args.artifact_root,
+            cache_dir=args.cache_dir,
+        )
         config_source = artifact_verifier.ensure_startup_metadata(include_tokenizer=True)
     else:
         args.torch_dtype = args.torch_dtype or "bfloat16"
-        config_source = MODEL
+        config_source = model_name
+
+    if not args.prompt:
+        raise ValueError("--prompt must be non-empty")
+    if args.new_tokens < 1:
+        raise ValueError("--new-tokens must be at least 1")
 
     faulthandler.dump_traceback_later(args.timeout, exit=True)
 
@@ -159,14 +217,15 @@ def main() -> None:
     else:
         log(f"torch={torch.__version__}, device={device}")
 
-    block_indices = parse_block_indices(args.block_indices)
-    log(f"initializing local DHT for blocks={block_indices}")
-    identity_dir = Path(tempfile.mkdtemp(prefix="drift-smoke-identities-")) if manifest is not None else None
+    requested_block_indices = parse_block_indices(args.block_indices) if args.block_indices is not None else None
+    expected_block_count = manifest.model.num_blocks if manifest is not None else 8
+    dht_worker_count = len(requested_block_indices) if requested_block_indices is not None else expected_block_count
+    identity_dir = Path(tempfile.mkdtemp(prefix="drift-qualification-identities-")) if manifest is not None else None
     bootstrap_identity_path = identity_dir / "bootstrap.key" if identity_dir is not None else None
     dht = DHT(
         initial_peers=[],
         start=True,
-        num_workers=len(block_indices),
+        num_workers=dht_worker_count,
         use_relay=False,
         use_auto_relay=False,
         client_mode=False,
@@ -176,6 +235,7 @@ def main() -> None:
     )
     containers = []
     worker_dhts = []
+    model = None
 
     try:
         peers = [str(addr) for addr in dht.get_visible_maddrs()]
@@ -189,7 +249,17 @@ def main() -> None:
         )
         if manifest is not None:
             manifest.validate_model_config(block_config)
-        block_config._attn_implementation = "eager"
+            if manifest.runtime.attention_implementation != "auto":
+                block_config._attn_implementation = manifest.runtime.attention_implementation
+        else:
+            block_config._attn_implementation = "eager"
+        block_indices = requested_block_indices or list(range(block_config.num_hidden_layers))
+        if block_indices[-1] >= block_config.num_hidden_layers:
+            raise ValueError(
+                f"--block-indices ends at {block_indices[-1] + 1}, but the model has "
+                f"{block_config.num_hidden_layers} blocks"
+            )
+        log(f"initializing local DHT for model={model_name} blocks={block_indices}")
         torch_dtype = resolve_block_dtype(block_config, DTYPE_MAP[args.torch_dtype])
         log(f"torch_dtype={torch_dtype}")
         attn_cache_tokens = 128
@@ -229,13 +299,13 @@ def main() -> None:
                 quant_type=QuantType.NONE.name.lower(),
                 using_relay=False,
             )
-            model_info = ModelInfo(num_blocks=block_config.num_hidden_layers, repository=MODEL)
+            model_info = ModelInfo(num_blocks=block_config.num_hidden_layers, repository=model_name)
 
             log(f"starting module container replica={replica_index}")
             container = ModuleContainer.create(
                 dht=serving_dht,
                 dht_prefix=dht_prefix,
-                converted_model_name_or_path=MODEL,
+                converted_model_name_or_path=model_name,
                 block_config=block_config,
                 attn_cache_bytes=attn_cache_bytes,
                 server_info=server_info,
@@ -250,7 +320,7 @@ def main() -> None:
                 page_size=args.page_size,
                 inference_max_length=64,
                 torch_dtype=torch_dtype,
-                cache_dir=None,
+                cache_dir=args.cache_dir,
                 max_disk_space=None,
                 device=device,
                 compression=CompressionType.NONE,
@@ -286,9 +356,10 @@ def main() -> None:
 
         log("loading client")
         tokenizer = AutoTokenizer.from_pretrained(
-            artifact_verifier.snapshot_root if artifact_verifier is not None else MODEL,
+            artifact_verifier.snapshot_root if artifact_verifier is not None else model_name,
             revision=None if manifest is not None else revision,
             local_files_only=manifest is not None,
+            cache_dir=args.cache_dir,
         )
         model_kwargs = dict(
             dht_prefix=dht_prefix,
@@ -305,13 +376,13 @@ def main() -> None:
         )
         if artifact_verifier is not None:
             model_kwargs["artifact_verifier"] = artifact_verifier
-        model = AutoDistributedModelForCausalLM.from_pretrained(MODEL, **model_kwargs)
+        model = AutoDistributedModelForCausalLM.from_pretrained(model_name, **model_kwargs)
         log_local_component_placement("client_input_embeddings", model.get_input_embeddings(), torch_dtype)
         log_local_component_placement("client_lm_head", model.get_output_embeddings(), torch_dtype)
 
         log("generating")
-        inputs = tokenizer("Hello", return_tensors="pt")["input_ids"]
-        generated_tokens = args.failover_tokens if args.test_failover else 3
+        inputs = tokenizer(args.prompt, return_tensors="pt")["input_ids"]
+        generated_tokens = args.failover_tokens if args.test_failover else args.new_tokens
         if args.test_failover:
             if generated_tokens < 2:
                 raise ValueError("--failover-tokens must be at least 2")
@@ -355,10 +426,27 @@ def main() -> None:
         log(f"decoded={tokenizer.decode(outputs[0])!r}")
 
         if not args.skip_reference:
+            log("releasing distributed client and workers before loading the stock reference")
+            close_distributed_client(model)
+            model = None
+            stop_workers(containers, worker_dhts)
+            gc.collect()
             log("loading stock local model for token parity check")
-            reference_model = AutoModelForCausalLM.from_pretrained(MODEL, revision=revision, dtype=torch_dtype).to(
-                device
-            )
+            if artifact_verifier is not None:
+                for artifact in manifest.artifacts_for_roles({"weight", "weight_index"}):
+                    artifact_verifier.ensure_path(artifact.path, allowed_roles={"weight", "weight_index"})
+            reference_kwargs = {
+                "revision": None if artifact_verifier is not None else revision,
+                "dtype": torch_dtype,
+                "local_files_only": artifact_verifier is not None,
+                "cache_dir": args.cache_dir,
+            }
+            if manifest is not None and manifest.runtime.attention_implementation != "auto":
+                reference_kwargs["attn_implementation"] = manifest.runtime.attention_implementation
+            reference_model = AutoModelForCausalLM.from_pretrained(
+                artifact_verifier.snapshot_root if artifact_verifier is not None else model_name,
+                **reference_kwargs,
+            ).to(device)
             reference_model.eval()
             with torch.inference_mode():
                 if args.test_failover:
@@ -380,17 +468,11 @@ def main() -> None:
             log(f"reference_output_ids={reference_outputs.tolist()}")
             log("distributed output matches the stock model exactly")
 
-        log("tinyllama local swarm smoke ok")
+        log(f"manifested local swarm qualification ok model={model_name}")
     finally:
         log("shutting down")
-        for container in reversed(containers):
-            if container.is_alive():
-                container.shutdown()
-                container.join(timeout=10)
-        for worker_dht in reversed(worker_dhts):
-            if worker_dht.is_alive():
-                worker_dht.shutdown()
-                worker_dht.join()
+        close_distributed_client(model)
+        stop_workers(containers, worker_dhts)
         dht.shutdown()
         dht.join()
         if identity_dir is not None:

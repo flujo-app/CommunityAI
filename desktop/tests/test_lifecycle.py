@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
+import communityai_desktop.lifecycle as lifecycle
 from communityai_desktop.client import NodeApiError
 from communityai_desktop.credentials import CredentialProvision
 from communityai_desktop.lifecycle import NodeLifecycleError, NodeLifecycleSupervisor
@@ -91,6 +94,25 @@ class PortSequence:
 
 
 class NodeLifecycleTests(unittest.TestCase):
+    def test_frozen_desktop_resolves_nested_node_sidecar(self):
+        executable = Path.cwd() / "product" / ("CommunityAI.exe" if lifecycle.os.name == "nt" else "CommunityAI")
+        suffix = ".exe" if lifecycle.os.name == "nt" else ""
+        with mock.patch.object(lifecycle.sys, "frozen", True, create=True), mock.patch.object(
+            lifecycle.sys, "executable", str(executable)
+        ):
+            command = lifecycle._default_node_command()
+
+        self.assertEqual(
+            command,
+            (str(executable.resolve().parent / "node" / f"CommunityAI-Node{suffix}"),),
+        )
+
+        with mock.patch.object(lifecycle.sys, "frozen", True, create=True), mock.patch.object(
+            lifecycle.sys, "executable", str(executable)
+        ):
+            bootstrap_command = lifecycle._default_bootstrap_command()
+        self.assertEqual(bootstrap_command, (*command, "bootstrap"))
+
     def _supervisor(self, directory, store, **kwargs):
         root = Path(directory)
         config = root / "node-config.json"
@@ -237,7 +259,83 @@ class NodeLifecycleTests(unittest.TestCase):
                 client_factory=FakeClient,
                 port_probe=PortSequence(False),
             )
-            with self.assertRaisesRegex(NodeLifecycleError, "model catalog is not installed"):
+            with self.assertRaisesRegex(NodeLifecycleError, "signed model catalog is not bundled"):
+                supervisor.ensure_client()
+            supervisor.close()
+
+        self.assertEqual(processes, [])
+
+    def test_missing_config_is_bootstrapped_before_the_node_starts(self):
+        bootstrap_calls = []
+        processes = []
+        clock = FakeClock()
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "node-config.json"
+            bootstrap_path = root / "catalog-bootstrap.json"
+            bootstrap_path.write_text("{}\n", encoding="utf-8")
+
+            def bootstrap_runner(command, **kwargs):
+                bootstrap_calls.append((tuple(command), kwargs))
+                output_path = Path(command[command.index("--node_config") + 1])
+                output_path.write_text("{}\n", encoding="utf-8")
+                return mock.Mock(returncode=0, stdout="{}", stderr="")
+
+            def process_factory(command, **kwargs):
+                process = FakeProcess(command, **kwargs)
+                processes.append(process)
+                return process
+
+            supervisor = NodeLifecycleSupervisor(
+                "http://127.0.0.1:8080",
+                FakeStore(),
+                config_path=config_path,
+                data_dir=root / "data",
+                node_command=("python", "fake-node.py"),
+                bootstrap_command=("python", "fake-bootstrap.py"),
+                bootstrap_config_path=bootstrap_path,
+                bootstrap_runner=bootstrap_runner,
+                process_factory=process_factory,
+                client_factory=FakeClient,
+                port_probe=PortSequence(False, True),
+                clock=clock,
+                sleeper=clock.sleep,
+            )
+            supervisor.ensure_client()
+            supervisor.close()
+
+        self.assertEqual(len(bootstrap_calls), 1)
+        bootstrap_command = bootstrap_calls[0][0]
+        self.assertEqual(bootstrap_command[:2], ("python", "fake-bootstrap.py"))
+        self.assertEqual(bootstrap_command[2], os.path.abspath(bootstrap_path))
+        self.assertEqual(bootstrap_command[bootstrap_command.index("--node_config") + 1], os.path.abspath(config_path))
+        self.assertNotIn(CONTROL_KEY, bootstrap_command)
+        self.assertEqual(len(processes), 1)
+        self.assertTrue(processes[0].terminated)
+
+    def test_failed_catalog_bootstrap_does_not_start_the_node(self):
+        processes = []
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            bootstrap_path = root / "catalog-bootstrap.json"
+            bootstrap_path.write_text("{}\n", encoding="utf-8")
+            supervisor = NodeLifecycleSupervisor(
+                "http://127.0.0.1:8080",
+                FakeStore(),
+                config_path=root / "node-config.json",
+                data_dir=root / "data",
+                node_command=("python", "fake-node.py"),
+                bootstrap_command=("python", "fake-bootstrap.py"),
+                bootstrap_config_path=bootstrap_path,
+                bootstrap_runner=lambda *args, **kwargs: mock.Mock(
+                    returncode=2, stdout="", stderr="bootstrap: signature threshold was not met\n"
+                ),
+                process_factory=lambda *args, **kwargs: processes.append((args, kwargs)),
+                client_factory=FakeClient,
+                port_probe=PortSequence(False),
+            )
+            with self.assertRaisesRegex(NodeLifecycleError, "signature threshold was not met"):
                 supervisor.ensure_client()
             supervisor.close()
 

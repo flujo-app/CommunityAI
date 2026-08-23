@@ -5,6 +5,17 @@ of Petals found during the August 2026 fork audit. It preserves the parts that a
 most valuable for a revival: transformer-block sharding, Hivemind DHT discovery,
 fault-aware routing, heterogeneous devices, and a standard OpenAI-compatible API.
 
+DRIFT-LLM is the implementation starting point, not the product or network
+destination. CommunityAI is not intended to stop at operator-created private
+clusters. Its primary goal is a shared public inference network in the spirit of
+the original Petals public swarm, where independently operated machines contribute
+model blocks and ordinary users can run supported models without assembling a
+cluster, exchanging join addresses, or coordinating block placement. The revival
+adds the product and security work needed to make that public model practical:
+one-install onboarding, automatic discovery and routing, exact model identity,
+artifact verification, authenticated peers, bounded contribution controls, and
+recovery from untrusted or disappearing workers.
+
 The original Petals 2.2.0 source snapshot remains separate and unchanged. The
 following remotes are configured in the local revival checkout:
 
@@ -15,7 +26,7 @@ following remotes are configured in the local revival checkout:
 - `nakshatra`: an active, independent llama.cpp/GGUF distributed-inference effort
   that we will track for discovery, transport, and reliability ideas.
 
-## Current status (2026-08-22)
+## Current status (2026-08-23)
 
 Milestones 1 through 4 are complete. The revival has exact cross-platform inference
 parity, real multi-machine failure recovery, signed manifest and artifact integrity,
@@ -38,11 +49,22 @@ package. Its source and packaged smokes enforce the GUI/node boundary, strict lo
 control traffic, key lifecycle, and worker controls without importing model runtimes.
 The node and desktop now share the native credential store directly, and the desktop
 has source-level ownership for node startup, authenticated readiness, bounded crash
-backoff, reconnect, and shutdown. The first signed-catalog foundation now provides
-independent Ed25519 keys, threshold verification, expiry, rollback protection, and an
-elastic capacity-ladder selector; the signed catalog distribution and first qualified
-manifest set are not yet published. The immediate objective is to bundle the standalone
-node sidecar, consume that catalog safely, and ship automatic public seed configuration.
+backoff, reconnect, and shutdown. The production builder now also stages a separately
+frozen node runtime and smokes its node and contribution-worker entry points; a packaged
+Windows run joined the published DNS seed with a native credential and completed owned
+shutdown. The signed-catalog path now provides independent Ed25519 keys, threshold
+verification, expiry, rollback protection, an elastic capacity-ladder selector, bounded
+node-side HTTPS fetching, exact manifest installation, last-known-good recovery, and
+automatic seed-backed first-install configuration. The desktop invokes that work in the
+separately frozen sidecar before starting a node, and the builder can stage the strict
+public release input without moving trust code into the GUI. The model-agnostic
+qualification path now pins the official Qwen3 1.7B primary candidate as exact digest
+`sha256:aef22f8678f9c5dcc5315913cf1cf584fa9e6c2fba8d064f715d78d823c9f056`; all 28
+blocks passed full-artifact Windows CPU parity and two-replica selected-worker recovery.
+That local evidence does not yet make the candidate catalog-approved. The remaining
+primary matrix, standby manifest, signed catalog distribution, release bootstrap, and
+actual model workers are not yet published. Those qualification, publication, and real
+packaged clean-install inference gates are the immediate objective.
 Contribution policies and budgets, accessibility and resource measurements, and signed
 installer/update/rollback validation follow. Milestones 6 through 8 remain planned
 after this desktop foundation.
@@ -52,22 +74,25 @@ infrastructure. A separate Windows client reached its public IPv4 address, compl
 real Hivemind join and DHT query, and observed the same peer identity after service
 restarts. This removes the immediate need for users to operate the first node, but it
 does not complete decentralized discovery and does not by itself make the desktop
-usable: the application still needs to start and own its local node automatically,
-ship the trusted seed and model catalog, and find actual model workers.
+usable: the application can start and own its local node and now has the safe bootstrap
+consumer, but a release still needs to ship the trusted root/seed input, publish the
+signed model catalog, and find actual model workers.
 
 ## Scope and product destination
 
-Inference is the product. Distributed training and fine-tuning are compatibility
-features, not roadmap priorities. Near-term work must make it easy for ordinary
-computers to contribute model blocks and for clients to receive correct, streamed
-responses.
+Public community inference is the primary product. Distributed training and
+fine-tuning are compatibility features, not roadmap priorities. Near-term work
+must make it easy for ordinary computers to contribute model blocks and for clients
+to receive correct, streamed responses from a shared public network.
 
 The long-term product is one installable desktop application. A user starts the
 application, points an AI client at a stable localhost OpenAI endpoint, and chooses
-a community model. The application discovers the swarm, calculates and repairs its
-own route, and streams the response without depending on an operator-owned gateway.
-The same installation may contribute compute in the background when the user opts
-in.
+a model from a signed community catalog. By default, the application discovers the
+public community swarm, calculates and repairs its own route, and streams the
+response directly through independently operated workers without depending on an
+operator-owned inference gateway. The user does not need to create a swarm, run a
+bootstrap node, find peers, or assign model blocks. The same installation may
+contribute compute to that public network in the background when the user opts in.
 
 ```mermaid
 flowchart LR
@@ -101,13 +126,19 @@ The GUI must let a non-expert:
 - understand that public workers process request-derived data and must be assumed
   capable of observing or retaining it.
 
-Private and VPN swarms remain supported. The community network is an additional
-mode, not a replacement for environments where every participant is trusted.
+The public community network is the product destination and, once its release gates
+pass, the intended default experience. Private and VPN swarms remain supported as a
+secondary mode for organizations or groups where every participant is trusted; they
+are not the end goal inherited from DRIFT-LLM. Using private swarms as the current
+validation and rollout baseline is a safety measure while the public-network identity,
+discovery, abuse-resistance, redundancy, and usability gates are completed.
 
 ## Architectural baseline and gaps
 
-The current code is decentralized within a configured model swarm, but it is not
-yet an autonomous public community:
+The current DRIFT-derived code is decentralized within a configured model swarm,
+which makes private clusters a useful implementation baseline. The gap this roadmap
+must close is turning that baseline into the intended autonomous, easy-to-join public
+community network:
 
 - Workers publish expiring layer announcements into a Hivemind DHT. Each client
   reads those records and chooses its own latency- or throughput-aware route. The
@@ -137,11 +168,13 @@ rules are improvised.
 
 ## Decentralization model
 
-The goal is to minimize concentrated authority and eliminate central services from
-the inference hot path. It is not credible to promise that a fresh installation can
-discover a global network with no prior information or trust. Each installation
-needs at least a trusted application build or catalog root and one reachable way to
-learn about peers.
+The target is public community inference across independently operated, mutually
+untrusted nodes, while minimizing concentrated authority and eliminating central
+services from the inference hot path. Joining that network must feel like using a
+local application, not operating a distributed system. It is not credible to promise
+that a fresh installation can discover a global network with no prior information or
+trust, so each installation needs at least a trusted application build or catalog
+root and one reachable way to learn about peers.
 
 The target design is:
 
@@ -176,6 +209,69 @@ The target design is:
 No single bootstrap, catalog mirror, health dashboard, hosted API, or credit node
 may have unilateral control over inference. Catalog signing and credit settlement
 are separate trust domains and stay off the token-generation critical path.
+
+## Security and privacy objectives
+
+A public swarm must assume that its DHT, relays, artifact hosts, catalog mirrors,
+workers, clients, and future accounting participants can fail independently and that
+some of them may be malicious. CommunityAI must not obtain safety merely by replacing
+the old Petals services with one new trusted coordinator. Clients validate identities,
+records, manifests, and artifacts locally, and security-sensitive inputs fail closed
+when they are malformed, stale, unsigned, downgraded, or inconsistent.
+
+The major security outcomes are:
+
+| Threat or boundary | Intended protection | Current state and public-release work |
+| --- | --- | --- |
+| Network interception or an untrusted relay | Manifested client-to-worker RPC uses libp2p TLS 1.3 and connects to an authenticated PeerID. Relays may forward the encrypted connection but do not receive its plaintext. | Implemented for manifested swarms. Public qualification must continue to reject plaintext or unauthenticated transport profiles and test direct plus relayed paths. |
+| Forged, copied, or stale DHT records | The DHT is only an untrusted carrier. Worker announcements and intent leases bind the public key, PeerID, exact manifest, execution profile, block range, lifetime, and monotonic sequence in a signed envelope. Clients reject bad signatures, copied block records, expiry, replay, equivocation, and revoked identities before routing. | Worker announcements, rotation, successor revocation, replay guards, and RPC identity comparison are implemented in [`Public swarm security v1`](PUBLIC_SWARM_SECURITY_V1.md). Catalog-authority revocation and public key-compromise drills remain release work. |
+| Model substitution or poisoned artifacts | A content-derived `ModelManifest` pins the full upstream revision, tokenizer, chat template, execution profile, and complete weight inventory. Configuration and every required weight shard are checked by size and SHA-256 before parsing or deserialization; partial downloads remain unusable until atomically verified. | Implemented and validated against tampered metadata, poisoned weights, interrupted downloads, and exact stock-model parity. Public catalogs still need qualified production manifests and interchangeable artifact origins. |
+| Compromise of one catalog key or mirror | Model approval is separate from worker identity. Catalogs use independent Ed25519 keys, configurable signature thresholds, expiry, sequence-based rollback protection, exact manifest digests, and interchangeable HTTPS mirrors. Installations retain their own trust root and may select a different compatible catalog. | The format, verifier, selector, first-install consumer, and last-known-good recovery are implemented. Production roots and catalogs, key rotation/compromise exercises, and alternative-catalog interoperability remain release gates. |
+| Tampered application or unsafe update | Release artifacts must use platform-verifiable signing, authenticate update metadata, refuse unauthorized or older builds, and support tested rollback to the last known-good application without preserving stale secrets. | Current desktop bundles are unsigned engineering evidence, not release candidates. Signed installers, update-key governance, clean install, upgrade, rollback, uninstall, and compromised-update recovery must pass on Windows, Linux, and macOS before release. |
+| Local credential theft or privilege confusion | The node binds to loopback by default. Revocable OpenAI client keys authorize inference only; a separate privileged control credential manages workers and keys but cannot perform inference. Desktop-owned control credentials live in the native OS credential store and are not passed in commands, environment variables, logs, or ordinary configuration. | Authority separation, 256-bit client keys, immediate revocation, one-time secret display, native credential ownership, and authenticated node lifecycle are implemented. Signed installers and packaged credential-store validation on every supported OS remain open. |
+| Discovery, telemetry, or accounting leaking request content | DHT records contain routing and capacity data, not prompts. Demand signals must be coarse, short-lived aggregates, and future receipts must exclude prompts, generated text, hidden states, logits, API keys, and per-user request histories. | This is a protocol and data-minimization requirement. Signed demand aggregation, privacy review, retention limits, receipt implementation, and tests proving that content cannot enter observability or accounting records are still required. |
+| Worker loss, compromised infrastructure, or denial of service | Clients route directly, use finite timeouts, exclude failed identities, replay bounded activation history through redundant workers, and do not require an operator gateway. Multiple independent seeds, mirrors, and routes prevent one service from controlling availability. | In-generation worker-loss recovery is implemented and has passed real multi-machine parity tests. Independent public seeds, admission and rate limits, regional redundancy, partition drills, and malicious-load testing remain public-release gates. |
+| A public signal coercing or exhausting a contributor | Contribution is opt-in and local policy is authoritative. The network must not override model allow/deny rules, force an unapproved download, exceed storage/VRAM/bandwidth/power limits, or keep resources after the user pauses sharing. Worker processes remain supervised separately from the desktop and local API. | Worker supervision exists. Hard budget enforcement, download authorization, sandbox/containment review, pause-time guarantees, and adversarial resource-exhaustion tests remain milestone work. |
+
+Signatures, hashes, and TLS address different threats. Signatures authenticate who
+published a record; hashes prove which bytes were selected; TLS protects those bytes
+and request-derived tensors while they travel between authenticated endpoints. None
+of these alone proves that a remote worker runs honest code, reports honest capacity,
+or deletes data after processing it. Runtime attestation, measurement, admission,
+rate limits, Sybil resistance, and receipt validation are separate controls and must
+not be represented as consequences of transport encryption.
+
+### Privacy boundary
+
+CommunityAI preserves Petals' valuable decentralized data path and makes it the
+default product boundary: the OpenAI endpoint, routing decision, input embeddings,
+final language-model head, and sampling stay on the user's machine. Bootstrap nodes,
+catalog mirrors, relays, health services, and accounting services are not in the
+inference plaintext path. No single hosted gateway receives every prompt, and
+discovery and future accounting data are deliberately separated from prompt and
+generated content.
+
+This is not end-to-end confidential inference against the selected workers. A worker
+must decrypt and process the request-derived activations for the blocks it serves.
+Those activations can reveal information about the request, and a malicious worker
+may inspect, analyze, or retain them. TLS prevents passive network observers and
+relays from reading the connection; it does not make the serving worker blind. The
+network also does not currently provide sender anonymity: peers and relays may observe
+connection metadata such as addresses, timing, and traffic volume.
+
+The public application must therefore warn users before first use and provide a
+persistent explanation of this boundary. Sensitive workloads should use a private or
+VPN swarm of trusted workers unless a separately specified and validated confidential-
+execution design is available. Any future thin-edge mode that moves embeddings, the
+language-model head, or sampling to remote peers expands the privacy boundary and
+requires an explicit protocol decision, threat model, user disclosure, and parity and
+privacy tests. It must never be presented as equivalent to the current local-head path.
+
+The public-network privacy goal is consequently precise rather than absolute: encrypt
+request-derived traffic in transit, authenticate every endpoint used for computation,
+keep content out of discovery and accounting systems, minimize retained metadata, avoid
+a central prompt-processing gateway, and tell users honestly which selected workers
+can still observe request-derived data.
 
 ## Pilot discovery deployment
 
@@ -471,8 +567,9 @@ implementation.
    worker identity, announcements, intent leases, and execution profiles; reject
    manifest mismatches; authenticate and encrypt transport; define key rotation and
    revocation; and preserve an explicit legacy/private namespace during migration.
-   Private/VPN swarms remain the default until this milestone and the public safety
-   gates pass.
+   Private/VPN swarms remain the deployment default until this milestone and the
+   public safety gates pass. That is a rollout precaution, not the product destination;
+   the intended release experience is the shared public community network.
 
    The first identity slice is implemented: the strict
    [`ModelManifest v1`](MODEL_MANIFEST_V1.md) schema has deterministic SHA-256
@@ -584,24 +681,49 @@ implementation.
    The shell-neutral supervisor detects occupied ports without replacing their process,
    starts the node with no secret in arguments or environment, waits for authenticated
    readiness, applies bounded crash backoff, reconnects after a failed status refresh, and
-   stops only its owned process. The GUI bundle does not yet contain the actual model/DHT
-   sidecar or a signed catalog, so packaged end-to-end lifecycle promotion remains open.
-   A real source-level Windows smoke nevertheless provisioned Credential Manager, launched
+   stops only its owned process. The production product bundle now contains a separately
+   frozen model/DHT sidecar while the GUI executable continues to exclude those runtimes.
+   The builder smokes the frozen node, contribution-worker, and catalog-bootstrap entry
+   points. A production signed catalog and release bootstrap are not yet bundled, so
+   clean-install inference remains open. A real source-level Windows smoke provisioned Credential Manager, launched
    `drift node` on an isolated loopback port, joined through the published DNS seed,
    authenticated the control API without creating `control-api.key`, and shut down the
-   owned node cleanly.
+   owned node cleanly. The packaged Windows sidecar then passed that same native-credential,
+   public-seed, authenticated-readiness, and owned-shutdown path.
 
    The strict signed-catalog foundation is now implemented separately from worker
    identity: offline Ed25519 roots enforce configurable signature thresholds, expiry,
    sequence rollback/equivocation protection, exact manifest references, one primary
    plus standby options per capacity rung, and fail-closed promotion gates based on
    bottleneck coverage, independent routes, largest-peer-loss survival, soak, latency,
-   and throughput. It does not yet fetch catalogs or drive workers.
+   and throughput. The standalone sidecar now also fetches bounded HTTPS catalogs without
+   redirects or environment proxies, tries interchangeable mirrors, validates the
+   signature threshold, expiry, and persistent rollback state, fetches and digest-checks
+   every exact manifest, rejects alias collisions, and atomically installs a seed-backed
+   `NodeConfig v1`. Existing configurations are preserved, and an unexpired accepted
+   catalog plus its content-addressed manifests can recover offline. The desktop invokes
+   this only when its configuration is missing and passes no credential to the bootstrap
+   process. The format and release gate are specified in
+   [`CATALOG_BOOTSTRAP_V1.md`](CATALOG_BOOTSTRAP_V1.md). Catalog publication and worker
+   allocation remain open.
 
-   **Next implementation sequence.** Bundle the standalone node sidecar, ship the
-   published DNS peer as an automatic replaceable seed, publish and consume the initial
-   signed model catalog plus verified worker manifests so model selection represents
-   real usable swarms. Prove the native credential and owned-process path against real
+   The model-agnostic local qualification runner now derives repository, revision,
+   block count, DHT namespace, dtype, attention profile, and artifact verification from
+   an exact manifest and emits bounded evidence that cannot claim full release approval.
+   Its first pinned primary candidate is official Qwen3 1.7B bfloat16/eager. Windows CPU
+   audited all 4,079,422,995 declared bytes, served all 28 blocks, matched stock token IDs
+   exactly, and recovered through a surviving full replica in 4.484 seconds. The run also
+   fixed a safetensors loader defect that retained a complete large-shard mapping per
+   same-dtype block. Multi-machine, other-platform, edge-envelope, public-route, and
+   standby evidence remain open as specified in
+   [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
+
+   **Next implementation sequence.** Complete the Qwen3 primary's external qualification
+   matrix and qualify the exact first-rung standby manifest, operate redundant model
+   workers, publish the initial signed catalog through interchangeable HTTPS mirrors,
+   and build the release bootstrap with the published DNS peer plus at least one
+   independent seed. Then pass real packaged
+   clean-install inference and prove the native credential and owned-process path against real
    packaged Windows, Linux, and macOS credential backends. After that, add single-instance
    and login startup behavior, feed privacy-safe peer-region observations into the region
    view, enforce contribution budgets and model policy in the node rather than only in

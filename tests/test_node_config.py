@@ -184,4 +184,10 @@ def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch,
     assert "provider-token" not in launch.command
     assert launch.environment == (("HF_TOKEN", "provider-token"),)
     supervisor.shutdown()
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    frozen_supervisor = _build_worker_supervisor(config, manager, token=None)
+    assert frozen_supervisor.launches[0].command[:2] == (sys.executable, "server")
+    assert "-m" not in frozen_supervisor.launches[0].command
+    frozen_supervisor.shutdown()
     manager.shutdown()

@@ -24,6 +24,7 @@ from communityai_desktop.lifecycle import (
     DEFAULT_NODE_DATA_DIR,
     NodeLifecycleError,
     NodeLifecycleSupervisor,
+    default_bootstrap_config_path,
 )
 
 
@@ -36,6 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--credential-account", default=DEFAULT_CREDENTIAL_ACCOUNT, help=argparse.SUPPRESS)
     parser.add_argument("--node-config", type=Path, default=DEFAULT_NODE_CONFIG_PATH, help=argparse.SUPPRESS)
     parser.add_argument("--node-data-dir", type=Path, default=DEFAULT_NODE_DATA_DIR, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--bootstrap-config", type=Path, default=default_bootstrap_config_path(), help=argparse.SUPPRESS
+    )
     parser.add_argument("--no-manage-node", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--capture-page", type=int, default=0, help=argparse.SUPPRESS)
     action = parser.add_mutually_exclusive_group()
@@ -124,6 +128,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 credential_store,
                 config_path=args.node_config,
                 data_dir=args.node_data_dir,
+                bootstrap_config_path=args.bootstrap_config,
                 client_timeout=args.timeout,
             )
         )
