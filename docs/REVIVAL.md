@@ -61,10 +61,11 @@ public release input without moving trust code into the GUI. The model-agnostic
 qualification path now pins the official Qwen3 1.7B primary candidate as exact digest
 `sha256:aef22f8678f9c5dcc5315913cf1cf584fa9e6c2fba8d064f715d78d823c9f056`; all 28
 blocks passed full-artifact Windows CPU parity and two-replica selected-worker recovery.
-That local evidence does not yet make the candidate catalog-approved. The remaining
-primary matrix, standby manifest, signed catalog distribution, release bootstrap, and
-actual model workers are not yet published. Those qualification, publication, and real
-packaged clean-install inference gates are the immediate objective.
+Its cold-client Windows CPU edge envelope is also measured. That local evidence does
+not yet make the candidate catalog-approved. The remaining primary matrix, standby
+manifest, signed catalog distribution, release bootstrap, and actual model workers are
+not yet published. Those qualification, publication, and real packaged clean-install
+inference gates are the immediate objective.
 Contribution policies and budgets, accessibility and resource measurements, and signed
 installer/update/rollback validation follow. Milestones 6 through 8 remain planned
 after this desktop foundation.
@@ -714,8 +715,10 @@ implementation.
    audited all 4,079,422,995 declared bytes, served all 28 blocks, matched stock token IDs
    exactly, and recovered through a surviving full replica in 4.484 seconds. The run also
    fixed a safetensors loader defect that retained a complete large-shard mapping per
-   same-dtype block. Multi-machine, other-platform, edge-envelope, public-route, and
-   standby evidence remain open as specified in
+   same-dtype block. A separate cold-client Windows CPU route then measured the exact
+   model's cache, local embedding/head, RSS, first-token, and decode envelope.
+   Multi-machine, other-platform and device-class edge, public-route, and standby
+   evidence remain open as specified in
    [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
 
    **Next implementation sequence.** Complete the Qwen3 primary's external qualification

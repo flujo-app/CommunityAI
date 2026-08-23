@@ -1,0 +1,80 @@
+{
+  "latency": {
+    "decode_seconds_after_first_token": 4.027199400006793,
+    "decode_tokens_per_second": 1.738180632423662,
+    "first_token_seconds": 2.0788238000823185,
+    "load_seconds": 2574.9430878000567,
+    "total_generation_seconds": 6.108027000096627
+  },
+  "measured_at_unix": 1787516227,
+  "memory": {
+    "accelerators": {},
+    "client_components": {
+      "components": {
+        "input_embeddings": {
+          "devices": [
+            "cpu"
+          ],
+          "dtypes": [
+            "bfloat16"
+          ],
+          "parameter_bytes": 622329856,
+          "parameter_count": 311164928
+        },
+        "output_head": {
+          "devices": [
+            "cpu"
+          ],
+          "dtypes": [
+            "bfloat16"
+          ],
+          "parameter_bytes": 622329856,
+          "parameter_count": 311164928
+        }
+      },
+      "unique_parameter_bytes": 622329856
+    },
+    "process_tree_rss_baseline_bytes": 341151744,
+    "process_tree_rss_loaded_bytes": 799625216,
+    "process_tree_rss_peak_bytes": 1381253120,
+    "process_tree_rss_peak_delta_bytes": 1040101376
+  },
+  "model": {
+    "dtype": "bfloat16",
+    "id": "Qwen3 1.7B",
+    "manifest_digest": "sha256:aef22f8678f9c5dcc5315913cf1cf584fa9e6c2fba8d064f715d78d823c9f056",
+    "repository": "Qwen/Qwen3-1.7B",
+    "revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
+  },
+  "runtime": {
+    "drift": "2.3.0.dev2",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.12.9",
+    "torch": "2.6.0+cpu"
+  },
+  "schema_version": 1,
+  "storage": {
+    "cache_bytes_after": 4079449800,
+    "cache_bytes_before": 0,
+    "cache_growth_bytes": 4079449800,
+    "cold_start": true
+  },
+  "workload": {
+    "decoded": "Hello: I'm trying to understand the concept",
+    "generated_tokens": 8,
+    "output_ids": [
+      9707,
+      25,
+      358,
+      2776,
+      4460,
+      311,
+      3535,
+      279,
+      7286
+    ],
+    "prompt": "Hello",
+    "prompt_tokens": 1,
+    "requested_new_tokens": 8
+  }
+}
