@@ -38,6 +38,32 @@ def test_qwen3_first_rung_candidate_is_exactly_pinned():
     }
 
 
+def test_qwen3_5_edge_primary_candidate_is_exactly_pinned():
+    candidate = Path(__file__).resolve().parents[1] / "manifests" / "candidates" / "qwen3.5-2b-bfloat16-eager.json"
+    manifest = ModelManifest.load(candidate)
+
+    assert manifest.name == "Qwen3.5 2B"
+    assert manifest.aliases == ("qwen3.5-2b",)
+    assert manifest.source.repository == "Qwen/Qwen3.5-2B"
+    assert manifest.source.revision == "15852e8c16360a2fea060d615a32b45270f8a8fc"
+    assert manifest.model.architecture == "Qwen3_5ForConditionalGeneration"
+    assert manifest.model.num_blocks == 24
+    assert manifest.model.context_length == 262144
+    assert manifest.model.license == "apache-2.0"
+    assert manifest.model.gated is False
+    assert manifest.runtime.dtype == "bfloat16"
+    assert manifest.runtime.attention_implementation == "eager"
+    assert manifest.runtime.quantization == "none"
+    assert manifest.digest_id == "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33"
+    assert len(manifest.artifacts) == 8
+    assert sum(artifact.size for artifact in manifest.artifacts) == 4_571_197_320
+    assert {artifact.path: artifact.sha256 for artifact in manifest.artifacts if artifact.role == "weight"} == {
+        "model.safetensors-00001-of-00001.safetensors": (
+            "aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1"
+        )
+    }
+
+
 def manifest_dict():
     return {
         "schema_version": 1,

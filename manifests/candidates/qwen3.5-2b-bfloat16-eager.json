@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "name": "Qwen3.5 2B",
+  "aliases": [
+    "qwen3.5-2b"
+  ],
+  "source": {
+    "repository": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+  },
+  "model": {
+    "architecture": "Qwen3_5ForConditionalGeneration",
+    "num_blocks": 24,
+    "context_length": 262144,
+    "license": "apache-2.0",
+    "gated": false
+  },
+  "runtime": {
+    "implementation": "drift",
+    "minimum_version": "2.3.0.dev0",
+    "maximum_version_exclusive": "2.4.0",
+    "protocol_version": 1,
+    "tensor_schema": "hidden-states-v1",
+    "attention_implementation": "eager",
+    "dtype": "bfloat16",
+    "quantization": "none",
+    "adapter_profile": "none"
+  },
+  "artifacts": [
+    {
+      "role": "chat_template",
+      "path": "chat_template.jinja",
+      "sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+      "size": 7755
+    },
+    {
+      "role": "config",
+      "path": "config.json",
+      "sha256": "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4",
+      "size": 2908
+    },
+    {
+      "role": "tokenizer",
+      "path": "merges.txt",
+      "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+      "size": 3353259
+    },
+    {
+      "role": "weight",
+      "path": "model.safetensors-00001-of-00001.safetensors",
+      "sha256": "aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1",
+      "size": 4548221488
+    },
+    {
+      "role": "weight_index",
+      "path": "model.safetensors.index.json",
+      "sha256": "aca8afed9da75b0f050b408d270766fd77627f1af401e240f61c3b47d0db02f9",
+      "size": 64460
+    },
+    {
+      "role": "tokenizer",
+      "path": "tokenizer.json",
+      "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+      "size": 12807982
+    },
+    {
+      "role": "tokenizer",
+      "path": "tokenizer_config.json",
+      "sha256": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+      "size": 16709
+    },
+    {
+      "role": "tokenizer",
+      "path": "vocab.json",
+      "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+      "size": 6722759
+    }
+  ]
+}
