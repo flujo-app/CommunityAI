@@ -8,6 +8,7 @@
     drift node <manifest> ...       A persistent authenticated localhost gateway
     drift edge-benchmark <manifest> Measure client-only edge resource use
     drift manifest <file>           Validate and inspect a ModelManifest v1
+    drift catalog ...               Create and verify signed model catalogs
     drift identity ...              Manage public-swarm identities and trust records
 
 Each subcommand owns its own argument parsing; this shim just strips the subcommand
@@ -16,7 +17,7 @@ name and delegates. Also runnable as ``python -m drift.cli``.
 
 import sys
 
-_COMMANDS = ("up", "down", "server", "dht", "api", "node", "edge-benchmark", "manifest", "identity")
+_COMMANDS = ("up", "down", "server", "dht", "api", "node", "edge-benchmark", "manifest", "catalog", "identity")
 
 _USAGE = """usage: drift <command> [options]
 
@@ -32,6 +33,7 @@ commands:
   edge-benchmark
             Measure manifested client storage, memory, and generation latency (requires drift[benchmark])
   manifest  Validate and inspect a content-addressed ModelManifest v1
+  catalog   Create signing keys, trust roots, and threshold-signed model catalogs
   identity  Create, inspect, rotate, revoke, and verify public-swarm identities
 
 Run `drift <command> --help` for command-specific options.
@@ -65,6 +67,8 @@ def main() -> int:
         from drift.cli.run_edge_benchmark import main as run
     elif command == "manifest":
         from drift.cli.run_manifest import main as run
+    elif command == "catalog":
+        from drift.cli.run_catalog import main as run
     elif command == "identity":
         from drift.cli.run_identity import main as run
     else:  # dht

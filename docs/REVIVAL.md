@@ -38,8 +38,11 @@ package. Its source and packaged smokes enforce the GUI/node boundary, strict lo
 control traffic, key lifecycle, and worker controls without importing model runtimes.
 The node and desktop now share the native credential store directly, and the desktop
 has source-level ownership for node startup, authenticated readiness, bounded crash
-backoff, reconnect, and shutdown. The immediate objective is to bundle that standalone
-node sidecar plus the first signed catalog and automatic public seed configuration.
+backoff, reconnect, and shutdown. The first signed-catalog foundation now provides
+independent Ed25519 keys, threshold verification, expiry, rollback protection, and an
+elastic capacity-ladder selector; the signed catalog distribution and first qualified
+manifest set are not yet published. The immediate objective is to bundle the standalone
+node sidecar, consume that catalog safely, and ship automatic public seed configuration.
 Contribution policies and budgets, accessibility and resource measurements, and signed
 installer/update/rollback validation follow. Milestones 6 through 8 remain planned
 after this desktop foundation.
@@ -215,6 +218,29 @@ Google VM being a single point of failure.
 The existing Petals/DRIFT balancing algorithm solves placement only after a model
 has been chosen. Community mode needs a higher-level allocator that chooses a model
 and then delegates block placement to the existing algorithm.
+
+### Elastic model ladder
+
+Small checkpoints are bootstrap and test rungs, not the distributed network's product
+ceiling. Community `auto` selection should move monotonically toward larger qualified
+models as measured capacity grows: approximately 1-2B, 3-4B, 8B, 27-32B, 70B, and
+400B-plus. Each rung approves exactly one primary and at least one standby so the
+catalog can replace a model without requiring both alternatives to fragment live VRAM.
+
+At INT8, two complete weight replicas require roughly two bytes of aggregate usable
+VRAM per parameter: 10 GB for a 5B model, 60 GB for a 30B model, 140 GB for 70B, and
+810 GB for 405B before KV-cache, activation, framework, churn, and migration headroom.
+Promotion is never inferred from that aggregate alone. The selector requires minimum
+per-block replica coverage, independent complete routes, survival after the largest
+peer loss, a stability soak, fresh observations, and measured latency and throughput
+limits. Total parameters determine MoE storage; active parameters describe per-token
+compute and do not make the other expert weights disappear.
+
+The first candidate ladder and the implemented signed format are specified in
+[`MODEL_CATALOG_V1.md`](MODEL_CATALOG_V1.md). The local selector may resolve an `auto`
+request to the highest eligible exact manifest, but it never changes an explicit model
+selection or an in-flight request. Catalog fetching, DHT-derived observations, staged
+worker migration, fallback, and automatic alias updates remain integration work.
 
 ### Canonical model manifest
 
@@ -565,14 +591,21 @@ implementation.
    authenticated the control API without creating `control-api.key`, and shut down the
    owned node cleanly.
 
+   The strict signed-catalog foundation is now implemented separately from worker
+   identity: offline Ed25519 roots enforce configurable signature thresholds, expiry,
+   sequence rollback/equivocation protection, exact manifest references, one primary
+   plus standby options per capacity rung, and fail-closed promotion gates based on
+   bottleneck coverage, independent routes, largest-peer-loss survival, soak, latency,
+   and throughput. It does not yet fetch catalogs or drive workers.
+
    **Next implementation sequence.** Bundle the standalone node sidecar, ship the
-   published DNS peer as an automatic replaceable seed, and add the initial signed model
-   catalog plus verified worker manifests so model selection represents real usable
-   swarms. Prove the native credential and owned-process path against real packaged
-   Windows, Linux, and macOS credential backends. After that, add single-instance and login
-   startup behavior, feed privacy-safe peer-region observations into the region view,
-   enforce contribution budgets and model policy in the node rather than only in the
-   GUI, and complete resource, accessibility, signed installer, upgrade, rollback,
+   published DNS peer as an automatic replaceable seed, publish and consume the initial
+   signed model catalog plus verified worker manifests so model selection represents
+   real usable swarms. Prove the native credential and owned-process path against real
+   packaged Windows, Linux, and macOS credential backends. After that, add single-instance
+   and login startup behavior, feed privacy-safe peer-region observations into the region
+   view, enforce contribution budgets and model policy in the node rather than only in
+   the GUI, and complete resource, accessibility, signed installer, upgrade, rollback,
    uninstall, and retained-data gates on all three operating systems.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and
