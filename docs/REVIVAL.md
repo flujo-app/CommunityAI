@@ -58,13 +58,15 @@ node-side HTTPS fetching, exact manifest installation, last-known-good recovery,
 automatic seed-backed first-install configuration. The desktop invokes that work in the
 separately frozen sidecar before starting a node, and the builder can stage the strict
 public release input without moving trust code into the GUI. The model-agnostic
-qualification path now pins the official Qwen3 1.7B primary candidate as exact digest
+qualification path pins Qwen3 1.7B as a bootstrap evidence checkpoint with exact digest
 `sha256:aef22f8678f9c5dcc5315913cf1cf584fa9e6c2fba8d064f715d78d823c9f056`; all 28
 blocks passed full-artifact Windows CPU parity and two-replica selected-worker recovery.
-Its cold-client Windows CPU edge envelope is also measured. That local evidence does
-not yet make the candidate catalog-approved. The remaining primary matrix, standby
-manifest, signed catalog distribution, release bootstrap, and actual model workers are
-not yet published. Those qualification, publication, and real packaged clean-install
+Its cold-client Windows CPU edge envelope is also measured. That older checkpoint proves
+the harness but is not a production-ladder candidate. The 2026-08-23 ladder refresh now
+targets current size-specific Qwen3.5/Qwen3.8 primaries, Gemma 4 standbys through 31B,
+and Llama 4 standbys for larger MoE rungs. Their adapters or exact manifests, signed
+catalog distribution, release bootstrap, and actual model workers are not yet published.
+Those implementation, qualification, publication, and real packaged clean-install
 inference gates are the immediate objective.
 Contribution policies and budgets, accessibility and resource measurements, and signed
 installer/update/rollback validation follow. Milestones 6 through 8 remain planned
@@ -711,21 +713,21 @@ implementation.
    The model-agnostic local qualification runner now derives repository, revision,
    block count, DHT namespace, dtype, attention profile, and artifact verification from
    an exact manifest and emits bounded evidence that cannot claim full release approval.
-   Its first pinned primary candidate is official Qwen3 1.7B bfloat16/eager. Windows CPU
+   Its first completed bootstrap checkpoint is official Qwen3 1.7B bfloat16/eager. Windows CPU
    audited all 4,079,422,995 declared bytes, served all 28 blocks, matched stock token IDs
    exactly, and recovered through a surviving full replica in 4.484 seconds. The run also
    fixed a safetensors loader defect that retained a complete large-shard mapping per
    same-dtype block. A separate cold-client Windows CPU route then measured the exact
    model's cache, local embedding/head, RSS, first-token, and decode envelope.
-   Multi-machine, other-platform and device-class edge, public-route, and standby
-   evidence remain open as specified in
+   This preserves harness and loader evidence but does not promote the older model into
+   the refreshed production ladder. Current-model evidence remains open as specified in
    [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
 
-   **Next implementation sequence.** Complete the Qwen3 primary's external qualification
-   matrix and qualify the exact first-rung standby manifest, operate redundant model
-   workers, publish the initial signed catalog through interchangeable HTTPS mirrors,
-   and build the release bootstrap with the published DNS peer plus at least one
-   independent seed. Then pass real packaged
+   **Next implementation sequence.** Implement the Qwen3.5/Qwen3.8 architecture path,
+   generate and qualify exact Qwen3.5 2B primary and Gemma 4 E2B standby manifests,
+   operate redundant model workers, publish the initial signed catalog through
+   interchangeable HTTPS mirrors, and build the release bootstrap with the published
+   DNS peer plus at least one independent seed. Then pass real packaged
    clean-install inference and prove the native credential and owned-process path against real
    packaged Windows, Linux, and macOS credential backends. After that, add single-instance
    and login startup behavior, feed privacy-safe peer-region observations into the region

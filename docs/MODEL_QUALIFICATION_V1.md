@@ -1,16 +1,18 @@
 # Model qualification v1
 
-Status: the model-agnostic single-machine harness is implemented. The first-rung
-primary candidate is pinned in
+Status: the model-agnostic single-machine harness is implemented. Its bootstrap evidence
+checkpoint is pinned in
 [`manifests/candidates/qwen3-1.7b-bfloat16-eager.json`](../manifests/candidates/qwen3-1.7b-bfloat16-eager.json),
 and has passed full-artifact audit, local Windows CPU parity, selected-worker
-interruption recovery, and the Windows CPU cold-client edge envelope. A candidate
-manifest is not catalog approval. The remaining evidence below must be attached before
-its digest enters a signed production catalog.
+interruption recovery, and the Windows CPU cold-client edge envelope. Qwen3 1.7B is
+retained as reproducible harness evidence, not as a current production-ladder candidate.
+The refreshed edge rung targets Qwen3.5 2B with Gemma 4 E2B as standby; neither has an
+exact manifest or release qualification yet. A candidate manifest is never catalog
+approval.
 
-## Candidate identity
+## Bootstrap evidence identity
 
-The first primary candidate uses the official
+The completed harness proof uses the official
 [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B) repository at immutable
 revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`. The selected execution profile is
 unquantized bfloat16 with eager attention on DRIFT `>=2.3.0.dev0,<2.4.0`. The manifest
@@ -47,7 +49,7 @@ of downloading them into the separate DRIFT cache. Other layouts require an expl
 `--cache-dir`. `--manifest-only` performs only schema, runtime, and optional artifact
 validation.
 
-## First primary local result
+## Bootstrap local result
 
 On 2026-08-23, Windows CPU with DRIFT 2.3.0.dev2 and Torch 2.6.0 loaded and served all
 28 Qwen3 blocks through the manifest-derived namespace. Both client input embeddings

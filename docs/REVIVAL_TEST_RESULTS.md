@@ -126,7 +126,7 @@ published DNS seed, authenticated API version 1 with one configured manifest, wr
 `control-api.key`, and shut down the owned process. Clean-runner Linux/macOS sidecar
 results and GPU-specific bundle policy remain open.
 
-## First-rung model qualification harness
+## Bootstrap model qualification harness
 
 The former TinyLlama-specific local swarm smoke is now manifest-driven. For a supplied
 `ModelManifest v1`, it derives the exact repository, immutable revision, block count,
@@ -150,7 +150,7 @@ model. The CI-sized offline suite, including the new report/parser/command tests
 passed 247 tests with seven expected skips after adding the exact candidate pin,
 Hub-cache inference, and mapped-storage regression gates.
 
-The first primary candidate pins official `Qwen/Qwen3-1.7B` commit
+The completed bootstrap evidence pins official `Qwen/Qwen3-1.7B` commit
 `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` as an ungated Apache-2.0 bfloat16/eager
 profile with manifest digest
 `sha256:aef22f8678f9c5dcc5315913cf1cf584fa9e6c2fba8d064f715d78d823c9f056`. The runner
@@ -173,9 +173,10 @@ block tensors kept their complete safetensors shard mapping, accumulating one 3.
 mapping per block until the process failed while loading block 25. The loader now
 copies only the selected block tensors into owned CPU storage before closing the file
 mapping. A regression test checks storage independence, and the TinyLlama parity plus
-focused loader/model suites passed before the full Qwen rerun. The candidate manifest
-is still not catalog approval: multi-machine, cross-platform, remaining device-class
-edge, and public-route evidence plus the first-rung standby qualification remain open.
+focused loader/model suites passed before the full Qwen rerun. This older checkpoint is
+retained as harness and loader evidence, not as a production-ladder candidate. Exact
+Qwen3.5 2B primary and Gemma 4 E2B standby manifests plus all external qualification
+gates remain open.
 
 ## Desktop milestone: shell decision
 
