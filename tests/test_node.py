@@ -271,6 +271,21 @@ def test_node_parser_accepts_config_mode_and_rejects_ambiguous_model_options():
     _validate_args(parser, config_args)
     assert config_args.control_key_path.as_posix() == "private/control.key"
 
+    native_args = parser.parse_args(["--config", "node.json", "--control_key_source", "native"])
+    _validate_args(parser, native_args)
+    conflicting_native_args = parser.parse_args(
+        [
+            "--config",
+            "node.json",
+            "--control_key_source",
+            "native",
+            "--control_key_path",
+            "private/control.key",
+        ]
+    )
+    with pytest.raises(SystemExit):
+        _validate_args(parser, conflicting_native_args)
+
     both = parser.parse_args(
         [
             "manifest.json",

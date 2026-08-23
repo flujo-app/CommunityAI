@@ -36,10 +36,13 @@ Milestone 5 is active. Its architectural foundation is now fixed:
 The shared client and acceptance contract now live in a standalone production PySide
 package. Its source and packaged smokes enforce the GUI/node boundary, strict loopback
 control traffic, key lifecycle, and worker controls without importing model runtimes.
-The immediate objective is now end-to-end native credential ownership, followed by
-onboarding and process lifecycle, contribution policies and budgets, accessibility and
-resource measurements, and signed installer/update/rollback validation. Milestones 6
-through 8 remain planned after this desktop foundation.
+The node and desktop now share the native credential store directly, and the desktop
+has source-level ownership for node startup, authenticated readiness, bounded crash
+backoff, reconnect, and shutdown. The immediate objective is to bundle that standalone
+node sidecar plus the first signed catalog and automatic public seed configuration.
+Contribution policies and budgets, accessibility and resource measurements, and signed
+installer/update/rollback validation follow. Milestones 6 through 8 remain planned
+after this desktop foundation.
 
 The first always-on public discovery peer is now deployed as milestone 6 pilot
 infrastructure. A separate Windows client reached its public IPv4 address, completed a
@@ -185,7 +188,7 @@ receives no prompts, selects no routes, and has no Google Cloud API identity.
 | Network | Dedicated VPC, Standard Tier, static IPv4 `35.209.21.129` |
 | Public ingress | TCP 31337 only; SSH is restricted to Google IAP |
 | Peer address | `/ip4/35.209.21.129/tcp/31337/p2p/QmZhGcSVR6qPLZTq3TJPZEi734GbMkouv3kPxQLdDY2qUo` |
-| Planned DNS | `bootstrap.communityai.flujo.com.co` A record to `35.209.21.129` |
+| Published DNS | `bootstrap.communityai.flujo.com.co` A record to `35.209.21.129` |
 
 The static IPv4 makes dynamic DNS unnecessary and keeps the peer reachable by
 IPv4-only contributors. The VM and disk fit the Google Cloud Free Tier when that
@@ -201,9 +204,9 @@ boot, runs as an unprivileged user, preserves its private identity with owner-on
 permissions, and retained the PeerID above across restarts. Reproducible deployment
 sources and the live inventory are in [`deploy/gcp/`](../deploy/gcp/README.md).
 
-This node is a bootstrap dependency, not a centralized inference service. The next
-deployment gate is the DNS record and automatic desktop seed configuration. Before a
-public release, at least one independently operated seed must be added and the fresh-
+This node is a bootstrap dependency, not a centralized inference service. Its DNS A
+record is published; the next deployment gate is automatic desktop seed configuration.
+Before a public release, at least one independently operated seed must be added and the fresh-
 install, cached-peer, seed-loss, partition, and recovery paths must pass without this
 Google VM being a single point of failure.
 
@@ -545,18 +548,28 @@ implementation.
    Existing headless credentials migrate into the native store automatically, missing
    credentials and node failures render inside the application instead of terminating
    before Qt starts, and the Windows build uses the GUI subsystem without a console
-   window. An unsigned Windows bundle passed the
-   packaged runtime, authenticated contract, connected UI, and onboarding UI smokes; the
-   three-platform production workflow is now checked in but must pass remotely before
-   cross-platform promotion is claimed.
+   window. The production workflow passed its unsigned runtime, authenticated-contract,
+   connected-UI, and onboarding-UI smokes on clean Windows, Linux, and macOS runners.
 
-   **Next implementation sequence.** Publish the pending
-   `bootstrap.communityai.flujo.com.co` DNS record and ship that peer as an automatic,
-   replaceable seed; make the packaged desktop start, supervise, and stop its bundled
-   local node without a setup button; and make the node and desktop share native
-   credential ownership directly so the one-time private-file migration can be retired.
-   Then ship the initial signed model catalog and verified worker manifests so model
-   selection represents real usable swarms. After that, add single-instance and login
+   The second product slice is implemented at the source boundary. A desktop-owned node
+   reads the same native credential entry directly, while explicitly headless nodes keep
+   private-file mode. Fresh installs generate the key only in the native store; existing
+   private files migrate and are removed only after an owned native-key node authenticates.
+   The shell-neutral supervisor detects occupied ports without replacing their process,
+   starts the node with no secret in arguments or environment, waits for authenticated
+   readiness, applies bounded crash backoff, reconnects after a failed status refresh, and
+   stops only its owned process. The GUI bundle does not yet contain the actual model/DHT
+   sidecar or a signed catalog, so packaged end-to-end lifecycle promotion remains open.
+   A real source-level Windows smoke nevertheless provisioned Credential Manager, launched
+   `drift node` on an isolated loopback port, joined through the published DNS seed,
+   authenticated the control API without creating `control-api.key`, and shut down the
+   owned node cleanly.
+
+   **Next implementation sequence.** Bundle the standalone node sidecar, ship the
+   published DNS peer as an automatic replaceable seed, and add the initial signed model
+   catalog plus verified worker manifests so model selection represents real usable
+   swarms. Prove the native credential and owned-process path against real packaged
+   Windows, Linux, and macOS credential backends. After that, add single-instance and login
    startup behavior, feed privacy-safe peer-region observations into the region view,
    enforce contribution budgets and model policy in the node rather than only in the
    GUI, and complete resource, accessibility, signed installer, upgrade, rollback,
@@ -571,8 +584,8 @@ implementation.
 
    **Pilot evidence.** The first GCP `e2-micro` bootstrap is live on a stable public
    IPv4 address, preserves its identity, and has passed an off-host DHT connection.
-   This is the first seed, not milestone completion: DNS publication, desktop wiring,
-   independent operators, additional seeds and relays, cached-peer recovery, signed
+   This is the first seed, not milestone completion: desktop wiring, independent
+   operators, additional seeds and relays, cached-peer recovery, signed
    catalog distribution, observability, and failure drills remain open.
 7. **Safe public pilot and shadow credits.** Add admission and rate limits, abuse
    controls, health and coverage monitoring without a single required dashboard,

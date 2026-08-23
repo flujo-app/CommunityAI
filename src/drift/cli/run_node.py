@@ -16,6 +16,12 @@ from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
 from drift.node.loading import make_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelNotFoundError
+from drift.node.native_credentials import (
+    DEFAULT_CREDENTIAL_ACCOUNT,
+    DEFAULT_CREDENTIAL_SERVICE,
+    NativeCredentialLocation,
+    load_native_control_key,
+)
 from drift.node.worker_supervisor import WorkerLaunch, WorkerSupervisor
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
@@ -64,6 +70,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Private drift_control_ key file for the privileged control API (generated if missing)",
     )
     parser.add_argument(
+        "--control_key_source",
+        choices=("file", "native"),
+        default="file",
+        help="Read the privileged control key from a private file or the native OS credential store",
+    )
+    parser.add_argument("--credential_service", default=DEFAULT_CREDENTIAL_SERVICE, help=argparse.SUPPRESS)
+    parser.add_argument("--credential_account", default=DEFAULT_CREDENTIAL_ACCOUNT, help=argparse.SUPPRESS)
+    parser.add_argument(
         "--max_loaded_models",
         type=int,
         default=None,
@@ -110,6 +124,10 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error("--default_max_tokens must be at least 1")
     if any(not key for key in args.api_key):
         parser.error("--api_key values must not be empty")
+    if args.control_key_source == "native" and args.control_key_path is not None:
+        parser.error("--control_key_path cannot be combined with --control_key_source native")
+    if not args.credential_service.strip() or not args.credential_account.strip():
+        parser.error("native credential service and account must not be empty")
 
 
 def _load_node_config(args: argparse.Namespace) -> NodeConfig:
@@ -287,8 +305,22 @@ def _prepare_api_key_store(data_dir: Path, supplied_keys: list[str]) -> tuple[Ap
     return key_store, key_path, created
 
 
-def _prepare_control_key(data_dir: Path, supplied_path: Path | None) -> tuple[str, Path, bool]:
+def _prepare_control_key(
+    data_dir: Path,
+    supplied_path: Path | None,
+    *,
+    source: str = "file",
+    credential_service: str = DEFAULT_CREDENTIAL_SERVICE,
+    credential_account: str = DEFAULT_CREDENTIAL_ACCOUNT,
+) -> tuple[str, Path | None, bool]:
     """Load or atomically create the credential used only by `/control/v1/*`."""
+    if source == "native":
+        if supplied_path is not None:
+            raise ValueError("a control key path cannot be used with the native credential store")
+        key = load_native_control_key(NativeCredentialLocation(credential_service, credential_account))
+        return key, None, False
+    if source != "file":
+        raise ValueError(f"unsupported control key source {source!r}")
     key_path = supplied_path if supplied_path is not None else data_dir / "control-api.key"
     key, created = load_or_create_control_key(key_path)
     return key, key_path, created
@@ -315,7 +347,13 @@ def main() -> None:
 
     try:
         key_store, key_path, created = _prepare_api_key_store(args.data_dir, args.api_key)
-        control_key, control_key_path, control_key_created = _prepare_control_key(args.data_dir, args.control_key_path)
+        control_key, control_key_path, control_key_created = _prepare_control_key(
+            args.data_dir,
+            args.control_key_path,
+            source=args.control_key_source,
+            credential_service=args.credential_service,
+            credential_account=args.credential_account,
+        )
         if key_path is not None:
             if created:
                 logger.info(f"Created the local API key in {key_path}; its value is not written to logs")
@@ -323,7 +361,12 @@ def main() -> None:
                 logger.info(f"Using the local API key from {key_path}")
         elif not args.api_key:
             logger.info(f"Using the active managed API keys in {key_store.path}")
-        if control_key_created:
+        if control_key_path is None:
+            logger.info(
+                f"Using the privileged local control key from native account {args.credential_account!r}; "
+                "its value is not written to logs"
+            )
+        elif control_key_created:
             logger.info(
                 f"Created the privileged local control key in {control_key_path}; its value is not written to logs"
             )

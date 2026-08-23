@@ -15,7 +15,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6 after all six clean Windows/Linux/macOS spike jobs passed; the standalone production package enforces the GUI/node import boundary and an unsigned Windows product bundle passed runtime, authenticated-contract, and UI smokes; OpenAI inference keys and the privileged control credential are separate authorities | End-to-end native credential ownership, production cross-platform CI, contribution policies and budgets, lifecycle integration, startup/RSS and crash-isolation measurements, signing, updates, rollback, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the node can read the desktop's native credential directly; and source-level lifecycle tests cover startup, authenticated readiness, collisions, backoff, reconnect, migration retirement, and owned shutdown | The real node sidecar and signed catalog are not bundled; real native-store integration, contribution policies and budgets, startup/RSS and crash-isolation measurements, signing, updates, rollback, accessibility, and installer gates remain |
 
 ## Desktop milestone: control authority separation
 
@@ -29,10 +29,11 @@ cannot use those controls.
 The headless migration preserves `~/.drift/node/local-api.key` as an OpenAI client
 key and creates `~/.drift/node/control-api.key` on first upgraded startup. An explicit
 private path can be supplied with `--control_key_path`; putting the privileged secret
-itself on the command line is not supported. The production desktop reads its copy from
-the native OS store and automatically imports an existing node private file once when
-needed. The next slice makes that store the shared source of truth so the migration file
-can be retired.
+itself on the command line is not supported. Desktop-owned nodes instead use
+`--control_key_source native` and read the same service/account entry as the GUI. A fresh
+desktop provisions that entry directly. An existing private file is imported and removed
+only after the owned node authenticates with the native copy. Explicitly headless nodes
+retain private-file mode as their default.
 
 ## Desktop milestone: first production slice
 
@@ -55,12 +56,39 @@ same store directly; the headless node continues to own the private-file mode. N
 desktop startup opens Qt before reading the credential, renders missing-credential and
 connection errors in the window, and retries without a setup or secret-entry screen.
 
-Fourteen focused source tests pass. A clean local Windows x64 PyInstaller build using
+The initial fourteen focused source tests pass. A clean local Windows x64 PyInstaller build using
 Python 3.12.9 and PySide 6.11.2 produced an unsigned 120,936,481-byte, 232-file bundle.
 It uses the Windows GUI subsystem and opens no console. The packaged framework check,
 full authenticated control contract, connected offscreen UI smoke, and missing-credential
-onboarding smoke all passed. A production Windows/Linux/macOS workflow is checked in; its
-clean-runner results are still required before claiming cross-platform product packaging.
+onboarding smoke all passed. The production Windows/Linux/macOS workflow subsequently
+passed all three clean-runner package and UI-smoke jobs.
+
+## Desktop milestone: native credential and lifecycle source contract
+
+The local node has an explicit native credential source that lazily loads `keyring`,
+requires a usable backend and an existing `drift_control_` credential, and never falls
+back to a file if native access fails. The desktop provisions a new 256-bit control key
+directly in that store or verifies and imports a legacy private file. It verifies the
+round trip after writing. The legacy file is retired only after a node started by this
+desktop authenticates successfully; attaching to an external headless node never causes
+the desktop to remove its file.
+
+The source supervisor checks the configured loopback port before spawning, refuses to
+replace an unknown service, launches the standalone node with native-store identifiers
+but no secret, waits for authenticated readiness, applies exponential backoff capped at
+30 seconds, and terminates only its owned process. A failed periodic status refresh now
+drops the stale client so the next refresh re-enters lifecycle recovery. Twenty-one
+desktop tests and twenty-five focused node/key tests pass. The package still excludes
+model, DHT, and worker runtimes and does not yet stage a node sidecar, so this is not a
+claim that a clean packaged installation can run inference.
+
+The real Windows source smoke used a disposable Credential Manager service/account and
+an isolated loopback port. The desktop launched the installed `drift node`, the node
+loaded the same native key, joined via
+`/dns4/bootstrap.communityai.flujo.com.co/tcp/31337/p2p/QmZhGcSVR6qPLZTq3TJPZEi734GbMkouv3kPxQLdDY2qUo`,
+and returned authenticated API version 1 status for one manifest. No
+`control-api.key` appeared in the temporary data directory. The supervisor then stopped
+its owned process and deleted the disposable native credential.
 
 ## Desktop milestone: shell decision
 
@@ -77,7 +105,7 @@ against an isolated fake node. All six package jobs passed.
 ADR 0002 therefore selects PySide 6 for product implementation. Pywebview's Windows and
 macOS size advantage does not offset its 948 MB Linux Qt bundle, larger backend variance,
 and additional JavaScript bridge. The unsigned CI artifacts prove clean packaging and UI
-startup only; native credential stores, accessibility, lifecycle, crash isolation,
+startup only; real native credential backends, accessibility, packaged lifecycle, crash isolation,
 startup/RSS, signed installers, upgrades, rollback, and uninstall remain open release gates.
 
 ## Unified local node: first vertical slice

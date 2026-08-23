@@ -307,9 +307,17 @@ def load_or_create_api_key(path: Path) -> Tuple[str, bool]:
     return _load_or_create_secret(path, prefix="drift_")
 
 
+def validate_control_key(value: str) -> str:
+    """Validate and normalize a privileged local-node control credential."""
+    if not isinstance(value, str):
+        raise ValueError("control key must be a string")
+    key = value.strip()
+    if _CONTROL_KEY_RE.fullmatch(key) is None:
+        raise ValueError("control key must use the drift_control_ key class with at least 256 bits of entropy")
+    return key
+
+
 def load_or_create_control_key(path: Path) -> Tuple[str, bool]:
     """Load or create the privileged local control credential."""
     key, created = _load_or_create_secret(path, prefix="drift_control_")
-    if _CONTROL_KEY_RE.fullmatch(key) is None:
-        raise ValueError("control key must use the drift_control_ key class with at least 256 bits of entropy")
-    return key, created
+    return validate_control_key(key), created

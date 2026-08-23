@@ -601,7 +601,7 @@ def run(
                 self.sidebar_status.setText("Connecting")
                 self._submit(connect, self._connected)
                 return
-            self._submit(self._controller.snapshot, self._render)
+            self._submit(self._controller.snapshot, self._render, self._snapshot_failed)
 
         def _connected(self, connected_controller) -> None:  # noqa: ANN001
             self._controller = connected_controller
@@ -609,8 +609,13 @@ def run(
 
         def _connection_failed(self, message: str) -> None:
             self._set_connection_state(False)
+            self.connection_detail.setText(str(message)[:300])
             self.hero_title.setText("Your AI will appear here")
             self.hero_subtitle.setText("CommunityAI connects automatically as soon as it is ready.")
+
+        def _snapshot_failed(self, message: str) -> None:
+            self._controller = None
+            self._connection_failed(message)
 
         def _reset_connection(self) -> None:
             self._controller = None
