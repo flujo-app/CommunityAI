@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 from drift.client.lm_head import LMHead
-from drift.server.from_pretrained import _find_unconsumed_checkpoint_keys
+from drift.server.from_pretrained import _find_unconsumed_checkpoint_keys, _load_state_dict_from_local_file
 from drift.utils.asyncio import patch_hivemind_task_cleanup, safe_cancel_task_if_running
 
 
@@ -24,6 +24,37 @@ def test_legacy_rotary_frequency_is_derived_but_other_state_stays_strict():
         "mystery_scale",
         "self_attn.rotary_emb.trained_scale",
     ]
+
+
+def test_safetensors_block_load_copies_selected_tensors_out_of_the_file_mapping(monkeypatch):
+    selected = torch.arange(4, dtype=torch.float32)
+    unrelated = torch.ones(2)
+
+    class FakeSafeOpen:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return None
+
+        def keys(self):
+            return ("layers.0.weight", "layers.1.weight")
+
+        def get_tensor(self, key):
+            return selected if key == "layers.0.weight" else unrelated
+
+    monkeypatch.setattr(
+        "drift.server.from_pretrained.safetensors.safe_open",
+        lambda *args, **kwargs: FakeSafeOpen(),
+    )
+
+    loaded = _load_state_dict_from_local_file("model.safetensors", block_prefix="layers.0.")
+
+    assert set(loaded) == {"layers.0.weight"}
+    assert torch.equal(loaded["layers.0.weight"], selected)
+    assert loaded["layers.0.weight"].data_ptr() != selected.data_ptr()
+    selected.add_(100)
+    assert torch.equal(loaded["layers.0.weight"], torch.arange(4, dtype=torch.float32))
 
 
 def test_chunked_lm_head_warning_reports_actual_dtype_once(monkeypatch):

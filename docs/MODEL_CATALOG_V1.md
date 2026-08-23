@@ -1,9 +1,14 @@
 # Signed model catalog and elastic capacity ladder v1
 
 Status: strict schema, independent Ed25519 signing keys, threshold verification,
-expiry, persistent rollback protection, and local rung selection are implemented.
-Remote catalog fetching, trust-root rotation, node/desktop consumption, automatic
-worker migration, and the first qualified public manifests remain open.
+expiry, persistent rollback protection, local rung selection, bounded HTTPS fetching,
+exact manifest installation, first-install node configuration, and desktop-sidecar
+consumption are implemented. The model-agnostic qualification runner and exact first
+primary source/profile pin are also implemented; the pinned Qwen3 1.7B candidate passed
+full-artifact audit, local Windows CPU parity, and selected-worker recovery. Trust-root
+rotation, periodic catalog refresh, automatic worker migration, publication of the
+release bootstrap, the standby manifest, and the remaining primary/standby
+qualification gates remain open.
 
 `ModelManifest v1` identifies one exact checkpoint and execution profile. A model
 catalog answers a separate question: which immutable manifests does one community
@@ -149,11 +154,15 @@ the required number of distinct signatures is present.
 
 ## Remaining integration work
 
-1. Generate and qualify exact manifests for both options in the first rung.
-2. Publish the signed catalog through interchangeable HTTPS mirrors and bundle its
-   independent trust root with the desktop.
-3. Fetch manifests, verify their digest against the catalog, and register them with
-   the persistent node without trusting catalog display metadata.
+1. Complete multi-machine, cross-platform, edge-envelope, and public-route
+   qualification for the pinned Qwen3 1.7B primary candidate. Generate and qualify the
+   exact Gemma 3 1B standby manifest. The evidence contract and completed local primary
+   evidence are defined in [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
+2. Publish the signed catalog through interchangeable HTTPS mirrors and build the
+   release bootstrap containing its independent trust root and public seeds.
+3. Bundle that bootstrap and pass the clean-install packaged inference gate. The
+   implemented sidecar consumer fetches manifests, verifies their digest against the
+   catalog, and registers them without trusting catalog display metadata.
 4. Reconstruct capacity observations from authenticated DHT records and completed
    route probes rather than accepting a central capacity total.
 5. Add the staged promotion controller, worker intent leases, download hysteresis,

@@ -30,12 +30,18 @@ entry points. A packaged Windows lifecycle smoke has also launched that sidecar 
 native Credential Manager key, joined the published DNS seed, authenticated readiness,
 and shut down the owned process without writing a control-key file.
 
-The initial signed catalog, verified model manifests, and first-install node
-configuration have not been added yet. Until those arrive, source or packaged runs can
-supervise the node when `~/.drift/node/node-config.json` exists, while a fresh install
-renders the missing-catalog state in the window. Cross-platform packaged native-store
-promotion, contribution budgets, login startup, accessibility validation, signed
-installers, and update/rollback behavior remain later milestone-5 slices.
+The sidecar now implements the first-install catalog consumer, and the desktop invokes
+it automatically when `~/.drift/node/node-config.json` is absent. It authenticates a
+bounded HTTPS catalog against a bundled root, enforces expiry and persistent rollback
+state, installs only exact digest-matched manifests, generates the seed-backed node
+configuration, and retains an unexpired last-known-good catalog for offline recovery.
+The release bootstrap file and first qualified public manifests are not published or
+bundled yet, so current unsigned builds still render the missing-catalog state on a
+truly clean install. See [`CATALOG_BOOTSTRAP_V1.md`](../docs/CATALOG_BOOTSTRAP_V1.md).
+
+Cross-platform packaged native-store promotion, contribution budgets, login startup,
+accessibility validation, signed installers, and update/rollback behavior remain later
+milestone-5 slices.
 
 ## Development
 
@@ -84,6 +90,13 @@ Build and smoke-test the unsigned PyInstaller bundle:
 ```shell
 python generate_assets.py  # only needed after changing the product icon
 python build_desktop.py
+```
+
+Once release catalog inputs are qualified, stage the validated public bootstrap file
+into the product bundle with:
+
+```shell
+python build_desktop.py --bootstrap-config ../path/to/catalog-bootstrap.json
 ```
 
 On Windows the GUI build uses the GUI subsystem, so double-clicking the application does

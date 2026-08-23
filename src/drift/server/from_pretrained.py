@@ -331,6 +331,16 @@ def _load_state_dict_from_local_file(path: str, *, block_prefix: Optional[str] =
 
     if path.endswith(".safetensors"):
         with safetensors.safe_open(path, framework="pt", device="cpu") as f:
-            return {key: f.get_tensor(key) for key in f.keys() if block_prefix is None or key.startswith(block_prefix)}
+            # ``get_tensor`` returns a view backed by the file mapping. A manifested worker loads one
+            # block at a time, so retaining those views can retain one mapping of the complete shard
+            # per block. Large same-dtype checkpoints exhausted Windows commit/virtual memory long
+            # before their actual selected block tensors filled RAM. Copy only the selected tensors
+            # while the mapping is open; the caller then owns ordinary CPU storage and the complete
+            # shard mapping can close before the next block is loaded.
+            return {
+                key: f.get_tensor(key).clone()
+                for key in f.keys()
+                if block_prefix is None or key.startswith(block_prefix)
+            }
 
     raise ValueError(f"Unknown weight format: {path}")

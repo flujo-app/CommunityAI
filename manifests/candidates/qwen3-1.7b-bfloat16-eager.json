@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "name": "Qwen3 1.7B",
+  "aliases": [
+    "qwen3-1.7b"
+  ],
+  "source": {
+    "repository": "Qwen/Qwen3-1.7B",
+    "revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
+  },
+  "model": {
+    "architecture": "Qwen3ForCausalLM",
+    "num_blocks": 28,
+    "context_length": 40960,
+    "license": "apache-2.0",
+    "gated": false
+  },
+  "runtime": {
+    "implementation": "drift",
+    "minimum_version": "2.3.0.dev0",
+    "maximum_version_exclusive": "2.4.0",
+    "protocol_version": 1,
+    "tensor_schema": "hidden-states-v1",
+    "attention_implementation": "eager",
+    "dtype": "bfloat16",
+    "quantization": "none",
+    "adapter_profile": "none"
+  },
+  "artifacts": [
+    {
+      "role": "config",
+      "path": "config.json",
+      "sha256": "1ddb5b89ebc90dcb417a45c213d818577e65976454d29385c8f6140771d95197",
+      "size": 726
+    },
+    {
+      "role": "tokenizer",
+      "path": "merges.txt",
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+      "size": 1671853
+    },
+    {
+      "role": "weight",
+      "path": "model-00001-of-00002.safetensors",
+      "sha256": "169ad53ec313c3a34b06c0809216e4fc072cce444a5d4ff2b59690d064130ed5",
+      "size": 3441185608
+    },
+    {
+      "role": "weight",
+      "path": "model-00002-of-00002.safetensors",
+      "sha256": "912becff8d60672aa8628ef08c05898d9adf17c2ad4ae3caf99b065622fdeff9",
+      "size": 622329984
+    },
+    {
+      "role": "weight_index",
+      "path": "model.safetensors.index.json",
+      "sha256": "0d660e94b165eb912669a5249dff44b83188c4777a07ddb9611fb78d91b0578d",
+      "size": 25605
+    },
+    {
+      "role": "tokenizer",
+      "path": "tokenizer.json",
+      "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+      "size": 11422654
+    },
+    {
+      "role": "tokenizer",
+      "path": "tokenizer_config.json",
+      "sha256": "d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101",
+      "size": 9732
+    },
+    {
+      "role": "tokenizer",
+      "path": "vocab.json",
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "size": 2776833
+    }
+  ]
+}

@@ -15,6 +15,29 @@ from drift.model_manifest import (
 from drift.server.handler import TransformerConnectionHandler
 
 
+def test_qwen3_first_rung_candidate_is_exactly_pinned():
+    candidate = Path(__file__).resolve().parents[1] / "manifests" / "candidates" / "qwen3-1.7b-bfloat16-eager.json"
+    manifest = ModelManifest.load(candidate)
+
+    assert manifest.name == "Qwen3 1.7B"
+    assert manifest.aliases == ("qwen3-1.7b",)
+    assert manifest.source.repository == "Qwen/Qwen3-1.7B"
+    assert manifest.source.revision == "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
+    assert manifest.model.architecture == "Qwen3ForCausalLM"
+    assert manifest.model.num_blocks == 28
+    assert manifest.model.license == "apache-2.0"
+    assert manifest.model.gated is False
+    assert manifest.runtime.dtype == "bfloat16"
+    assert manifest.runtime.attention_implementation == "eager"
+    assert manifest.runtime.quantization == "none"
+    assert manifest.digest_id == "sha256:aef22f8678f9c5dcc5315913cf1cf584fa9e6c2fba8d064f715d78d823c9f056"
+    assert sum(artifact.size for artifact in manifest.artifacts) == 4_079_422_995
+    assert {artifact.path: artifact.sha256 for artifact in manifest.artifacts if artifact.role == "weight"} == {
+        "model-00001-of-00002.safetensors": "169ad53ec313c3a34b06c0809216e4fc072cce444a5d4ff2b59690d064130ed5",
+        "model-00002-of-00002.safetensors": "912becff8d60672aa8628ef08c05898d9adf17c2ad4ae3caf99b065622fdeff9",
+    }
+
+
 def manifest_dict():
     return {
         "schema_version": 1,

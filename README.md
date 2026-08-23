@@ -268,6 +268,28 @@ activation prefix on the survivor, and verify exact parity:
     --test-failover --failover-tokens 8
 ```
 
+To qualify any exact `ModelManifest v1` instead of the legacy TinyLlama default,
+use the model-agnostic runner. It derives the repository, immutable revision, block
+count, DHT namespace, dtype, and attention profile from the manifest, serves every
+declared transformer block, compares generated token IDs with the stock model, and
+writes bounded machine-readable evidence:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\qualify_model_manifest.py `
+    manifests\candidates\qwen3-1.7b-bfloat16-eager.json `
+    --device cpu --with-failover `
+    --output qualification-qwen3-1.7b-windows-cpu.json
+```
+
+Pass `--artifact-root` with a complete publisher snapshot to re-hash every declared
+artifact before inference. A standard immutable Hugging Face snapshot also lets the
+runner infer and reuse its Hub cache root; pass `--cache-dir` for other cache layouts.
+`--manifest-only` performs the schema/runtime/artifact gate without loading the model.
+The report always marks
+`complete_release_qualification` false because multi-machine interruption recovery,
+the cross-platform device matrix, the cold-client resource envelope, and redundant
+public-worker soak require separate evidence.
+
 ## Supported models
 
 Dense GQA models:

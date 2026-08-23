@@ -19,6 +19,7 @@ from drift.model_catalog import (
     SignedModelCatalog,
     select_highest_eligible_model,
 )
+from drift.node.catalog_bootstrap import CatalogBootstrapConfig
 
 NOW = 2_000_000_000.0
 
@@ -308,6 +309,7 @@ def test_catalog_cli_keygen_root_sign_verify_and_rollback_state(tmp_path, monkey
     public_key = tmp_path / "catalog.pub.json"
     trust_root = tmp_path / "root.json"
     signed = tmp_path / "catalog.signed.json"
+    bootstrap = tmp_path / "catalog-bootstrap.json"
     state = tmp_path / "state.json"
     source = catalog_dict()
     current = time.time()
@@ -333,10 +335,22 @@ def test_catalog_cli_keygen_root_sign_verify_and_rollback_state(tmp_path, monkey
         str(trust_root),
     )
     run("sign", str(payload), "--key", str(private_key), "--output", str(signed))
+    run(
+        "bootstrap-config",
+        "--root",
+        str(trust_root),
+        "--catalog-mirror",
+        "https://catalog.example/catalog.signed.json",
+        "--initial-peer",
+        "/dns4/bootstrap.example/tcp/31337/p2p/QmExample",
+        "--output",
+        str(bootstrap),
+    )
     output = run("verify", str(signed), "--root", str(trust_root), "--state", str(state))
 
     assert "valid catalog communityai-test sequence 1" in output
     assert CatalogRollbackGuard.load(state).latest["communityai-test"][0] == 1
+    assert CatalogBootstrapConfig.load(bootstrap).trust_root.catalog_id == "communityai-test"
 
 
 def test_catalog_cli_never_overwrites_a_signing_input(tmp_path, monkeypatch):

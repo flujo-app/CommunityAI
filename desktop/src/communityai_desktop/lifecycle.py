@@ -19,10 +19,17 @@ DEFAULT_NODE_DATA_DIR = Path.home() / ".drift" / "node"
 DEFAULT_NODE_CONFIG_PATH = DEFAULT_NODE_DATA_DIR / "node-config.json"
 PACKAGED_NODE_DIRECTORY = "node"
 PACKAGED_NODE_NAME = "CommunityAI-Node"
+PACKAGED_BOOTSTRAP_DIRECTORY = "bootstrap"
+PACKAGED_BOOTSTRAP_NAME = "catalog-bootstrap.json"
 
 
 class NodeLifecycleError(RuntimeError):
     """The desktop could not safely connect to or supervise its local node."""
+
+
+def _absolute_path(path: Path | str) -> Path:
+    """Make a path absolute without following its final symbolic link."""
+    return Path(os.path.abspath(os.fspath(Path(path).expanduser())))
 
 
 def _default_node_command() -> tuple[str, ...]:
@@ -31,6 +38,22 @@ def _default_node_command() -> tuple[str, ...]:
         executable = Path(sys.executable).resolve().parent / PACKAGED_NODE_DIRECTORY / f"{PACKAGED_NODE_NAME}{suffix}"
         return (str(executable),)
     return (sys.executable, "-m", "drift.cli", "node")
+
+
+def _default_bootstrap_command() -> tuple[str, ...]:
+    if getattr(sys, "frozen", False):
+        return (*_default_node_command(), "bootstrap")
+    return (sys.executable, "-m", "drift.cli", "bootstrap")
+
+
+def default_bootstrap_config_path() -> Optional[Path]:
+    """Locate a release bootstrap staged by the packager, if one is available."""
+    if getattr(sys, "frozen", False):
+        bundle_data = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        candidate = bundle_data / PACKAGED_BOOTSTRAP_DIRECTORY / PACKAGED_BOOTSTRAP_NAME
+    else:
+        candidate = Path(__file__).resolve().parents[2] / "release" / PACKAGED_BOOTSTRAP_NAME
+    return candidate.resolve() if candidate.is_file() and not candidate.is_symlink() else None
 
 
 def _port_is_open(node_url: str, timeout: float) -> bool:
@@ -55,10 +78,14 @@ class NodeLifecycleSupervisor:
         config_path: Path | str = DEFAULT_NODE_CONFIG_PATH,
         data_dir: Path | str = DEFAULT_NODE_DATA_DIR,
         node_command: Optional[Sequence[str]] = None,
+        bootstrap_config_path: Optional[Path | str] = None,
+        bootstrap_command: Optional[Sequence[str]] = None,
+        bootstrap_timeout: float = 60.0,
         startup_timeout: float = 45.0,
         poll_interval: float = 0.2,
         client_timeout: float = 2.0,
         process_factory: Callable[..., Any] = subprocess.Popen,
+        bootstrap_runner: Callable[..., Any] = subprocess.run,
         client_factory: Callable[..., NodeClient] = NodeClient,
         port_probe: Callable[[str, float], bool] = _port_is_open,
         clock: Callable[[], float] = time.monotonic,
@@ -66,17 +93,31 @@ class NodeLifecycleSupervisor:
     ) -> None:
         self.node_url = normalize_loopback_url(node_url)
         self.credential_store = credential_store
-        self.config_path = Path(config_path).expanduser().resolve()
+        self.config_path = _absolute_path(config_path)
         self.data_dir = Path(data_dir).expanduser().resolve()
+        default_node_command = node_command is None
         self.node_command = tuple(node_command or _default_node_command())
         if not self.node_command or any(not isinstance(part, str) or not part for part in self.node_command):
             raise ValueError("node command must contain non-empty strings")
-        if startup_timeout <= 0 or poll_interval <= 0 or client_timeout <= 0:
+        if bootstrap_command is not None:
+            self.bootstrap_command = tuple(bootstrap_command)
+        elif default_node_command:
+            self.bootstrap_command = _default_bootstrap_command()
+        elif len(self.node_command) == 1:
+            self.bootstrap_command = (*self.node_command, "bootstrap")
+        else:
+            self.bootstrap_command = ()
+        if any(not isinstance(part, str) or not part for part in self.bootstrap_command):
+            raise ValueError("bootstrap command must contain non-empty strings")
+        self.bootstrap_config_path = None if bootstrap_config_path is None else _absolute_path(bootstrap_config_path)
+        if bootstrap_timeout <= 0 or startup_timeout <= 0 or poll_interval <= 0 or client_timeout <= 0:
             raise ValueError("node lifecycle timeouts must be positive")
+        self.bootstrap_timeout = float(bootstrap_timeout)
         self.startup_timeout = float(startup_timeout)
         self.poll_interval = float(poll_interval)
         self.client_timeout = float(client_timeout)
         self._process_factory = process_factory
+        self._bootstrap_runner = bootstrap_runner
         self._client_factory = client_factory
         self._port_probe = port_probe
         self._clock = clock
@@ -124,13 +165,59 @@ class NodeLifecycleSupervisor:
         delay = min(30.0, float(2 ** min(self._failures - 1, 5)))
         self._next_start = self._clock() + delay
 
+    def _ensure_config(self) -> None:
+        if self.config_path.is_symlink():
+            raise NodeLifecycleError(f"CommunityAI refuses the unsafe configuration link {self.config_path.name}")
+        if self.config_path.is_file():
+            return
+        if self.bootstrap_config_path is None:
+            raise NodeLifecycleError(
+                f"CommunityAI's signed model catalog is not bundled yet ({self.config_path.name} is missing)"
+            )
+        if not self.bootstrap_config_path.is_file() or self.bootstrap_config_path.is_symlink():
+            raise NodeLifecycleError("CommunityAI's bundled catalog trust configuration is missing or unsafe")
+        if not self.bootstrap_command:
+            raise NodeLifecycleError("The configured local node cannot provision a first-install catalog")
+
+        executable = Path(self.bootstrap_command[0])
+        if len(self.node_command) == 1 and not executable.is_file():
+            raise NodeLifecycleError("The bundled CommunityAI node is missing; reinstall the application")
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        command = (
+            *self.bootstrap_command,
+            str(self.bootstrap_config_path),
+            "--data_dir",
+            str(self.data_dir),
+            "--node_config",
+            str(self.config_path),
+        )
+        kwargs = {
+            "stdin": subprocess.DEVNULL,
+            "capture_output": True,
+            "text": True,
+            "timeout": self.bootstrap_timeout,
+            "cwd": str(self.data_dir),
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            result = self._bootstrap_runner(command, **kwargs)
+        except subprocess.TimeoutExpired as exc:
+            raise NodeLifecycleError("The signed model catalog installation timed out") from exc
+        except OSError as exc:
+            raise NodeLifecycleError(f"Could not run the bundled catalog installer: {exc}") from exc
+        if result.returncode:
+            output = (result.stderr or result.stdout or "").strip().splitlines()
+            detail = output[-1][:600] if output else f"exit code {result.returncode}"
+            raise NodeLifecycleError(f"The signed model catalog could not be installed: {detail}")
+        if not self.config_path.is_file() or self.config_path.is_symlink():
+            raise NodeLifecycleError("The signed model catalog installer did not create a safe node configuration")
+
     def _start(self) -> None:
         if urlsplit(self.node_url).scheme != "http":
             raise NodeLifecycleError("Desktop-owned nodes require a loopback HTTP URL")
-        if not self.config_path.is_file() or self.config_path.is_symlink():
-            raise NodeLifecycleError(
-                f"CommunityAI's model catalog is not installed yet ({self.config_path.name} is missing)"
-            )
+        self._ensure_config()
         executable = Path(self.node_command[0])
         if len(self.node_command) == 1 and not executable.is_file():
             raise NodeLifecycleError("The bundled CommunityAI node is missing; reinstall the application")

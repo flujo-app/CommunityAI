@@ -55,6 +55,7 @@ def _run_pyinstaller(arguments: list[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--bootstrap-config", type=Path)
     args = parser.parse_args()
 
     try:
@@ -70,6 +71,14 @@ def main() -> int:
     icon_path = project / "src" / "communityai_desktop" / "assets" / "communityai.ico"
     if not icon_path.is_file():
         raise RuntimeError(f"desktop icon is missing: {icon_path}; run generate_assets.py")
+    bootstrap_config = args.bootstrap_config or project / "release" / "catalog-bootstrap.json"
+    bootstrap_config = bootstrap_config.expanduser().resolve()
+    if args.bootstrap_config is not None and not bootstrap_config.is_file():
+        raise RuntimeError(f"release bootstrap config is missing: {bootstrap_config}")
+    if bootstrap_config.is_file():
+        from drift.node.catalog_bootstrap import CatalogBootstrapConfig
+
+        CatalogBootstrapConfig.load(bootstrap_config)
 
     pyinstaller_args = [
         str(project / "launch_desktop.py"),
@@ -91,6 +100,8 @@ def main() -> int:
         "--add-data",
         f"{icon_path}{os.pathsep}communityai_desktop/assets",
     ]
+    if bootstrap_config.is_file():
+        pyinstaller_args.extend(("--add-data", f"{bootstrap_config}{os.pathsep}bootstrap"))
     if platform.system() == "Windows":
         # The product executable is a GUI application. Diagnostic actions still
         # return meaningful exit codes but do not open a console window.
@@ -166,6 +177,7 @@ def main() -> int:
     _run_bundle(executable, "--onboarding-ui-self-test", environment)
     node_contract = json.loads(_run_bundle(node_executable, "--self-test", environment, timeout=180).stdout)
     _run_bundle(node_executable, "--help", environment, timeout=180)
+    _run_bundle(node_executable, ("bootstrap", "--help"), environment, timeout=180)
     _run_bundle(node_executable, ("server", "--help"), environment, timeout=180)
     bundle_bytes, file_count = _directory_metrics(bundle_root)
     node_bytes, node_file_count = _directory_metrics(node_root)
@@ -192,6 +204,7 @@ def main() -> int:
         },
         "console_window": platform.system() != "Windows",
         "signed": False,
+        "catalog_bootstrap_bundled": bootstrap_config.is_file(),
     }
     metrics_path = output_root / "desktop-metrics.json"
     metrics_path.parent.mkdir(parents=True, exist_ok=True)

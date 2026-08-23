@@ -1,8 +1,9 @@
 """Frozen entry point for the standalone CommunityAI node sidecar.
 
 The sidecar normally runs ``drift node``. A frozen node also reuses this
-executable for supervised contribution workers, so the explicit ``server`` mode
-below replaces ``python -m drift.cli server`` inside a packaged installation.
+executable for supervised contribution workers and first-install catalog
+bootstrap, so the explicit modes below replace their ``python -m drift.cli``
+forms inside a packaged installation.
 """
 
 from __future__ import annotations
@@ -17,13 +18,15 @@ from importlib.resources import files
 
 def _runtime_contract() -> dict[str, object]:
     """Import every critical packaged runtime and locate Hivemind's daemon."""
-    import drift
     import fastapi
     import hivemind
     import keyring
     import torch
     import transformers
     import uvicorn
+
+    import drift
+    from drift.node.catalog_bootstrap import CATALOG_BOOTSTRAP_SCHEMA_VERSION
 
     daemon_name = "p2pd.exe" if os.name == "nt" else "p2pd"
     daemon = files("hivemind.hivemind_cli").joinpath(daemon_name)
@@ -40,6 +43,7 @@ def _runtime_contract() -> dict[str, object]:
         "uvicorn": uvicorn.__version__,
         "keyring": version("keyring"),
         "p2pd": daemon_name,
+        "catalog_bootstrap_schema": CATALOG_BOOTSTRAP_SCHEMA_VERSION,
         "frozen": bool(getattr(sys, "frozen", False)),
     }
 
@@ -55,6 +59,9 @@ def main() -> int:
     if argv[:1] == ["server"]:
         sys.argv = ["CommunityAI-Node server", *argv[1:]]
         from drift.cli.run_server import main as run
+    elif argv[:1] == ["bootstrap"]:
+        sys.argv = ["CommunityAI-Node bootstrap", *argv[1:]]
+        from drift.cli.run_bootstrap import main as run
     else:
         from drift.cli.run_node import main as run
 

@@ -1,6 +1,6 @@
 # Revival baseline results
 
-Test dates: 2026-08-21 through 2026-08-22
+Test dates: 2026-08-21 through 2026-08-23
 
 These tests exercise `Maykeye/TinyLLama-v0` as an eight-block model and compare
 greedy distributed generation with the stock Transformers implementation. The
@@ -15,7 +15,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build now stages an independently frozen node sidecar and smokes its node and worker entry points; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; and the strict signed-catalog foundation covers independent signing keys, thresholds, expiry, rollback, exact manifests, and elastic-rung promotion gates | The initial catalog is not bundled or remotely fetched; first-install configuration, qualified public manifests, cross-platform native-store package promotion, contribution policies and budgets, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; and the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation | The release bootstrap and initial catalog are not published or bundled; qualified public manifests and workers, real packaged clean-install inference, cross-platform native-store package promotion, contribution policies and budgets, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
 
 ## Desktop milestone: control authority separation
 
@@ -77,12 +77,35 @@ The source supervisor checks the configured loopback port before spawning, refus
 replace an unknown service, launches the standalone node with native-store identifiers
 but no secret, waits for authenticated readiness, applies exponential backoff capped at
 30 seconds, and terminates only its owned process. A failed periodic status refresh now
-drops the stale client so the next refresh re-enters lifecycle recovery. Twenty-two
+drops the stale client so the next refresh re-enters lifecycle recovery. Twenty-four
 desktop tests and the focused node/key tests pass. The package still excludes model,
 DHT, and worker runtimes from the GUI executable itself. Its product bundle now stages
-those dependencies in a separate frozen node directory and verifies the node and worker
-entry points. The missing signed catalog and first-install configuration mean this is
-still not a claim that a clean packaged installation can run inference.
+those dependencies in a separate frozen node directory and verifies the node, worker,
+and catalog-bootstrap entry points. The sidecar and desktop now implement first-install
+catalog fetching, authentication, manifest installation, and node-config generation,
+but the missing production release bootstrap, qualified signed catalog, and public model
+workers mean this is still not a claim that a clean packaged installation can run inference.
+
+## Desktop milestone: first-install signed catalog consumer
+
+The strict `CatalogBootstrap v1` release input binds an offline catalog trust root,
+ordered HTTPS catalog mirrors, public libp2p seed addresses, and a local runtime-residency
+limit. The node-side consumer disables environment proxies and redirects, bounds response
+bodies, verifies the catalog signature threshold, time window, and persistent rollback
+state, and installs only manifests whose canonical digest matches an exact signed catalog
+entry. It rejects duplicate selectors across manifests and generates a validated,
+secret-free `NodeConfig v1` through an atomic activation path. Existing node configs are
+never replaced. An unexpired last-known-good envelope plus cached content-addressed
+manifests can recreate a missing config while offline.
+
+The desktop starts that mode only when `node-config.json` is absent, passes no credential,
+requires a safe generated file before spawning the node, and surfaces bounded installer
+errors in the existing reconnect UI. The builder validates and stages an explicitly
+supplied release bootstrap and smokes the frozen dispatch. Focused tests cover mirror
+fallback, threshold verification, digest mismatch rejection, existing-config preservation,
+offline recovery, lifecycle ordering, failure isolation, and the GUI/runtime import
+boundary. A production asset is intentionally withheld until its manifests and real
+worker routes pass qualification.
 
 The real Windows source smoke used a disposable Credential Manager service/account and
 an isolated loopback port. The desktop launched the installed `drift node`, the node
@@ -92,15 +115,58 @@ and returned authenticated API version 1 status for one manifest. No
 `control-api.key` appeared in the temporary data directory. The supervisor then stopped
 its owned process and deleted the disposable native credential.
 
-The subsequent Windows product build created a 1,841,600,397-byte, 4,810-file frozen
-node directory inside a 1,967,229,026-byte, 5,154-file unsigned product bundle. Its
+The subsequent Windows product build created a 1,841,616,549-byte, 4,810-file frozen
+node directory inside a 1,967,247,643-byte, 5,154-file unsigned product bundle. Its
 runtime contract imported DRIFT 2.3.0.dev2, Torch 2.6.0 CPU, Transformers 5.13.0,
 Hivemind 1.1.12, FastAPI, Uvicorn, the Windows keyring backend, and the packaged
-`p2pd.exe`; both `node` and frozen contribution-worker dispatch passed. The same
+`p2pd.exe`; `node`, frozen contribution-worker, and catalog-bootstrap dispatch passed,
+and the runtime reported catalog-bootstrap schema 1. The same
 disposable native-credential smoke then launched the packaged executable, joined the
 published DNS seed, authenticated API version 1 with one configured manifest, wrote no
 `control-api.key`, and shut down the owned process. Clean-runner Linux/macOS sidecar
 results and GPU-specific bundle policy remain open.
+
+## First-rung model qualification harness
+
+The former TinyLlama-specific local swarm smoke is now manifest-driven. For a supplied
+`ModelManifest v1`, it derives the exact repository, immutable revision, block count,
+DHT namespace, dtype, attention implementation, and artifact verifier from the
+manifest; defaults to serving every declared block; and releases the distributed
+client and workers before loading the stock reference to bound peak memory for larger
+models. The legacy unmanifested TinyLlama path remains available for device bring-up.
+
+The `qualify_model_manifest.py` runner adds a bounded JSON evidence contract. It
+requires successful manifested-route completion and exact stock token parity rather
+than trusting a subprocess exit code. Its optional failover stage also requires an
+observed selected-worker interruption and measured recovery. Reports explicitly list
+the multi-machine, cross-platform, edge-envelope, and public-worker gates they cannot
+prove and never claim complete release qualification.
+
+On 2026-08-23, the new Windows CPU runner served all eight TinyLlama blocks and passed
+exact stock parity. A second requested stage started two complete signed replicas,
+interrupted the selected worker, recovered in 3.172 seconds, and produced
+`[[1,16644,31844,260,1496,2789,3557,21075,31843,1100]]`, exactly matching the stock
+model. The CI-sized offline suite, including the new report/parser/command tests,
+passed 247 tests with seven expected skips after adding the exact candidate pin,
+Hub-cache inference, and mapped-storage regression gates.
+
+The first primary candidate pins official `Qwen/Qwen3-1.7B` commit
+`70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` as an ungated Apache-2.0 bfloat16/eager
+profile with manifest digest
+`sha256:aef22f8678f9c5dcc5315913cf1cf584fa9e6c2fba8d064f715d78d823c9f056`. The runner
+audited all eight artifacts and 4,079,422,995 declared bytes, served all 28 blocks on
+Windows CPU, and produced `[[9707,25,358,2776]]`, exactly matching the stock eager
+model. A two-replica run interrupted the selected worker, recovered in 4.484 seconds,
+and preserved the same exact IDs.
+
+The first Qwen load also found and fixed a larger-model Windows defect: same-dtype
+block tensors kept their complete safetensors shard mapping, accumulating one 3.44 GB
+mapping per block until the process failed while loading block 25. The loader now
+copies only the selected block tensors into owned CPU storage before closing the file
+mapping. A regression test checks storage independence, and the TinyLlama parity plus
+focused loader/model suites passed before the full Qwen rerun. The candidate manifest
+is still not catalog approval: multi-machine, cross-platform, edge, and public-route
+evidence plus the first-rung standby qualification remain open.
 
 ## Desktop milestone: shell decision
 

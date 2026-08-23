@@ -207,9 +207,12 @@ The implementation now includes worker signatures, authenticated encrypted
 transport binding, signed intent-lease primitives, dual-signed rotation, successor
 revocation, replay/expiry enforcement, deterministic interrupted-download tests, and
 a successful real Hub HTTP 206 resume followed by SHA-256 promotion. Native Windows
-has passed signed manifested exact parity and in-generation failover locally. The
-macOS workflow runs canonical vectors, adversarial identity tests, a real Hub resume,
-and manifested exact parity, but its first hosted run still has to complete. A signed
-two-worker Fly swarm has passed cross-Machine routing and exact parity under the same
-manifest. Converted and pre-quantized formats still require model-specific release
-qualification even though the v1 verifier treats them as declared content.
+has passed signed manifested exact parity and in-generation failover locally. Hosted
+Apple Silicon macOS passed canonical vectors, adversarial identity tests, a real Hub
+resume, and manifested exact parity. A signed two-worker Fly swarm passed
+cross-Machine routing and exact parity under the same manifest.
+
+The model-agnostic local runner and the remaining per-model approval matrix are
+specified in [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md). Converted and
+pre-quantized formats still require model-specific release qualification even though
+the v1 verifier treats them as declared content.
