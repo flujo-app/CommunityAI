@@ -6,6 +6,11 @@ Run large language models across a cluster of your own machines. Each machine se
 
 This is a fork of [Petals](https://github.com/bigscience-workshop/petals), which is no longer maintained. It is modernized (newer `transformers`, PyTorch, and `hivemind`) and refocused: instead of one large public swarm, it targets private clusters. There is no "main" public network to join and no central coordinator; you run the whole thing yourself.
 
+The inference-first community revival plan is tracked in
+[`docs/REVIVAL.md`](docs/REVIVAL.md). Its selected PySide product client is developed as
+an isolated package in [`desktop/`](desktop/README.md); it controls the standalone local
+node without importing model or networking runtimes into the GUI process.
+
 ## How it works
 
 - The model is split into contiguous blocks of transformer layers.

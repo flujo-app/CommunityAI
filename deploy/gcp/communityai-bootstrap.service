@@ -1,0 +1,33 @@
+[Unit]
+Description=CommunityAI discovery bootstrap
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=communityai
+Group=communityai
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/communityai/venv/bin/python /opt/communityai/bootstrap_node.py --identity-path /var/lib/communityai/bootstrap.id --host-maddr /ip4/0.0.0.0/tcp/31337 --announce-maddr /ip4/__PUBLIC_IP__/tcp/31337
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ReadWritePaths=/var/lib/communityai
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target
