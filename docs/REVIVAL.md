@@ -720,11 +720,14 @@ implementation.
    same-dtype block. A separate cold-client Windows CPU route then measured the exact
    model's cache, local embedding/head, RSS, first-token, and decode envelope.
    This preserves harness and loader evidence but does not promote the older model into
-   the refreshed production ladder. Current-model evidence remains open as specified in
+   the refreshed production ladder. The dense Qwen3.5 text path now supports its three-to-one
+   Gated DeltaNet/full-attention pattern with fixed recurrent state, conservative cache accounting,
+   nested multimodal-wrapper loading, and exact synthetic cached-decode parity through a real local
+   Hivemind RPC route. Real-checkpoint and external evidence remain open as specified in
    [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
 
-   **Next implementation sequence.** Implement the Qwen3.5/Qwen3.8 architecture path,
-   generate and qualify exact Qwen3.5 2B primary and Gemma 4 E2B standby manifests,
+   **Next implementation sequence.** Generate and qualify exact Qwen3.5 2B primary and Gemma 4
+   E2B standby manifests against their implemented adapters,
    operate redundant model workers, publish the initial signed catalog through
    interchangeable HTTPS mirrors, and build the release bootstrap with the published
    DNS peer plus at least one independent seed. Then pass real packaged

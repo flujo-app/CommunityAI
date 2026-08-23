@@ -178,6 +178,16 @@ retained as harness and loader evidence, not as a production-ladder candidate. E
 Qwen3.5 2B primary and Gemma 4 E2B standby manifests plus all external qualification
 gates remain open.
 
+The dense Qwen3.5 source path now covers its alternating hybrid decoder without treating it as
+Qwen3. Standard full-attention layers retain token-indexed K/V state; Gated DeltaNet layers keep
+their fixed causal-convolution window and float32 recurrent state behind a block-aware cache
+strategy. The initial implementation deliberately rejects paged and tensor-parallel recurrent
+caching rather than silently using an incompatible layout. Tiny offline tests matched all three
+linear layers and the following full-attention layer exactly, matched mixed prefill and cached
+continuation, loaded the nested text tower from a synthetic official-shaped multimodal wrapper,
+and served the complete hybrid stack through a real local Hivemind RPC route with exact stock
+parity. The official Qwen3.5 2B artifact has not yet been downloaded or qualified.
+
 ## Desktop milestone: shell decision
 
 The clean cross-platform matrix built PySide 6.11.2 and pywebview 6.2.1 independently,

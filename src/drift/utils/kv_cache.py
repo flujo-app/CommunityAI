@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from itertools import chain
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import torch
 from hivemind.utils.tensor_descr import TensorDescriptor
@@ -37,8 +37,11 @@ class KVCacheStrategy(ABC):
     so a single strategy object serves every inference session on that backend.
     """
 
-    def __init__(self, config: PretrainedConfig):
+    supports_paged_cache = True
+
+    def __init__(self, config: PretrainedConfig, *, module: Optional[Any] = None):
         self.config = config
+        self.module = module
 
     @abstractmethod
     def get_cache_descriptors(
@@ -73,6 +76,17 @@ class KVCacheStrategy(ABC):
         self, cache_tensors: Sequence[torch.Tensor], new_kvs: Sequence[torch.Tensor], prefix_length: int
     ) -> None:
         """Write the block's freshly computed keys/values back into the cache in place."""
+
+    def reorder_cache_inplace(self, cache_tensors: Sequence[torch.Tensor], hypo_ids: torch.Tensor) -> None:
+        """Reorder the batch dimension after beam/hypothesis selection.
+
+        Standard K/V caches reorder every allocated tensor. Architectures may override this when
+        their allocation contains accounting-only reservation tensors that do not participate in
+        inference.
+        """
+
+        for cache_tensor in cache_tensors:
+            cache_tensor[...] = cache_tensor[hypo_ids.to(cache_tensor.device)]
 
 
 class StandardGQACache(KVCacheStrategy):

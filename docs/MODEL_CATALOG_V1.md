@@ -7,8 +7,9 @@ consumption are implemented. The model-agnostic qualification runner and an exac
 bootstrap evidence pin are also implemented; Qwen3 1.7B passed full-artifact audit,
 local Windows CPU parity, and selected-worker recovery. That 2025-generation checkpoint
 proves the harness but is not a production-ladder candidate. The production backlog was
-refreshed against official publisher releases on 2026-08-23. Current-model architecture
-adapters and manifests, trust-root rotation, periodic catalog refresh, automatic worker
+refreshed against official publisher releases on 2026-08-23. The dense Qwen3.5 text adapter now
+has exact synthetic block, cached-decode, nested-wrapper loading, and real local Hivemind RPC
+parity. Exact current-model manifests, trust-root rotation, periodic catalog refresh, automatic worker
 migration, publication of the release bootstrap, and the primary/standby qualification
 gates remain open.
 
@@ -170,8 +171,8 @@ the required number of distinct signatures is present.
 
 ## Remaining integration work
 
-1. Implement and prove the `qwen3_5` dense adapter, then generate exact manifests for
-   the Qwen3.5 2B edge primary and Gemma 4 E2B standby. Complete their multi-machine,
+1. Generate exact manifests for the Qwen3.5 2B edge primary and Gemma 4 E2B standby, then
+   run the existing adapter through their real checkpoints. Complete their multi-machine,
    cross-platform, edge-envelope, and public-route qualification. The evidence contract
    and earlier harness proof are defined in
    [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).

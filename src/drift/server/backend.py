@@ -86,8 +86,10 @@ class TransformerBackend(ModuleBackend):
         shard_kv_groups = []
         donor_layer_types = set()
         for shard in self.module.module_shards:
+            found_attention = False
             for submodule in shard.modules():
                 if isinstance(submodule, config.attn_class):
+                    found_attention = True
                     self.shard_num_heads.append(get_num_attention_heads(submodule, config))
                     shard_head_dims.append(getattr(submodule, "head_dim", None))
                     shard_kv_groups.append(getattr(submodule, "num_key_value_groups", None))
@@ -96,6 +98,24 @@ class TransformerBackend(ModuleBackend):
                     # server can ship them to a consumer hosted downstream (see block_functions).
                     if getattr(submodule, "store_full_length_kv", False):
                         donor_layer_types.add(submodule.layer_type)
+            if not found_attention:
+                # Hybrid architectures may contain blocks whose token mixer is recurrent rather
+                # than self-attention. Such a wrapper exposes the logical query-head count solely
+                # for backend scheduling/chunk estimates; its cache strategy owns the real state
+                # geometry.
+                cache_num_heads = getattr(shard, "cache_num_heads", None)
+                if cache_num_heads is None:
+                    raise TypeError(
+                        f"{type(shard).__name__} contains no {config.attn_class} and does not expose cache_num_heads"
+                    )
+                if len(self.module.devices) > 1:
+                    raise NotImplementedError(
+                        f"Tensor-parallel recurrent caching is not implemented for {type(shard).__name__}; "
+                        "serve this block on one device"
+                    )
+                self.shard_num_heads.append(cache_num_heads)
+                shard_head_dims.append(None)
+                shard_kv_groups.append(None)
         assert len(self.shard_num_heads) == len(self.module.devices)
         assert sum(self.shard_num_heads) == config.num_attention_heads
 
@@ -117,7 +137,12 @@ class TransformerBackend(ModuleBackend):
         # The cache layout (descriptor shapes, prefix selection, write-back) is owned by a
         # pluggable strategy so that non-standard layouts (sliding window, MLA) can be added
         # without touching the backend. Models select one via `config.kv_cache_strategy`.
-        self.cache_strategy = getattr(config, "kv_cache_strategy", StandardGQACache)(config)
+        self.cache_strategy = getattr(config, "kv_cache_strategy", StandardGQACache)(config, module=self.module)
+        if self.memory_cache.paged and not self.cache_strategy.supports_paged_cache:
+            raise NotImplementedError(
+                f"Paged inference caching is not implemented for {type(self.cache_strategy).__name__}; "
+                "start the worker with --cache contiguous"
+            )
 
         self.inference_schema = (
             (
@@ -277,8 +302,7 @@ class TransformerBackend(ModuleBackend):
     def _reorder_cache_inplace(self, cache_tensors: torch.Tensor, hypo_ids: torch.Tensor):
         """If hypo_ids is specified, reorder elements of each cache tensor in-place by taking indices from hypo_ids"""
         if not is_dummy(hypo_ids):
-            for cache_tensor in cache_tensors:
-                cache_tensor[...] = cache_tensor[hypo_ids.to(cache_tensor.device)]  # in-place reorder cache by hypo ids
+            self.cache_strategy.reorder_cache_inplace(cache_tensors, hypo_ids)
 
     def get_pools(self) -> Sequence[PrioritizedTaskPool]:
         return self.forward_pool, self.backward_pool, self.inference_pool

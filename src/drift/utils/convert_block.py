@@ -135,9 +135,24 @@ def make_tensor_parallel(
     tp_block = TensorParallel(block, devices, config=tp_config, output_device=output_device, delay_init=True)
     total_heads = 0
     for tp_shard in tp_block.module_shards:
+        shard_heads = 0
         for submodule in tp_shard.modules():
             if isinstance(submodule, model_config.attn_class):
-                total_heads += get_num_attention_heads(submodule, model_config)
+                shard_heads += get_num_attention_heads(submodule, model_config)
+        if shard_heads == 0:
+            cache_num_heads = getattr(tp_shard, "cache_num_heads", None)
+            if cache_num_heads is None:
+                raise TypeError(
+                    f"{type(tp_shard).__name__} contains no {model_config.attn_class} and does not expose "
+                    "cache_num_heads"
+                )
+            if len(devices) > 1:
+                raise NotImplementedError(
+                    f"Tensor-parallel recurrent caching is not implemented for {type(tp_shard).__name__}; "
+                    "serve this block on one device"
+                )
+            shard_heads = cache_num_heads
+        total_heads += shard_heads
     assert total_heads == model_config.num_attention_heads, (
         f"Tensor-parallel head split is inconsistent: counted {total_heads} query heads across "
         f"{len(tp_block.module_shards)} shard(s), expected {model_config.num_attention_heads}"

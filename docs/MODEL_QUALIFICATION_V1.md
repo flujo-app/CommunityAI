@@ -6,8 +6,9 @@ checkpoint is pinned in
 and has passed full-artifact audit, local Windows CPU parity, selected-worker
 interruption recovery, and the Windows CPU cold-client edge envelope. Qwen3 1.7B is
 retained as reproducible harness evidence, not as a current production-ladder candidate.
-The refreshed edge rung targets Qwen3.5 2B with Gemma 4 E2B as standby; neither has an
-exact manifest or release qualification yet. A candidate manifest is never catalog
+The refreshed edge rung targets Qwen3.5 2B with Gemma 4 E2B as standby. Qwen3.5 now has
+source-level hybrid-cache, block, nested-wrapper, and local RPC parity, but neither model has an
+exact manifest or real-checkpoint release qualification yet. A candidate manifest is never catalog
 approval.
 
 ## Bootstrap evidence identity
