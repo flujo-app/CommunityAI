@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -307,8 +308,8 @@ class NodeLifecycleTests(unittest.TestCase):
         self.assertEqual(len(bootstrap_calls), 1)
         bootstrap_command = bootstrap_calls[0][0]
         self.assertEqual(bootstrap_command[:2], ("python", "fake-bootstrap.py"))
-        self.assertEqual(bootstrap_command[2], str(bootstrap_path.resolve()))
-        self.assertEqual(bootstrap_command[bootstrap_command.index("--node_config") + 1], str(config_path.resolve()))
+        self.assertEqual(bootstrap_command[2], os.path.abspath(bootstrap_path))
+        self.assertEqual(bootstrap_command[bootstrap_command.index("--node_config") + 1], os.path.abspath(config_path))
         self.assertNotIn(CONTROL_KEY, bootstrap_command)
         self.assertEqual(len(processes), 1)
         self.assertTrue(processes[0].terminated)
