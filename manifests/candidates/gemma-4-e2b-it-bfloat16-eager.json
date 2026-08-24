@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "name": "Gemma 4 E2B IT",
+  "aliases": [
+    "gemma-4-e2b-it"
+  ],
+  "source": {
+    "repository": "google/gemma-4-E2B-it",
+    "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+  },
+  "model": {
+    "architecture": "Gemma4ForConditionalGeneration",
+    "num_blocks": 35,
+    "context_length": 131072,
+    "license": "apache-2.0",
+    "gated": false
+  },
+  "runtime": {
+    "implementation": "drift",
+    "minimum_version": "2.3.0.dev0",
+    "maximum_version_exclusive": "2.4.0",
+    "protocol_version": 1,
+    "tensor_schema": "hidden-states-v1",
+    "attention_implementation": "eager",
+    "dtype": "bfloat16",
+    "quantization": "none",
+    "adapter_profile": "none"
+  },
+  "artifacts": [
+    {
+      "role": "chat_template",
+      "path": "chat_template.jinja",
+      "sha256": "0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5",
+      "size": 18569
+    },
+    {
+      "role": "config",
+      "path": "config.json",
+      "sha256": "1b28f3d2c3100f6c594754b81107428bd7b822a7f48272ca681dae9d2ec38330",
+      "size": 4954
+    },
+    {
+      "role": "weight",
+      "path": "model.safetensors",
+      "sha256": "2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550",
+      "size": 10246621918
+    },
+    {
+      "role": "tokenizer",
+      "path": "tokenizer.json",
+      "sha256": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+      "size": 32169626
+    },
+    {
+      "role": "tokenizer",
+      "path": "tokenizer_config.json",
+      "sha256": "9f4fec4b1dc6ecddf8f4a92e9caea5971c0e67d81309f3f9066a2bee8c362633",
+      "size": 3082
+    }
+  ]
+}

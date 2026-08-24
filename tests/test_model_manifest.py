@@ -64,6 +64,30 @@ def test_qwen3_5_edge_primary_candidate_is_exactly_pinned():
     }
 
 
+def test_gemma4_edge_standby_candidate_is_exactly_pinned():
+    candidate = Path(__file__).resolve().parents[1] / "manifests" / "candidates" / "gemma-4-e2b-it-bfloat16-eager.json"
+    manifest = ModelManifest.load(candidate)
+
+    assert manifest.name == "Gemma 4 E2B IT"
+    assert manifest.aliases == ("gemma-4-e2b-it",)
+    assert manifest.source.repository == "google/gemma-4-E2B-it"
+    assert manifest.source.revision == "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+    assert manifest.model.architecture == "Gemma4ForConditionalGeneration"
+    assert manifest.model.num_blocks == 35
+    assert manifest.model.context_length == 131072
+    assert manifest.model.license == "apache-2.0"
+    assert manifest.model.gated is False
+    assert manifest.runtime.dtype == "bfloat16"
+    assert manifest.runtime.attention_implementation == "eager"
+    assert manifest.runtime.quantization == "none"
+    assert manifest.digest_id == "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd"
+    assert len(manifest.artifacts) == 5
+    assert sum(artifact.size for artifact in manifest.artifacts) == 10_278_818_149
+    assert {artifact.path: artifact.sha256 for artifact in manifest.artifacts if artifact.role == "weight"} == {
+        "model.safetensors": "2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550"
+    }
+
+
 def manifest_dict():
     return {
         "schema_version": 1,
