@@ -53,6 +53,7 @@ from drift.utils.hardware import (
     normalize_device,
     supports_dtype,
 )
+from drift.utils.kv_cache import StandardGQACache
 from drift.utils.misc import format_all_thread_stacks, get_size_in_bytes
 from drift.utils.ping import PingAggregator
 from drift.utils.random import sample_up_to
@@ -310,9 +311,17 @@ class Server:
         # For attention cache in GPU or RAM
         if attn_cache_tokens is None:
             attn_cache_tokens = 16384 if is_multiquery_attn else 4096
-        cache_values_per_block = 2 * self.block_config.hidden_size * attn_cache_tokens
-        cache_values_per_block //= self.block_config.num_key_value_groups
-        self._cache_bytes_per_block = cache_values_per_block * get_size_in_bytes(self.torch_dtype)
+        cache_strategy = getattr(self.block_config, "kv_cache_strategy", StandardGQACache)
+        cache_bytes_by_block = [
+            cache_strategy.estimate_cache_bytes(
+                self.block_config,
+                attn_cache_tokens,
+                dtype=self.torch_dtype,
+                block_index=block_index,
+            )
+            for block_index in range(self.block_config.num_hidden_layers)
+        ]
+        self._cache_bytes_per_block = max(cache_bytes_by_block)
 
         # For disk cache
         self.cache_dir = cache_dir
@@ -334,7 +343,11 @@ class Server:
         self.strict_block_indices, self.num_blocks = block_indices, num_blocks
 
         gib = 1024**3
-        self.attn_cache_bytes = self._cache_bytes_per_block * num_blocks
+        self.attn_cache_bytes = (
+            sum(cache_bytes_by_block[block_index] for block_index in block_indices)
+            if block_indices is not None
+            else self._cache_bytes_per_block * num_blocks
+        )
         logger.info(f"Attention cache for all blocks will consume up to {self.attn_cache_bytes / gib:.2f} GiB")
 
         assert isinstance(throughput, float) or throughput in ["auto", "eval", "dry_run"]

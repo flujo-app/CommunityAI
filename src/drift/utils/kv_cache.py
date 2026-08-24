@@ -43,6 +43,27 @@ class KVCacheStrategy(ABC):
         self.config = config
         self.module = module
 
+    @classmethod
+    def estimate_cache_bytes(
+        cls,
+        config: PretrainedConfig,
+        max_length: int,
+        *,
+        dtype: torch.dtype,
+        block_index: Optional[int] = None,
+    ) -> int:
+        """Estimate one block's cache budget before its weights are loaded.
+
+        The default preserves the historical dense-GQA accounting formula. Cache strategies
+        with fixed-size or otherwise non-standard state must override this method so server
+        admission never advertises less memory than one real session will allocate.
+        """
+
+        del cls, block_index
+        cache_values = 2 * config.hidden_size * max_length
+        cache_values //= config.num_key_value_groups
+        return cache_values * torch.tensor([], dtype=dtype).element_size()
+
     @abstractmethod
     def get_cache_descriptors(
         self,

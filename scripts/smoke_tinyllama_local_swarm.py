@@ -44,7 +44,7 @@ from drift.utils.auto_config import AutoDistributedConfig
 from drift.utils.convert_block import QuantType
 from drift.utils.dht import get_remote_module_infos
 from drift.utils.hardware import normalize_device
-from drift.utils.misc import get_size_in_bytes
+from drift.utils.kv_cache import StandardGQACache
 from drift.utils.reference_model import load_reference_model_for_causal_lm
 
 DEFAULT_MODEL = "Maykeye/TinyLLama-v0"
@@ -264,9 +264,16 @@ def main(argv=None) -> None:
         torch_dtype = resolve_block_dtype(block_config, DTYPE_MAP[args.torch_dtype])
         log(f"torch_dtype={torch_dtype}")
         attn_cache_tokens = 128
-        cache_values_per_block = 2 * block_config.hidden_size * attn_cache_tokens
-        cache_values_per_block //= block_config.num_key_value_groups
-        attn_cache_bytes = cache_values_per_block * get_size_in_bytes(torch_dtype) * len(block_indices)
+        cache_strategy = getattr(block_config, "kv_cache_strategy", StandardGQACache)
+        attn_cache_bytes = sum(
+            cache_strategy.estimate_cache_bytes(
+                block_config,
+                attn_cache_tokens,
+                dtype=torch_dtype,
+                block_index=block_index,
+            )
+            for block_index in block_indices
+        )
 
         serving_dhts = [dht]
         serving_identities = [NodeIdentity.load(bootstrap_identity_path)] if bootstrap_identity_path else [None]
@@ -370,7 +377,7 @@ def main(argv=None) -> None:
             manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
             torch_dtype=torch_dtype,
             request_timeout=3 if args.test_failover else 60,
-            max_retries=3 if args.test_failover else None,
+            max_retries=3,
             min_backoff=0.1 if args.test_failover else 1,
             max_backoff=1 if args.test_failover else 60,
             update_period=1 if args.test_failover else 60,

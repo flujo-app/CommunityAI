@@ -103,6 +103,38 @@ def test_qwen3_5_wrapper_detection_and_dispatch(wrapper_checkpoint, text_only_ch
     assert AutoDistributedConfig.from_pretrained(text_only_checkpoint).block_prefix == "model.layers"
 
 
+def test_qwen3_5_cache_budget_includes_fixed_recurrent_state():
+    config = _tiny_text_config()
+    strategy = config.kv_cache_strategy
+    dtype = torch.float32
+    max_length = 1
+
+    standard_bytes = (
+        2 * config.hidden_size * max_length // config.num_key_value_groups * torch.empty((), dtype=dtype).element_size()
+    )
+    conv_dim = (
+        2 * config.linear_num_key_heads * config.linear_key_head_dim
+        + config.linear_num_value_heads * config.linear_value_head_dim
+    )
+    recurrent_state_bytes = (
+        conv_dim * config.linear_conv_kernel_dim * torch.empty((), dtype=dtype).element_size()
+        + config.linear_num_value_heads
+        * config.linear_key_head_dim
+        * config.linear_value_head_dim
+        * torch.empty((), dtype=torch.float32).element_size()
+    )
+    linear_index = config.layer_types.index("linear_attention")
+    full_index = config.layer_types.index("full_attention")
+
+    assert recurrent_state_bytes > standard_bytes
+    assert (
+        strategy.estimate_cache_bytes(config, max_length, dtype=dtype, block_index=linear_index)
+        == recurrent_state_bytes
+    )
+    assert strategy.estimate_cache_bytes(config, max_length, dtype=dtype, block_index=full_index) == standard_bytes
+    assert strategy.estimate_cache_bytes(config, max_length, dtype=dtype) == recurrent_state_bytes
+
+
 def test_qwen3_5_wrapper_blocks_load_and_match(wrapper_checkpoint):
     path, reference = wrapper_checkpoint
     config = AutoDistributedConfig.from_pretrained(path)
@@ -192,13 +224,14 @@ def test_qwen3_5_remote_prefill_and_decode_matches_stock(wrapper_checkpoint):
     remote = None
     try:
         cache_tokens = 128
-        cache_bytes = (
-            2
-            * config.hidden_size
-            * cache_tokens
-            // config.num_key_value_groups
-            * torch.tensor([], dtype=torch.float32).element_size()
-            * config.num_hidden_layers
+        cache_bytes = sum(
+            config.kv_cache_strategy.estimate_cache_bytes(
+                config,
+                cache_tokens,
+                dtype=torch.float32,
+                block_index=block_index,
+            )
+            for block_index in range(config.num_hidden_layers)
         )
         container = ModuleContainer.create(
             dht=server_dht,

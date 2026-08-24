@@ -49,6 +49,34 @@ class Qwen3_5HybridCache(KVCacheStrategy):
         self.standard_cache = StandardGQACache(config, module=module)
         self.supports_paged_cache = self.block_type == "full_attention"
 
+    @classmethod
+    def estimate_cache_bytes(
+        cls,
+        config,
+        max_length: int,
+        *,
+        dtype: torch.dtype,
+        block_index: int | None = None,
+    ) -> int:
+        standard_bytes = super().estimate_cache_bytes(
+            config,
+            max_length,
+            dtype=dtype,
+            block_index=block_index,
+        )
+        if block_index is not None and config.layer_types[block_index] == "full_attention":
+            return standard_bytes
+
+        key_dim = config.linear_num_key_heads * config.linear_key_head_dim
+        value_dim = config.linear_num_value_heads * config.linear_value_head_dim
+        conv_dim = key_dim * 2 + value_dim
+        state_bytes = conv_dim * config.linear_conv_kernel_dim * get_size_in_bytes(
+            dtype
+        ) + config.linear_num_value_heads * config.linear_key_head_dim * config.linear_value_head_dim * get_size_in_bytes(
+            _resolve_state_dtype(config)
+        )
+        return max(standard_bytes, state_bytes)
+
     def get_cache_descriptors(
         self,
         batch_size: int,
