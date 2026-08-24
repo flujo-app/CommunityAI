@@ -18,6 +18,7 @@ import torch
 from safetensors.torch import save_file
 
 from drift.models.gemma4_unified.block import WrappedGemma4UnifiedBlock
+from drift.models.gemma4_unified.config import DistributedGemma4UnifiedConfig
 from drift.server.from_pretrained import load_pretrained_block
 from drift.utils.auto_config import AutoDistributedConfig
 from drift.utils.kv_cache import StandardGQACache
@@ -181,6 +182,18 @@ def test_cache_descriptors_honor_per_block_kv_groups():
     model = _stock_model_and_refs(cfg, torch.randint(0, cfg.vocab_size, (1, 2)))[0]
     assert model.layers[0].self_attn.num_key_value_groups == 2 and model.layers[0].self_attn.head_dim == 16
     assert model.layers[2].self_attn.num_key_value_groups == 4 and model.layers[2].self_attn.head_dim == 32
+
+
+def test_cache_estimate_honors_per_block_kv_geometry():
+    cfg = DistributedGemma4UnifiedConfig(**_tiny_config().to_dict())
+    strategy = cfg.kv_cache_strategy
+    max_length = 8
+
+    # Sliding: K + V, two KV heads of 16 elements each, float32.
+    assert strategy.estimate_cache_bytes(cfg, max_length, dtype=torch.float32, block_index=0) == 2048
+    # Full: K + V, one global KV head of 32 elements, also float32.
+    assert strategy.estimate_cache_bytes(cfg, max_length, dtype=torch.float32, block_index=2) == 2048
+    assert strategy.estimate_cache_bytes(cfg, max_length, dtype=torch.float32) == 2048
 
 
 @pytest.fixture(scope="module")

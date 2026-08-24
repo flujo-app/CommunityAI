@@ -10,6 +10,7 @@ from drift.client.config import ClientConfig
 from drift.client.lm_head import LMHeadConfig
 from drift.client.ptune import PTuneConfig
 from drift.models.gemma4.block import WrappedGemma4Block
+from drift.models.gemma4.cache import Gemma4Cache
 
 logger = get_logger(__name__)
 
@@ -51,6 +52,7 @@ class DistributedGemma4Config(Gemma4TextConfig, ClientConfig, PTuneConfig, LMHea
     block_class = WrappedGemma4Block
     attn_class = Gemma4TextAttention
     block_prefix = _TEXT_ONLY_BLOCK_PREFIX
+    kv_cache_strategy = Gemma4Cache
 
     @property
     def num_key_value_groups(self):
