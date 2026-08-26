@@ -41,6 +41,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 - Defined the first release as a Windows/Linux public inference alpha. macOS and all
   credit/payment features are explicitly deferred and will not be advertised as available.
+- Qualification images now install their native build toolchain only during the locked
+  environment build, isolate exact-source verification from the installed environment,
+  and bind the runtime version to installed package metadata before publication.
 - Model qualification now treats exact Windows/Linux CPU/CUDA coverage as the strict
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
 - Fly qualification now reuses the existing native `flyctl` login by default instead of

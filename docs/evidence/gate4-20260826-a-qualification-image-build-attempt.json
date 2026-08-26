@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "scope": "qualification-image-build-attempt",
+  "run_id": "gate4-20260826-a",
+  "result": "incomplete",
+  "complete_release_qualification": false,
+  "source_commit": "7660e33e03326e5b868f81cb95282460ba649d5f",
+  "source_tree_digest": "sha256:607931bee4f226051cf817ae6bff2d423ab0ec7e0508a2e01358f3784f24ec84",
+  "dockerfile_digest": "sha256:5abbefb41a9faaf85556f0122036d068833c1d5ed198e85257e7853ef5041ca2",
+  "started_at": "2026-08-26T17:29:42.594Z",
+  "publication_cutoff_at": "2026-08-26T20:55:56Z",
+  "cleanup_verified_at": "2026-08-26T20:58:20.3173044Z",
+  "cost": {
+    "provider": "gcp",
+    "maximum_estimate_usd": 10,
+    "observed_cost_usd": null,
+    "billing_state": "delayed"
+  },
+  "builder": {
+    "provider": "gcp",
+    "instance": "cai-g4-20260826-a",
+    "zone": "us-central1-a",
+    "machine_type": "e2-standard-4",
+    "boot_disk_gb": 200,
+    "external_ip": false,
+    "service_account": false,
+    "max_run_seconds": 14400
+  },
+  "candidates": [
+    {
+      "candidate": "qwen3.5-2b",
+      "contract_digest": "sha256:4030cc5c6e28e33cd5da1454a0742bf9c7013b11161ad57121722954858b5472",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "declared_artifact_bytes": 4571197320,
+      "exact_input_verification": {
+        "result": "passed",
+        "artifact_count": 8,
+        "artifact_hashes_verified": true,
+        "source_file_count": 160,
+        "source_hashes_verified": true
+      },
+      "sbom_generation": {
+        "result": "passed",
+        "duration_seconds": 693.3
+      },
+      "publication": {
+        "result": "incomplete",
+        "reason": "Layer export had not completed at the manual cleanup cutoff; the build was cancelled before Buildx metadata existed.",
+        "image_published": false,
+        "immutable_digest": null,
+        "publication_evidence": false
+      }
+    },
+    {
+      "candidate": "gemma-4-e2b",
+      "contract_digest": "sha256:62068434634a851300fa65ebc3d1009fbcfb703572054578d842405e2ee05b6d",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "declared_artifact_bytes": 10278818149,
+      "exact_input_verification": {
+        "result": "passed",
+        "artifact_count": 5,
+        "artifact_hashes_verified": true,
+        "source_file_count": 160,
+        "source_hashes_verified": true
+      },
+      "sbom_generation": {
+        "result": "not_run",
+        "reason": "The shared builder serialized SBOM generation behind Qwen; this build was cancelled to preserve the cleanup margin."
+      },
+      "publication": {
+        "result": "incomplete",
+        "reason": "The build was cancelled before SBOM, export, or Buildx metadata.",
+        "image_published": false,
+        "immutable_digest": null,
+        "publication_evidence": false
+      }
+    }
+  ],
+  "cleanup": {
+    "registry_logout": true,
+    "instance_absent": true,
+    "boot_disk_absent": true,
+    "excluded_bootstrap_present": true
+  }
+}

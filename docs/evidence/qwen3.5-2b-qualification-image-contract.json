@@ -1,0 +1,676 @@
+{
+  "artifact_count": 8,
+  "artifact_hashes_verified": true,
+  "artifact_paths": [
+    "chat_template.jinja",
+    "config.json",
+    "merges.txt",
+    "model.safetensors-00001-of-00001.safetensors",
+    "model.safetensors.index.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json"
+  ],
+  "candidate": "qwen3.5-2b",
+  "contract_digest": "sha256:4030cc5c6e28e33cd5da1454a0742bf9c7013b11161ad57121722954858b5472",
+  "declared_artifact_bytes": 4571197320,
+  "dockerfile_digest": "sha256:5abbefb41a9faaf85556f0122036d068833c1d5ed198e85257e7853ef5041ca2",
+  "image_built": false,
+  "image_published": false,
+  "image_tag": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b:source-7660e33e03326e5b868f81cb95282460ba649d5f",
+  "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+  "manifest_filename": "model-manifest.json",
+  "model_repository": "Qwen/Qwen3.5-2B",
+  "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "platform": "linux/amd64",
+  "python_image": "python:3.12.13-slim-bookworm@sha256:6e13e65c55e33adf203d77ee371cf8bf5d81bd4902ef07565721f46bf44917af",
+  "remote_cache_dir": "/cache/model",
+  "remote_manifest": "/workspace/qualification/model-manifest.json",
+  "schema_version": 1,
+  "scope": "qualification-image-input",
+  "source_commit": "7660e33e03326e5b868f81cb95282460ba649d5f",
+  "source_files": {
+    "Dockerfile.qualification": {
+      "sha256": "5abbefb41a9faaf85556f0122036d068833c1d5ed198e85257e7853ef5041ca2",
+      "size": 3446
+    },
+    "README.md": {
+      "sha256": "714081edd6ec30f92b2b246dba0fdc6244180a690eaa51d82c40839aee0396f4",
+      "size": 1083
+    },
+    "pyproject.toml": {
+      "sha256": "082842d4be0720e96163014443ca992e72fcc68b2ac60a938de3959f9d3a2307",
+      "size": 5329
+    },
+    "scripts/fly_qualification_node.py": {
+      "sha256": "39629d1d1583cfb6aef9fced45c0609607ce534bdc8578fc2a663187b8335a78",
+      "size": 7522
+    },
+    "scripts/qualification_image_contract.py": {
+      "sha256": "8b69d50276af821d8fe51ef2c40b76edadc0d48ac4c084c9815c3143d965bc7c",
+      "size": 35597
+    },
+    "src/drift/__init__.py": {
+      "sha256": "f9bf92aeb78bf4e683086fe8920fdeef9817c6c78f23e02d0cd67604171b72a6",
+      "size": 1201
+    },
+    "src/drift/api/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "src/drift/api/server.py": {
+      "sha256": "17c4cfdf32969c4392a639e012d2c82c58e8001774297992e340c1d1cfb01416",
+      "size": 18562
+    },
+    "src/drift/catalog_release.py": {
+      "sha256": "5bb9c50bfa63133873fdd3a14afc92994b19dfa3730bfe917101c5718dd0da5b",
+      "size": 28809
+    },
+    "src/drift/cli/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "src/drift/cli/__main__.py": {
+      "sha256": "47d257ae76354900e3b741f6e7fbfd961a5f1933ebcb1997622df44a7d8afaea",
+      "size": 3940
+    },
+    "src/drift/cli/run_api.py": {
+      "sha256": "49dc037a4ba8794f4954163a5139525a58a2c17f08c9bb182865823f30655d8b",
+      "size": 7165
+    },
+    "src/drift/cli/run_bootstrap.py": {
+      "sha256": "1e9d6ad01e5a072133c2e3383aa800f8577dd2ab6ba9831681db9e1f55daf0ac",
+      "size": 1359
+    },
+    "src/drift/cli/run_catalog.py": {
+      "sha256": "6850c6eee23b814884091165b0fc68ff56feab47e554a5c995fae712249c1447",
+      "size": 13330
+    },
+    "src/drift/cli/run_dht.py": {
+      "sha256": "afc5f812e5a720177560b81ca6b2471f09c745399eff8b37ee9788675f35cbb3",
+      "size": 4210
+    },
+    "src/drift/cli/run_down.py": {
+      "sha256": "92a4d611463e385c97839d62b60e1656ad61b7a668bf39b479db7f406b3ddb3a",
+      "size": 6230
+    },
+    "src/drift/cli/run_edge_benchmark.py": {
+      "sha256": "b2d77423c82f5dd4b2cd9f556a154b8d64438f8f82d21d34bd298a3ddb990a6f",
+      "size": 4238
+    },
+    "src/drift/cli/run_identity.py": {
+      "sha256": "12f5558402f39d1eb8444be7f43a2cdcc63d215615358ece143affadccbcd6e7",
+      "size": 5962
+    },
+    "src/drift/cli/run_manifest.py": {
+      "sha256": "40eff51af06c7f6251a3c8cbf27da5a3ee2a269ae6e02bd7e850d7e5e20b747b",
+      "size": 7629
+    },
+    "src/drift/cli/run_node.py": {
+      "sha256": "83304f2e655c615950a444cecd8a7e2559de610dccea95dae8c20f59d5629970",
+      "size": 27400
+    },
+    "src/drift/cli/run_prod_server.sh": {
+      "sha256": "a0f39efa6b101b4f05b4f941fe12785c56f416beb265d178110ac2c194bd7ed4",
+      "size": 221
+    },
+    "src/drift/cli/run_server.py": {
+      "sha256": "cdcc6ce7f13f4ec387e2a06cb53343593c245dd7f91da3bc64938a9cec595d07",
+      "size": 26489
+    },
+    "src/drift/cli/run_up.py": {
+      "sha256": "5dbcf8d17394903941341d5b56df5a01b5d327d55ce28efb89762375ff7ac8df",
+      "size": 4431
+    },
+    "src/drift/client/__init__.py": {
+      "sha256": "51c204cabf56fddb8bbab110041df34f9c5df9b09dabfd958705b2d389332d97",
+      "size": 262
+    },
+    "src/drift/client/config.py": {
+      "sha256": "b05f476f59bf4bd7ec9d89d9facda83b85c677eda8adecad6cd1a0b5038c79a5",
+      "size": 2441
+    },
+    "src/drift/client/from_pretrained.py": {
+      "sha256": "ca0f6e7b940c7875995d92c129210fc266480f314e5843014bcff2751a61cfcd",
+      "size": 5828
+    },
+    "src/drift/client/inference_session.py": {
+      "sha256": "57d1d11953a35f4c0c50e1078eee8c82e52e4103002bfa6f6dcc22fb0f48e749",
+      "size": 31924
+    },
+    "src/drift/client/lm_head.py": {
+      "sha256": "0042f934a54b1285146a6ec7f4f2eabf6e3984a1d93b2a77e69ea6fadb936cb6",
+      "size": 3494
+    },
+    "src/drift/client/ptune.py": {
+      "sha256": "2d12ce9beac06ed076d8a41a6f6b3d85f69e5f37e0c842420bfbdf4d787fef3b",
+      "size": 3582
+    },
+    "src/drift/client/remote_forward_backward.py": {
+      "sha256": "93757c9b00c92d766d5edbdb6d729006f74baf34c97d9cdc0fb822d830d4c4a1",
+      "size": 7334
+    },
+    "src/drift/client/remote_generation.py": {
+      "sha256": "17eb8a822d14cb69995be5d5931e4f2a45dfb0ce789f602d239e9ce5cf933134",
+      "size": 7983
+    },
+    "src/drift/client/remote_sequential.py": {
+      "sha256": "40d4042db011531a15953e16c6cb685d7bfdbeb6667a28f26e6593ae1dc9af82",
+      "size": 4831
+    },
+    "src/drift/client/routing/__init__.py": {
+      "sha256": "e3ccf601afc13c57b3e7e7df31ff16673c7764b2af5a08dc654e4fca0750f378",
+      "size": 181
+    },
+    "src/drift/client/routing/sequence_info.py": {
+      "sha256": "58e9bd1f312d73bbad6c234ada5fbcad888214e87d339cab249979077377d3b3",
+      "size": 3596
+    },
+    "src/drift/client/routing/sequence_manager.py": {
+      "sha256": "080e4798bdb21a9c1941c9f2b926169b84b363b0f8cdb31e07cb1bf819b979ea",
+      "size": 26463
+    },
+    "src/drift/client/routing/spending_policy.py": {
+      "sha256": "e5cd8570fe215e1441c5312fd7859b3600bf440a31a4c435c9406e638b6e262c",
+      "size": 669
+    },
+    "src/drift/client/sequential_autograd.py": {
+      "sha256": "81e1729f258fc7830aa7cd77d0d58452618b8f4cb18362e4b848fb1a1ac70c90",
+      "size": 12944
+    },
+    "src/drift/constants.py": {
+      "sha256": "abf3737fe372622a178bf16b1b8e3e86f4a8e8c134ee0776398ccad7c272e89a",
+      "size": 118
+    },
+    "src/drift/data_structures.py": {
+      "sha256": "2b26adf1faac075a3fa9d9c5c345ec7f6b9dedb3d969f8a8dd6f8020c4ffe71c",
+      "size": 4149
+    },
+    "src/drift/dht_utils.py": {
+      "sha256": "16a02b934d144b46e6d824d265f267f8bb176c2a2d462d2d5add0f853cf4fa91",
+      "size": 221
+    },
+    "src/drift/model_catalog.py": {
+      "sha256": "fbed67dc1e4d02046b4b7c257c43c3f47f83138af3d2ba5d59ae259df48f5c92",
+      "size": 37513
+    },
+    "src/drift/model_manifest.py": {
+      "sha256": "e3df741750ffb670546b2b3a077914967f5ea93fac84c9338f9f3ac89fdf9809",
+      "size": 40027
+    },
+    "src/drift/models/__init__.py": {
+      "sha256": "ece5852c7907a00d6f6921b3d8b868e42b19f5a474c131d25e5cd7ebc8231fef",
+      "size": 454
+    },
+    "src/drift/models/_gemma_block.py": {
+      "sha256": "60b53b5ac228a315446328f47adc9f20a43919fcda658cb8c51c529e4e9c42b0",
+      "size": 4514
+    },
+    "src/drift/models/_gqa_block.py": {
+      "sha256": "2c55a1e99a8eeba6528981d852209488bf3f25bb1423cdc4d90399d60c8b29d2",
+      "size": 6944
+    },
+    "src/drift/models/bloom/__init__.py": {
+      "sha256": "4ce43ff3770b4ede96eed7ffb2d11290fd036d57235198a1573aa199782c8612",
+      "size": 567
+    },
+    "src/drift/models/bloom/block.py": {
+      "sha256": "df290e8ceb288cd26c3e11abb030b385692a4aa3504856defded7b5122742691",
+      "size": 4971
+    },
+    "src/drift/models/bloom/config.py": {
+      "sha256": "0861a6046afa9bc7e49123ed8cc113e2deb0c9ac74e2631c55745c6129a5c6ef",
+      "size": 1442
+    },
+    "src/drift/models/bloom/model.py": {
+      "sha256": "ecbb53aa163e1b714f35c78830a41f5391d85d5a36e6d0d44cc4711f57353d8d",
+      "size": 8646
+    },
+    "src/drift/models/deepseek_v3/__init__.py": {
+      "sha256": "6c9348e12520648e2ce4b01b25054ac1063062d82c2a74ad4ba5df3b680e1c14",
+      "size": 630
+    },
+    "src/drift/models/deepseek_v3/block.py": {
+      "sha256": "2ece6b49dc12c5fa38c76501f90712b7c4e39b2251afe56ee0e602f52e567c29",
+      "size": 3602
+    },
+    "src/drift/models/deepseek_v3/config.py": {
+      "sha256": "a3bda63103eb2f74ba2f3ca6cf205b873ddbd522ce4a75ae800f1b3cf14a10f2",
+      "size": 1964
+    },
+    "src/drift/models/deepseek_v3/model.py": {
+      "sha256": "e9ceb1c6946dfeb9aa4625cc667c6aae73fc7aeebea7f7af85b66ef6d66f97e9",
+      "size": 7462
+    },
+    "src/drift/models/falcon/__init__.py": {
+      "sha256": "8aa9717c72ba2716637758532faff818f5a7364397007f937fe05226c721c628",
+      "size": 579
+    },
+    "src/drift/models/falcon/block.py": {
+      "sha256": "0de3ecf8a7314ded90daf2f633fce3caea6d6f1dc468c2a5049e42b11de99d40",
+      "size": 5981
+    },
+    "src/drift/models/falcon/config.py": {
+      "sha256": "3cb1c5d1094980ebc27197d5d8983b2b0619c233151344d10b972c3079ae5619",
+      "size": 2037
+    },
+    "src/drift/models/falcon/model.py": {
+      "sha256": "4aa9e47c4427a82c61d058128aa56fa9722f0a47b57004e4d6a8705688dd9565",
+      "size": 6588
+    },
+    "src/drift/models/gemma2/__init__.py": {
+      "sha256": "3c86c608eca0bc82302254d978ef3f0853f43079f2288855fa4bda0849312f9b",
+      "size": 579
+    },
+    "src/drift/models/gemma2/block.py": {
+      "sha256": "2bb0037d7838a65b4c9e20a8c2dfafbeddf6587fcff84d73e68ab0dbc341d548",
+      "size": 794
+    },
+    "src/drift/models/gemma2/config.py": {
+      "sha256": "82bf127d782318ccc72247d2d4f7a984a575b7b640d0048962cd8c29563d6488",
+      "size": 1782
+    },
+    "src/drift/models/gemma2/model.py": {
+      "sha256": "35506cca302317b97563864d26416c450028985e71a41f124e3bd2db4f139522",
+      "size": 7344
+    },
+    "src/drift/models/gemma3/__init__.py": {
+      "sha256": "dd417bbd3146d83cefdd8e5061ce7b3ff6db4d223d7826120e9179f7244e0086",
+      "size": 579
+    },
+    "src/drift/models/gemma3/block.py": {
+      "sha256": "cc1d53103ef2456deda030ca1a372e39d24d298dc23951aa86765ecc678a5e90",
+      "size": 814
+    },
+    "src/drift/models/gemma3/config.py": {
+      "sha256": "75171fd0d6893db8a16e90b03edac09c6b34b21124dd4b7cdecd4f3a01c9cc39",
+      "size": 1790
+    },
+    "src/drift/models/gemma3/model.py": {
+      "sha256": "b9ef922d55ed379c4eff68f6449d246610958372c38ea729a561df0d19949ec1",
+      "size": 7360
+    },
+    "src/drift/models/gemma4/__init__.py": {
+      "sha256": "e161a5e6ec091819c0858eeffbca7b2c06a328f11b088dc1a9a785078acf0805",
+      "size": 564
+    },
+    "src/drift/models/gemma4/block.py": {
+      "sha256": "f1e46ca049fb0366e85d538c66a80bc44dcc6219eb2c3e73856c505ce6efad2b",
+      "size": 6934
+    },
+    "src/drift/models/gemma4/cache.py": {
+      "sha256": "2799a7141d62c3de37d162280bc985e389aff5121e00cb2df3c0ddc936adbe0e",
+      "size": 1910
+    },
+    "src/drift/models/gemma4/config.py": {
+      "sha256": "156f58dddbd863dc450fd9dd88b67dabcdc289d1751ae5672f83abd9ce319907",
+      "size": 4301
+    },
+    "src/drift/models/gemma4/model.py": {
+      "sha256": "24572ccbbfbe29775fe188a908f1ab6ec42e7d298c68937d553a783063b4b4ed",
+      "size": 12057
+    },
+    "src/drift/models/gemma4_unified/__init__.py": {
+      "sha256": "f04f8fff726edf414ad6abdfbe6a3a437c20165aaff9c317692b080e5e72d140",
+      "size": 651
+    },
+    "src/drift/models/gemma4_unified/block.py": {
+      "sha256": "8ae18a15205dfcac8028778bda2d22cbb0a551e30a28a93fa3d9551368e8d084",
+      "size": 6080
+    },
+    "src/drift/models/gemma4_unified/config.py": {
+      "sha256": "5bc2f6728988ed1327f8b4f58f008381a39ef5215813f2446e13cf9f153f9fd5",
+      "size": 3385
+    },
+    "src/drift/models/gemma4_unified/model.py": {
+      "sha256": "3f8c0b9dc8eae1d3d4410540cec4f65ee22686e13e73e5b789b7daf9e8c3bc25",
+      "size": 9550
+    },
+    "src/drift/models/llama/__init__.py": {
+      "sha256": "e2dffa3d41153bd0c5cba79f8a48ef8dfbfc524ac53aca1321caadd4ddef5ce5",
+      "size": 727
+    },
+    "src/drift/models/llama/block.py": {
+      "sha256": "40c455f5d801429839e6afc779d99d4a02dedec9f31ae3e7e88bf813d5175dac",
+      "size": 550
+    },
+    "src/drift/models/llama/config.py": {
+      "sha256": "3e3492d577fd2798e1b017e6add6bb6efa791bf191d3a47a0f0638b38fffd6f4",
+      "size": 2108
+    },
+    "src/drift/models/llama/model.py": {
+      "sha256": "16c698ac15950345c2365eb0da9948c03338dbd226a885b3a19d37c82dd1eb1b",
+      "size": 7342
+    },
+    "src/drift/models/llama/speculative_model.py": {
+      "sha256": "fdc1973349065678615eeeed192fadd5036a915d4bb6e3571add1e6a0b9cf087",
+      "size": 5163
+    },
+    "src/drift/models/mistral/__init__.py": {
+      "sha256": "89794392643711595b9077e2c02580d07bb7c481dd79200ba09ab5a03d3a915c",
+      "size": 591
+    },
+    "src/drift/models/mistral/block.py": {
+      "sha256": "008e07d94e0e00141f37acf1b50fbac900a40212a5fac267678320ab809f03d2",
+      "size": 763
+    },
+    "src/drift/models/mistral/config.py": {
+      "sha256": "14b4893781d930a3024d6e9a0287acf6465fbb4c46576e786ef5fed47bc24a86",
+      "size": 1688
+    },
+    "src/drift/models/mistral/model.py": {
+      "sha256": "52d4a4ec95cf4f4af0f2a548c07ed70aea25c6951d1fd97606199d65468dccbb",
+      "size": 7373
+    },
+    "src/drift/models/mixtral/__init__.py": {
+      "sha256": "eac8ec3a91d60b9b1ec5d2ecf2d932b66ee1e63e962b75410245e78c38f402af",
+      "size": 591
+    },
+    "src/drift/models/mixtral/block.py": {
+      "sha256": "d44709364ac009baba3ff5c3328fdc12a96995d5ee6cb10e8fee7bb3cd7e1063",
+      "size": 4954
+    },
+    "src/drift/models/mixtral/config.py": {
+      "sha256": "1e7f0481749ff27b5032f8d251af6b770ffd3563a1150409afcc8ff3df5e73dc",
+      "size": 1454
+    },
+    "src/drift/models/mixtral/model.py": {
+      "sha256": "eb28dced7bcc6c09941b9bcf52e1245eb8f7523f41e9ca9d3bc3e6f4df511582",
+      "size": 7700
+    },
+    "src/drift/models/qwen2/__init__.py": {
+      "sha256": "b270bfc8e3d7c77fceb485614638cafb5866410fd6abdc669f36cdb1cb7d2e0d",
+      "size": 567
+    },
+    "src/drift/models/qwen2/block.py": {
+      "sha256": "5b44ba67bd9b9499aed2fd9f2ae7cd8e2972ee0b38adbf72f64f4a53b1279b1a",
+      "size": 550
+    },
+    "src/drift/models/qwen2/config.py": {
+      "sha256": "80bcfb41558ac0c032bc10f0c300eae9410de685422ccd87d954f07d28075f7c",
+      "size": 1666
+    },
+    "src/drift/models/qwen2/model.py": {
+      "sha256": "5ba1423a919bc62e3c82fab5d7e9fb4082eb5bd93a5e2e1ac7720d8ae3780c1f",
+      "size": 7289
+    },
+    "src/drift/models/qwen3/__init__.py": {
+      "sha256": "3383af165a62159090d54359dadba7b1e22e4b2b899bda883e84b530766e18a7",
+      "size": 567
+    },
+    "src/drift/models/qwen3/block.py": {
+      "sha256": "14eeda65e40022486f14648c065432362c6b1348b072355e7bd30476dd248c42",
+      "size": 741
+    },
+    "src/drift/models/qwen3/config.py": {
+      "sha256": "e11179215162b48cc3f2ef8fde31a17dcb9c6aa76b2651eae3c3067741d5528a",
+      "size": 1666
+    },
+    "src/drift/models/qwen3/model.py": {
+      "sha256": "7e6b416a8d84e6688db21c8bba2538b4b734c553721c9b682447d6f35ff14bbf",
+      "size": 7289
+    },
+    "src/drift/models/qwen3_5/__init__.py": {
+      "sha256": "7a5c3bc89c45a882832adced740b8d19c2dded51218a5d31fccaf098fc7408a5",
+      "size": 431
+    },
+    "src/drift/models/qwen3_5/block.py": {
+      "sha256": "cb506f75ad664086ee5e750cfaa0cfd8ebf3b1b289efa210039bb38bf549165f",
+      "size": 3960
+    },
+    "src/drift/models/qwen3_5/cache.py": {
+      "sha256": "e7455ea6d38d30c0ca7dbdc8486697351cbfe6173ed00fd1022533e4d9fdb196",
+      "size": 6537
+    },
+    "src/drift/models/qwen3_5/config.py": {
+      "sha256": "8d68ff40ae4f52f6716f5a02e0954bf36a826b9f4a3f542876a19e902bdce713",
+      "size": 2936
+    },
+    "src/drift/models/qwen3_5/model.py": {
+      "sha256": "551151dcb1ab1579a4fc1dcd20ad3964d7db1dc5a765a7e95102ce2405c67d9c",
+      "size": 6010
+    },
+    "src/drift/node/__init__.py": {
+      "sha256": "6822afb210c37806d000ec03f6768129a7b67ab668933de6445f5202cdf05865",
+      "size": 745
+    },
+    "src/drift/node/catalog_bootstrap.py": {
+      "sha256": "60c84b003156031d38fbe504985b6ce0d91a70a5746424fb24b56d828d51e0db",
+      "size": 21305
+    },
+    "src/drift/node/config.py": {
+      "sha256": "6b543d62be80cb6150192b3b09785a07c2e54ae9e1e51d516d978fb4c8b125a8",
+      "size": 25481
+    },
+    "src/drift/node/config_lock.py": {
+      "sha256": "b0ffa5a4f8808a96f78f1766f56926fceb7b32737a36d007c0c37a3ef0d732e1",
+      "size": 4443
+    },
+    "src/drift/node/discovery.py": {
+      "sha256": "5281a05b31aecb6890af8b91c8b9eee30c4153a00f4f954bd048919d09e350e7",
+      "size": 8845
+    },
+    "src/drift/node/edge_benchmark.py": {
+      "sha256": "e73f056a281c20b8a1b79a58138439eb83a510e07570095df5990fee498ada2b",
+      "size": 11546
+    },
+    "src/drift/node/keys.py": {
+      "sha256": "09fe9b048c65c2dd68a02a1d3ee72b3faec527cd6dc63ac0f1f9be561bd08493",
+      "size": 12744
+    },
+    "src/drift/node/loading.py": {
+      "sha256": "4ebe28612d40a9d16c3dd2a3bc9dff8d787257410650ab2fad9fb9bc0e93bcdc",
+      "size": 3665
+    },
+    "src/drift/node/model_manager.py": {
+      "sha256": "cf9df732e99a58a65dbb8bba0e9eaae11c85a981b9fb6208d042f431afeab4be",
+      "size": 21848
+    },
+    "src/drift/node/native_credentials.py": {
+      "sha256": "c81a9c2125aa543705ce3bbcc14fd58aa3452832d57886a7e492ab39bd3ec97f",
+      "size": 2513
+    },
+    "src/drift/node/policy_store.py": {
+      "sha256": "c68df7a873454de0b9a75d3cc105495b868a72d40edf4aefacb57b56e313c9a1",
+      "size": 14950
+    },
+    "src/drift/node/route_health.py": {
+      "sha256": "2d06d0316e958c1757aedbedfcfb5339655d0e9ea3db3cf79b4edb9c5ec93c0f",
+      "size": 2674
+    },
+    "src/drift/node/server.py": {
+      "sha256": "d0e493073fd6c12060f75d0b9b04408f0ac04c4593b963cb6994f51e482f012f",
+      "size": 15404
+    },
+    "src/drift/node/worker_supervisor.py": {
+      "sha256": "9e074b3b90e80ba59fa4c8eee79c5ecd6a135cbc5f29cea2d4cef93d39893667",
+      "size": 32464
+    },
+    "src/drift/protocol_identity.py": {
+      "sha256": "24a09c7c020fd26c97d0f4951881e277b5ae534e1682d48a9addeff42d655c8f",
+      "size": 31572
+    },
+    "src/drift/server/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "src/drift/server/admission.py": {
+      "sha256": "228021a291ad46ae24eb2e9ee886c71ce263264baa790ddcd8b481808df7d904",
+      "size": 22435
+    },
+    "src/drift/server/backend.py": {
+      "sha256": "38858453c0bd28c9941a0f9f9a88d1dfb0c04b363b19ef0cf1fac30776aa70da",
+      "size": 20283
+    },
+    "src/drift/server/block_functions.py": {
+      "sha256": "b9663eed654f339517162a279556336c556352ed195c70d33a1f55c7e841377e",
+      "size": 15624
+    },
+    "src/drift/server/block_selection.py": {
+      "sha256": "3f30f47c234352f5e0b087f8ae5790c91ea490c429bcf10a056ab608d29a4dca",
+      "size": 4068
+    },
+    "src/drift/server/block_utils.py": {
+      "sha256": "23adb8c2d4d146bbcdb3f71c7e930f897a865fb9ec543b930a68a571161dfd78",
+      "size": 2685
+    },
+    "src/drift/server/from_pretrained.py": {
+      "sha256": "31c8ba13d5dc4695045648b4cde57af5a5d09d0ab71301323bab535b61e040ef",
+      "size": 14646
+    },
+    "src/drift/server/handler.py": {
+      "sha256": "9aa18b62a7aeaeeb0fda87b9b505e1e513de7dc47ad03c4f3b707bb064b1058d",
+      "size": 43666
+    },
+    "src/drift/server/memory_cache.py": {
+      "sha256": "213c16fa03663e5eca120977a565225a291ba150227c72286891e0ca02a3d280",
+      "size": 25825
+    },
+    "src/drift/server/reachability.py": {
+      "sha256": "bea5c2889c1c2ceaf1ebcca2c6a34b5c6ae3623e81ff1d849797f8200a5bdac8",
+      "size": 5844
+    },
+    "src/drift/server/rejection_logging.py": {
+      "sha256": "910c9d38ca13ee87ac379354972cdf680c041bebff7c871ab05a52e9c8458fc1",
+      "size": 4707
+    },
+    "src/drift/server/server.py": {
+      "sha256": "354119a4d873e65e0a410560e5ebdd8dad2819c2a4d7f8818b23bb8028738c7c",
+      "size": 55824
+    },
+    "src/drift/server/task_pool.py": {
+      "sha256": "b1d15f2e2b912e722afde2c753c1ac3415b496c70814a8f4867ba010891bd40f",
+      "size": 7852
+    },
+    "src/drift/server/task_prioritizer.py": {
+      "sha256": "9eb55220153a3c03e3873431ff6868cf2f961e20d5e9deaf064966702dd2dd28",
+      "size": 747
+    },
+    "src/drift/server/throughput.py": {
+      "sha256": "e508ab8128ec988c5daca00ef8e7913432e95bd844a912abe0fb5eb8f4b18e8a",
+      "size": 9167
+    },
+    "src/drift/utils/__init__.py": {
+      "sha256": "83f00a50e5ec190e2c75552dd6ab81523f18b8c121b1dbf19ac7d23cf847fb55",
+      "size": 302
+    },
+    "src/drift/utils/asyncio.py": {
+      "sha256": "ebf42b50f0544f9f0cc43618e7d93af1a9ec268b46d4cf4dcedf448f19e1165e",
+      "size": 2123
+    },
+    "src/drift/utils/auto_config.py": {
+      "sha256": "5a917fad6ca5343b1a0feda443c39f7520b22bdb1feb3408cbd4cc2f73d79f62",
+      "size": 5010
+    },
+    "src/drift/utils/convert_block.py": {
+      "sha256": "d7d258b500217ba684211844e905ce7b41f84587a36eda8fdb93d33db0624877",
+      "size": 8065
+    },
+    "src/drift/utils/dht.py": {
+      "sha256": "6b142a0333af466873c14a451047503f49e68f272fd4d5c48d4aa3ee69b73d14",
+      "size": 8494
+    },
+    "src/drift/utils/disk_cache.py": {
+      "sha256": "eda0e93e40871a5aa7665742058753cdada800d65ba16f3e89adce527200edeb",
+      "size": 4132
+    },
+    "src/drift/utils/file_lock.py": {
+      "sha256": "f8530419e2419fefd7d6f89cb3ea6afcc135a9c39a0b6d711bc3eb2467cd8ce9",
+      "size": 2092
+    },
+    "src/drift/utils/hardware.py": {
+      "sha256": "39da5961f43b562bd151f861389a26abf4aba806021058a441f163481b5a217f",
+      "size": 6975
+    },
+    "src/drift/utils/join_token.py": {
+      "sha256": "dc826a66cce14e830a2c03d7cc273f9cd9cc4c2678eb54d83fe86947961457c1",
+      "size": 6392
+    },
+    "src/drift/utils/kv_cache.py": {
+      "sha256": "a0c6d8796ac67c78b652d6c83113f189a2c6cbd8d934206dc782786b9167b74e",
+      "size": 10636
+    },
+    "src/drift/utils/logging.py": {
+      "sha256": "7ba375161fcc21b4972a70d7a40a645e782bd69d25f76e7f3ec4d2c8ce6fda96",
+      "size": 764
+    },
+    "src/drift/utils/misc.py": {
+      "sha256": "4c1975f3353ddf8ad3e69fc3b8b11ffe47664c5bfc7962fa647ca32b0a2aed3b",
+      "size": 5205
+    },
+    "src/drift/utils/packaging.py": {
+      "sha256": "8d322dc8fe651ea8b1930a259d91f343bfbf849d5dc272b3e71978f89b36a04f",
+      "size": 1650
+    },
+    "src/drift/utils/peft.py": {
+      "sha256": "fc527dc80ebfc52c3cf45e56f99670145e06ee9aa25e2bc8ea06736d28d7b9c3",
+      "size": 12659
+    },
+    "src/drift/utils/ping.py": {
+      "sha256": "86a8797339bf253f5c1d245c24e04384575e8dba67c15481c97e331daf8b7376",
+      "size": 2517
+    },
+    "src/drift/utils/process_lifetime.py": {
+      "sha256": "75539270d5f0d13d238a804495b79b713283e0bc489e34229b568ccef4de163c",
+      "size": 7914
+    },
+    "src/drift/utils/random.py": {
+      "sha256": "8d17088935f502b46a1d03fcbd3a8c1beb9fe140edd57fe873d45e2434af3462",
+      "size": 310
+    },
+    "src/drift/utils/reference_model.py": {
+      "sha256": "f32974976022ce342f21d87ac1c2fea980191b47abc78217e3d87f44c4b2b56b",
+      "size": 2148
+    },
+    "src/drift/utils/server_registry.py": {
+      "sha256": "4cbaf85e5fd15d1c21e3e005fe6233b4c9d0096443a381a9c690779972dbd862",
+      "size": 7717
+    },
+    "src/drift/utils/shared_kv.py": {
+      "sha256": "aeeb0ada7b30177bb1cf7bc870296bb6c01aa59cfb046c991fb7b863c0c47ebf",
+      "size": 1923
+    },
+    "src/drift/utils/tensor_parallel/__init__.py": {
+      "sha256": "4e98d8d0943c6c7cb7de15ac559fd5a1cb47c9370923d18155a958337df26b29",
+      "size": 1208
+    },
+    "src/drift/utils/tensor_parallel/communications.py": {
+      "sha256": "17115399ced4da75871c137236dd335eb5a71bf0d5f0e62674bf8f173b8241b0",
+      "size": 5696
+    },
+    "src/drift/utils/tensor_parallel/configs.py": {
+      "sha256": "1471f543381b9f85ddba902a111ee9b50a3c0b3ea6a76329c8309c88d3e15ae4",
+      "size": 14595
+    },
+    "src/drift/utils/tensor_parallel/cross_device_ops.py": {
+      "sha256": "968c01a5d54b86cdbbd9fdae5a374b94de99aa9e0546c12012e5674417de868b",
+      "size": 2742
+    },
+    "src/drift/utils/tensor_parallel/slicer.py": {
+      "sha256": "61c5c420dc72b7231727cfeace8dcbf46c8d65f04689a4e8ac7c2f1fefd53c0a",
+      "size": 14654
+    },
+    "src/drift/utils/tensor_parallel/utils.py": {
+      "sha256": "12727f9c9ba09e6049bb0128178af9a2e7ac2a7e9225ac845bea076c6cecc9b1",
+      "size": 2148
+    },
+    "src/drift/utils/tensor_parallel/wrapper.py": {
+      "sha256": "0e5f0e228dd80461871d514bbfd9f01ca2ee34cdfddf92d8c537b086147f2c83",
+      "size": 8986
+    },
+    "src/drift/utils/version.py": {
+      "sha256": "8d9520a26fa93f0ff733f6735ab2615328b2581d490e36f9eb701a6733c08b9f",
+      "size": 767
+    },
+    "src/drift/utils/weight_conversion.py": {
+      "sha256": "64aceff28cd038d1529cdad0f52633d4680c2e50be9710decbc3accee21d10b7",
+      "size": 5912
+    },
+    "uv.lock": {
+      "sha256": "26056576fdb25cbb2cffd13b928edd78625a3468e5e165c051f7c4c0a17fe0fd",
+      "size": 556677
+    }
+  },
+  "source_tree_digest": "sha256:607931bee4f226051cf817ae6bff2d423ab0ec7e0508a2e01358f3784f24ec84",
+  "uv_image": "ghcr.io/astral-sh/uv:0.11.21@sha256:6f1fa8fc4040ad7197d7e652057219871e5f6640abfe2b790f1419fdb2319e6b"
+}

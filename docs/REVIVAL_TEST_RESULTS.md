@@ -111,13 +111,35 @@ hashing, layer media/count/size bounds, local platform/rootfs/size checks, Docke
 failure/output bounds, and atomic non-overwriting reports. The combined focused suite
 passes all 46 collector and preparation tests locally.
 
-This remains implementation evidence only. Native `gh`, `gcloud`, and `flyctl`
-authentication are now active, and registry-direct Buildx inspection works, but this host
-has no available Docker Engine or exact materialized candidate snapshots. No image was
-built or published, no OCI digest or image size is claimed, no provider resource was
-created, no paid run was recorded, and the combined new-resource spend remains USD 0.
-Gate 4 stays `IN PROGRESS` until both exact snapshots are built and pushed on an
-authenticated Docker-enabled builder and both publication reports are retained.
+Before the external run, the qualification Dockerfile was hardened for the locked native
+extension build: `build-essential` is installed only for `uv sync` and purged from the
+runtime layer, source verification is isolated from the installed environment, and the
+runtime version check compares `drift.__version__` with installed package metadata rather
+than a stale literal. The 25-test input-contract suite, Black, isort, and the whitespace
+gate passed at source `7660e33e03326e5b868f81cb95282460ba649d5f`.
+
+The bounded `gate4-20260826-a` GCP attempt then materialized both exact unlinked snapshots
+and retained their input contracts. Qwen verified eight artifacts totalling 4,571,197,320
+bytes plus all 160 tracked source files; Gemma verified five artifacts totalling
+10,278,818,149 bytes plus the same exact source inventory. Both checks matched their
+candidate manifest, source-tree, and Dockerfile digests. Qwen also completed the required
+SBOM scan in 693.3 seconds. The shared builder serialized that scanner, however, and Qwen
+was still exporting layers at the 20:55:56Z manual cleanup cutoff. Gemma's later SBOM and
+both publications were cancelled to preserve cleanup margin. Buildx metadata never
+existed, so no pushed image, immutable OCI digest, layer size, rootfs size, attestation,
+or publication report is claimed.
+
+The non-secret [attempt report](evidence/gate4-20260826-a-qualification-image-build-attempt.json)
+and exact [Qwen](evidence/qwen3.5-2b-qualification-image-contract.json) and
+[Gemma](evidence/gemma-4-e2b-qualification-image-contract.json) contracts are retained.
+GHCR credentials were removed from the builder before deletion. At
+2026-08-26T20:58:20Z, both the exact temporary instance and its auto-delete boot disk were
+absent, while the excluded bootstrap remained present. Billing is delayed, so the USD 10
+maximum remains reserved and the combined ceiling has USD 90 unreserved.
+
+Gate 4 stays `IN PROGRESS`. A follow-up run must budget independent scanner/export margin,
+complete both provenance/SBOM pushes, and pass both fail-closed publication collectors
+before either image counts as release qualification.
 
 ## Desktop milestone: control authority separation
 
