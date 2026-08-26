@@ -691,8 +691,30 @@ empty, reversed, and out-of-model block ranges now fail before loading. The focu
 node, supervisor, device-portability, server-budget, and manifest run passes 80 tests
 with three expected unavailable-accelerator skips. Black and isort accept all eleven
 changed Python files. This is deterministic source enforcement; real packaged
-accelerator behavior remains an OS release gate, and bandwidth/power controls remain
-open.
+accelerator behavior remains an OS release gate. The measured bandwidth/power slice
+that follows closes the remaining source-level controls.
+
+On 2026-08-26, the authoritative contribution policy gained measured bandwidth
+and power ceilings. `max_bandwidth_mbps` and `max_power_watts` accept finite
+positive node and worker values, and a worker can only tighten its inherited ceiling.
+Aggregate send-plus-receive traffic is sampled without request content; each CUDA
+worker reads only its selected device's aggregate draw through NVML, so another GPU's
+draw cannot suspend it. Workers intentionally share the same reading when assigned to
+the same device. The supervisor now uses one policy-stop path for schedules and measured
+resources, suspends over-budget workers within the configured pause timeout, preserves
+desired intent independently of crash restart, and resumes only after both schedule and
+resource gates admit the worker. Missing, failed, non-finite, negative, or otherwise
+invalid telemetry fails auto-start and control start/restart closed while pause remains
+available. Authenticated snapshots expose resolved limits, per-worker measurements,
+admission, reason, and suspension state. `psutil>=5.9` and
+`nvidia-ml-py>=12.535` are core runtime dependencies; the regenerated lock selects
+psutil 7.2.2 and nvidia-ml-py 13.610.43, and both broad and CUDA environments import
+their providers. The focused CUDA-environment configuration/supervisor run passes 62
+tests. The full offline CI selection passes 410 tests with 10 expected skips, and Black,
+isort, plus `uv lock --check` are clean. This is deterministic source evidence, not
+packaged resource qualification: host-wide traffic attribution and real NVIDIA NVML
+behavior still require OS validation, while CPU, XPU, and MPS power-budget configurations
+exercise the explicit unavailable-provider path.
 
 ## Follow-up issues
 
@@ -703,9 +725,10 @@ open.
 2. Exercise the changed-boundary replacement route in the controlled separate-machine
    interruption gate; beam-search recovery needs a reorder-aware activation history before
    it can be enabled safely.
-3. Enforce the remaining bandwidth and power budgets authoritatively in the node,
-   connect the schedule and VRAM policy to packaged controls, and validate every budget
-   against real OS resource behavior.
+3. Connect schedule, VRAM, bandwidth, and power policy to packaged controls; validate
+   every budget against real OS resource behavior, qualify clean-install NVIDIA NVML
+   provider behavior, and either add trusted CPU/XPU/MPS power providers or preserve
+   their explicit fail-closed unsupported state in the release matrix.
 
 Resolved on 2026-08-22: the native hosted macOS security/parity workflow is green;
 Hivemind P2P cleanup no longer queries a closed global uvloop; legacy

@@ -41,6 +41,14 @@ def _config_dict(**overrides):
     return source
 
 
+def test_contribution_telemetry_providers_are_core_runtime_dependencies():
+    pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    core_dependencies = pyproject.split("dependencies = [", 1)[1].split("\n]\n", 1)[0]
+
+    assert '"psutil>=5.9"' in core_dependencies
+    assert '"nvidia-ml-py>=12.535"' in core_dependencies
+
+
 def test_node_config_resolves_paths_relative_to_its_own_directory(tmp_path):
     config = NodeConfig.from_json(json.dumps(_config_dict()), base_dir=tmp_path)
 
@@ -78,6 +86,8 @@ def test_node_config_parses_strict_worker_controls(tmp_path):
                 "device": "cuda:0",
                 "cache_dir": "worker-cache",
                 "max_disk_space": "20GiB",
+                "max_bandwidth_mbps": 25,
+                "max_power_watts": 175.5,
                 "throughput": 1.5,
                 "port": 31337,
                 "public_ip": "203.0.113.4",
@@ -92,6 +102,8 @@ def test_node_config_parses_strict_worker_controls(tmp_path):
     assert worker.block_indices == "0:4"
     assert worker.enabled is True
     assert worker.auto_restart is False
+    assert worker.max_bandwidth_mbps == 25.0
+    assert worker.max_power_watts == 175.5
     assert worker.throughput == 1.5
     assert worker.port == 31337
 
@@ -214,6 +226,32 @@ def test_contribution_policy_defaults_off_and_requires_a_disk_ceiling_when_enabl
         )
 
 
+@pytest.mark.parametrize("field", ["max_bandwidth_mbps", "max_power_watts"])
+@pytest.mark.parametrize("value", [True, 0, -1, float("inf"), "10"])
+def test_contribution_policy_rejects_invalid_measured_resource_budgets(field, value):
+    with pytest.raises(NodeConfigError, match=field):
+        ContributionPolicyConfig.from_dict(
+            {
+                "sharing_enabled": True,
+                "max_disk_space": "1GiB",
+                field: value,
+            }
+        )
+
+
+@pytest.mark.parametrize("field", ["max_bandwidth_mbps", "max_power_watts"])
+def test_worker_config_rejects_invalid_measured_resource_budgets(tmp_path, field):
+    worker = {
+        "id": "worker",
+        "model": "model",
+        "identity_path": "worker.key",
+        "num_blocks": 1,
+        field: 0,
+    }
+    with pytest.raises(NodeConfigError, match=field):
+        NodeConfig.from_dict(_config_dict(workers=[worker]), base_dir=tmp_path)
+
+
 def test_contribution_schedule_enforces_boundaries_and_overnight_windows():
     schedule = ContributionScheduleConfig.from_dict(
         {
@@ -291,7 +329,10 @@ def test_worker_supervisor_enforces_resolved_model_policy_and_disk_ceiling(monke
                     "identity_path": "worker.key",
                     "num_blocks": 2,
                     "enabled": True,
+                    "device": "cpu",
                     "max_disk_space": "2GiB",
+                    "max_bandwidth_mbps": 12,
+                    "max_power_watts": 250,
                 }
             ],
             contribution_policy={
@@ -299,6 +340,8 @@ def test_worker_supervisor_enforces_resolved_model_policy_and_disk_ceiling(monke
                 "allowed_models": [manifest.aliases[0]],
                 "preferred_models": [manifest.name],
                 "max_disk_space": "1GiB",
+                "max_bandwidth_mbps": 20,
+                "max_power_watts": 200,
                 "pause_timeout": 1.5,
             },
         ),
@@ -312,6 +355,8 @@ def test_worker_supervisor_enforces_resolved_model_policy_and_disk_ceiling(monke
     assert launch.policy_reason is None
     assert launch.preferred is True
     assert launch.max_disk_bytes == 1024**3
+    assert launch.max_bandwidth_mbps == 12
+    assert launch.max_power_watts == 200
     assert launch.command[launch.command.index("--max_disk_space") + 1] == "1GiB"
     assert supervisor._stop_timeout == 1.5
 
@@ -513,6 +558,61 @@ def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tm
     assert launch.vram_device == "cuda:0"
     assert launch.command[launch.command.index("--max_device_memory") + 1] == str(8 * 1024**3)
     assert supervisor.snapshot("gpu-worker")["max_vram_bytes"] == 8 * 1024**3
+
+    supervisor.shutdown()
+    manager.shutdown()
+
+
+def test_power_monitor_is_scoped_to_each_cuda_workers_device(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    monkeypatch.setattr("drift.cli.run_node.get_device_total_memory", lambda device: 16 * 1024**3)
+    monitor_devices = []
+
+    class FakePowerMonitor:
+        def __init__(self, device_indices):
+            self.device_indices = tuple(device_indices)
+            monitor_devices.append(self.device_indices)
+
+        def __call__(self):
+            return {0: 100.0, 1: 200.0}[self.device_indices[0]]
+
+    monkeypatch.setattr("drift.cli.run_node.NvidiaPowerMonitor", FakePowerMonitor)
+    config = NodeConfig.from_dict(
+        _config_dict(
+            models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+            workers=[
+                {
+                    "id": f"gpu-worker-{index}",
+                    "model": manifest.name,
+                    "identity_path": f"worker-{index}.key",
+                    "num_blocks": 2,
+                    "device": f"cuda:{index}",
+                }
+                for index in range(2)
+            ],
+            contribution_policy={
+                "sharing_enabled": True,
+                "max_disk_space": "1GiB",
+                "max_vram": "8GiB",
+                "max_power_watts": 250,
+            },
+        ),
+        base_dir=tmp_path,
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+    supervisor = _build_worker_supervisor(config, manager)
+
+    snapshots = {snapshot["id"]: snapshot for snapshot in supervisor.snapshots()}
+    assert monitor_devices == [(0,), (1,)]
+    assert snapshots["gpu-worker-0"]["current_power_watts"] == 100.0
+    assert snapshots["gpu-worker-1"]["current_power_watts"] == 200.0
+    assert all(snapshot["resource_admitted"] is True for snapshot in snapshots.values())
 
     supervisor.shutdown()
     manager.shutdown()

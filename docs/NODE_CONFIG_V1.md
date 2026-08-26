@@ -32,6 +32,8 @@ registration does not download tokenizers or client-side weights.
     "denied_models": [],
     "max_disk_space": "20GiB",
     "max_vram": "50%",
+    "max_bandwidth_mbps": 25,
+    "max_power_watts": 180,
     "pause_timeout": 10,
     "schedule": {
       "timezone": "local",
@@ -53,6 +55,8 @@ registration does not download tokenizers or client-side weights.
       "cache_dir": "worker-cache/tinyllama",
       "max_disk_space": "8GiB",
       "max_vram": "6GiB",
+      "max_bandwidth_mbps": 15,
+      "max_power_watts": 150,
       "throughput": 1.0,
       "port": 31337
     }
@@ -70,7 +74,7 @@ Workers reference a configured model by name, alias, or manifest digest and run 
 isolated `drift server` child processes. Each declares exactly one of `num_blocks`
 or an explicit `block_indices` range such as `0:4`. Worker IDs are unique. Optional
 fields configure enabled-at-start, automatic crash restart, the restart delay,
-device, cache/disk/VRAM limits, throughput, port, and public address. A worker failure
+device, cache/disk/VRAM/bandwidth/power limits, throughput, port, and public address. A worker failure
 does not stop the node API.
 
 Contribution is fail-closed: omitting `contribution_policy` leaves sharing disabled,
@@ -96,6 +100,22 @@ fixed ranges whose exact layer weights and KV caches exceed the ceiling. Tensor-
 servers apply the byte ceiling to each participating accelerator. CPU workers do not
 consume this VRAM pool.
 
+`max_bandwidth_mbps` limits aggregate host send-plus-receive traffic, and
+`max_power_watts` limits aggregate power observed for the worker's selected CUDA
+device. Both accept finite positive numbers. A worker inherits the node limit or its
+own smaller value. Each CUDA worker's power monitor is scoped to that device: workers
+sharing one device observe the same device aggregate, but draw from another CUDA device
+cannot suspend them. The supervisor samples these privacy-safe totals without request
+content; an over-budget worker stops within `pause_timeout`, retains desired-running
+intent, and resumes when the measurement returns within its resolved limit. Missing,
+invalid, or failed telemetry is fail-closed: configured auto-start stays deferred and
+manual start/restart returns HTTP 409, while pause remains available. The core runtime
+ships `psutil` for bandwidth sampling and `nvidia-ml-py`'s `pynvml` module for NVIDIA
+power sampling. CPU, XPU, and MPS currently have no trusted power provider, so their
+configured power limits remain explicitly unavailable instead of silently unenforced.
+Resolved limits, current per-worker measurements, eligibility, and suspension reasons
+are exposed by the authenticated worker-status API.
+
 An optional weekly `schedule` is authoritative in the node supervisor. `timezone`
 may be `local`, `UTC`, or an IANA timezone available to the runtime. Windows
 installations can always use `local` or `UTC` without an added timezone database.
@@ -105,9 +125,9 @@ the window starts. Configured auto-start is deferred outside the schedule. When 
 window closes, a running worker is terminated within `pause_timeout` while its
 desired-running intent is retained, and it resumes when the window reopens even when
 crash auto-restart is disabled. A manual start or restart outside the schedule fails
-with HTTP 409; pause remains available. Bandwidth and power limits are not yet
-authoritative in this schema; VRAM still requires validation against real packaged
-accelerator workers on every supported OS.
+with HTTP 409; pause remains available. VRAM, bandwidth, and power enforcement
+still require validation against real packaged workers on every supported OS, including
+explicit qualification of unavailable power-telemetry paths on CPU, XPU, and MPS.
 
 The parser rejects unknown fields, duplicate JSON keys, non-finite numbers,
 duplicate manifest paths, empty peer sets, and invalid resource limits. Every

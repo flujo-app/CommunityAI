@@ -23,7 +23,7 @@ from drift.node.native_credentials import (
     NativeCredentialLocation,
     load_native_control_key,
 )
-from drift.node.worker_supervisor import WorkerLaunch, WorkerSupervisor
+from drift.node.worker_supervisor import NvidiaPowerMonitor, SystemBandwidthMonitor, WorkerLaunch, WorkerSupervisor
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
@@ -248,6 +248,14 @@ def _build_worker_supervisor(
         policy.max_vram_bytes is not None and policy.max_vram_fraction is not None
     ):
         raise NodeConfigError("contribution policy has an inconsistent max_vram value")
+    for field, value in (
+        ("max_bandwidth_mbps", policy.max_bandwidth_mbps),
+        ("max_power_watts", policy.max_power_watts),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+        ):
+            raise NodeConfigError(f"contribution policy {field} must be a finite number > 0")
 
     manifested_models = {}
     for model_config in config.models:
@@ -301,6 +309,22 @@ def _build_worker_supervisor(
             worker.max_vram_bytes is not None and worker.max_vram_fraction is not None
         ):
             raise NodeConfigError(f"worker {worker.worker_id!r} has an inconsistent max_vram value")
+        for field, value in (
+            ("max_bandwidth_mbps", worker.max_bandwidth_mbps),
+            ("max_power_watts", worker.max_power_watts),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+            ):
+                raise NodeConfigError(f"worker {worker.worker_id!r} {field} must be a finite number > 0")
+        effective_bandwidth_mbps = min(
+            (value for value in (worker.max_bandwidth_mbps, policy.max_bandwidth_mbps) if value is not None),
+            default=None,
+        )
+        effective_power_watts = min(
+            (value for value in (worker.max_power_watts, policy.max_power_watts) if value is not None),
+            default=None,
+        )
         configured_device = normalize_device(torch.device(worker.device or auto_detect_device()))
         policy_vram_limit = (policy.max_vram_bytes, policy.max_vram_fraction)
         worker_vram_limit = (worker.max_vram_bytes, worker.max_vram_fraction)
@@ -308,7 +332,7 @@ def _build_worker_supervisor(
         policy_vram_bytes = None
         vram_device = None
         if is_accelerator(configured_device):
-            if policy.sharing_enabled and policy_vram_limit == (None, None):
+            if policy_admitted and policy_vram_limit == (None, None):
                 raise NodeConfigError(
                     f"accelerator worker {worker.worker_id!r} requires a finite contribution max_vram"
                 )
@@ -383,13 +407,32 @@ def _build_worker_supervisor(
                 max_vram_bytes=effective_vram_bytes,
                 vram_device=vram_device,
                 vram_pool_bytes=policy_vram_bytes,
+                max_bandwidth_mbps=effective_bandwidth_mbps,
+                max_power_watts=effective_power_watts,
                 environment=(("HF_TOKEN", token),) if token is not None else (),
             )
         )
+    bandwidth_monitor = (
+        SystemBandwidthMonitor() if any(launch.max_bandwidth_mbps is not None for launch in launches) else None
+    )
+    power_monitors = {
+        launch.worker_id.casefold(): NvidiaPowerMonitor([int(launch.vram_device.split(":", 1)[1])])
+        for launch in launches
+        if launch.max_power_watts is not None
+        and launch.vram_device is not None
+        and launch.vram_device.startswith("cuda:")
+    }
+
+    def worker_power_watts(worker_id: str) -> float | None:
+        monitor = power_monitors.get(worker_id.casefold())
+        return None if monitor is None else monitor()
+
     return WorkerSupervisor(
         launches,
         stop_timeout=policy.pause_timeout,
         schedule_allowed=None if policy.schedule is None else policy.schedule.allows,
+        bandwidth_mbps=bandwidth_monitor,
+        power_watts=worker_power_watts if any(launch.max_power_watts is not None for launch in launches) else None,
     )
 
 

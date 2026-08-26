@@ -746,8 +746,17 @@ implementation.
    VRAM ceiling, resolves the tighter policy/worker limit against the selected accelerator,
    reserves one aggregate pool per device across supervised workers, applies a hard child
    allocator ceiling before accelerator probes, and fails fixed or movable block selections
-   whose layer-aware weight and KV-cache envelope exceeds it. Bandwidth and power budgets,
-   plus real packaged cross-platform VRAM validation, remain open.
+   whose layer-aware weight and KV-cache envelope exceeds it. Positive bandwidth and
+   power ceilings now resolve to the tighter node/worker value. The supervisor measures
+   aggregate privacy-safe host traffic and each worker's selected NVIDIA-device power,
+   suspends workers through the bounded pause path when a ceiling is exceeded, preserves
+   desired intent, resumes when safe, and fails start/restart closed when configured
+   telemetry is unavailable. Power readings are device-scoped, so draw from one CUDA
+   worker's device cannot suspend a worker assigned to another device. The core runtime
+   now packages both measurement providers. Resolved limits, per-worker measurements,
+   and reasons are visible through authenticated status. Real packaged cross-platform
+   VRAM, bandwidth, and power validation remains open,
+   including explicit unavailable-provider qualification on CPU, XPU, and MPS.
 
    The strict signed-catalog foundation is now implemented separately from worker
    identity: offline Ed25519 roots enforce configurable signature thresholds, expiry,
@@ -881,9 +890,8 @@ implementation.
    clean-install inference and prove the native credential and owned-process path against real
    packaged Windows, Linux, and macOS credential backends. After that, validate the
    source-complete single-instance and login-startup behavior in each packaged OS,
-   feed privacy-safe peer-region observations into the region view, validate VRAM enforcement
-   against real packaged accelerators, and enforce the remaining bandwidth and power budgets
-   in the node rather than only in the GUI,
+   feed privacy-safe peer-region observations into the region view, validate VRAM, bandwidth,
+   and power enforcement against real packaged hardware and its unavailable-telemetry paths,
    and complete resource, accessibility, signed installer, upgrade, rollback,
    uninstall, and retained-data gates on all three operating systems.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple

@@ -257,6 +257,8 @@ class ContributionPolicyConfig:
     max_vram: Optional[str] = None
     max_vram_bytes: Optional[int] = None
     max_vram_fraction: Optional[float] = None
+    max_bandwidth_mbps: Optional[float] = None
+    max_power_watts: Optional[float] = None
     pause_timeout: float = 10.0
     schedule: Optional[ContributionScheduleConfig] = None
 
@@ -274,6 +276,8 @@ class ContributionPolicyConfig:
                 "denied_models",
                 "max_disk_space",
                 "max_vram",
+                "max_bandwidth_mbps",
+                "max_power_watts",
                 "pause_timeout",
                 "schedule",
             ),
@@ -313,6 +317,16 @@ class ContributionPolicyConfig:
             max_vram=max_vram,
             max_vram_bytes=max_vram_bytes,
             max_vram_fraction=max_vram_fraction,
+            max_bandwidth_mbps=(
+                None
+                if source.get("max_bandwidth_mbps") is None
+                else _require_positive_number(source["max_bandwidth_mbps"], f"{field}.max_bandwidth_mbps")
+            ),
+            max_power_watts=(
+                None
+                if source.get("max_power_watts") is None
+                else _require_positive_number(source["max_power_watts"], f"{field}.max_power_watts")
+            ),
             pause_timeout=_require_positive_number(source.get("pause_timeout", 10), f"{field}.pause_timeout"),
             schedule=(
                 None if source.get("schedule") is None else ContributionScheduleConfig.from_dict(source["schedule"])
@@ -339,6 +353,8 @@ class WorkerConfig:
     max_vram: Optional[str] = None
     max_vram_bytes: Optional[int] = None
     max_vram_fraction: Optional[float] = None
+    max_bandwidth_mbps: Optional[float] = None
+    max_power_watts: Optional[float] = None
     throughput: float | str = "auto"
     port: Optional[int] = None
     public_ip: Optional[str] = None
@@ -361,6 +377,8 @@ class WorkerConfig:
                 "cache_dir",
                 "max_disk_space",
                 "max_vram",
+                "max_bandwidth_mbps",
+                "max_power_watts",
                 "throughput",
                 "port",
                 "public_ip",
@@ -431,6 +449,16 @@ class WorkerConfig:
             max_vram=max_vram,
             max_vram_bytes=max_vram_bytes,
             max_vram_fraction=max_vram_fraction,
+            max_bandwidth_mbps=(
+                None
+                if source.get("max_bandwidth_mbps") is None
+                else _require_positive_number(source["max_bandwidth_mbps"], f"{field}.max_bandwidth_mbps")
+            ),
+            max_power_watts=(
+                None
+                if source.get("max_power_watts") is None
+                else _require_positive_number(source["max_power_watts"], f"{field}.max_power_watts")
+            ),
             throughput=throughput,
             port=port,
             public_ip=optional_string("public_ip"),
