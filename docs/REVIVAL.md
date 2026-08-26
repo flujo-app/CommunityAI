@@ -1,4 +1,4 @@
-# Petals revival: inference-first plan
+# Petals revival: public inference alpha roadmap
 
 This repository starts from DRIFT-LLM, the most practical maintained continuation
 of Petals found during the August 2026 fork audit. It preserves the parts that are
@@ -26,7 +26,102 @@ following remotes are configured in the local revival checkout:
 - `nakshatra`: an active, independent llama.cpp/GGUF distributed-inference effort
   that we will track for discovery, transport, and reliability ideas.
 
-## Current status (2026-08-26)
+## Autonomous execution contract
+
+This section is the authoritative instruction for implementation work. An unattended
+agent must read this section and [`RELEASE_READINESS.md`](RELEASE_READINESS.md) before
+choosing work. If later historical text, an older test result, or a post-alpha design
+goal conflicts with them, this section and the live readiness tracker win.
+
+### Immediate objective
+
+Ship a clearly labelled **public inference alpha** that real people can install and use
+through a localhost OpenAI-compatible endpoint backed by public community workers. The
+alpha exists to obtain real usage and reliability evidence; it is not the final credit
+marketplace or the final fully independent community network.
+
+The following owner decisions are settled and must not be reopened by an implementation
+agent:
+
+- The first release provides public inference without credits, earnings, payments, or
+  payouts. Those remain post-alpha work and must not appear as available features.
+- The first supported desktop and qualification matrix is Windows and Linux. macOS is
+  explicitly deferred and must not be claimed as supported until later tests on real
+  Apple devices pass.
+- Qwen3.5 2B is the first-rung primary candidate and Gemma 4 E2B is its standby.
+- GCP and Fly Machines are authorized for bounded qualification and public-alpha
+  infrastructure. Use whichever provider fits the test: GCP/local hosts for platform
+  qualification and Fly for the existing separate-machine recovery adapter.
+- New temporary GCP and Fly test resources share one combined **USD 100 maximum**.
+  Track conservative estimates and observed cost in
+  [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that could exceed
+  the remaining balance.
+- Use the existing `gcloud`, `flyctl`, and `gh` logins. Do not require the owner to copy
+  provider tokens into environment variables when native CLI authentication works.
+
+### Execution loop
+
+On every implementation run:
+
+1. Inspect the worktree and recent commits. Preserve unfinished and unrelated work; do
+   not reset or discard it.
+2. Read the live tracker and select the highest-priority unfinished item whose
+   prerequisites are satisfied.
+3. Implement the smallest complete vertical slice. Do not spend a run merely rewriting
+   the roadmap or restating blockers when useful code, tests, packaging, or operational
+   preparation can proceed.
+4. Run verification proportional to risk. External evidence must name the exact source
+   commit, model manifest, device/profile, and cleanup result.
+5. Update `RELEASE_READINESS.md`, `CHANGELOG.md` when user-visible behavior changed, and
+   the evidence archive when a real gate ran. Never mark a gate complete from a unit test
+   when the gate requires real hardware, separate machines, public infrastructure, or a
+   packaged application.
+6. Commit each verified slice with a descriptive message. Push the working branch and
+   open or update its pull request when the slice is ready for CI; never merge failing
+   required checks or rewrite shared history.
+7. Continue with the next unblocked item. Stop only when the run ends, the release is
+   complete, or every remaining item needs owner input or unavailable external state.
+
+### Cloud safety rules
+
+- Before provisioning, record a conservative maximum estimate in the spend ledger and
+  confirm it fits under the combined USD 100 ceiling.
+- Tag every temporary resource with a unique run ID. Provision only exact resolved
+  targets; never delete by a broad name, glob, project, application, or account scope.
+- Always execute cleanup. A run is failed—not passed—unless it proves that every
+  temporary resource it created was destroyed.
+- Never delete or replace the existing GCP discovery peer
+  `communityai-bootstrap-1`, its disk/address/identity, or an unrelated Fly application.
+- If cleanup cannot be proven, stop new provisioning and report the surviving resource
+  identifiers privately for recovery.
+- Do not expose prompts, credentials, private paths, provider responses, or network
+  endpoints in committed reports.
+
+### Work that requires owner input
+
+Do not block on these while another roadmap item can proceed. Ask the owner only when the
+input is on the critical path:
+
+- a provider login expires and native CLI reauthentication is required;
+- the next bounded cloud run does not fit under the remaining USD 100 ceiling;
+- platform code-signing/notarization credentials or a publisher identity are required;
+- production catalog signing needs independent human key holders;
+- an independent seed or mirror operator must accept operational responsibility; or
+- an irreversible public release action has no tested rollback path.
+
+### Public-alpha definition of done
+
+The alpha is ready only when every required gate in `RELEASE_READINESS.md` is passed.
+At minimum that means exact Windows/Linux qualification for both first-rung candidates,
+real separate-machine interruption recovery, redundant public routes and discovery,
+a published signed catalog/bootstrap, packaged clean-install inference, enforced local
+contribution limits, explicit volunteer-worker privacy disclosure, and a documented
+rollback/disable procedure. Credits and macOS are not alpha gates.
+
+## Implementation evidence snapshot (2026-08-26)
+
+This section is historical context, not the active task queue. Current gate status and
+next actions live in [`RELEASE_READINESS.md`](RELEASE_READINESS.md).
 
 Milestones 1 through 4 are complete. The revival has exact cross-platform inference
 parity, real multi-machine failure recovery, signed manifest and artifact integrity,
@@ -938,10 +1033,11 @@ implementation.
 Detailed baseline evidence and the remaining gates are recorded in
 [`REVIVAL_TEST_RESULTS.md`](REVIVAL_TEST_RESULTS.md).
 
-## Decisions that must be resolved explicitly
+## Stable-service architecture decisions
 
-The following questions require written architecture decisions and prototypes; they
-must not be settled accidentally by the first GUI implementation:
+These are post-alpha design decisions or validation requirements, not open questions
+that block the public inference alpha. They require written architecture decisions and
+prototypes before the corresponding stable-service feature ships:
 
 | Decision | Current position | Evidence required |
 | --- | --- | --- |
@@ -962,9 +1058,13 @@ transport experiments, layer-package distribution, and recovery work are useful
 design references. Direct code merging is unlikely; ideas should be ported behind
 small interfaces and verified against this repository's end-to-end inference path.
 
-## Release gates
+## Stable community-service release gates
 
-No public community release is complete unless all of these are demonstrated:
+The gates below describe the longer-term stable service, including platforms and
+economic features outside the first public inference alpha. They do not override the
+alpha scope and execution order defined above.
+
+No stable community-service release is complete unless all of these are demonstrated:
 
 - distributed output parity against a stock reference model for every published
   execution profile;

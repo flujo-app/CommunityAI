@@ -1,0 +1,88 @@
+# Public inference alpha release readiness
+
+Last verified: 2026-08-26
+
+This is the live source of truth for public-alpha implementation. Update it whenever a
+gate changes state. `docs/REVIVAL.md` defines the execution contract and long-term design;
+`docs/REVIVAL_TEST_RESULTS.md` is the detailed evidence archive.
+
+## Release definition
+
+- Product: public community inference through the packaged localhost OpenAI-compatible
+  API, with optional bounded compute sharing.
+- Label: public alpha. Do not describe it as a stable, production-SLO service.
+- Supported platforms: Windows and Linux.
+- Deferred platform: macOS, until later CPU/MPS and packaged-device testing passes.
+- First catalog rung: Qwen3.5 2B primary, Gemma 4 E2B standby.
+- Not included: credits, earnings, payments, payouts, or a compute marketplace.
+
+## Status vocabulary
+
+- `PASSED`: required real evidence exists and is linked.
+- `IN PROGRESS`: implementation or a real gate run is underway.
+- `READY`: prerequisites exist and the gate can be run.
+- `BLOCKED`: owner input or unavailable external state is required.
+- `TODO`: not yet started.
+- `DEFERRED`: explicitly outside the public-alpha scope.
+
+## Critical path
+
+Work from top to bottom while prerequisites are satisfied. A later task may proceed when
+an earlier task is externally blocked and the work does not weaken or bypass that gate.
+
+| Order | Gate | Status | Current evidence | Next action |
+| ---: | --- | --- | --- | --- |
+| 1 | Integrate the active revival branch and make its CI workflows dispatchable from the repository default branch | IN PROGRESS | Local branch contains the current qualification/catalog/contribution work; focused suites pass | Review the complete diff, run the repository CI selection, then push through the normal branch/PR path |
+| 2 | Make Windows/Linux the strict public-alpha qualification matrix | TODO | The implemented workflow still treats four profiles as incomplete and six profiles as the strict gate | Update workflow, aggregators, tests, and qualification docs so Windows CPU/CUDA and Linux CPU/CUDA are the exact alpha matrix; keep macOS as a separate deferred gate |
+| 3 | Prepare bounded provider automation and cost controls | READY | `gcloud`, `flyctl`, and `gh` native logins work; Fly adapter cleanup is fail-closed; GCP bootstrap exists | Add a conservative pre-provision cost estimate/ledger check and implement or document exact GCP qualification-host lifecycle without touching the bootstrap peer |
+| 4 | Build immutable Qwen3.5 2B and Gemma 4 E2B qualification images/snapshots | TODO | Exact manifests and verified Windows CPU snapshots exist; no Fly qualification image is published | Build credential-free images bound to one source commit and exact verified artifact cache; record digests and bounded sizes |
+| 5 | Qwen3.5 2B Windows/Linux CPU/CUDA qualification | TODO | Historical Windows CPU parity and local interruption recovery pass, but not the strict four-profile matrix | Run all four exact profiles on distinct claimed hosts, aggregate reports, and retain immutable evidence |
+| 6 | Gemma 4 E2B Windows/Linux CPU/CUDA qualification | TODO | Historical Windows CPU parity and local interruption recovery pass, but not the strict four-profile matrix | Run all four exact profiles on distinct claimed hosts, aggregate reports, and retain immutable evidence |
+| 7 | Qwen3.5 2B real separate-machine recovery | READY | Provider-neutral controller and native-auth Fly adapter pass deterministic tests | After its accepted Windows/Linux matrix and image exist, run one bootstrap plus four Fly workers, kill the selected worker during generation, prove exact recovery and cleanup |
+| 8 | Gemma 4 E2B real separate-machine recovery | READY | Same harness supports the 35-block layout | Repeat the exact Fly gate with the Gemma image and retain bounded evidence |
+| 9 | Publish edge resource envelopes for selectable profiles | TODO | Older Qwen3 1.7B Windows CPU envelope exists; refreshed candidates lack complete supported-profile envelopes | Measure cold cache, disk, RAM/VRAM, first token, decode rate, and cleanup behavior on each supported device class |
+| 10 | Operate redundant public model routes | TODO | One discovery peer exists; no production candidate worker routes are public | Deploy bounded Qwen primary and Gemma standby workers with at least two complete routes and prove largest-worker-loss survival and soak |
+| 11 | Remove single-provider discovery and catalog availability | TODO | One GCP discovery peer is live | Add a second seed on a separate provider, two HTTPS catalog mirrors, cached-peer recovery, and seed-loss drills; independent human operation remains a stable-release follow-up if unavailable for alpha |
+| 12 | Create and publish the signed alpha catalog/bootstrap | TODO | Schema, threshold verifier, rollback protection, consumer, publication preflight, and deterministic bundle builder pass locally | Establish alpha signing/public-key handling, publish qualified manifests through mirrors, and produce the exact self-verifying publication bundle without committing private keys |
+| 13 | Pass packaged clean-install inference on Windows and Linux | TODO | Unsigned engineering bundles and a Windows sidecar lifecycle smoke pass; no production bundle exists | Stage the publication bundle, install on clean hosts, discover public workers, generate through localhost, restart, and repeat without developer files or credentials |
+| 14 | Pass contribution-control hardware checks | IN PROGRESS | Disk, schedule, VRAM, bandwidth, power, model policy, and bounded pause exist at source level | Wire every control into the packaged GUI and validate real enforcement/unsupported telemetry behavior on supported hardware |
+| 15 | Complete alpha release engineering | TODO | No signed installers, authenticated updater, rollback, or uninstall evidence | Establish publisher/signing inputs, build signed Windows/Linux artifacts, test install/update/rollback/uninstall and retained-data behavior, publish checksums and recovery instructions |
+| 16 | Complete public-alpha safety and operations | TODO | Manifest/worker security and privacy disclosure exist; public admission/rate/health operations remain | Add admission/rate limits, bounded abuse controls, privacy-safe health reconstruction, disable/rollback runbook, and a monitored limited rollout |
+| 17 | Publish and observe the public alpha | TODO | Owner has authorized a public inference alpha, but preceding gates are open | After gates 1–16 pass, publish with explicit alpha/support/privacy limitations, preserve rollback, and monitor real route/worker failures |
+
+## Deferred work
+
+| Item | Status | Resume condition |
+| --- | --- | --- |
+| macOS CPU/MPS and packaged application support | DEFERRED | Real Apple-device hosts and testers are available |
+| Credits, receipts, balances, spend authorization, earnings, and payouts | DEFERRED | Public inference alpha is live and its reliability/privacy behavior is understood |
+| Compute marketplace and jurisdiction-specific payment onboarding | DEFERRED | Accounting threat model, legal review, and independent audit are complete |
+| Larger model ladder rungs | DEFERRED | First-rung public capacity and operations are stable |
+
+## Cloud authorization and spend ledger
+
+Authorization applies only to CommunityAI qualification and public-alpha infrastructure.
+The ceiling is USD 100 combined across new temporary GCP and Fly resources. The existing
+GCP bootstrap's ordinary baseline cost is tracked separately; never delete it as test cleanup.
+
+Before every paid run, add an entry with a conservative maximum. After cleanup, replace
+the estimate with observed cost when available. If provider billing is delayed, retain the
+maximum estimate until actual cost is known.
+
+| Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| No new paid run recorded | — | — | USD 0 | USD 0 | — | READY |
+
+Remaining authorized maximum: **USD 100**, less any later unresolved maximum estimates
+or observed new-resource cost recorded above.
+
+## Evidence update rules
+
+- Link a passed gate to an immutable report, source commit, manifest digest, and relevant
+  workflow/provider run.
+- Never put credentials, prompts, provider output, private paths, or private endpoints here.
+- A deterministic unit/integration test may prove implementation readiness, but it cannot
+  pass a gate that explicitly requires external hardware, multiple hosts, public workers,
+  packaging, signing, or real cleanup.
+- When a gate fails, keep the failure evidence, return its status to `READY` or `IN PROGRESS`,
+  and record the concrete next action. Never lower the gate merely to obtain a pass.
