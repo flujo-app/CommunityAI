@@ -86,6 +86,7 @@ jobs:
             tests/test_qualification_harness.py \
             tests/test_qualification_matrix.py \
             tests/test_qualification_cost_guard.py \
+            tests/test_qualification_image_contract.py \
             tests/test_qwen3_5_block.py \
             tests/test_qwen3_5_multimodal_loading.py \
             tests/test_route_health.py \

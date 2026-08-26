@@ -1,8 +1,9 @@
 # Qualification runner operations
 
-Status: repository-side host preparation and a fail-closed combined-cloud cost
-guard are implemented. No Windows/Linux qualification fleet, four-profile candidate
-matrix, or separate-machine recovery result is claimed by this runbook.
+Status: repository-side host preparation, a fail-closed combined-cloud cost guard,
+and exact qualification-image input contracts are implemented. No image, Windows/Linux
+qualification fleet, four-profile candidate matrix, or separate-machine recovery result
+is claimed by this runbook.
 
 This procedure prepares one dedicated repository-level GitHub Actions runner for
 exactly one qualification profile. Repeat it on separate hosts for
@@ -69,6 +70,55 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
 
 This Fly example is not a USD 20 authorization: current provider pricing must justify
 the chosen maximum, and the exact row still must be recorded before the adapter runs.
+
+## Exact qualification image inputs
+
+Run `scripts/qualification_image_contract.py prepare` separately for `qwen3.5-2b`
+and `gemma-4-e2b` from the exact source commit to be qualified. The input root must
+be an absolute, fully materialized snapshot containing only the files and directories
+declared by that candidate manifest. Symbolic links, Windows junctions, unexpected
+empty directories, extra files, size drift, and SHA-256 drift fail closed. Do not pass
+a shared Hugging Face cache containing links; copy the exact snapshot into an isolated
+unlinked directory first.
+
+The image tag is credential-free and must end in `source-<40-character-source-SHA>`.
+Registry authentication remains external to the command and must never be placed in
+the tag, build arguments, snapshot, contract directory, or evidence. For example:
+
+```powershell
+$sourceCommit = git rev-parse HEAD
+uv run --no-sync python scripts/qualification_image_contract.py prepare `
+  --candidate qwen3.5-2b `
+  --snapshot-root <absolute-unlinked-qwen-snapshot> `
+  --source-commit $sourceCommit `
+  --image-tag registry.example/communityai/qwen3.5-2b:source-$sourceCommit `
+  --output-dir qualification-image-inputs/qwen3.5-2b-$sourceCommit
+```
+
+Preparation calls neither Docker nor a provider. It materializes a tracked-only source
+context directly from the exact Git commit, requires the selected candidate manifest to
+match that commit, and copies the exact manifest plus two bounded JSON contracts; dirty,
+staged, untracked, and ignored working-tree files cannot enter the context. An explicit
+`--repository-root` must name the absolute, unlinked Git top-level directory; the CLI
+preserves link and Windows-junction identity until that check has passed. The model
+bytes remain in the named snapshot context. The emitted shell-free Buildx command uses
+`linux/amd64`, two digest-pinned base images, the locked project environment, named
+`snapshot` and `contract` contexts, maximum provenance, an SBOM, and `--push`. The
+Dockerfile copies no credential, forces Hub and Transformers offline mode at runtime,
+and rehashes the source inventory, Dockerfile, manifest identity, declared byte count,
+and copied model snapshot inside the build before running as UID/GID 65532.
+
+Do not edit the generated `source` or contract directories. Review the generated
+command array before executing it, and regenerate it if any input changes. Execute it
+only on a Docker-enabled builder after native registry authentication and any applicable cost
+reservation. Preserve the Buildx metadata, then resolve the published tag to its
+immutable OCI digest and inspect every manifest/layer size. Reject the result if the
+digest is absent, the platform is not exactly `linux/amd64`, or the compressed and
+uncompressed totals exceed the separately reviewed registry/Fly limits. Record those
+bounded totals and immutable digest in release evidence before setting Gate 4 to
+`PASSED`. A prepared contract reports `image_built=false`,
+`image_published=false`, and `qualification_evidence=false`; it cannot satisfy the
+external image or candidate qualification gates by itself.
 
 ## Exact temporary GCP fleet lifecycle
 

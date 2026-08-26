@@ -22,6 +22,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   with selected-worker hard kill and fail-closed resource cleanup.
 - A fail-closed combined GCP/Fly qualification cost guard with a conservative USD 69
   four-host GCP plan and exact isolated create, cleanup, and cleanup-verification targets.
+- Exact-snapshot qualification image preparation with commit-derived tracked-only source
+  contexts, exact candidate-manifest binding, digest-pinned base images, bounded
+  source-bound tags, credential-free offline runtime inputs, provenance/SBOM push plans,
+  and in-image source, Dockerfile, manifest, byte-inventory, and artifact re-verification
+  for Qwen3.5 2B and Gemma 4 E2B.
 
 ### Changed
 
