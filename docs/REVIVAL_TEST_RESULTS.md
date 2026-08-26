@@ -535,13 +535,159 @@ seconds with exact parity, and closed both its first-token and generation
 sessions. All 12 temporary Machines were then destroyed; the final Fly Machine
 list was empty.
 
+## Provider-neutral multi-machine controller
+
+On 2026-08-25, the manual Fly log procedure was converted into the provider-neutral
+[`qualify_model_multimachine.py`](../scripts/qualify_model_multimachine.py) controller.
+It consumes pre-provisioned resources instead of embedding a cloud provider. Its strict
+topology requires two disjoint complete split routes on unique machine identities and
+maps stable signed PeerIDs to opaque resources. After the first token, it hard-kills a
+worker selected on the active route through a shell-free private adapter, continues the
+same inference session through another machine, and compares the complete token IDs
+directly with the stock model. It then opens a clean request, proves that route excludes
+the victim and matches the stock prefix, closes that session, and stops and joins the
+client DHT. The report fails if activation replay/session progress, finite recovery,
+exact topology membership, a fresh nonce-bound hard-kill acknowledgement, clean-request
+parity, client shutdown, or complete resource cleanup is absent.
+
+Control acknowledgements use exact schemas and a per-invocation random nonce passed
+through dedicated environment variables. Combined adapter output and every controller
+input are bounded. Provider output is discarded, while diagnostic evidence redacts
+private paths, network endpoints, and secret-like assignments. Once a valid topology
+and cleanup command establish the controller's cleanup boundary, the full control plan
+and all later stages execute under `finally`-protected cleanup.
+
+On 2026-08-25, the first opt-in provider implementation was added in
+[`fly_qualification_adapter.py`](../scripts/fly_qualification_adapter.py), with
+[`fly_qualification_node.py`](../scripts/fly_qualification_node.py) as the image-side
+entrypoint. It provisions one bootstrap and four worker Machines in an existing
+isolated Fly app, tags every provider resource with the opaque run/resource labels,
+derives two disjoint split routes for both the 24-block Qwen3.5 candidate and 35-block
+Gemma candidate, discovers only stable public PeerIDs, and writes the controller's
+private topology and control plan. Selected interruption verifies the provider metadata,
+requests `SIGKILL`, waits for the stopped state, and returns the controller nonce.
+Cleanup discovers all run-tagged resources, force-destroys them, and refuses to
+acknowledge while any remain. A private journal plus an exception/SIGTERM cleanup trap
+covers partial provisioning before controller preflight. The app is never deleted and
+`FLY_API_TOKEN` is read only from the environment.
+
+The offline controller state-machine suite has 16 passing tests covering independence,
+coverage, complete matrix-host binding, selected replacement, acknowledgement freshness
+and exact schemas, token equality, clean post-recovery routing, client shutdown evidence,
+bounded input/output, cleanup after accepted preflight, redaction, and failure reporting.
+The provider suite adds 29 passing cases for both candidate block layouts, controller
+schema compatibility, unique provider resources, ambiguous partial-create and delayed
+visibility cleanup, selected hard-kill binding, complete cleanup, shell-free local argv
+with immediate bounded-output overflow termination, bounded state input, strict `fdaa`
+6PN addressing, changed-metadata and duplicate-identity rejection, exact image-side
+runtime arguments, full-range worker rejection, and provider error redaction. Generated
+control argv retains only the private state filename, and the controller executes it from
+the private control-plan directory; tests cover both interruption and cleanup working
+directories. Cleanup fails closed rather than claiming that an already-missing journaled
+Machine was destroyed.
+
+The manual matrix now has a two-stage readiness boundary before any expensive model job.
+A repository runner-inventory validator requires exactly one online, OS-matched runner
+with exactly one of the six qualification profile labels. Its bounded report contains no
+runner names, API identifiers, or private paths. After inventory passes, all six hosts run
+a configuration-only preflight that checks the claimed OS, every manifested snapshot file
+and declared size, a privacy-safe machine label, the actual checkout against the claimed
+source commit, and CUDA/MPS availability without hashing model bytes or invoking the
+qualification harness. Both readiness outputs explicitly set `qualification_evidence=false`
+and `complete_release_qualification=false`. Qualification starts only after every preflight
+passes. The strict matrix aggregate also rejects a normalized machine label reused across
+profiles, so one same-OS host cannot impersonate multiple qualification hosts through case
+variants or an identical opaque label. Windows preflight now installs the patched Hivemind
+runtime before importing DRIFT, and aggregation installs and uses the locked project
+environment rather than an isolated `packaging`-only environment.
+
+Together with the external-runner, fleet-readiness, strict-matrix, controller, and Fly
+adapter suites, the focused qualification slice passes all 70 tests. The expanded
+qualification, catalog-publication, desktop-builder, and recovery slice passes 109 tests;
+the model-manifest and recovery subset passes 37. Black leaves all 26 changed Python files
+unchanged, and a local YAML compose parse plus the repository workflow contract tests pass.
+`actionlint` was unavailable. This is repository automation only. No Qwen3.5 or Gemma
+multi-machine report has been produced, so the external gate remains open and every
+controller report retains `complete_release_qualification=false`.
+
+The local recovery suite now also covers a worker disappearing from a nonzero middle
+span after prefix history exists, followed by a replacement route with different block
+boundaries. The regression checks offset per-layer history and prompt slicing, complete
+activation replay, trimming back to the current token before the existing downstream
+session, aligned positions, failed-peer closure/exclusion, finite retry, and
+reference-equivalent output. A route-level retry regression additionally makes the first
+replacement fail during replay and proves that a second replacement receives the complete
+cached prefix. A direct real-session regression disconnects on the second replay chunk,
+checks that complete activation and per-layer history plus prompts survive partial progress,
+and successfully rebuilds another replacement from position zero. All seven tests in
+`tests/test_inference_recovery.py` pass in the existing CUDA environment and both the test
+and production recovery module pass Black. This is deterministic local coverage, not
+separate-machine evidence.
+
+On 2026-08-26, the catalog handoff gate was tightened across the copy boundary. The
+desktop builder now fixes the PyInstaller onedir content location, revalidates the actual
+packaged publication bundle, and refuses to attest metrics when it differs from the
+source evidence captured before packaging. The bundle loader now rejects every Windows
+reparse point on all supported Python versions rather than depending on the newer
+`Path.is_junction()` API. Expanded tests mutate every indexed member without changing
+its size, reformat every JSON document while keeping the index internally consistent,
+exercise root/member symlinks, and cover identical, mutated, and different-valid
+packaged copies. The focused catalog-publication and desktop-builder gate passes all 37
+tests in the existing CUDA environment. This remains repository/package-integrity
+evidence; it does not claim external qualification, public infrastructure, or packaged
+inference.
+
+On 2026-08-26, the first authoritative node contribution-policy slice closed the
+model-admission and storage-ceiling gap. Sharing now defaults off; worker auto-start and
+control start/restart fail closed until the policy enables sharing with a finite disk
+ceiling. Allow, prefer, and deny selectors resolve to the exact configured model across
+names, aliases, and manifest digests, including semantic overlap rejection. The smaller
+of the node and worker disk ceilings reaches the server command, the policy pause timeout
+controls termination, status reports the resolved decision without secrets, and a blocked
+control action returns HTTP 409 while pause stays available. The max-loaded-models CLI
+override also preserves the policy instead of silently replacing it. The node config,
+worker supervisor, and authenticated node API slice passes all 29 tests; Black and isort
+accept the six changed Python files.
+
+The same 2026-08-26 policy path now enforces strict weekly contribution schedules.
+The parser requires nonempty weekday windows, exact 24-hour times, distinct start/end
+boundaries, and `local`, `UTC`, or an available IANA timezone; overnight windows
+retain the start day's ownership. The supervisor defers configured auto-start while a
+window is closed, terminates running workers concurrently through each worker's existing
+pause timeout, preserves desired-running intent, and resumes at reopening even when crash
+auto-restart is disabled. Previously crashed non-restarting workers remain crashed across a
+closed window. Manual start/restart remains fail-closed with HTTP 409, while pause remains
+available. Snapshots distinguish schedule eligibility, reason, and suspension from static
+model admission. The focused node-config and supervisor run passes 26 tests; the node API
+module has one environment skip because FastAPI is unavailable in the CUDA test environment.
+Black and isort accept the five touched Python files. VRAM, bandwidth, and power budgets
+remain open, so this is not complete
+contribution-controls, packaged-OS, or release evidence.
+
+The same 2026-08-26 source slice adds exact per-user login-startup backends and
+single-instance ownership. Temporary XDG/macOS paths and an injected falsey Windows
+registry cover exact enable/read/disable behavior without changing a real OS startup
+entry; tests also cover Windows command bounds, Linux field-code escaping, relative XDG
+fallback, control characters, live/dangling symlinks, minimized login intent, and stable
+per-user instance naming. Eleven source/backend tests pass. Two real-Qt local-endpoint
+smokes are present but skipped in the current CUDA environment because PySide6 is not
+installed there; the complete desktop suite reports 43 passes and those two explicit
+skips. The combined catalog, builder, and startup slice reports 48 passes and two skips,
+and Black plus isort accept all eight changed Python files. Packaged Windows, Linux, and
+macOS login/activation validation remains open.
+
 ## Follow-up issues
 
-1. Turn the route-aware Fly SIGKILL procedure into an opt-in script with a cleanup
-   trap, so the paid test can be repeated without manual log orchestration.
-2. Extend end-to-end interruption testing to split replacement routes and Gemma 4;
-   beam-search recovery needs a reorder-aware activation history before it can be
-   enabled safely.
+1. Provision and register the six uniquely labelled qualification hosts, configure the
+   read-only repository runner-inventory credential, and run the strict six-profile Qwen3.5
+   2B and Gemma 4 E2B matrices, then build each immutable Fly qualification
+   image and execute the adapter/controller gate for both candidates.
+2. Exercise the changed-boundary replacement route in the controlled separate-machine
+   interruption gate; beam-search recovery needs a reorder-aware activation history before
+   it can be enabled safely.
+3. Enforce the remaining VRAM, bandwidth, and power budgets authoritatively in the
+   node, connect the schedule policy to packaged controls, and validate every budget
+   against real OS resource behavior.
 
 Resolved on 2026-08-22: the native hosted macOS security/parity workflow is green;
 Hivemind P2P cleanup no longer queries a closed global uvloop; legacy

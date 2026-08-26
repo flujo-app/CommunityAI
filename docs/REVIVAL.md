@@ -26,7 +26,7 @@ following remotes are configured in the local revival checkout:
 - `nakshatra`: an active, independent llama.cpp/GGUF distributed-inference effort
   that we will track for discovery, transport, and reliability ideas.
 
-## Current status (2026-08-23)
+## Current status (2026-08-26)
 
 Milestones 1 through 4 are complete. The revival has exact cross-platform inference
 parity, real multi-machine failure recovery, signed manifest and artifact integrity,
@@ -64,10 +64,36 @@ blocks passed full-artifact Windows CPU parity and two-replica selected-worker r
 Its cold-client Windows CPU edge envelope is also measured. That older checkpoint proves
 the harness but is not a production-ladder candidate. The 2026-08-23 ladder refresh now
 targets current size-specific Qwen3.5/Qwen3.8 primaries, Gemma 4 standbys through 31B,
-and Llama 4 standbys for larger MoE rungs. Their adapters or exact manifests, signed
-catalog distribution, release bootstrap, and actual model workers are not yet published.
-Those implementation, qualification, publication, and real packaged clean-install
-inference gates are the immediate objective.
+and Llama 4 standbys for larger MoE rungs. Exact Qwen3.5 2B and Gemma 4 E2B candidate
+manifests now pass full-artifact Windows CPU stock parity and two-replica interruption
+recovery. A manual self-hosted workflow now checks the repository runner inventory for
+exactly one online, OS-matched host per claimed Windows/Linux/macOS CPU/CUDA/MPS profile,
+then preflights every declared snapshot file and size, verifies the actual checkout matches
+the claimed source commit, and checks the real device before any expensive model job begins.
+The identity-free inventory artifact and host readiness outputs cannot claim qualification.
+Passing hosts preserve immutable qualification reports and feed one strict source/runtime
+matrix. Both Windows preflight and qualification build and retain the repository-patched
+Hivemind runtime after the locked dependency sync, and aggregation now uses the same locked
+project environment. The workflow has not yet been run on the required hardware. A provider-neutral multi-machine controller now requires a passed
+matrix with complete host evidence, two disjoint complete split routes, a fresh nonce-bound
+selected-peer hard-kill acknowledgement, exact same-session stock parity, a clean
+post-recovery request, an observed stopped/joined client DHT, and complete
+provisioned-resource cleanup after its accepted preflight boundary. An opt-in Fly
+Machines adapter now provisions one isolated bootstrap plus four exact-manifest workers,
+discovers their stable public PeerIDs, generates the private topology/control inputs,
+binds a selected worker to provider metadata before requesting SIGKILL, and destroys all
+run-tagged Machines. Its private state journal and outer exception/SIGTERM cleanup trap
+cover failures before controller preflight. The bounded report retains neither provider
+commands/output, private paths, network endpoints, bootstrap addresses, nor the synthetic
+prompt. The adapter and controller have not yet been exercised against the candidate
+models on real separate hosts. The
+repository-local publication handoff is now a deterministic,
+self-verifying directory containing the exact signed catalog, bootstrap, manifests,
+preflight report, and a digest index; desktop packaging revalidates and stages that
+complete bundle instead of trusting a standalone report. No production bundle has been
+created or published.
+Multi-machine qualification, signed catalog publication, public model workers, release
+bootstrap, and real packaged clean-install inference remain the immediate objective.
 Contribution policies and budgets, accessibility and resource measurements, and signed
 installer/update/rollback validation follow. Milestones 6 through 8 remain planned
 after this desktop foundation.
@@ -692,7 +718,31 @@ implementation.
    `drift node` on an isolated loopback port, joined through the published DNS seed,
    authenticated the control API without creating `control-api.key`, and shut down the
    owned node cleanly. The packaged Windows sidecar then passed that same native-credential,
-   public-seed, authenticated-readiness, and owned-shutdown path.
+   public-seed, authenticated-readiness, and owned-shutdown path. The desktop source
+   now also arbitrates one per-user instance with a lock-owned local endpoint: a manual
+   second launch sends a bounded activation command, while a login-triggered launch exits
+   silently if the primary is already running. The Sharing page registers exact shell-free
+   per-user startup entries through Windows Run, a macOS LaunchAgent, or Linux XDG
+   autostart; it starts minimized, rejects control-character/field-code injection and
+   unsafe link targets, and never writes an entry merely by opening the app. Source and
+   injected-backend tests are complete, while real packaged login/activation behavior on
+   all three operating systems remains an installer gate.
+
+   The first authoritative contribution-policy slice is now enforced by the node,
+   not only represented in GUI state. Sharing defaults off and an enabled worker cannot
+   auto-start until the node policy explicitly enables contribution with a finite disk
+   ceiling. Allow, prefer, and deny selectors resolve through the configured exact model,
+   so names, aliases, and manifest digests cannot bypass policy and semantic conflicts fail
+   startup. Each admitted worker inherits the policy disk ceiling or its own smaller limit;
+   the supervisor exposes the resolved decision and refuses policy-blocked start/restart
+   controls with HTTP 409 while pause remains available. The policy pause timeout also
+   bounds graceful shutdown before a hard kill, and command-line residency overrides no
+   longer discard contribution policy. This closes authoritative model admission plus
+   disk/pause enforcement. A strict weekly schedule now uses explicit local, UTC, or
+   available IANA timezone windows; auto-start defers while closed, running workers stop
+   within the policy timeout, desired intent survives the suspension, and workers resume
+   when the window reopens without treating the transition as a crash. Manual start and
+   restart fail closed outside the window. VRAM, bandwidth, and power budgets remain open.
 
    The strict signed-catalog foundation is now implemented separately from worker
    identity: offline Ed25519 roots enforce configurable signature thresholds, expiry,
@@ -707,8 +757,22 @@ implementation.
    catalog plus its content-addressed manifests can recover offline. The desktop invokes
    this only when its configuration is missing and passes no credential to the bootstrap
    process. The format and release gate are specified in
-   [`CATALOG_BOOTSTRAP_V1.md`](CATALOG_BOOTSTRAP_V1.md). Catalog publication and worker
-   allocation remain open.
+   [`CATALOG_BOOTSTRAP_V1.md`](CATALOG_BOOTSTRAP_V1.md). A fail-closed publication
+   preflight now verifies the signed envelope and embedded root, distinct mirror hosts
+   and seed endpoints/identities, exact local manifest set and weight bytes, selector
+   uniqueness, and redundant rung policies while explicitly retaining
+   `complete_release_qualification=false`. Its report now binds the exact canonical
+   bootstrap digest. A deterministic publication-bundle command atomically writes that
+   report with the canonical signed catalog, bootstrap, digest-addressed manifests, and a
+   strict member index. Its loader rejects symlinks, extra or missing members, noncanonical
+   JSON, digest/size drift, and any cross-document mismatch; `--force` can replace only a
+   previously valid bundle. The desktop release builder now validates and stages the
+   whole public bundle, revalidates the actual packaged copy against its pre-copy
+   evidence, records only the packaged index and member digests in
+   `desktop-metrics.json`, and leaves no-input engineering builds unchanged. The offline catalog and desktop
+   builder tests are the deterministic and packaging-integration CI gates. This closes the repository-local packaging handoff; no
+   production bundle was created, and catalog publication, external qualification,
+   independent infrastructure, worker allocation, and packaged inference remain open.
 
    The model-agnostic local qualification runner now derives repository, revision,
    block count, DHT namespace, dtype, attention profile, and artifact verification from
@@ -720,22 +784,104 @@ implementation.
    same-dtype block. A separate cold-client Windows CPU route then measured the exact
    model's cache, local embedding/head, RSS, first-token, and decode envelope.
    This preserves harness and loader evidence but does not promote the older model into
-   the refreshed production ladder. The dense Qwen3.5 text path now supports its three-to-one
-   Gated DeltaNet/full-attention pattern with fixed recurrent state, conservative cache accounting,
-   nested multimodal-wrapper loading, and exact synthetic cached-decode parity through a real local
-   Hivemind RPC route. Real-checkpoint and external evidence remain open as specified in
-   [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
+   the refreshed production ladder. The exact Qwen3.5 2B primary candidate now verifies
+   4,571,197,320 declared bytes, serves all 24 hybrid blocks, matches stock token IDs, and
+   recovers through a surviving signed replica in 12.797 seconds. The exact Gemma 4 E2B
+   standby candidate verifies 10,278,818,149 declared bytes, serves all 35 blocks, matches
+   stock token IDs, and recovers in 8.516 seconds. The Gemma run was forced offline and
+   loaded only from its verified immutable snapshot. Both bounded Windows CPU reports retain
+   `complete_release_qualification=false`; multi-machine, cross-platform, resource-envelope,
+   and public-worker gates remain open as specified in
+   [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md). The local runner now records
+   privacy-safe host identity plus observed device, dtype, and attention evidence, and a strict
+   combiner fails closed unless every explicitly claimed Windows/Linux/macOS CPU/CUDA/MPS
+   profile has a complete exact-manifest parity and failover report from a unique normalized
+   machine identity. A manual self-hosted
+   workflow now first validates a bounded repository runner inventory, requiring exactly one
+   online OS-matched runner with exactly one qualification profile label. It then preflights
+   all six hosts for every declared snapshot file and size, an actual checkout matching the
+   claimed source commit, and real CUDA/MPS availability before any qualification job starts.
+   Only after those readiness gates pass does it run one exact candidate across all profiles
+   with Hub access forced offline, upload immutable bounded reports, and emit a strict aggregate
+   bound to one source commit and DRIFT build. Readiness reports retain neither runner names nor
+   API identifiers and explicitly are not qualification evidence. Both Windows preflight and
+   qualification build and install the patched Hivemind wheel after the locked environment sync
+   and run without resynchronizing it away; aggregation also runs in that locked project
+   environment instead of an incomplete isolated dependency set.
+   This completes repository-side cross-platform collection automation, not the external
+   hardware gate; no six-profile candidate matrix has been claimed. The provider-neutral
+   multi-machine controller now consumes that passed matrix plus a strict private run
+   topology and shell-free control adapter. It requires two disjoint split routes on unique
+   machines, exact manifested DHT membership, a nonce-bound hard kill of the selected active
+   PeerID, activation replay and continued session progress through another machine, direct
+   stock token-ID equality, a separate clean request that excludes the victim, a stopped and
+   joined client DHT, and cleanup of every declared bootstrap/worker resource after cleanup
+   preflight. JSON, prompts, argv entries, and adapter output are bounded; diagnostic evidence
+   redacts paths, endpoints, and secret-like values. The opt-in Fly Machines adapter now
+   provisions the five run-tagged resources, derives the two routes for either candidate's
+   manifested block count, discovers stable public PeerIDs without reading private identity
+   bytes, and supplies exact SIGKILL/cleanup acknowledgements while retaining an outer cleanup
+   trap. Generated control argv names the private state journal only relative to the private
+   control-plan directory, and the controller scopes both interruption and cleanup there.
+   Cleanup now requires strict `fdaa` 6PN addressing, detects a one-byte bounded-output
+   overflow immediately, reconciles delayed create visibility across three stable-empty scans,
+   and refuses to claim destruction for an already-missing journaled Machine. Client-side
+   recovery regression coverage now also exercises a failed nonzero middle span whose
+   replacement route changes block boundaries, including offset history slicing, downstream
+   token trimming, aligned positions, failed-peer exclusion, and finite retry. It also forces
+   a first replacement to disconnect after partial chunked replay, proves that complete
+   activation and per-layer history plus prompts remain available to a second replacement,
+   and reaches reference-equivalent output through bounded route retry. Sixteen
+   controller tests plus twenty-nine adapter tests cover the fail-closed contracts; the local
+   regression is not external evidence, and no real Qwen3.5 or Gemma separate-host run has
+   been claimed.
 
-   **Next implementation sequence.** Generate and qualify exact Qwen3.5 2B primary and Gemma 4
-   E2B standby manifests against their implemented adapters,
-   operate redundant model workers, publish the initial signed catalog through
-   interchangeable HTTPS mirrors, and build the release bootstrap with the published
-   DNS peer plus at least one independent seed. Then pass real packaged
+   **Qualification infrastructure and remaining platform gap.** Release qualification is
+   not generally blocked on unavailable hardware. The available local machine, Fly Machines,
+   and GCP can cover the Windows and Linux work: the local machine can supply an appropriate
+   Windows profile, GCP can provision Windows/Linux CPU and CUDA profiles subject to GPU
+   quota and compatible images, and the existing Fly adapter can provision the isolated
+   Linux bootstrap/workers needed for controlled separate-machine recovery. The only genuine
+   hardware-profile gap is macOS, especially Apple Silicon/MPS, because neither Fly nor GCP
+   supplies that platform. Credentials visible to the qualification run, GPU quota, image
+   selection, snapshot placement, runner registration/labels, workflow dispatch, and report
+   retention are operational prerequisites, not hardware blockers.
+
+   Windows/Linux profile collection and Fly topology provisioning are runnable now, but the
+   current release workflow and multi-machine controller deliberately fail closed unless their
+   input contains the exact six-profile Windows/Linux/macOS CPU/CUDA/MPS matrix. Consequently,
+   a four-profile Windows/Linux matrix cannot produce the strict aggregate, and the current
+   controller cannot complete Fly recovery qualification from that partial evidence. Fly can
+   provision the recovery infrastructure independently; it cannot yet produce a passing
+   controller report independently. No partial matrix, infrastructure smoke, or recovery run
+   may set `complete_release_qualification=true`.
+
+   Final Qwen3.5 2B and Gemma 4 E2B qualification on macOS CPU and macOS MPS is therefore
+   deferred until Apple/macOS runner capacity is available or the supported release matrix is
+   explicitly changed. This deferral is separate from the Windows/Linux and Fly work that can
+   proceed now, and it does not claim macOS support or complete release qualification.
+
+   **Next implementation sequence.** First decouple incremental evidence collection from the
+   final release gate: add a bounded partial-matrix path that can collect the four available
+   Windows/Linux profiles and authorize an explicitly incomplete Fly recovery exercise while
+   preserving the existing exact-six fail-closed path for a passing release report. Partial
+   aggregate and recovery outputs must list the missing macOS profiles and retain
+   `complete_release_qualification=false`. Then provision and register the uniquely labelled
+   Windows and Linux qualification runners using the local machine and GCP, configure the
+   read-only runner-inventory credential, and collect Qwen3.5 2B and Gemma 4 E2B evidence on
+   those profiles. Use Fly to execute the controlled separate-machine interruption/recovery
+   exercise for both exact candidates and preserve its bounded evidence. In parallel, obtain
+   macOS CPU/MPS capacity or explicitly revise the supported release matrix. Only after every
+   profile in that declared release matrix and both separate-machine recovery gates pass may
+   the roadmap proceed to operating redundant public model workers, publishing the initial
+   signed catalog through interchangeable HTTPS mirrors, and building the release bootstrap
+   with the published DNS peer plus at least one independent seed. Then pass real packaged
    clean-install inference and prove the native credential and owned-process path against real
-   packaged Windows, Linux, and macOS credential backends. After that, add single-instance
-   and login startup behavior, feed privacy-safe peer-region observations into the region
-   view, enforce contribution budgets and model policy in the node rather than only in
-   the GUI, and complete resource, accessibility, signed installer, upgrade, rollback,
+   packaged Windows, Linux, and macOS credential backends. After that, validate the
+   source-complete single-instance and login-startup behavior in each packaged OS,
+   feed privacy-safe peer-region observations into the region view, enforce the remaining
+   VRAM, bandwidth, and power budgets in the node rather than only in the GUI,
+   and complete resource, accessibility, signed installer, upgrade, rollback,
    uninstall, and retained-data gates on all three operating systems.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and

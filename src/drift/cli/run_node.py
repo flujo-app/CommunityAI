@@ -140,6 +140,7 @@ def _load_node_config(args: argparse.Namespace) -> NodeConfig:
             max_loaded_models=args.max_loaded_models,
             models=configured.models,
             workers=configured.workers,
+            contribution_policy=configured.contribution_policy,
             discovery_update_period=configured.discovery_update_period,
             discovery_startup_timeout=configured.discovery_startup_timeout,
         )
@@ -214,6 +215,34 @@ def _build_model_manager(
 def _build_worker_supervisor(
     config: NodeConfig, manager: ModelManager, *, token: str | None = None
 ) -> WorkerSupervisor:
+    policy = config.contribution_policy
+
+    def model_key(descriptor: ModelDescriptor) -> str:
+        return (descriptor.manifest_digest or descriptor.model_id).casefold()
+
+    def resolve_policy_models(selectors: tuple[str, ...], field: str) -> set[str]:
+        resolved = set()
+        for selector in selectors:
+            try:
+                resolved.add(model_key(manager.resolve(selector)))
+            except ModelNotFoundError as exc:
+                raise NodeConfigError(f"contribution_policy.{field} selects {exc}") from exc
+        return resolved
+
+    allowed_models = resolve_policy_models(policy.allowed_models, "allowed_models")
+    preferred_models = resolve_policy_models(policy.preferred_models, "preferred_models")
+    denied_models = resolve_policy_models(policy.denied_models, "denied_models")
+    if allowed_models.intersection(denied_models):
+        raise NodeConfigError("contribution policy resolves the same model as both allowed and denied")
+    if preferred_models.intersection(denied_models):
+        raise NodeConfigError("contribution policy resolves the same model as both preferred and denied")
+    if allowed_models and not preferred_models.issubset(allowed_models):
+        raise NodeConfigError("contribution policy preferred models must also be allowed")
+    if (policy.max_disk_space is None) != (policy.max_disk_bytes is None):
+        raise NodeConfigError("contribution policy has an inconsistent max_disk_space value")
+    if policy.sharing_enabled and policy.max_disk_bytes is None:
+        raise NodeConfigError("contribution policy requires max_disk_space while sharing is enabled")
+
     manifested_models = {}
     for model_config in config.models:
         manifest = ModelManifest.load(model_config.manifest_path)
@@ -237,6 +266,30 @@ def _build_worker_supervisor(
             )
         if worker.public_ip is not None and worker.port is None:
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
+
+        resolved_model = model_key(descriptor)
+        if not policy.sharing_enabled:
+            policy_reason = "sharing is disabled by contribution policy"
+        elif resolved_model in denied_models:
+            policy_reason = f"model {descriptor.model_id!r} is denied by contribution policy"
+        elif allowed_models and resolved_model not in allowed_models:
+            policy_reason = f"model {descriptor.model_id!r} is not in the contribution allowlist"
+        else:
+            policy_reason = None
+        policy_admitted = policy_reason is None
+
+        if (worker.max_disk_space is None) != (worker.max_disk_bytes is None):
+            raise NodeConfigError(f"worker {worker.worker_id!r} has an inconsistent max_disk_space value")
+        disk_limits = [
+            (worker.max_disk_bytes, worker.max_disk_space),
+            (policy.max_disk_bytes, policy.max_disk_space),
+        ]
+        disk_limits = [(size, label) for size, label in disk_limits if size is not None]
+        if disk_limits:
+            effective_disk_bytes, effective_disk_space = min(disk_limits, key=lambda item: item[0])
+        else:
+            effective_disk_bytes = None
+            effective_disk_space = None
 
         if getattr(sys, "frozen", False):
             # desktop/launch_node.py dispatches this mode inside the packaged
@@ -265,8 +318,8 @@ def _build_worker_supervisor(
         cache_dir = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
         if cache_dir is not None:
             command.extend(("--cache_dir", str(cache_dir)))
-        if worker.max_disk_space is not None:
-            command.extend(("--max_disk_space", worker.max_disk_space))
+        if effective_disk_space is not None:
+            command.extend(("--max_disk_space", effective_disk_space))
         if worker.port is not None:
             command.extend(("--port", str(worker.port)))
         if worker.public_ip is not None:
@@ -282,10 +335,18 @@ def _build_worker_supervisor(
                 auto_start=worker.enabled,
                 auto_restart=worker.auto_restart,
                 restart_backoff=worker.restart_backoff,
+                policy_admitted=policy_admitted,
+                policy_reason=policy_reason,
+                preferred=resolved_model in preferred_models,
+                max_disk_bytes=effective_disk_bytes,
                 environment=(("HF_TOKEN", token),) if token is not None else (),
             )
         )
-    return WorkerSupervisor(launches)
+    return WorkerSupervisor(
+        launches,
+        stop_timeout=policy.pause_timeout,
+        schedule_allowed=None if policy.schedule is None else policy.schedule.allows,
+    )
 
 
 def _prepare_api_key_store(data_dir: Path, supplied_keys: list[str]) -> tuple[ApiKeyStore, Path | None, bool]:

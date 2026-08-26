@@ -12,6 +12,7 @@ from drift.node.keys import ApiKeyStore, load_or_create_api_key, load_or_create_
 from drift.node.loading import make_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime, ModelState
 from drift.node.server import create_node_app
+from drift.node.worker_supervisor import WorkerPolicyError
 
 
 class FakeTokenizer:
@@ -192,6 +193,42 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
 
     assert supervisor.calls == [("start", "worker"), ("pause", "worker"), ("restart", "worker")]
     assert supervisor.closed
+
+
+def test_worker_policy_rejection_is_reported_as_a_control_conflict():
+    class PolicyBlockedSupervisor:
+        def snapshots(self):
+            return ({"id": "worker", "policy_admitted": False},)
+
+        def start_worker(self, worker_id):
+            raise WorkerPolicyError("sharing is disabled by contribution policy")
+
+        def pause_worker(self, worker_id):
+            raise AssertionError("pause was not requested")
+
+        def restart_worker(self, worker_id):
+            raise AssertionError("restart was not requested")
+
+        def shutdown(self):
+            pass
+
+    manager = ModelManager()
+    manager.register(ModelDescriptor("model"), lambda: ModelRuntime(FakeModel(), FakeTokenizer()))
+    app = create_node_app(
+        manager,
+        api_keys=["client-secret"],
+        control_keys=["control-secret"],
+        worker_supervisor=PolicyBlockedSupervisor(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/control/v1/workers/worker/start",
+            headers={"Authorization": "Bearer control-secret"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "sharing is disabled by contribution policy"
 
 
 def test_persistent_key_crud_updates_authentication_immediately(tmp_path):

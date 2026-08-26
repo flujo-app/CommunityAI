@@ -25,6 +25,20 @@ registration does not download tokenizers or client-side weights.
       "max_retries": 3
     }
   ],
+  "contribution_policy": {
+    "sharing_enabled": false,
+    "allowed_models": ["tinyllama"],
+    "preferred_models": ["tinyllama"],
+    "denied_models": [],
+    "max_disk_space": "20GiB",
+    "pause_timeout": 10,
+    "schedule": {
+      "timezone": "local",
+      "windows": [
+        {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "22:00", "end": "06:00"}
+      ]
+    }
+  },
   "workers": [
     {
       "id": "tinyllama-full",
@@ -36,6 +50,7 @@ registration does not download tokenizers or client-side weights.
       "restart_backoff": 5,
       "device": "cpu",
       "cache_dir": "worker-cache/tinyllama",
+      "max_disk_space": "8GiB",
       "throughput": 1.0,
       "port": 31337
     }
@@ -55,6 +70,28 @@ or an explicit `block_indices` range such as `0:4`. Worker IDs are unique. Optio
 fields configure enabled-at-start, automatic crash restart, the restart delay,
 device, cache/disk limits, throughput, port, and public address. A worker failure
 does not stop the node API.
+
+Contribution is fail-closed: omitting `contribution_policy` leaves sharing disabled,
+regardless of a worker's `enabled` value. Enabling sharing requires a finite
+`max_disk_space`. A worker inherits that ceiling, or its own smaller ceiling when
+one is configured; a larger worker value cannot relax the node policy. Every
+allow/prefer/deny selector must resolve to a configured exact model. A nonempty
+`allowed_models` list is an allowlist, `denied_models` takes precedence, and
+`preferred_models` must be a subset of the allowlist when one is present. Resolution
+happens before worker launch, so changing between a name, alias, or manifest digest
+cannot bypass policy.
+
+An optional weekly `schedule` is authoritative in the node supervisor. `timezone`
+may be `local`, `UTC`, or an IANA timezone available to the runtime. Windows
+installations can always use `local` or `UTC` without an added timezone database.
+Days use `mon` through `sun`; times use 24-hour `HH:MM`, the start is inclusive,
+and the end is exclusive. For an overnight window, the listed day is the day on which
+the window starts. Configured auto-start is deferred outside the schedule. When a
+window closes, a running worker is terminated within `pause_timeout` while its
+desired-running intent is retained, and it resumes when the window reopens even when
+crash auto-restart is disabled. A manual start or restart outside the schedule fails
+with HTTP 409; pause remains available. VRAM, bandwidth, and power limits are not yet
+authoritative in this schema.
 
 The parser rejects unknown fields, duplicate JSON keys, non-finite numbers,
 duplicate manifest paths, empty peer sets, and invalid resource limits. Every
@@ -128,7 +165,11 @@ POST /control/v1/workers/{id}/restart
 ```
 
 Worker snapshots distinguish paused, starting, running, stopping, and crashed
-states and include restart and bounded recent-log diagnostics. Key lifecycle uses:
+states and include restart and bounded recent-log diagnostics. They also expose the
+resolved `policy_admitted`, `policy_reason`, `schedule_admitted`,
+`schedule_reason`, `schedule_suspended`, `preferred`, and `max_disk_bytes`
+values. A policy- or schedule-blocked start or restart returns HTTP 409; pause
+remains available so sharing can always be stopped. Key lifecycle uses:
 
 ```text
 GET    /control/v1/keys

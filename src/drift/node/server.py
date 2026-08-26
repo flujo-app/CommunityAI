@@ -19,7 +19,7 @@ from drift.node.model_manager import (
     ModelNotFoundError,
     ModelUnloadError,
 )
-from drift.node.worker_supervisor import WorkerNotFoundError, WorkerSupervisor
+from drift.node.worker_supervisor import WorkerNotFoundError, WorkerPolicyError, WorkerSupervisor
 
 CONTROL_API_VERSION = 1
 
@@ -174,6 +174,8 @@ def create_node_app(
             snapshot = worker_supervisor.snapshot(worker_id)
         except WorkerNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except WorkerPolicyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {"changed": changed, "worker": snapshot}

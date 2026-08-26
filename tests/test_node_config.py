@@ -1,13 +1,23 @@
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from drift.cli.run_node import _build_model_manager, _build_worker_supervisor
+from drift.cli.run_node import _build_model_manager, _build_worker_supervisor, _load_node_config
 from drift.model_manifest import ModelManifest
-from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig, WorkerConfig
+from drift.node.config import (
+    NODE_CONFIG_SCHEMA_VERSION,
+    ContributionPolicyConfig,
+    ContributionScheduleConfig,
+    NodeConfig,
+    NodeConfigError,
+    NodeModelConfig,
+    WorkerConfig,
+)
 from drift.node.model_manager import ModelRuntime, ModelState
+from drift.node.worker_supervisor import WorkerPolicyError
 
 
 def _config_dict(**overrides):
@@ -191,3 +201,246 @@ def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch,
     assert "-m" not in frozen_supervisor.launches[0].command
     frozen_supervisor.shutdown()
     manager.shutdown()
+
+
+def test_contribution_policy_defaults_off_and_requires_a_disk_ceiling_when_enabled(tmp_path):
+    config = NodeConfig.from_dict(_config_dict(), base_dir=tmp_path)
+    assert config.contribution_policy.sharing_enabled is False
+
+    with pytest.raises(NodeConfigError, match="max_disk_space is required"):
+        NodeConfig.from_dict(
+            _config_dict(contribution_policy={"sharing_enabled": True}),
+            base_dir=tmp_path,
+        )
+
+
+def test_contribution_schedule_enforces_boundaries_and_overnight_windows():
+    schedule = ContributionScheduleConfig.from_dict(
+        {
+            "timezone": "UTC",
+            "windows": [
+                {"days": ["mon"], "start": "09:00", "end": "17:00"},
+                {"days": ["fri"], "start": "22:00", "end": "02:00"},
+            ],
+        }
+    )
+
+    assert schedule.allows(datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc))
+    assert schedule.allows(datetime(2026, 8, 24, 16, 59, tzinfo=timezone.utc))
+    assert not schedule.allows(datetime(2026, 8, 24, 17, 0, tzinfo=timezone.utc))
+    assert schedule.allows(datetime(2026, 8, 28, 23, 0, tzinfo=timezone.utc))
+    assert schedule.allows(datetime(2026, 8, 29, 1, 59, tzinfo=timezone.utc))
+    assert not schedule.allows(datetime(2026, 8, 29, 2, 0, tzinfo=timezone.utc))
+    with pytest.raises(ValueError, match="timezone-aware"):
+        schedule.allows(datetime(2026, 8, 24, 12, 0))
+
+
+@pytest.mark.parametrize(
+    ("schedule", "message"),
+    [
+        ({"timezone": "Not/A_Zone", "windows": []}, "available IANA timezone"),
+        (
+            {
+                "timezone": "UTC",
+                "windows": [{"days": ["mon"], "start": "09:00", "end": "09:00"}],
+            },
+            "start and end must differ",
+        ),
+        (
+            {
+                "timezone": "UTC",
+                "windows": [{"days": ["mon", "MON"], "start": "09:00", "end": "17:00"}],
+            },
+            "case-insensitive duplicates",
+        ),
+        (
+            {
+                "timezone": "UTC",
+                "windows": [{"days": ["funday"], "start": "09:00", "end": "17:00"}],
+            },
+            "unsupported weekday",
+        ),
+    ],
+)
+def test_contribution_schedule_rejects_ambiguous_or_invalid_values(schedule, message):
+    with pytest.raises(NodeConfigError, match=message):
+        ContributionPolicyConfig.from_dict(
+            {
+                "sharing_enabled": True,
+                "max_disk_space": "1GiB",
+                "schedule": schedule,
+            }
+        )
+
+
+def test_worker_supervisor_enforces_resolved_model_policy_and_disk_ceiling(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    config = NodeConfig.from_dict(
+        _config_dict(
+            models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+            workers=[
+                {
+                    "id": "worker",
+                    "model": manifest.digest_id,
+                    "identity_path": "worker.key",
+                    "num_blocks": 2,
+                    "enabled": True,
+                    "max_disk_space": "2GiB",
+                }
+            ],
+            contribution_policy={
+                "sharing_enabled": True,
+                "allowed_models": [manifest.aliases[0]],
+                "preferred_models": [manifest.name],
+                "max_disk_space": "1GiB",
+                "pause_timeout": 1.5,
+            },
+        ),
+        base_dir=tmp_path,
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+    supervisor = _build_worker_supervisor(config, manager)
+    launch = supervisor.launches[0]
+
+    assert launch.policy_admitted is True
+    assert launch.policy_reason is None
+    assert launch.preferred is True
+    assert launch.max_disk_bytes == 1024**3
+    assert launch.command[launch.command.index("--max_disk_space") + 1] == "1GiB"
+    assert supervisor._stop_timeout == 1.5
+
+    supervisor.shutdown()
+    manager.shutdown()
+
+
+def test_disabled_contribution_policy_blocks_auto_start_and_control_start(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    config = NodeConfig(
+        schema_version=1,
+        max_loaded_models=1,
+        models=(NodeModelConfig(manifest_path, ("peer-one",)),),
+        workers=(
+            WorkerConfig(
+                worker_id="worker",
+                model=manifest.name,
+                identity_path=tmp_path / "worker.key",
+                num_blocks=2,
+                enabled=True,
+            ),
+        ),
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+    supervisor = _build_worker_supervisor(config, manager)
+    supervisor.start_service()
+
+    snapshot = supervisor.snapshot("worker")
+    assert snapshot["desired_running"] is False
+    assert snapshot["policy_admitted"] is False
+    assert snapshot["policy_reason"] == "sharing is disabled by contribution policy"
+    with pytest.raises(WorkerPolicyError, match="sharing is disabled"):
+        supervisor.start_worker("worker")
+
+    supervisor.shutdown()
+    manager.shutdown()
+
+
+def test_denied_model_cannot_be_started_through_an_alias(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    config = NodeConfig(
+        schema_version=1,
+        max_loaded_models=1,
+        models=(NodeModelConfig(manifest_path, ("peer-one",)),),
+        workers=(
+            WorkerConfig(
+                worker_id="worker",
+                model=manifest.digest_id,
+                identity_path=tmp_path / "worker.key",
+                num_blocks=2,
+                enabled=True,
+            ),
+        ),
+        contribution_policy=ContributionPolicyConfig.from_dict(
+            {
+                "sharing_enabled": True,
+                "denied_models": [manifest.aliases[0]],
+                "max_disk_space": "1GiB",
+            }
+        ),
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+    supervisor = _build_worker_supervisor(config, manager)
+
+    snapshot = supervisor.snapshot("worker")
+    assert snapshot["desired_running"] is False
+    assert snapshot["policy_admitted"] is False
+    assert "denied by contribution policy" in snapshot["policy_reason"]
+    with pytest.raises(WorkerPolicyError, match="denied by contribution policy"):
+        supervisor.start_worker("worker")
+
+    supervisor.shutdown()
+    manager.shutdown()
+
+
+def test_contribution_policy_rejects_alias_based_allow_deny_conflicts(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    config = NodeConfig(
+        schema_version=1,
+        max_loaded_models=1,
+        models=(NodeModelConfig(manifest_path, ("peer-one",)),),
+        contribution_policy=ContributionPolicyConfig.from_dict(
+            {
+                "sharing_enabled": True,
+                "allowed_models": [manifest.name],
+                "denied_models": [manifest.aliases[0]],
+                "max_disk_space": "1GiB",
+            }
+        ),
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+
+    with pytest.raises(NodeConfigError, match="same model as both allowed and denied"):
+        _build_worker_supervisor(config, manager)
+
+    manager.shutdown()
+
+
+def test_max_loaded_models_override_preserves_contribution_policy(monkeypatch, tmp_path):
+    configured = NodeConfig(
+        schema_version=1,
+        max_loaded_models=1,
+        models=(NodeModelConfig(tmp_path / "manifest.json", ("peer-one",)),),
+        contribution_policy=ContributionPolicyConfig.from_dict(
+            {"sharing_enabled": False, "denied_models": ["blocked-model"]}
+        ),
+    )
+    monkeypatch.setattr(NodeConfig, "load", lambda path: configured)
+    args = type("Args", (), {"config": tmp_path / "node.json", "max_loaded_models": 2})()
+
+    overridden = _load_node_config(args)
+
+    assert overridden.max_loaded_models == 2
+    assert overridden.contribution_policy is configured.contribution_policy
