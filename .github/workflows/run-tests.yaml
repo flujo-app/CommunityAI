@@ -77,7 +77,6 @@ jobs:
             tests/test_native_credentials.py \
             tests/test_node_config.py \
             tests/test_node.py \
-            tests/test_policy_store.py \
             tests/test_openai_api.py \
             tests/test_official_openai_client.py \
             tests/test_paged_cache.py \
@@ -95,6 +94,15 @@ jobs:
             tests/test_startup_guard.py \
             tests/test_tied_embeddings_from_pretrained.py \
             tests/test_worker_supervisor.py
+
+      - name: Test Windows/Linux contribution policy persistence
+        if: matrix.os != 'macos'
+        run: |
+          source .venv/bin/activate
+          # Atomic config exchange is a Windows/Linux public-alpha contract.
+          # macOS persistence remains outside the supported release matrix.
+          python -m pytest -v --durations=0 --durations-min=1.0 \
+            tests/test_policy_store.py
 
       - name: Generate pinned TinyLlama manifest (macOS gate)
         if: matrix.os == 'macos'
