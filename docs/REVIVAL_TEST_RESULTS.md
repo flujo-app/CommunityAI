@@ -119,6 +119,34 @@ created, no paid run was recorded, and the combined new-resource spend remains U
 Gate 4 stays `IN PROGRESS` until both exact snapshots are built and pushed on an
 authenticated Docker-enabled builder and both publication reports are retained.
 
+## Cached-peer discovery recovery
+
+On 2026-08-26, the first provider-independent Gate 11 slice added a private peer cache
+for discovery recovery. Each entry is keyed by the SHA-256 of the exact ordered shipped
+seed set, so peers learned through one configured swarm cannot bootstrap another. After
+a successful coverage query, the node snapshots only peers present in Hivemind's DHT
+routing table and retains bounded global-IP TCP multiaddresses with canonically parsed
+PeerIDs. At the next
+startup or policy reload, fresh cached addresses are appended after the configured seeds
+for coverage discovery, inference clients, and contribution workers without changing the
+persisted node configuration.
+
+The cache accepts at most 8 scopes, 32 peers per scope, and 256 KiB total; entries expire
+after 7 days, future timestamps beyond 5 minutes fail closed, and unchanged writes are
+throttled for 5 minutes. Strict duplicate-key/non-finite JSON parsing, symlink rejection,
+same-directory atomic replacement, private/DNS endpoint exclusion, canonical Hivemind
+PeerID parsing, invalid-regular-file repair, and mode tightening bound the local
+persistence surface. Ninety-four focused discovery, node-configuration, node API,
+worker-supervisor, and catalog-bootstrap tests pass locally, including the real
+asynchronous Hivemind routing-table peer selection, original-scope retention after
+runtime merging, lifecycle propagation, invalid PeerID/private/DNS rejection, stale and
+malformed cache handling, and persisted-config immutability.
+
+This is deterministic implementation evidence, not the provider-diversity gate. No
+provider resource was created, no paid run was recorded, and no real seed-loss recovery
+drill was performed. Gate 11 remains `IN PROGRESS` until a priced second-provider seed,
+two HTTPS catalog mirrors, and real seed-loss plus cached-peer recovery evidence exist.
+
 ## Desktop milestone: control authority separation
 
 The first milestone-5 production prerequisite separates the local authorization

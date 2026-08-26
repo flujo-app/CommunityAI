@@ -1,10 +1,28 @@
+import asyncio
+import json
 import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+from hivemind.p2p import PeerID
+
 from drift.data_structures import RemoteModuleInfo, ServerState
 from drift.model_manifest import ModelManifest
-from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery
+from drift.node.discovery import (
+    MAX_PEER_CACHE_AGE_SECONDS,
+    CoverageTarget,
+    ModelCoverageDiscovery,
+    PeerCache,
+    _connected_peer_addresses,
+)
+
+PUBLIC_PEER = "/ip4/8.8.8.8/tcp/31337/p2p/Qm" + "A" * 44
+SECOND_PUBLIC_PEER = "/ip6/2606:4700:4700::1111/tcp/31337/p2p/Qm" + "B" * 44
+DNS_PEER = "/dns4/seed.example.com/tcp/31337/p2p/Qm" + "B" * 44
+PRIVATE_PEER = "/ip4/10.0.0.4/tcp/31337/p2p/Qm" + "C" * 44
+INVALID_PEER_ID = "/ip4/8.8.4.4/tcp/31337/p2p/" + "0" * 20
+CACHE_SCOPE = ("shipped-seed",)
 
 
 class FakeDHT:
@@ -30,6 +48,106 @@ class StrictFakeDHT(FakeDHT):
         if self.shutdown_calls:
             raise OSError("handle is closed")
         self.shutdown_calls += 1
+
+
+def test_peer_cache_retains_only_fresh_unique_public_peers(tmp_path):
+    now = [2_000_000_000.0]
+    path = tmp_path / "discovery-peers.json"
+    cache = PeerCache(path, clock=lambda: now[0])
+
+    assert (
+        cache.store(
+            CACHE_SCOPE,
+            (PRIVATE_PEER, PUBLIC_PEER, PUBLIC_PEER, SECOND_PUBLIC_PEER, DNS_PEER, INVALID_PEER_ID),
+        )
+        is True
+    )
+    assert cache.load(CACHE_SCOPE) == (PUBLIC_PEER, SECOND_PUBLIC_PEER)
+    assert cache.load(("different-seed",)) == ()
+    assert cache.store(CACHE_SCOPE, (PUBLIC_PEER, SECOND_PUBLIC_PEER)) is False
+    rendered = json.loads(path.read_text(encoding="utf-8"))
+    entry = next(iter(rendered["scopes"].values()))
+    assert entry["peers"] == [PUBLIC_PEER, SECOND_PUBLIC_PEER]
+    assert all(
+        rejected not in path.read_text(encoding="utf-8") for rejected in (PRIVATE_PEER, DNS_PEER, INVALID_PEER_ID)
+    )
+
+    now[0] += MAX_PEER_CACHE_AGE_SECONDS + 1
+    assert PeerCache(path, clock=lambda: now[0]).load(CACHE_SCOPE) == ()
+
+
+def test_peer_cache_ignores_malformed_or_symbolic_link_files(tmp_path):
+    path = tmp_path / "discovery-peers.json"
+    path.write_text('{"schema_version":1,"schema_version":1,"scopes":{}}', encoding="utf-8")
+    cache = PeerCache(path, clock=lambda: 1.0)
+    assert cache.load(CACHE_SCOPE) == ()
+    path.write_text('{"schema_version":true,"scopes":{}}', encoding="utf-8")
+    assert cache.load(CACHE_SCOPE) == ()
+    assert cache.store(CACHE_SCOPE, (PUBLIC_PEER,)) is True
+    assert cache.load(CACHE_SCOPE) == (PUBLIC_PEER,)
+
+    target = tmp_path / "target.json"
+    target.write_text("{}", encoding="utf-8")
+    path.unlink()
+    try:
+        path.symlink_to(target)
+    except OSError:
+        pytest.skip("symbolic links are unavailable on this host")
+    assert PeerCache(path, clock=lambda: 1.0).load(CACHE_SCOPE) == ()
+    with pytest.raises(OSError, match="symbolic-link"):
+        PeerCache(path, clock=lambda: 1.0).store(CACHE_SCOPE, (PUBLIC_PEER,))
+
+
+def test_successful_discovery_persists_connected_public_peers(tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    dht = FakeDHT()
+    refreshed = threading.Event()
+    cache = PeerCache(tmp_path / "discovery-peers.json", clock=lambda: 2_000_000_000.0)
+
+    def lookup(selected_dht, uids, **kwargs):
+        refreshed.set()
+        return [RemoteModuleInfo(uid, {}) for uid in uids]
+
+    runtime_peers = ("shipped-seed", SECOND_PUBLIC_PEER)
+    discovery = ModelCoverageDiscovery(
+        [CoverageTarget(manifest, runtime_peers, cache_scope=CACHE_SCOPE)],
+        update_period=60,
+        startup_timeout=1,
+        dht_factory=lambda **kwargs: dht,
+        lookup=lookup,
+        peer_cache=cache,
+        peer_snapshot=lambda selected_dht: (PRIVATE_PEER, PUBLIC_PEER),
+    )
+    discovery.start()
+    assert refreshed.wait(timeout=1)
+    deadline = time.monotonic() + 1
+    while not cache.path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert cache.load(CACHE_SCOPE) == (PUBLIC_PEER,)
+    assert cache.load(runtime_peers) == ()
+    discovery.close()
+
+
+def test_connected_peer_snapshot_keeps_only_public_routing_table_addresses():
+    routing_peer = PeerID.from_base58("Qm" + "A" * 44)
+    unrelated_peer = PeerID.from_base58("Qm" + "B" * 44)
+
+    class FakeP2P:
+        async def list_peers(self):
+            return [
+                SimpleNamespace(
+                    peer_id=routing_peer,
+                    addrs=("/ip4/8.8.8.8/tcp/31337", "/ip4/10.0.0.4/tcp/31337"),
+                ),
+                SimpleNamespace(peer_id=unrelated_peer, addrs=("/ip6/2606:4700:4700::1111/tcp/31337",)),
+            ]
+
+    routing_table = SimpleNamespace(peer_id_to_uid={routing_peer: object()})
+    protocol = SimpleNamespace(p2p=FakeP2P(), routing_table=routing_table)
+    node = SimpleNamespace(protocol=protocol)
+
+    assert asyncio.run(_connected_peer_addresses(None, node)) == (PUBLIC_PEER,)
 
 
 def test_unloaded_discovery_reports_verified_complete_coverage():

@@ -49,6 +49,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   size from exact Gate 4 publication evidence, recomputes the rootfs requirement from the
   measured uncompressed bytes, and rejects altered manifests, references, layers, sizing,
   or ceilings before provider authentication or resource creation.
+- At startup and policy reload, node discovery now reuses a bounded, fresh private cache
+  of Hivemind-valid global-IP TCP routing peers when configured seeds are unavailable.
+  Cached peers are isolated by the exact configured seed set and merged only at runtime,
+  leaving persisted configuration unchanged.
 - Model qualification dispatch no longer requires a persistent GitHub runner-inventory
   administration token.
 - Production desktop CI now packages the public alpha on Windows and Linux only; macOS
