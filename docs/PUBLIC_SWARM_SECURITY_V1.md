@@ -108,6 +108,31 @@ Pass one or more verified bundles to manifested workers and API clients with
 `--revocation_file`. Private material is never written into a record or printed by
 the CLI.
 
+## Manifested public-worker admission
+
+Manifested workers now share one finite admission authority across every connection
+handler. It takes an inference-stream lease before awaiting the first request message,
+applies global and per-transport-PeerID active/rate ceilings, bounds hashed PeerID
+records, and fails closed when its shared manager or lock is unavailable. Capacity and
+rate failures return one stable overload message; aggregate health samples contain
+counts only and never expose PeerIDs or client-supplied session names.
+
+Activation pushes are admitted through a bounded shared session registry. Session keys
+are hashed, each registration has a random generation token to prevent stale/ABA
+delivery, and every inference/push message is bounded before metadata parsing or tensor
+deserialization. Inbound queues and outbound activation RPC tasks share one aggregate
+pending-push ceiling; outstanding tasks are cancelled and awaited before the stream
+lease is released. Forward/backward training RPCs are disabled by default
+in manifest mode. Legacy servers without a manifest keep their historical behavior.
+
+PeerID is an authenticated transport identity, not authorization or proof of scarce
+identity. Per-PeerID fairness cannot prevent Sybil churn, so the global ceilings are
+authoritative. Hivemind/libp2p can also allocate transport/RPC tasks and emit exception
+logs before or around Drift's handler gates. Real connection-flood, task-volume, and
+log-backpressure evidence is still required before Gate 16 passes. Exact defaults,
+health reconstruction, rollout stops, and rollback are defined in
+[`PUBLIC_ALPHA_OPERATIONS.md`](PUBLIC_ALPHA_OPERATIONS.md).
+
 ## Artifact interruption and promotion
 
 Manifested artifacts use a separate content-addressed cache because

@@ -34,6 +34,7 @@ from drift.protocol_identity import (
     create_worker_announcement,
 )
 from drift.server import block_selection
+from drift.server.admission import AdmissionPolicy, AdmissionRejected, AdmissionState
 from drift.server.backend import TransformerBackend, merge_inference_pools_inplace
 from drift.server.block_utils import get_block_size, resolve_block_dtype
 from drift.server.from_pretrained import load_pretrained_block
@@ -121,6 +122,7 @@ class Server:
         attn_implementation: str = "auto",
         revision: Optional[str] = None,
         model_manifest: Optional[ModelManifest] = None,
+        admission_policy: Optional[AdmissionPolicy] = None,
         revocation_files: Sequence[str] = (),
         cache_dir: Optional[str] = None,
         max_disk_space: Optional[int] = None,
@@ -187,6 +189,11 @@ class Server:
         if model_manifest is not None:
             model_manifest.validate_model_config(self.block_config)
         self.model_manifest = model_manifest
+        self.admission_policy = (
+            (admission_policy if admission_policy is not None else AdmissionPolicy())
+            if model_manifest is not None
+            else None
+        )
         self.manifest_execution_profile = model_manifest.runtime.to_dict() if model_manifest is not None else None
         self.revocations = RevocationStore.from_files(revocation_files)
         self.announcement_replay_guard = ReplayGuard()
@@ -577,6 +584,7 @@ class Server:
                 revision=self.revision,
                 token=self.token,
                 model_manifest=self.model_manifest,
+                admission_policy=self.admission_policy,
                 protocol_identity=self.protocol_identity,
                 manifest_execution_profile=self.manifest_execution_profile,
                 revocations=self.revocations,
@@ -802,17 +810,25 @@ class ModuleContainer(threading.Thread):
             logger.info(f"Announced that blocks {module_uids} are offline")
             raise
 
-        return cls(
-            dht,
-            dht_prefix,
-            blocks,
-            dht_announcer=dht_announcer,
-            server_info=server_info,
-            protocol_identity=protocol_identity,
-            update_period=update_period,
-            expiration=expiration,
-            **kwargs,
-        )
+        try:
+            return cls(
+                dht,
+                dht_prefix,
+                blocks,
+                dht_announcer=dht_announcer,
+                server_info=server_info,
+                protocol_identity=protocol_identity,
+                update_period=update_period,
+                expiration=expiration,
+                **kwargs,
+            )
+        except BaseException:
+            logger.debug("Shutting down backends after module-container initialization failed")
+            for backend in blocks.values():
+                backend.shutdown()
+            dht_announcer.announce(ServerState.OFFLINE)
+            logger.info(f"Announced that blocks {module_uids} are offline")
+            raise
 
     def __init__(
         self,
@@ -825,6 +841,7 @@ class ModuleContainer(threading.Thread):
         dht_announcer: ModuleAnnouncerThread,
         server_info: ServerInfo,
         protocol_identity: Optional[NodeIdentity] = None,
+        admission_policy: Optional[AdmissionPolicy] = None,
         update_period: float,
         expiration: Optional[float] = None,
         request_timeout: float,
@@ -842,34 +859,78 @@ class ModuleContainer(threading.Thread):
         self.dht, self.module_backends = dht, module_backends
         self.server_info, self.update_period, self.expiration = server_info, update_period, expiration
 
-        handler_event_queues = [mp.Queue() for _ in range(num_handlers)]
-        self.conn_handlers = [
-            TransformerConnectionHandler(
-                dht,
-                self.module_backends,
-                adapters=server_info.adapters,
-                dht_prefix=dht_prefix,
-                handler_event_queues=handler_event_queues,
-                handler_index=i,
-                inference_max_length=inference_max_length,
-                request_timeout=request_timeout,
-                session_timeout=session_timeout,
-                step_timeout=step_timeout,
-                manifest_digest=server_info.manifest_digest,
-                identity_key_id=protocol_identity.key_id if protocol_identity is not None else None,
-                quant_type=QuantType[server_info.quant_type.upper()],
-            )
-            for i in range(num_handlers)
-        ]
+        self._admission_manager = None
+        self.admission_state = None
+        self._handler_event_queues = []
+        try:
+            if admission_policy is not None:
+                # Never fork a manager after Torch/CUDA initialization or from the announcer's
+                # multithreaded parent. Spawn is safe on Linux and prepared by the Windows bundle.
+                self._admission_manager = mp.get_context("spawn").Manager()
+                self.admission_state = AdmissionState.shared(admission_policy, self._admission_manager)
+                self._handler_event_queues = [
+                    mp.Queue(maxsize=admission_policy.push_queue_capacity) for _ in range(num_handlers)
+                ]
+            else:
+                # Preserve the historical private/legacy behavior exactly.
+                self._handler_event_queues = [mp.Queue() for _ in range(num_handlers)]
 
-        self.runtime = RuntimeWithDeduplicatedPools(self.module_backends, device=None, **kwargs)
-        # note: We set device=None in runtime to avoid moving all modules to device 0 in runtime.run(). tensor_parallel has already moved it as needed.
+            self.conn_handlers = [
+                TransformerConnectionHandler(
+                    dht,
+                    self.module_backends,
+                    adapters=server_info.adapters,
+                    dht_prefix=dht_prefix,
+                    handler_event_queues=self._handler_event_queues,
+                    handler_index=i,
+                    inference_max_length=inference_max_length,
+                    request_timeout=request_timeout,
+                    session_timeout=session_timeout,
+                    step_timeout=step_timeout,
+                    manifest_digest=server_info.manifest_digest,
+                    identity_key_id=protocol_identity.key_id if protocol_identity is not None else None,
+                    admission_state=self.admission_state,
+                    quant_type=QuantType[server_info.quant_type.upper()],
+                )
+                for i in range(num_handlers)
+            ]
 
-        dht_announcer.announce(ServerState.ONLINE)
-        self.dht_announcer = dht_announcer
+            self.runtime = RuntimeWithDeduplicatedPools(self.module_backends, device=None, **kwargs)
+            # note: We set device=None in runtime to avoid moving all modules to device 0 in runtime.run(). tensor_parallel has already moved it as needed.
+
+            dht_announcer.announce(ServerState.ONLINE)
+            self.dht_announcer = dht_announcer
+        except Exception:
+            self._close_admission_resources()
+            raise
 
         if start:
-            self.run_in_background(await_ready=True)
+            try:
+                self.run_in_background(await_ready=True)
+            except BaseException:
+                for handler in self.conn_handlers:
+                    if handler.is_alive():
+                        handler.shutdown()
+                self._close_admission_resources()
+                raise
+
+    def _close_admission_resources(self) -> None:
+        manager = self._admission_manager
+        if manager is None:
+            return
+        for event_queue in self._handler_event_queues:
+            try:
+                event_queue.cancel_join_thread()
+                event_queue.close()
+            except Exception:
+                logger.debug("Failed to close a public-worker push queue", exc_info=True)
+        try:
+            manager.shutdown()
+        except Exception:
+            logger.debug("Failed to shut down the public-worker admission manager", exc_info=True)
+        finally:
+            self._admission_manager = None
+            self.admission_state = None
 
     def run(self):
         """
@@ -922,8 +983,29 @@ class ModuleContainer(threading.Thread):
         return self.runtime.ready  # mp.Event that is true if self is ready to process batches
 
     def is_healthy(self) -> bool:
+        admission_healthy = True
+        if self.admission_state is not None:
+            try:
+                admission_snapshot = self.admission_state.snapshot()
+            except AdmissionRejected:
+                admission_healthy = False
+                logger.error("Public admission health is unavailable; the worker will restart")
+            else:
+                admission_healthy = admission_snapshot["healthy"]
+                logger.info(
+                    "Public admission health: active=%d tracked_peers=%d routes=%d pending_pushes=%d "
+                    "accepted=%d rejected=%d healthy=%s",
+                    admission_snapshot["active_sessions"],
+                    admission_snapshot["tracked_peers"],
+                    admission_snapshot["active_session_routes"],
+                    admission_snapshot["pending_pushes"],
+                    admission_snapshot["accepted_sessions"],
+                    admission_snapshot["rejected_sessions"],
+                    admission_snapshot["healthy"],
+                )
         return (
-            self.dht_announcer.is_alive()
+            admission_healthy
+            and self.dht_announcer.is_alive()
             and all(handler.is_alive() for handler in self.conn_handlers)
             and all(pool.is_alive() for pool in self.runtime.pools)
         )
@@ -942,6 +1024,7 @@ class ModuleContainer(threading.Thread):
         logger.debug("Shutting down connection handlers")
         for handler in self.conn_handlers:
             handler.shutdown()
+        self._close_admission_resources()
 
         logger.debug(f"Shutting down pools")
         for pool in self.runtime.pools:
