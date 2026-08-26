@@ -632,6 +632,13 @@ def test_public_alpha_candidates_and_dockerfile_are_immutable_and_offline():
     assert '--source-tree-digest "${SOURCE_TREE_DIGEST}"' in dockerfile
     assert '--dockerfile-digest "${DOCKERFILE_DIGEST}"' in dockerfile
     assert "COPY Dockerfile.qualification pyproject.toml uv.lock README.md ./" in dockerfile
+    build_toolchain_install = "apt-get install --no-install-recommends -y build-essential"
+    build_toolchain_purge = "apt-get purge --auto-remove -y build-essential"
+    assert build_toolchain_install in dockerfile
+    assert build_toolchain_purge in dockerfile
+    assert dockerfile.index(build_toolchain_install) < dockerfile.index("uv sync --frozen")
+    assert dockerfile.index("uv sync --frozen") < dockerfile.index(build_toolchain_purge)
+    assert "rm -rf /var/lib/apt/lists/*" in dockerfile
     assert "HF_HUB_OFFLINE=1" in dockerfile
     assert "TRANSFORMERS_OFFLINE=1" in dockerfile
     assert "USER 65532:65532" in dockerfile

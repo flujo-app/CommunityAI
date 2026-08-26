@@ -48,7 +48,11 @@ RUN test -n "${SOURCE_COMMIT}" \
     && test -n "${DECLARED_ARTIFACT_BYTES}" \
     && test -n "${SOURCE_TREE_DIGEST}" \
     && test -n "${DOCKERFILE_DIGEST}" \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y build-essential \
     && uv sync --frozen --no-dev --no-editable --python /usr/local/bin/python \
+    && apt-get purge --auto-remove -y build-essential \
+    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /workspace/qualification /cache/model /tmp/communityai \
     && chown -R 65532:65532 /tmp/communityai
 
