@@ -434,7 +434,7 @@ def collect_evidence(
     _docker(
         runner,
         docker_executable,
-        ["pull", "--platform", PLATFORM, immutable_runtime],
+        ["pull", "--quiet", "--platform", PLATFORM, immutable_runtime],
         timeout=1800,
         maximum_output=MAX_DOCKER_OUTPUT_BYTES,
     )

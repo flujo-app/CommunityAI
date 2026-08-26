@@ -181,8 +181,8 @@ class EvidenceFixture:
                 else:
                     raise AssertionError(f"unexpected inspect command: {command}")
             return evidence.CommandResult(0, payload)
-        if command[1:3] == ["pull", "--platform"]:
-            assert command[3:] == ["linux/amd64", self.immutable_runtime]
+        if command[1:3] == ["pull", "--quiet"]:
+            assert command[3:] == ["--platform", "linux/amd64", self.immutable_runtime]
             return evidence.CommandResult(0, b"pulled")
         if command[1:3] == ["image", "inspect"]:
             assert command[3:] == [self.immutable_runtime, "--format", "{{json .}}"]
