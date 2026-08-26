@@ -72,7 +72,7 @@ RUN python scripts/qualification_image_contract.py verify \
       --declared-artifact-bytes "${DECLARED_ARTIFACT_BYTES}" \
       --source-tree-digest "${SOURCE_TREE_DIGEST}" \
       --dockerfile-digest "${DOCKERFILE_DIGEST}" \
-    && test "$(python -c 'from drift import __version__; print(__version__)')" = "2.3.0.dev0" \
+    && python -c 'from importlib.metadata import version; from drift import __version__; raise SystemExit(0 if __version__ == version("drift") else 1)' \
     && rm -rf /qualification-source
 
 USER 65532:65532
