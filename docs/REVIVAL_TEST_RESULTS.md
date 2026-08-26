@@ -141,9 +141,48 @@ unreserved. The follow-up [parallel-builder plan](evidence/gate4-20260826-b-cost
 now reserves another USD 20, for USD 30 committed maximum and USD 70 currently
 unreserved.
 
-Gate 4 stays `IN PROGRESS`. A follow-up run must budget independent scanner/export margin,
-complete both provenance/SBOM pushes, and pass both fail-closed publication collectors
-before either image counts as release qualification.
+The bounded `gate4-20260826-b` retry used two independent no-address GCP builders behind
+one isolated Cloud NAT. Both builders checked out clean source `7660e33`, materialized
+fresh unlinked revision-pinned snapshots, matched the retained contracts, and passed the
+in-image artifact and 160-file source inventories. The live publication path exposed two
+collector integration mismatches: Docker pull progress could exceed the bounded output,
+and Buildx exposes provenance/SBOM as result objects rather than iterable collections.
+The collector now uses a quiet immutable pull and checks `.Provenance.SLSA` and
+`.SBOM.SPDX` directly; all 46 preparation/publication tests, Black, isort, and the
+whitespace gate pass after those fixes.
+
+Qwen published as
+`ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed`.
+Its sole `linux/amd64` runtime is
+`sha256:5ad01b9ea9fea6adb5e2c60cc804685ba3bfa2a4f09d5ff48b56a762f3df1770`,
+its bound attestation manifest is
+`sha256:084669614eabfff348a1fe5994b3567d4c2a2eaa4a02b799a50bec246c7fb3bf`,
+and the collector found SLSA provenance, SPDX SBOM, 6,913,811,781 compressed bytes,
+6,913,829,173 uncompressed bytes, a 3,572,741,435-byte largest layer, and a required
+9 GB Fly rootfs. The exact [Buildx metadata](evidence/gate4-20260826-b-qwen3.5-2b-build-metadata.json)
+and [publication report](evidence/gate4-20260826-b-qwen3.5-2b-publication-evidence.json)
+are retained.
+
+Gemma published as
+`ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f`.
+Its sole `linux/amd64` runtime is
+`sha256:406f94b7a53bcef847fb4ea04eae0036310a4b5f92e87beade6ec919629530f8`,
+its bound attestation manifest is
+`sha256:7f2e5244457cfe8dab4c2bc57f7cfdb48e05325ef844da600de066fb347c7b29`,
+and the collector found SLSA provenance, SPDX SBOM, 11,011,406,681 compressed bytes,
+11,011,424,083 uncompressed bytes, a 7,670,350,172-byte largest layer, and a required
+13 GB Fly rootfs. The exact [Buildx metadata](evidence/gate4-20260826-b-gemma-4-e2b-build-metadata.json)
+and [publication report](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json)
+are retained.
+
+Both builders removed their GHCR credential files before deletion. At
+2026-08-26T23:34:31Z, both run-labelled instances and boot disks plus the exact retry
+firewall, NAT, router, subnet, and network were absent, while
+`communityai-bootstrap-1` remained present. The non-secret [attempt report](evidence/gate4-20260826-b-qualification-image-build-attempt.json)
+binds the two publications, original artifact hashes, builder identities, and cleanup.
+Billing is delayed, so the USD 20 retry maximum and USD 10 attempt-A maximum remain
+reserved; USD 70 is unreserved under the combined ceiling. Gate 4 is `PASSED`, making
+Gates 5 and 6 ready for their real distinct-host Windows/Linux CPU/CUDA matrices.
 
 ## Desktop milestone: control authority separation
 

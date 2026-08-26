@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "scope": "qualification-image-build-attempt",
+  "run_id": "gate4-20260826-b",
+  "result": "passed",
+  "complete_release_qualification": false,
+  "source_commit": "7660e33e03326e5b868f81cb95282460ba649d5f",
+  "source_tree_digest": "sha256:607931bee4f226051cf817ae6bff2d423ab0ec7e0508a2e01358f3784f24ec84",
+  "dockerfile_digest": "sha256:5abbefb41a9faaf85556f0122036d068833c1d5ed198e85257e7853ef5041ca2",
+  "collector_commit": "f87b15c",
+  "cleanup_verified_at": "2026-08-26T23:34:31Z",
+  "cost": {
+    "provider": "gcp",
+    "maximum_estimate_usd": 20,
+    "observed_cost_usd": null,
+    "billing_state": "delayed"
+  },
+  "builders": [
+    {
+      "candidate": "qwen3.5-2b",
+      "provider": "gcp",
+      "instance": "cai-g4b-qwen-20260826",
+      "instance_id": "7701679905886627610",
+      "zone": "us-central1-a",
+      "machine_type": "e2-standard-4",
+      "boot_disk_gb": 200,
+      "external_ip": false,
+      "service_account": false,
+      "secure_boot": true,
+      "max_run_seconds": 21600,
+      "build_started_at": "2026-08-26T21:47:15Z",
+      "collector_finished_at": "2026-08-26T22:21:26Z"
+    },
+    {
+      "candidate": "gemma-4-e2b",
+      "provider": "gcp",
+      "instance": "cai-g4b-gemma-20260826",
+      "instance_id": "8565542199944428",
+      "zone": "us-central1-a",
+      "machine_type": "e2-standard-4",
+      "boot_disk_gb": 200,
+      "external_ip": false,
+      "service_account": false,
+      "secure_boot": true,
+      "max_run_seconds": 21600,
+      "creation_timestamp": "2026-08-26T21:26:27.960Z",
+      "build_started_at": "2026-08-26T21:46:31Z",
+      "collector_finished_at": "2026-08-26T23:27:30Z"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate": "qwen3.5-2b",
+      "contract_digest": "sha256:4030cc5c6e28e33cd5da1454a0742bf9c7013b11161ad57121722954858b5472",
+      "contract_file_sha256": "973ae6f81fafd9b575b503e20bf610bbf68fc70ccfc4adf89139f8e768962fd7",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "declared_artifact_bytes": 4571197320,
+      "exact_input_verification": {
+        "result": "passed",
+        "artifact_count": 8,
+        "artifact_hashes_verified": true,
+        "source_file_count": 160,
+        "source_hashes_verified": true
+      },
+      "publication": {
+        "result": "passed",
+        "image_reference": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed",
+        "index_digest": "sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed",
+        "runtime_manifest_digest": "sha256:5ad01b9ea9fea6adb5e2c60cc804685ba3bfa2a4f09d5ff48b56a762f3df1770",
+        "attestation_manifest_digest": "sha256:084669614eabfff348a1fe5994b3567d4c2a2eaa4a02b799a50bec246c7fb3bf",
+        "platform": "linux/amd64",
+        "provenance": "slsa",
+        "sbom": "spdx",
+        "compressed_layer_bytes": 6913811781,
+        "uncompressed_image_bytes": 6913829173,
+        "required_fly_rootfs_gb": 9,
+        "largest_layer_bytes": 3572741435,
+        "build_metadata_file": "gate4-20260826-b-qwen3.5-2b-build-metadata.json",
+        "build_metadata_sha256": "00218c2be8530402c126908b1c8fc6a8711a379a5600e5306d1f091df904baeb",
+        "publication_evidence_file": "gate4-20260826-b-qwen3.5-2b-publication-evidence.json",
+        "publication_evidence_sha256": "831c9dadf0257939c4940d5d20553b4af433e955cb9210ad4a1cc73a7dd8c594"
+      }
+    },
+    {
+      "candidate": "gemma-4-e2b",
+      "contract_digest": "sha256:62068434634a851300fa65ebc3d1009fbcfb703572054578d842405e2ee05b6d",
+      "contract_file_sha256": "966062cd4ad6c56a6e1fe2ef7ce6ef3d355f4174615b1055f3239d9aa331adb6",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "declared_artifact_bytes": 10278818149,
+      "exact_input_verification": {
+        "result": "passed",
+        "artifact_count": 5,
+        "artifact_hashes_verified": true,
+        "source_file_count": 160,
+        "source_hashes_verified": true
+      },
+      "publication": {
+        "result": "passed",
+        "image_reference": "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f",
+        "index_digest": "sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f",
+        "runtime_manifest_digest": "sha256:406f94b7a53bcef847fb4ea04eae0036310a4b5f92e87beade6ec919629530f8",
+        "attestation_manifest_digest": "sha256:7f2e5244457cfe8dab4c2bc57f7cfdb48e05325ef844da600de066fb347c7b29",
+        "platform": "linux/amd64",
+        "provenance": "slsa",
+        "sbom": "spdx",
+        "compressed_layer_bytes": 11011406681,
+        "uncompressed_image_bytes": 11011424083,
+        "required_fly_rootfs_gb": 13,
+        "largest_layer_bytes": 7670350172,
+        "build_metadata_file": "gate4-20260826-b-gemma-4-e2b-build-metadata.json",
+        "build_metadata_sha256": "19bfd59a9b737f7bc2642ea5284996529266cb05b8e8c3a6f8c741b36a3b05f5",
+        "publication_evidence_file": "gate4-20260826-b-gemma-4-e2b-publication-evidence.json",
+        "publication_evidence_sha256": "6eac4c10a36cb73f55f4f216d9d35d3bd29136dd842bb52e3bbd8dd6ec5ddca3"
+      }
+    }
+  ],
+  "cleanup": {
+    "registry_logout": {
+      "qwen3_5_2b": true,
+      "gemma_4_e2b": true
+    },
+    "run_instances_absent": true,
+    "run_boot_disks_absent": true,
+    "firewall_absent": true,
+    "nat_absent": true,
+    "router_absent": true,
+    "subnet_absent": true,
+    "network_absent": true,
+    "excluded_bootstrap_present": true
+  }
+}
