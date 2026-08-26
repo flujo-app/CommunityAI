@@ -173,8 +173,10 @@ class EvidenceFixture:
             else:
                 template = command[-1]
                 if reference == self.immutable_index and ".Provenance" in template:
+                    assert template == "{{if .Provenance.SLSA}}slsa{{end}}"
                     payload = self.provenance
                 elif reference == self.immutable_index and ".SBOM" in template:
+                    assert template == "{{if .SBOM.SPDX}}spdx{{end}}"
                     payload = self.sbom
                 elif reference == self.immutable_runtime and template == "{{json .Image}}":
                     payload = _json_bytes(self.image)
