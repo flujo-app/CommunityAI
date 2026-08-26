@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import pytest
 
 import drift.node.policy_store as policy_store_module
 from drift.node.config import NodeConfig, NodeConfigError
-from drift.node.config_lock import node_config_write_lock
+from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
 from drift.node.policy_store import (
     ContributionPolicyConflictError,
     ContributionPolicyPersistenceError,
@@ -352,6 +353,60 @@ def test_policy_store_requires_workers_to_be_paused_before_commit(tmp_path):
     assert path.read_bytes() == before
     assert supervisor.snapshot("worker")["desired_running"] is True
     supervisor.pause_worker("worker")
+    supervisor.shutdown()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows short-path aliases are platform-specific")
+def test_policy_store_accepts_a_windows_short_path_alias(tmp_path):
+    import ctypes
+
+    target = tmp_path / "node-config-with-a-long-name.json"
+    _write_config(target)
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = ctypes.windll.kernel32.GetShortPathNameW(str(target), buffer, len(buffer))
+    alias = Path(buffer.value)
+    if not length or os.path.normcase(os.fspath(alias)) == os.path.normcase(os.fspath(target)):
+        pytest.skip("8.3 short-path aliases are unavailable on this volume")
+
+    initial = _settings(NodeConfig.load(target))
+    supervisor = WorkerSupervisor(initial.launches)
+    store = ContributionPolicyStore(alias, supervisor, _settings)
+    before = store.snapshot()
+
+    result = store.update(_complete_policy(), expected_revision=before["config_revision"])
+
+    assert store.path == target.resolve()
+    assert result["policy"] == _complete_policy()
+    assert NodeConfig.load(target).contribution_policy.to_dict() == _complete_policy()
+    updated_buffer = ctypes.create_unicode_buffer(32768)
+    assert ctypes.windll.kernel32.GetShortPathNameW(str(target), updated_buffer, len(updated_buffer))
+    with node_config_write_lock(target):
+        with pytest.raises(NodeConfigWriteLockError, match="writer.*active"):
+            with node_config_write_lock(Path(updated_buffer.value)):
+                pass
+    supervisor.shutdown()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junctions are platform-specific")
+def test_policy_store_refuses_a_windows_junction_ancestor(tmp_path):
+    real = tmp_path / "real-junction-target"
+    real.mkdir()
+    target = real / "node-config.json"
+    _write_config(target)
+    junction = tmp_path / "linked-junction"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", os.fspath(junction), os.fspath(real)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        pytest.skip("directory junctions are unavailable on this host")
+
+    initial = _settings(NodeConfig.load(target))
+    supervisor = WorkerSupervisor(initial.launches)
+    with pytest.raises(NodeConfigError, match="links|junctions"):
+        ContributionPolicyStore(junction / target.name, supervisor, _settings)
     supervisor.shutdown()
 
 

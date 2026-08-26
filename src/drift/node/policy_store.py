@@ -38,19 +38,14 @@ def _is_link_or_junction(path: Path) -> bool:
 def _safe_config_path(path: Path | str) -> Path:
     absolute = Path(os.path.abspath(os.path.expanduser(os.fspath(path))))
     try:
-        if _is_link_or_junction(absolute) or _is_link_or_junction(absolute.parent):
+        if any(_is_link_or_junction(candidate) for candidate in (absolute, *absolute.parents)):
             raise NodeConfigError("node config policy persistence refuses links and junctions")
         if not absolute.is_file():
             raise NodeConfigError("node config policy persistence requires a regular file")
         resolved = absolute.resolve(strict=True)
-        resolved_parent = absolute.parent.resolve(strict=True)
     except OSError as exc:
         raise NodeConfigError("node config policy persistence could not verify its target") from exc
-    if os.path.normcase(os.fspath(resolved)) != os.path.normcase(os.fspath(absolute)):
-        raise NodeConfigError("node config policy persistence refuses linked paths")
-    if os.path.normcase(os.fspath(resolved_parent)) != os.path.normcase(os.fspath(absolute.parent)):
-        raise NodeConfigError("node config policy persistence refuses linked parent paths")
-    return absolute
+    return resolved
 
 
 def _exchange_paths(replacement: Path, target: Path) -> Path:

@@ -23,15 +23,13 @@ def _is_link_or_junction(path: Path) -> bool:
     return path.is_symlink() or bool(getattr(os.path, "isjunction", lambda candidate: False)(path))
 
 
-def _validate_parent(parent: Path) -> None:
+def _validate_parent(parent: Path) -> Path:
     try:
-        if _is_link_or_junction(parent):
+        if any(_is_link_or_junction(candidate) for candidate in (parent, *parent.parents)):
             raise NodeConfigWriteLockError("node config writer refuses a linked lock directory")
-        resolved = parent.resolve(strict=True)
+        return parent.resolve(strict=True)
     except OSError as exc:
         raise NodeConfigWriteLockError("node config lock directory could not be verified") from exc
-    if os.path.normcase(os.fspath(resolved)) != os.path.normcase(os.fspath(parent)):
-        raise NodeConfigWriteLockError("node config writer refuses a linked lock directory")
 
 
 def _acquire(descriptor: int) -> None:
@@ -72,8 +70,19 @@ def node_config_write_lock(config_path: Path | str) -> Iterator[None]:
     writers use this protocol before checking or replacing the config.
     """
 
-    lock_path = node_config_lock_path(config_path)
-    _validate_parent(lock_path.parent)
+    absolute_config = Path(os.path.abspath(os.path.expanduser(os.fspath(config_path))))
+    canonical_parent = _validate_parent(absolute_config.parent)
+    if _is_link_or_junction(absolute_config):
+        raise NodeConfigWriteLockError("node config writer refuses a linked config path")
+    try:
+        canonical_config = (
+            absolute_config.resolve(strict=True)
+            if absolute_config.exists()
+            else canonical_parent / absolute_config.name
+        )
+    except OSError as exc:
+        raise NodeConfigWriteLockError("node config path could not be verified") from exc
+    lock_path = node_config_lock_path(canonical_config)
     if _is_link_or_junction(lock_path):
         raise NodeConfigWriteLockError("node config writer refuses a linked lock file")
 
