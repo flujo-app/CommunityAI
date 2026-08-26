@@ -9,8 +9,10 @@ from drift.node.worker_supervisor import (
     SystemBandwidthMonitor,
     WorkerLaunch,
     WorkerPolicyError,
+    WorkerReconfigurationBusyError,
     WorkerState,
     WorkerSupervisor,
+    WorkerSupervisorSettings,
 )
 
 
@@ -21,6 +23,63 @@ def _wait_for(predicate, timeout=2):
             return
         time.sleep(0.01)
     raise AssertionError("condition was not reached before timeout")
+
+
+def test_supervisor_reconfigures_only_after_persistence_and_while_idle():
+    initial = WorkerLaunch(
+        "worker",
+        "model",
+        (sys.executable, "-c", "import time; time.sleep(30)"),
+        policy_admitted=False,
+        policy_reason="sharing disabled",
+    )
+    updated = WorkerLaunch(
+        "worker",
+        "model",
+        initial.command,
+        policy_admitted=True,
+        max_disk_bytes=10,
+    )
+    supervisor = WorkerSupervisor([initial])
+    persisted = []
+    supervisor.reconfigure(
+        WorkerSupervisorSettings((updated,), stop_timeout=3),
+        persist=lambda: persisted.append(True),
+    )
+    assert persisted == [True]
+    assert supervisor.launches == (updated,)
+
+    with pytest.raises(OSError, match="write failed"):
+        supervisor.reconfigure(
+            WorkerSupervisorSettings((initial,), stop_timeout=4),
+            persist=lambda: (_ for _ in ()).throw(OSError("write failed")),
+        )
+    assert supervisor.launches == (updated,)
+    supervisor.shutdown()
+
+
+def test_supervisor_reconfiguration_refuses_running_intent_before_persistence():
+    launch = WorkerLaunch(
+        "worker",
+        "model",
+        (sys.executable, "-c", "import time; time.sleep(30)"),
+        auto_restart=False,
+    )
+    supervisor = WorkerSupervisor([launch], stop_timeout=2, poll_period=0.01)
+    supervisor.start_service()
+    supervisor.start_worker("worker")
+    persisted = []
+
+    with pytest.raises(WorkerReconfigurationBusyError, match="pause all"):
+        supervisor.reconfigure(
+            WorkerSupervisorSettings((launch,), stop_timeout=3),
+            persist=lambda: persisted.append(True),
+        )
+
+    assert persisted == []
+    assert supervisor.snapshot("worker")["desired_running"] is True
+    supervisor.pause_worker("worker")
+    supervisor.shutdown()
 
 
 def test_supervisor_starts_and_pauses_an_isolated_worker_process():

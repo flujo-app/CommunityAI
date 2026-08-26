@@ -24,6 +24,7 @@ from drift.model_catalog import (
 )
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError
+from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
 
 CATALOG_BOOTSTRAP_SCHEMA_VERSION = 1
 MAX_CATALOG_BYTES = 4 * 1024 * 1024
@@ -410,7 +411,12 @@ class CatalogBootstrapInstaller:
             overwrite=True,
         )
         guard.save(self.rollback_path)
-        _atomic_write(self.config_path, config_text, overwrite=False)
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with node_config_write_lock(self.config_path):
+                _atomic_write(self.config_path, config_text, overwrite=False)
+        except NodeConfigWriteLockError as exc:
+            raise CatalogBootstrapError("Another node configuration writer is active") from exc
         return CatalogBootstrapResult(
             config_path=self.config_path,
             catalog_id=catalog.catalog_id,

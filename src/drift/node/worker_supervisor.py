@@ -32,6 +32,10 @@ class WorkerPolicyError(PermissionError):
     """A contribution worker is blocked by the node's authoritative policy."""
 
 
+class WorkerReconfigurationBusyError(RuntimeError):
+    """Live policy cannot change while a worker still has running intent."""
+
+
 class SystemBandwidthMonitor:
     """Estimate aggregate host network traffic without inspecting request contents."""
 
@@ -173,6 +177,26 @@ class WorkerLaunch:
                 raise ValueError(f"worker {name} must be a finite positive number")
         if any(not name or not isinstance(name, str) or not isinstance(value, str) for name, value in self.environment):
             raise ValueError("worker environment names and values must be strings")
+
+
+@dataclass(frozen=True)
+class WorkerSupervisorSettings:
+    """A completely validated, atomically swappable worker-policy configuration."""
+
+    launches: Tuple[WorkerLaunch, ...]
+    stop_timeout: float
+    schedule_allowed: Optional[Callable[[], bool]] = None
+    bandwidth_mbps: Optional[Callable[[], Optional[float]]] = None
+    power_watts: Optional[Callable[[str], Optional[float]]] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.launches, tuple):
+            raise ValueError("worker launches must be a tuple")
+        normalized_ids = [launch.worker_id.casefold() for launch in self.launches]
+        if len(set(normalized_ids)) != len(normalized_ids):
+            raise ValueError("worker ids must be unique case-insensitively")
+        if self.stop_timeout <= 0:
+            raise ValueError("worker stop timeout must be positive")
 
 
 @dataclass
@@ -657,6 +681,43 @@ class WorkerSupervisor:
     def launches(self) -> Tuple[WorkerLaunch, ...]:
         with self._lock:
             return tuple(record.launch for record in self._records.values())
+
+    def reconfigure(self, settings: WorkerSupervisorSettings, *, persist: Callable[[], None]) -> None:
+        """Persist and apply a prevalidated policy while every worker is paused.
+
+        The persistence callback runs while worker actions hold the same lock. If it
+        fails, no in-memory field changes. Once it succeeds, the remaining assignments
+        cannot perform I/O or spawn a process, so disk and active policy advance as one
+        bounded transaction.
+        """
+        launches = {launch.worker_id.casefold(): launch for launch in settings.launches}
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("worker supervisor is closed")
+            if set(launches) != set(self._records):
+                raise ValueError("a policy update must preserve the configured worker set")
+            for record in self._records.values():
+                self._refresh_locked(record)
+                if (
+                    record.desired_running
+                    or record.process is not None
+                    or record.suspension_stop_thread is not None
+                    or record.state in (WorkerState.STARTING, WorkerState.STOPPING)
+                ):
+                    raise WorkerReconfigurationBusyError(
+                        "pause all contribution workers before changing the contribution policy"
+                    )
+            persist()
+            for normalized, record in self._records.items():
+                record.launch = launches[normalized]
+                record.schedule_suspended = False
+                record.resource_suspended = False
+                record.last_power_watts = None
+            self._stop_timeout = settings.stop_timeout
+            self._schedule_allowed = settings.schedule_allowed
+            self._bandwidth_mbps = settings.bandwidth_mbps
+            self._power_watts = settings.power_watts
+            self._last_bandwidth_mbps = None
 
     def shutdown(self) -> None:
         with self._lock:

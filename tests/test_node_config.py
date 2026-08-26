@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from drift.cli.run_node import _build_model_manager, _build_worker_supervisor, _load_node_config
+from drift.cli.run_node import _build_model_manager, _build_worker_supervisor, _load_persisted_and_runtime_config
 from drift.model_manifest import ModelManifest
 from drift.node.config import (
     NODE_CONFIG_SCHEMA_VERSION,
@@ -473,7 +473,7 @@ def test_contribution_policy_rejects_alias_based_allow_deny_conflicts(monkeypatc
     manager.shutdown()
 
 
-def test_max_loaded_models_override_preserves_contribution_policy(monkeypatch, tmp_path):
+def test_max_loaded_models_override_preserves_the_single_persisted_startup_snapshot(monkeypatch, tmp_path):
     configured = NodeConfig(
         schema_version=1,
         max_loaded_models=1,
@@ -482,13 +482,21 @@ def test_max_loaded_models_override_preserves_contribution_policy(monkeypatch, t
             {"sharing_enabled": False, "denied_models": ["blocked-model"]}
         ),
     )
-    monkeypatch.setattr(NodeConfig, "load", lambda path: configured)
+    loaded_paths = []
+
+    def load(path):
+        loaded_paths.append(path)
+        return configured
+
+    monkeypatch.setattr(NodeConfig, "load", load)
     args = type("Args", (), {"config": tmp_path / "node.json", "max_loaded_models": 2})()
 
-    overridden = _load_node_config(args)
+    persisted, runtime = _load_persisted_and_runtime_config(args)
 
-    assert overridden.max_loaded_models == 2
-    assert overridden.contribution_policy is configured.contribution_policy
+    assert loaded_paths == [args.config]
+    assert persisted is configured
+    assert runtime.max_loaded_models == 2
+    assert runtime.contribution_policy is configured.contribution_policy
 
 
 def test_contribution_policy_parses_absolute_and_percentage_vram_limits():

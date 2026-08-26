@@ -12,6 +12,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
 from drift.api.server import create_app
+from drift.node.config import ContributionPolicyConfig, NodeConfigError
 from drift.node.keys import ApiKeyNotFoundError, ApiKeyStore, ApiKeyStoreError, LastActiveKeyError
 from drift.node.model_manager import (
     ModelInUseError,
@@ -20,10 +21,21 @@ from drift.node.model_manager import (
     ModelNotFoundError,
     ModelUnloadError,
 )
-from drift.node.worker_supervisor import WorkerNotFoundError, WorkerPolicyError, WorkerSupervisor
+from drift.node.policy_store import (
+    ContributionPolicyConflictError,
+    ContributionPolicyPersistenceError,
+    ContributionPolicyStore,
+    parse_policy_update_request,
+)
+from drift.node.worker_supervisor import (
+    WorkerNotFoundError,
+    WorkerPolicyError,
+    WorkerReconfigurationBusyError,
+    WorkerSupervisor,
+)
 
 CONTROL_API_VERSION = 1
-CONTRIBUTION_STATUS_SCHEMA_VERSION = 1
+CONTRIBUTION_STATUS_SCHEMA_VERSION = 2
 
 
 def _bounded_text(value, fallback: str, *, limit: int = 300) -> str:
@@ -62,7 +74,7 @@ def _gate_status(snapshot, prefix: str):
     }
 
 
-def _contribution_status(worker_snapshots, *, configured: bool):
+def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, policy_snapshot):
     """Return the bounded, secret-free worker view consumed by the desktop."""
     workers = []
     for snapshot in worker_snapshots:
@@ -100,6 +112,8 @@ def _contribution_status(worker_snapshots, *, configured: bool):
     return {
         "schema_version": CONTRIBUTION_STATUS_SCHEMA_VERSION,
         "configured": configured,
+        "editable": editable,
+        "policy": policy_snapshot,
         "workers": workers,
     }
 
@@ -127,6 +141,8 @@ def create_node_app(
     max_concurrent: int = 1,
     default_max_tokens: int = 512,
     worker_supervisor: Optional[WorkerSupervisor] = None,
+    contribution_policy: Optional[ContributionPolicyConfig] = None,
+    contribution_policy_store: Optional[ContributionPolicyStore] = None,
 ):
     """Compose the OpenAI API and authenticated local control surface."""
     if api_key_store is None and (not api_keys or any(not isinstance(key, str) or not key for key in api_keys)):
@@ -145,6 +161,8 @@ def create_node_app(
         )
     if overlaps:
         raise ValueError("control keys must be distinct from OpenAI API keys")
+    if contribution_policy_store is not None and worker_supervisor is None:
+        raise ValueError("persistent contribution policy requires a worker supervisor")
     control_keys = tuple(control_keys)
     app = create_app(
         model_manager=model_manager,
@@ -166,9 +184,21 @@ def create_node_app(
     async def node_status(request: Request):
         check_control_auth(request)
         worker_snapshots = list(worker_supervisor.snapshots()) if worker_supervisor is not None else []
+        if contribution_policy_store is not None:
+            policy_snapshot = contribution_policy_store.snapshot()
+        else:
+            policy_snapshot = {
+                "schema_version": 1,
+                "config_revision": None,
+                "policy": (
+                    ContributionPolicyConfig() if contribution_policy is None else contribution_policy
+                ).to_dict(),
+            }
         contribution = _contribution_status(
             worker_snapshots,
             configured=worker_supervisor is not None,
+            editable=contribution_policy_store is not None,
+            policy_snapshot=policy_snapshot,
         )
         return {
             "api_version": CONTROL_API_VERSION,
@@ -183,6 +213,39 @@ def create_node_app(
             ],
             "contribution": contribution,
         }
+
+    def require_policy_store() -> ContributionPolicyStore:
+        if contribution_policy_store is None:
+            raise HTTPException(status_code=501, detail="persistent contribution policy editing is not configured")
+        return contribution_policy_store
+
+    @app.get("/control/v1/contribution-policy")
+    async def get_contribution_policy(request: Request):
+        check_control_auth(request)
+        return require_policy_store().snapshot()
+
+    @app.put("/control/v1/contribution-policy")
+    async def update_contribution_policy(request: Request):
+        check_control_auth(request)
+        store = require_policy_store()
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().casefold() != "application/json":
+            raise HTTPException(status_code=415, detail="contribution policy request must use application/json")
+        payload = bytearray()
+        async for chunk in request.stream():
+            payload.extend(chunk)
+            if len(payload) > 256 * 1024:
+                raise HTTPException(status_code=413, detail="contribution policy request exceeds the size limit")
+        try:
+            expected_revision, policy = parse_policy_update_request(bytes(payload))
+            return store.update(policy, expected_revision=expected_revision)
+        except NodeConfigError as exc:
+            raise HTTPException(status_code=422, detail=_bounded_text(str(exc), "invalid contribution policy")) from exc
+        except ContributionPolicyConflictError as exc:
+            raise HTTPException(status_code=412, detail=str(exc)) from exc
+        except WorkerReconfigurationBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ContributionPolicyPersistenceError as exc:
+            raise HTTPException(status_code=503, detail="contribution policy persistence failed") from exc
 
     @app.post("/control/v1/models/unload")
     async def unload_model(body: ModelUnloadRequest, request: Request):

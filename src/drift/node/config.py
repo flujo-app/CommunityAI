@@ -207,6 +207,13 @@ class ContributionWindowConfig:
             (weekday - 1) % 7 in self.weekdays and minute < self.end_minute
         )
 
+    def to_dict(self) -> Mapping[str, Any]:
+        return {
+            "days": [_WEEKDAYS[weekday] for weekday in self.weekdays],
+            "start": f"{self.start_minute // 60:02d}:{self.start_minute % 60:02d}",
+            "end": f"{self.end_minute // 60:02d}:{self.end_minute % 60:02d}",
+        }
+
 
 @dataclass(frozen=True)
 class ContributionScheduleConfig:
@@ -242,6 +249,12 @@ class ContributionScheduleConfig:
                 raise ValueError("schedule evaluation requires a timezone-aware datetime")
             local_now = now.astimezone() if schedule_timezone is None else now.astimezone(schedule_timezone)
         return any(window.contains(local_now) for window in self.windows)
+
+    def to_dict(self) -> Mapping[str, Any]:
+        return {
+            "timezone": self.timezone_name,
+            "windows": [window.to_dict() for window in self.windows],
+        }
 
 
 @dataclass(frozen=True)
@@ -332,6 +345,21 @@ class ContributionPolicyConfig:
                 None if source.get("schedule") is None else ContributionScheduleConfig.from_dict(source["schedule"])
             ),
         )
+
+    def to_dict(self) -> Mapping[str, Any]:
+        """Return the complete secret-free policy document used by control clients."""
+        return {
+            "sharing_enabled": self.sharing_enabled,
+            "allowed_models": list(self.allowed_models),
+            "preferred_models": list(self.preferred_models),
+            "denied_models": list(self.denied_models),
+            "max_disk_space": self.max_disk_space,
+            "max_vram": self.max_vram,
+            "max_bandwidth_mbps": self.max_bandwidth_mbps,
+            "max_power_watts": self.max_power_watts,
+            "pause_timeout": self.pause_timeout,
+            "schedule": None if self.schedule is None else self.schedule.to_dict(),
+        }
 
 
 @dataclass(frozen=True)

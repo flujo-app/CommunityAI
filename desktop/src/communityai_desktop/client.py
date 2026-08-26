@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import math
+import re
 import socket
 from typing import Any, Dict, List, Mapping, Optional
 from urllib.error import HTTPError, URLError
@@ -13,7 +14,8 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SUPPORTED_CONTROL_API_VERSION = 1
-CONTRIBUTION_STATUS_SCHEMA_VERSION = 1
+CONTRIBUTION_STATUS_SCHEMA_VERSION = 2
+CONTRIBUTION_POLICY_SCHEMA_VERSION = 1
 
 
 class NodeClientError(RuntimeError):
@@ -110,13 +112,133 @@ def _normalize_gate(value: Any, field: str, *, suspended: bool = False) -> Dict[
     return result
 
 
+def _normalize_model_selectors(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list) or len(value) > 256:
+        raise NodeClientError(f"Local node contribution policy has invalid {field}")
+    result = []
+    for selector in value:
+        if not isinstance(selector, str):
+            raise NodeClientError(f"Local node contribution policy has invalid {field}")
+        if not selector.strip() or not selector.isprintable() or len(selector) > 256:
+            raise NodeClientError(f"Local node contribution policy has invalid {field}")
+        result.append(selector)
+    if len({selector.casefold() for selector in result}) != len(result):
+        raise NodeClientError(f"Local node contribution policy has duplicate {field}")
+    return result
+
+
+def _normalize_policy(value: Any) -> Dict[str, Any]:
+    fields = {
+        "sharing_enabled",
+        "allowed_models",
+        "preferred_models",
+        "denied_models",
+        "max_disk_space",
+        "max_vram",
+        "max_bandwidth_mbps",
+        "max_power_watts",
+        "pause_timeout",
+        "schedule",
+    }
+    if not isinstance(value, dict) or set(value) != fields or not isinstance(value["sharing_enabled"], bool):
+        raise NodeClientError("Local node contribution policy is malformed")
+    allowed = _normalize_model_selectors(value["allowed_models"], "allowed models")
+    preferred = _normalize_model_selectors(value["preferred_models"], "preferred models")
+    denied = _normalize_model_selectors(value["denied_models"], "denied models")
+
+    def optional_text(field: str):
+        item = value[field]
+        if item is None:
+            return None
+        if not isinstance(item, str) or not item.strip() or not item.isprintable() or len(item) > 64:
+            raise NodeClientError(f"Local node contribution policy has invalid {field.replace('_', ' ')}")
+        return item
+
+    max_disk_space = optional_text("max_disk_space")
+    max_vram = optional_text("max_vram")
+    if value["sharing_enabled"] and max_disk_space is None:
+        raise NodeClientError("Local node contribution policy enables sharing without a storage ceiling")
+    bandwidth = _optional_number(value["max_bandwidth_mbps"], "bandwidth limit", positive=True)
+    power = _optional_number(value["max_power_watts"], "power limit", positive=True)
+    pause_timeout = _optional_number(value["pause_timeout"], "pause timeout", positive=True)
+    if pause_timeout is None:
+        raise NodeClientError("Local node contribution policy has invalid pause timeout")
+
+    schedule = value["schedule"]
+    clean_schedule = None
+    if schedule is not None:
+        if not isinstance(schedule, dict) or set(schedule) != {"timezone", "windows"}:
+            raise NodeClientError("Local node contribution policy has invalid schedule")
+        timezone = schedule["timezone"]
+        if not isinstance(timezone, str) or not timezone.strip() or not timezone.isprintable() or len(timezone) > 128:
+            raise NodeClientError("Local node contribution policy has invalid schedule timezone")
+        windows = schedule["windows"]
+        if not isinstance(windows, list) or not windows or len(windows) > 64:
+            raise NodeClientError("Local node contribution policy has invalid schedule windows")
+        clean_windows = []
+        for window in windows:
+            if not isinstance(window, dict) or set(window) != {"days", "start", "end"}:
+                raise NodeClientError("Local node contribution policy has invalid schedule window")
+            days = window["days"]
+            if (
+                not isinstance(days, list)
+                or not days
+                or any(day not in ("mon", "tue", "wed", "thu", "fri", "sat", "sun") for day in days)
+                or len(set(days)) != len(days)
+            ):
+                raise NodeClientError("Local node contribution policy has invalid schedule days")
+            start, end = window["start"], window["end"]
+            if (
+                not isinstance(start, str)
+                or not isinstance(end, str)
+                or re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", start) is None
+                or re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", end) is None
+                or start == end
+            ):
+                raise NodeClientError("Local node contribution policy has invalid schedule time")
+            clean_windows.append({"days": list(days), "start": start, "end": end})
+        clean_schedule = {"timezone": timezone, "windows": clean_windows}
+    return {
+        "sharing_enabled": value["sharing_enabled"],
+        "allowed_models": allowed,
+        "preferred_models": preferred,
+        "denied_models": denied,
+        "max_disk_space": max_disk_space,
+        "max_vram": max_vram,
+        "max_bandwidth_mbps": bandwidth,
+        "max_power_watts": power,
+        "pause_timeout": pause_timeout,
+        "schedule": clean_schedule,
+    }
+
+
+def _normalize_policy_snapshot(value: Any, *, require_revision: bool) -> Dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"schema_version", "config_revision", "policy"}:
+        raise NodeClientError("Local node contribution policy response is malformed")
+    if value["schema_version"] != CONTRIBUTION_POLICY_SCHEMA_VERSION:
+        raise NodeClientError("Local node contribution policy schema is unsupported")
+    revision = value["config_revision"]
+    valid_revision = isinstance(revision, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", revision) is not None
+    if (require_revision and not valid_revision) or (
+        not require_revision and revision is not None and not valid_revision
+    ):
+        raise NodeClientError("Local node contribution policy revision is invalid")
+    return {
+        "schema_version": CONTRIBUTION_POLICY_SCHEMA_VERSION,
+        "config_revision": revision,
+        "policy": _normalize_policy(value["policy"]),
+    }
+
+
 def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema_version") != CONTRIBUTION_STATUS_SCHEMA_VERSION:
         raise NodeClientError("Local node status has an unsupported contribution schema")
     configured = value.get("configured")
+    editable = value.get("editable")
     workers = value.get("workers")
-    if not isinstance(configured, bool) or not isinstance(workers, list):
+    if not isinstance(configured, bool) or not isinstance(editable, bool) or not isinstance(workers, list):
         raise NodeClientError("Local node contribution status is malformed")
+    policy_snapshot = _normalize_policy_snapshot(value.get("policy"), require_revision=editable)
     normalized_workers = []
     for worker in workers:
         if not isinstance(worker, dict):
@@ -180,6 +302,8 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
     return {
         "schema_version": CONTRIBUTION_STATUS_SCHEMA_VERSION,
         "configured": configured,
+        "editable": editable,
+        "policy": policy_snapshot,
         "workers": normalized_workers,
     }
 
@@ -214,7 +338,7 @@ class NodeClient:
         return decoded
 
     def _request(self, method: str, path: str, *, payload: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-        data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        data = None if payload is None else json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
         request = Request(
             f"{self.node_url}{path}",
             data=data,
@@ -261,6 +385,31 @@ class NodeClient:
             raise NodeClientError("Local node status has invalid model or worker data")
         result["contribution"] = _normalize_contribution_status(result.get("contribution"))
         return result
+
+    def get_contribution_policy(self) -> Dict[str, Any]:
+        return _normalize_policy_snapshot(
+            self._request("GET", "/control/v1/contribution-policy"),
+            require_revision=True,
+        )
+
+    def update_contribution_policy(self, policy: Mapping[str, Any], *, expected_revision: str) -> Dict[str, Any]:
+        if not isinstance(policy, Mapping):
+            raise ValueError("contribution policy must be a mapping")
+        normalized_policy = _normalize_policy(dict(policy))
+        if not isinstance(expected_revision, str):
+            raise ValueError("expected config revision must be a string")
+        return _normalize_policy_snapshot(
+            self._request(
+                "PUT",
+                "/control/v1/contribution-policy",
+                payload={
+                    "schema_version": CONTRIBUTION_POLICY_SCHEMA_VERSION,
+                    "expected_config_revision": expected_revision,
+                    "policy": normalized_policy,
+                },
+            ),
+            require_revision=True,
+        )
 
     def list_workers(self) -> List[Dict[str, Any]]:
         result = self._request("GET", "/control/v1/workers")

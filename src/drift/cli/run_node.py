@@ -23,7 +23,14 @@ from drift.node.native_credentials import (
     NativeCredentialLocation,
     load_native_control_key,
 )
-from drift.node.worker_supervisor import NvidiaPowerMonitor, SystemBandwidthMonitor, WorkerLaunch, WorkerSupervisor
+from drift.node.policy_store import ContributionPolicyPersistenceError, ContributionPolicyStore
+from drift.node.worker_supervisor import (
+    NvidiaPowerMonitor,
+    SystemBandwidthMonitor,
+    WorkerLaunch,
+    WorkerSupervisor,
+    WorkerSupervisorSettings,
+)
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
@@ -132,9 +139,9 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error("native credential service and account must not be empty")
 
 
-def _load_node_config(args: argparse.Namespace) -> NodeConfig:
+def _load_node_config(args: argparse.Namespace, *, persisted_config: NodeConfig | None = None) -> NodeConfig:
     if args.config:
-        configured = NodeConfig.load(args.config)
+        configured = persisted_config if persisted_config is not None else NodeConfig.load(args.config)
         if args.max_loaded_models is None:
             return configured
         return NodeConfig(
@@ -163,6 +170,13 @@ def _load_node_config(args: argparse.Namespace) -> NodeConfig:
             ),
         ),
     )
+
+
+def _load_persisted_and_runtime_config(
+    args: argparse.Namespace,
+) -> tuple[NodeConfig | None, NodeConfig]:
+    persisted = NodeConfig.load(args.config) if args.config is not None else None
+    return persisted, _load_node_config(args, persisted_config=persisted)
 
 
 def _build_model_manager(
@@ -214,9 +228,9 @@ def _build_model_manager(
     return manager, tuple(descriptors), discovery
 
 
-def _build_worker_supervisor(
+def _prepare_worker_supervisor_settings(
     config: NodeConfig, manager: ModelManager, *, token: str | None = None
-) -> WorkerSupervisor:
+) -> WorkerSupervisorSettings:
     policy = config.contribution_policy
 
     def model_key(descriptor: ModelDescriptor) -> str:
@@ -427,12 +441,25 @@ def _build_worker_supervisor(
         monitor = power_monitors.get(worker_id.casefold())
         return None if monitor is None else monitor()
 
-    return WorkerSupervisor(
-        launches,
+    return WorkerSupervisorSettings(
+        launches=tuple(launches),
         stop_timeout=policy.pause_timeout,
         schedule_allowed=None if policy.schedule is None else policy.schedule.allows,
         bandwidth_mbps=bandwidth_monitor,
         power_watts=worker_power_watts if any(launch.max_power_watts is not None for launch in launches) else None,
+    )
+
+
+def _build_worker_supervisor(
+    config: NodeConfig, manager: ModelManager, *, token: str | None = None
+) -> WorkerSupervisor:
+    settings = _prepare_worker_supervisor_settings(config, manager, token=token)
+    return WorkerSupervisor(
+        settings.launches,
+        stop_timeout=settings.stop_timeout,
+        schedule_allowed=settings.schedule_allowed,
+        bandwidth_mbps=settings.bandwidth_mbps,
+        power_watts=settings.power_watts,
     )
 
 
@@ -483,10 +510,20 @@ def main() -> None:
     _validate_args(parser, args)
 
     try:
-        config = _load_node_config(args)
+        persisted_config, config = _load_persisted_and_runtime_config(args)
         manager, descriptors, discovery = _build_model_manager(config, token=args.token)
         worker_supervisor = _build_worker_supervisor(config, manager, token=args.token)
-    except (NodeConfigError, ManifestError, ValueError) as exc:
+        policy_store = (
+            None
+            if args.config is None
+            else ContributionPolicyStore(
+                args.config,
+                worker_supervisor,
+                lambda candidate: _prepare_worker_supervisor_settings(candidate, manager, token=args.token),
+                expected_config=persisted_config,
+            )
+        )
+    except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))
 
     try:
@@ -537,6 +574,8 @@ def main() -> None:
         max_concurrent=args.max_concurrent,
         default_max_tokens=args.default_max_tokens,
         worker_supervisor=worker_supervisor,
+        contribution_policy=config.contribution_policy,
+        contribution_policy_store=policy_store,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
     logger.info(
