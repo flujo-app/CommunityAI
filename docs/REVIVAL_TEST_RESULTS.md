@@ -15,7 +15,7 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; and the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation | The release bootstrap and initial catalog are not published or bundled; qualified public manifests and workers, real packaged clean-install inference, cross-platform native-store package promotion, contribution policies and budgets, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; and the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics | The release bootstrap and initial catalog are not published or bundled; qualified public manifests and workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
 
 ## Default-branch integration and Windows/Linux package CI
 
@@ -824,6 +824,36 @@ selection passes 409 tests with 10 expected skips. Black, isort, YAML parsing, a
 diff whitespace gate are clean. This is deterministic contract evidence only: no external
 runner, model matrix, provider recovery, or cleanup gate was executed.
 
+## Packaged contribution-policy control plane
+
+On 2026-08-26, the Gate 14 repository slice carried the node-authoritative
+contribution contract through the authenticated desktop control plane. The bounded
+status projection allowlists worker identity, desired/running state, resolved model
+policy, schedule eligibility and suspension, disk and VRAM limits, measured bandwidth
+and power, resource admission, and sanitized reasons. It does not transport worker
+PIDs, logs, raw failure strings, credentials, private endpoints, prompts, or provider
+output. The desktop validates that schema before presenting it and rejects malformed,
+non-finite, unbounded, or internally inconsistent values. In particular, a configured
+bandwidth or power ceiling cannot appear admitted without its corresponding
+measurement.
+
+The Sharing page now renders the node's resolved limits and explicit unavailable
+telemetry reasons. Start and restart remain disabled whenever model, schedule, or
+resource admission fails, while pause stays available for the selected worker. The
+former Qt-local VRAM preference was removed because it never changed the enforced node
+policy; the replacement is deliberately read-only until an authenticated, atomic,
+validated persistence API exists. The packaged self-test now exercises the
+contribution-policy contract, and the offscreen UI self-test renders the new sharing
+surface.
+
+The focused node and desktop-client selection passes 22 tests. The exact offline CI
+selection passes 458 tests with 8 expected skips; Black and isort accept all 262 tracked
+Python files, both desktop self-tests pass, and the whitespace gate is clean. This is
+source and package-wiring evidence only. Gate 14 remains `IN PROGRESS`: editing every
+policy value still needs atomic validated persistence, and real packaged Windows/Linux
+hardware must prove enforcement, suspension, bounded pause, and unsupported-telemetry
+behavior.
+
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts
@@ -833,10 +863,11 @@ runner, model matrix, provider recovery, or cleanup gate was executed.
 2. Exercise the changed-boundary replacement route in the controlled separate-machine
    interruption gate; beam-search recovery needs a reorder-aware activation history before
    it can be enabled safely.
-3. Connect schedule, VRAM, bandwidth, and power policy to packaged controls; validate
-   every budget against real OS resource behavior, qualify clean-install NVIDIA NVML
-   provider behavior, and either add trusted CPU/XPU/MPS power providers or preserve
-   their explicit fail-closed unsupported state in the release matrix.
+3. Add authenticated atomic persistence for editing every contribution-policy value
+   from the packaged GUI; validate every budget against real OS resource behavior,
+   qualify clean-install NVIDIA NVML provider behavior, and either add trusted
+   CPU/XPU/MPS power providers or preserve their explicit fail-closed unsupported state
+   in the release matrix.
 
 Resolved on 2026-08-22: the native hosted macOS security/parity workflow is green;
 Hivemind P2P cleanup no longer queries a closed global uvloop; legacy

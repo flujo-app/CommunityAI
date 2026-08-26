@@ -141,18 +141,7 @@ def run(
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
 
-    from PySide6.QtCore import (
-        QLockFile,
-        QObject,
-        QRunnable,
-        QSettings,
-        QStandardPaths,
-        Qt,
-        QThreadPool,
-        QTimer,
-        Signal,
-        Slot,
-    )
+    from PySide6.QtCore import QLockFile, QObject, QRunnable, QStandardPaths, Qt, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
     from PySide6.QtWidgets import (
@@ -170,7 +159,6 @@ def run(
         QPushButton,
         QScrollArea,
         QSizePolicy,
-        QSlider,
         QStackedWidget,
         QVBoxLayout,
         QWidget,
@@ -240,7 +228,6 @@ def run(
                 "network": {"peer_count": 0, "regions": []},
                 "contribution": {"enabled": False, "active_models": []},
             }
-            self._settings = QSettings("CommunityAI", "CommunityAI")
             self._page_buttons = []
 
             shell = QWidget()
@@ -482,31 +469,48 @@ def run(
             memory_header = QHBoxLayout()
             memory_header.addLayout(
                 self._section_header(
-                    "GPU memory to share", "Choose a comfortable target. It's saved on this computer."
+                    "Configured GPU memory budget",
+                    "Read from the node's enforced policy; unavailable data never becomes an invented default.",
                 ),
                 1,
             )
-            self.memory_value = label("50%", "metricValue")
+            self.memory_value = label("Unavailable", "metricValue")
             self.memory_value.setStyleSheet("font-size: 22px;")
             memory_header.addWidget(self.memory_value)
             memory_layout.addLayout(memory_header)
-            self.gpu_label = label("Your GPU", "bodyMuted")
-            memory_layout.addWidget(self.gpu_label)
-            self.memory_slider = QSlider(Qt.Horizontal)
-            self.memory_slider.setRange(10, 100)
-            self.memory_slider.setSingleStep(5)
-            saved_percent = int(self._settings.value("sharing/gpuMemoryPercent", 50))
-            self.memory_slider.setValue(max(10, min(100, saved_percent)))
-            self.memory_slider.valueChanged.connect(self._memory_changed)
-            self.memory_slider.sliderReleased.connect(self._save_memory_preference)
-            self.memory_slider.setAccessibleName("GPU memory to share")
-            memory_layout.addWidget(self.memory_slider)
-            scale = QHBoxLayout()
-            scale.addWidget(label("Keep more for me", "metricNote"))
-            scale.addStretch(1)
-            scale.addWidget(label("Share more", "metricNote"))
-            memory_layout.addLayout(scale)
+            self.memory_detail = label("No accelerator budget is reported.", "bodyMuted")
+            memory_layout.addWidget(self.memory_detail)
+            self.memory_bar = QProgressBar()
+            self.memory_bar.setRange(0, 100)
+            self.memory_bar.setValue(0)
+            self.memory_bar.setTextVisible(False)
+            self.memory_bar.setAccessibleName("Configured GPU memory budget")
+            memory_layout.addWidget(self.memory_bar)
             layout.addWidget(memory_card)
+
+            policy_card, policy_layout = card()
+            policy_layout.addLayout(
+                self._section_header(
+                    "Node-enforced sharing limits",
+                    "These values and admission decisions come from the authenticated local node.",
+                )
+            )
+            self.policy_status = label("Contribution policy is unavailable.", "bodyStrong")
+            self.policy_status.setWordWrap(True)
+            policy_layout.addWidget(self.policy_status)
+            self.disk_policy = label("Storage: unavailable", "bodyMuted")
+            self.bandwidth_policy = label("Bandwidth: unavailable", "bodyMuted")
+            self.power_policy = label("Power: unavailable", "bodyMuted")
+            self.schedule_policy = label("Schedule: unavailable", "bodyMuted")
+            for policy_line in (
+                self.disk_policy,
+                self.bandwidth_policy,
+                self.power_policy,
+                self.schedule_policy,
+            ):
+                policy_line.setWordWrap(True)
+                policy_layout.addWidget(policy_line)
+            layout.addWidget(policy_card)
 
             startup_card, startup_layout = card()
             startup_header = QHBoxLayout()
@@ -552,7 +556,6 @@ def run(
             privacy_layout.addWidget(privacy_text)
             layout.addWidget(privacy)
             layout.addStretch(1)
-            self._memory_changed(self.memory_slider.value())
             return page
 
         def _build_api_page(self) -> QScrollArea:
@@ -619,7 +622,13 @@ def run(
             busy = self._busy > 0
             self.retry_button.setDisabled(busy)
             self.create_key_button.setDisabled(busy or self._controller is None)
-            self.master_share_button.setDisabled(busy or not self._snapshot.get("workers"))
+            contribution = self._snapshot.get("contribution", {})
+            action_available = (
+                contribution.get("can_pause") if contribution.get("intent_enabled") else contribution.get("can_start")
+            )
+            self.master_share_button.setDisabled(
+                busy or self._controller is None or not self._snapshot.get("workers") or not action_available
+            )
 
         def _submit(
             self,
@@ -757,24 +766,101 @@ def run(
             contribution = snapshot["contribution"]
             workers = snapshot["workers"]
             enabled = contribution["enabled"]
+            intent_enabled = contribution["intent_enabled"]
             active_models = contribution["active_models"]
             if enabled:
                 self.sharing_title.setText(f"You're helping with {', '.join(active_models)}")
-                self.sharing_detail.setText("CommunityAI shares the models you selected below.")
+                self.sharing_detail.setText("The node is enforcing every configured sharing limit.")
+            elif intent_enabled:
+                self.sharing_title.setText("Sharing is waiting on the node policy")
+                self.sharing_detail.setText(
+                    contribution["selected_blocked_reasons"][0]
+                    if contribution["selected_blocked_reasons"]
+                    else "The selected worker is paused or stopping."
+                )
+            else:
+                self.sharing_title.setText("Your computer is not sharing right now")
+                self.sharing_detail.setText(
+                    "Choose an admitted model below, then start whenever you're ready."
+                    if contribution["can_start"]
+                    else (
+                        contribution["blocked_reasons"][0]
+                        if contribution["blocked_reasons"]
+                        else "No contribution worker is available."
+                    )
+                )
+            if intent_enabled:
                 self.master_share_button.setText("Pause sharing")
                 self.master_share_button.setObjectName("ghostButton")
             else:
-                self.sharing_title.setText("Your GPU is not sharing right now")
-                self.sharing_detail.setText("Choose models below, then start whenever you're ready.")
                 self.master_share_button.setText("Start sharing")
                 self.master_share_button.setObjectName("primaryButton")
             self.master_share_button.style().unpolish(self.master_share_button)
             self.master_share_button.style().polish(self.master_share_button)
 
-            total = contribution.get("gpu_memory_total_bytes")
-            gpu_name = contribution.get("gpu_name") or "Your GPU"
-            total_text = _gib_text(total)
-            self.gpu_label.setText(f"{gpu_name}  •  {total_text}" if total_text else gpu_name)
+            vram_status = contribution["vram_status"]
+            if vram_status == "configured":
+                percent = contribution["vram_percent"]
+                shared = _gib_text(contribution["vram_bytes"])
+                pool = _gib_text(contribution["vram_pool_bytes"])
+                self.memory_value.setText(f"{percent}%")
+                self.memory_detail.setText(f"{shared} of {pool} is reserved per configured worker.")
+                self.memory_bar.setValue(percent)
+            elif vram_status == "varies":
+                self.memory_value.setText("Varies")
+                self.memory_detail.setText("Configured accelerator limits differ between workers.")
+                self.memory_bar.setValue(0)
+            else:
+                self.memory_value.setText("Unavailable")
+                self.memory_detail.setText("No accelerator budget is reported; no default is assumed.")
+                self.memory_bar.setValue(0)
+
+            def limit_summary(key: str, unit: str, *, byte_size: bool = False) -> str:
+                values = [worker["limits"][key] for worker in workers]
+                configured = {value for value in values if value is not None}
+                if not configured:
+                    return "not configured"
+                if len(configured) != 1 or len(configured) != len(values) and any(value is None for value in values):
+                    return "varies by worker"
+                value = next(iter(configured))
+                return _gib_text(value) if byte_size else f"{value:g} {unit}"
+
+            def measurement_summary(key: str, unit: str) -> str:
+                values = [worker["measurements"][key] for worker in workers]
+                present = {value for value in values if value is not None}
+                if not present:
+                    return "telemetry unavailable"
+                if len(present) != 1 or any(value is None for value in values):
+                    return "telemetry varies or is unavailable"
+                return f"{next(iter(present)):g} {unit} measured"
+
+            admitted_models = sum(worker["policy_admitted"] for worker in workers)
+            policy_text = (
+                f"Model policy admits {admitted_models} of {len(workers)} configured workers."
+                if workers
+                else "No contribution workers are configured."
+            )
+            if contribution["blocked_reasons"]:
+                policy_text += f" {contribution['blocked_reasons'][0]}"
+            self.policy_status.setText(policy_text)
+            self.disk_policy.setText(f"Storage ceiling: {limit_summary('disk_bytes', '', byte_size=True)}")
+            self.bandwidth_policy.setText(
+                "Bandwidth ceiling: "
+                f"{limit_summary('bandwidth_mbps', 'Mbps')} · "
+                f"{measurement_summary('bandwidth_mbps', 'Mbps')}"
+            )
+            self.power_policy.setText(
+                "Power ceiling: " f"{limit_summary('power_watts', 'W')} · " f"{measurement_summary('power_watts', 'W')}"
+            )
+            closed_reasons = []
+            for worker in workers:
+                if not worker["schedule_admitted"] and worker["schedule_reason"] not in closed_reasons:
+                    closed_reasons.append(worker["schedule_reason"])
+            self.schedule_policy.setText(
+                "Schedule: unavailable"
+                if not workers
+                else (f"Schedule: {closed_reasons[0]}" if closed_reasons else "Schedule: open now")
+            )
 
             clear_layout(self.contribution_models_layout)
             workers_by_model: Dict[str, list[Dict[str, Any]]] = {}
@@ -792,21 +878,28 @@ def run(
                 copy = QVBoxLayout()
                 copy.setSpacing(2)
                 copy.addWidget(label(model["id"], "bodyStrong"))
-                active = any(worker["desired_running"] for worker in model_workers)
-                copy.addWidget(
-                    label(
-                        "Sharing" if active else ("Not sharing" if model_workers else "Available after sharing setup"),
-                        "bodyMuted",
-                    )
-                )
+                selected = any(worker["desired_running"] for worker in model_workers)
+                statuses = list(dict.fromkeys(worker["display_status"] for worker in model_workers))
+                detail = "; ".join(statuses) if statuses else "Available after sharing setup"
+                status_label = label(detail, "bodyMuted")
+                status_label.setWordWrap(True)
+                copy.addWidget(status_label)
                 row_layout.addLayout(copy, 1)
                 toggle = QCheckBox()
-                toggle.setChecked(active)
-                toggle.setEnabled(bool(model_workers) and self._busy == 0)
-                toggle.setAccessibleName(f"Share GPU with {model['id']}")
+                toggle.setChecked(selected)
+                toggle.setEnabled(
+                    bool(model_workers)
+                    and self._busy == 0
+                    and (selected or any(worker["can_start"] for worker in model_workers))
+                )
+                toggle.setAccessibleName(f"Share compute with {model['id']}")
                 worker_ids = [worker["id"] for worker in model_workers]
+                startable_ids = [worker["id"] for worker in model_workers if worker["can_start"]]
                 toggle.stateChanged.connect(
-                    lambda state, ids=worker_ids: self._set_model_sharing(ids, state == Qt.Checked.value)
+                    lambda state, all_ids=worker_ids, start_ids=startable_ids: self._set_model_sharing(
+                        start_ids if state == Qt.Checked.value else all_ids,
+                        state == Qt.Checked.value,
+                    )
                 )
                 row_layout.addWidget(toggle)
                 self.contribution_models_layout.addWidget(row)
@@ -851,29 +944,34 @@ def run(
                 return
             self.login_startup_detail.setText("Enabled for this user" if enabled else "Off")
 
-        def _memory_changed(self, value: int) -> None:
-            total = self._snapshot.get("contribution", {}).get("gpu_memory_total_bytes")
-            total_text = _gib_text(int(total * value / 100)) if total else ""
-            self.memory_value.setText(f"{value}%" + (f"  ·  {total_text}" if total_text else ""))
-
-        def _save_memory_preference(self) -> None:
-            self._settings.setValue("sharing/gpuMemoryPercent", self.memory_slider.value())
+        def _sharing_action_failed(self, message: str) -> None:
+            self.sharing_title.setText("The node rejected the sharing change")
+            self.sharing_detail.setText(str(message)[:300])
 
         def _set_model_sharing(self, worker_ids: list[str], enabled: bool) -> None:
             if not worker_ids or self._controller is None or self._busy:
                 return
             self._submit(
-                lambda: self._controller.set_workers_enabled(worker_ids, enabled), lambda result: self.refresh()
+                lambda: self._controller.set_workers_enabled(worker_ids, enabled),
+                lambda result: self.refresh(),
+                self._sharing_action_failed,
             )
 
         def _toggle_all_sharing(self) -> None:
             workers = self._snapshot.get("workers", [])
+            contribution = self._snapshot.get("contribution", {})
             if not workers or self._controller is None:
                 return
-            enable = not self._snapshot.get("contribution", {}).get("enabled", False)
-            worker_ids = [worker["id"] for worker in workers]
+            enable = not contribution.get("intent_enabled", False)
+            worker_ids = [
+                worker["id"] for worker in workers if (worker["can_start"] if enable else worker["desired_running"])
+            ]
+            if not worker_ids:
+                return
             self._submit(
-                lambda: self._controller.set_workers_enabled(worker_ids, enable), lambda result: self.refresh()
+                lambda: self._controller.set_workers_enabled(worker_ids, enable),
+                lambda result: self.refresh(),
+                self._sharing_action_failed,
             )
 
         def _copy_endpoint(self) -> None:

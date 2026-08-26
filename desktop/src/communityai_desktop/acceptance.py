@@ -46,6 +46,41 @@ class _FakeNodeState:
     def workers(self) -> list[Dict[str, Any]]:
         return [self.worker(worker_id) for worker_id in self.worker_states]
 
+    def contribution_worker(self, worker_id: str) -> Dict[str, Any]:
+        worker = self.worker(worker_id)
+        denied = worker_id == "worker-c"
+        return {
+            "id": worker["id"],
+            "model": worker["model"],
+            "state": worker["state"],
+            "desired_running": worker["desired_running"],
+            "policy": {
+                "admitted": not denied,
+                "reason": "Model is denied by node policy" if denied else None,
+                "preferred": worker_id == "worker-b",
+            },
+            "schedule": {"admitted": True, "reason": None, "suspended": False},
+            "resources": {
+                "admitted": not denied,
+                "reason": "Power telemetry is unavailable" if denied else None,
+                "suspended": False,
+                "limits": {
+                    "disk_bytes": 100 * 1024**3,
+                    "vram_bytes": 8 * 1024**3,
+                    "vram_pool_bytes": 16 * 1024**3,
+                    "bandwidth_mbps": 100.0,
+                    "power_watts": 250.0,
+                },
+                "measurements": {
+                    "bandwidth_mbps": 20.0 if not denied else None,
+                    "power_watts": 120.0 if not denied else None,
+                },
+            },
+        }
+
+    def contribution_workers(self) -> list[Dict[str, Any]]:
+        return [self.contribution_worker(worker_id) for worker_id in self.worker_states]
+
 
 def _handler(state: _FakeNodeState):
     class FakeNodeHandler(BaseHTTPRequestHandler):
@@ -120,9 +155,9 @@ def _handler(state: _FakeNodeState):
                             ],
                         },
                         "contribution": {
-                            "gpu_name": "NVIDIA GeForce RTX 4090",
-                            "gpu_memory_percent": 50,
-                            "gpu_memory_total_bytes": 25_769_803_776,
+                            "schema_version": 1,
+                            "configured": True,
+                            "workers": state.contribution_workers(),
                         },
                     },
                 )
@@ -202,6 +237,17 @@ def fake_node() -> Iterator[Tuple[str, str]]:
 def run_contract(client: NodeClient) -> Dict[str, Any]:
     """Exercise every privileged protocol operation used by this desktop slice."""
     status = client.status()
+    contribution = status["contribution"]
+    if contribution["schema_version"] != 1 or not contribution["configured"]:
+        raise AssertionError("acceptance node omitted the authoritative contribution contract")
+    from communityai_desktop.controller import DesktopController
+
+    desktop = DesktopController(client).snapshot()
+    denied = next(worker for worker in desktop["workers"] if worker["id"] == "worker-c")
+    if denied["can_start"] or denied["blocked_reason"] != "Model is denied by node policy":
+        raise AssertionError("desktop did not preserve the node's model-policy decision")
+    if desktop["contribution"]["vram_percent"] != 50:
+        raise AssertionError("desktop did not preserve the node's resolved VRAM budget")
     workers = client.list_workers()
     worker_a = next((worker for worker in workers if worker.get("id") == "worker-a"), None)
     if worker_a is None or worker_a.get("state") != "paused":
@@ -228,6 +274,7 @@ def run_contract(client: NodeClient) -> Dict[str, Any]:
         "model_count": len(status["models"]),
         "worker_actions": 3,
         "key_lifecycle": "passed",
+        "contribution_policy": "passed",
     }
 
 

@@ -11,6 +11,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,
   client-key management, worker controls, single-instance ownership, and login startup.
+- Authenticated desktop contribution status for model admission, schedule suspension,
+  storage, VRAM, bandwidth, power, measured telemetry, and unavailable-provider reasons.
 - Exact content-addressed model manifests, verified artifacts, signed worker identities,
   encrypted manifested transport, bounded failure recovery, and signed catalog/bootstrap
   formats.
@@ -44,6 +46,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   a named-pipe deadlock during startup and CI validation.
 - Root product messaging now describes public inference and optional compute sharing
   without claiming that credits, earnings, or spending already exist.
+- The desktop sharing page now reflects node-authoritative worker intent and enforced
+  limits. Its former local-only VRAM preference was replaced by a read-only policy view;
+  blocked workers cannot look startable, while selected workers can always be paused.
 
 ### Security
 
@@ -51,6 +56,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   announcement, PeerID, transport, revocation, expiry, and rollback mismatches.
 - Desktop control credentials remain separate from inference keys and live in native OS
   credential storage when the desktop owns the node.
+- Contribution status is bounded and fail-closed, excludes worker PIDs, logs, and raw
+  failure details, and rejects malformed, inconsistent, non-finite, or unbounded telemetry.
 - Temporary provider qualification resources are bound to exact run metadata and cannot
   produce a passing report unless complete cleanup is proven.
 
