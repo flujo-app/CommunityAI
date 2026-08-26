@@ -53,6 +53,8 @@ _SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _IDENTITY_MARKER = "COMMUNITYAI_QUALIFICATION_IDENTITY="
 _FLY_PRIVATE_NETWORK = ipaddress.ip_network("fdaa::/16")
 _GIB = 1024**3
+_MIN_FLY_ROOTFS_GB = 8
+_FLY_ROOTFS_HEADROOM_GB = 2
 _GHCR_MAX_LAYER_BYTES = 10_000_000_000
 _LAYER_MEDIA_TYPES = {
     "application/vnd.oci.image.layer.v1.tar+gzip",
@@ -1254,7 +1256,14 @@ def load_publication_binding(path: Path, manifest: ModelManifest) -> Publication
         "maximum_fly_rootfs_gb",
     ):
         _positive_integer(limits.get(field), f"publication limit {field}")
+    uncompressed_bytes = int(evidence["uncompressed_image_bytes"])
     rootfs_gb = int(evidence["required_fly_rootfs_gb"])
+    expected_rootfs_gb = max(
+        _MIN_FLY_ROOTFS_GB,
+        (uncompressed_bytes + _GIB - 1) // _GIB + _FLY_ROOTFS_HEADROOM_GB,
+    )
+    if rootfs_gb != expected_rootfs_gb:
+        raise AdapterError("qualification image publication rootfs does not match its measured size")
     expected_limits = _CANDIDATE_LIMITS[str(candidate)]
     if (
         not isinstance(limits.get("reviewed_on"), str)
@@ -1266,8 +1275,8 @@ def load_publication_binding(path: Path, manifest: ModelManifest) -> Publication
         != "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#troubleshooting"
         or limits.get("fly_rootfs_source") != "https://fly.io/docs/machines/flyctl/fly-machine-create/"
         or int(evidence["compressed_layer_bytes"]) > int(limits["maximum_compressed_bytes"])
-        or int(evidence["uncompressed_image_bytes"]) > int(limits["maximum_uncompressed_bytes"])
-        or rootfs_gb < 8
+        or uncompressed_bytes > int(limits["maximum_uncompressed_bytes"])
+        or rootfs_gb < _MIN_FLY_ROOTFS_GB
         or rootfs_gb > int(limits["maximum_fly_rootfs_gb"])
         or int(limits["maximum_fly_rootfs_gb"]) > 32
     ):

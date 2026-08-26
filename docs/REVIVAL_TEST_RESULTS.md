@@ -679,8 +679,9 @@ provision command no longer accepts a free-form image: before authentication or 
 requires the exact report schema and candidate source/revision/manifest identity, derives
 the immutable runtime-manifest reference, rechecks the source-bound GHCR references,
 SLSA/SPDX result, layer digests/media/sizes and totals, measured uncompressed size, and
-hard-coded reviewed ceilings. Every bootstrap/worker payload receives the report's
-bounded `rootfs.size_gb`; modified limits, mismatched totals, unknown layer media, or an
+hard-coded reviewed ceilings. It recomputes the exact rootfs requirement from the measured
+size before every bootstrap/worker payload receives that bounded `rootfs.size_gb`;
+modified limits, mismatched rootfs sizing or totals, unknown layer media, or an
 unrelated runtime fail before provider access. Repository-only tests cover both candidate
 bindings and confirm the measured rootfs is present on all five create payloads. No Fly
 resource was created and this does not pass either real recovery gate.
@@ -689,7 +690,7 @@ The offline controller state-machine suite has 16 passing tests covering indepen
 coverage, complete matrix-host binding, selected replacement, acknowledgement freshness
 and exact schemas, token equality, clean post-recovery routing, client shutdown evidence,
 bounded input/output, cleanup after accepted preflight, redaction, and failure reporting.
-The provider suite has 45 passing cases for both candidate block layouts, exact
+The provider suite has 46 passing cases for both candidate block layouts, exact
 publication-report/runtime/rootfs binding, tamper and ceiling rejection, native-login
 authentication and bounded stdout/stderr separation, controller
 schema compatibility, unique provider resources, ambiguous partial-create and delayed

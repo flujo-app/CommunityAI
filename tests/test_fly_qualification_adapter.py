@@ -310,6 +310,10 @@ def test_publication_binding_selects_exact_runtime_and_measured_rootfs(tmp_path,
             "references are not exactly bound",
         ),
         (
+            lambda report: report.update({"required_fly_rootfs_gb": 8}),
+            "rootfs does not match its measured size",
+        ),
+        (
             lambda report: report["limits"].update({"maximum_fly_rootfs_gb": 33}),
             "exceeds the reviewed limits",
         ),
