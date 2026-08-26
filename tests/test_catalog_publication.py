@@ -19,6 +19,9 @@ from drift.model_catalog import CATALOG_SCHEMA_VERSION, CatalogSigningKey, Model
 from drift.model_manifest import ModelManifest
 from drift.node.catalog_bootstrap import CatalogBootstrapConfig, CatalogBootstrapError
 
+PEER_ID_ONE = "Qm" + "A" * 44
+PEER_ID_TWO = "Qm" + "B" * 44
+
 
 def _manifest(name: str, alias: str) -> ModelManifest:
     source = ModelManifest.load("tests/data/model_manifest_v1_vector.json").to_dict()
@@ -86,13 +89,13 @@ def _documents(
             },
             "catalog_mirrors": mirror_urls
             or [
-                "https://catalog-one.example/catalog.signed.json",
-                "https://catalog-two.example/catalog.signed.json",
+                "https://catalog-one.example.com/catalog.signed.json",
+                "https://catalog-two.example.com/catalog.signed.json",
             ],
             "initial_peers": initial_peers
             or [
-                "/dns4/seed-one.example/tcp/31337/p2p/QmSeedOne",
-                "/dns4/seed-two.example/tcp/31337/p2p/QmSeedTwo",
+                f"/dns4/seed-one.example.com/tcp/31337/p2p/{PEER_ID_ONE}",
+                f"/dns4/seed-two.example.com/tcp/31337/p2p/{PEER_ID_TWO}",
             ],
             "max_loaded_models": 1,
         }
@@ -118,33 +121,55 @@ def test_publication_preflight_matches_signed_transport_and_exact_manifests():
 
 
 @pytest.mark.parametrize(
+    "mirror_urls, initial_peers, message",
+    [
+        (["https://localhost/catalog.json"], None, "public DNS"),
+        (["https://[::1]/catalog.json"], None, "globally routable"),
+        (
+            None,
+            [f"/ip4/192.168.1.2/tcp/31337/p2p/{PEER_ID_ONE}"],
+            "globally routable",
+        ),
+        (
+            None,
+            ["/ip4/8.8.8.8/tcp/31337/p2p/" + "0" * 20],
+            "invalid PeerID",
+        ),
+    ],
+)
+def test_publication_inputs_reject_nonpublic_transport(mirror_urls, initial_peers, message):
+    with pytest.raises(CatalogBootstrapError, match=message):
+        _documents(mirror_urls=mirror_urls, initial_peers=initial_peers)
+
+
+@pytest.mark.parametrize(
     "documents, manifests_selector, message",
     [
         (
-            lambda: _documents(mirror_urls=["https://catalog-one.example/catalog.json"]),
+            lambda: _documents(mirror_urls=["https://catalog-one.example.com/catalog.json"]),
             lambda manifests: manifests,
             "at least two catalog mirrors",
         ),
         (
             lambda: _documents(
                 mirror_urls=[
-                    "https://catalog.example/one/catalog.json",
-                    "https://catalog.example/two/catalog.json",
+                    "https://catalog.example.com/one/catalog.json",
+                    "https://catalog.example.com/two/catalog.json",
                 ]
             ),
             lambda manifests: manifests,
             "distinct network hosts",
         ),
         (
-            lambda: _documents(initial_peers=["/dns4/seed-one.example/tcp/31337/p2p/QmSeedOne"]),
+            lambda: _documents(initial_peers=[f"/dns4/seed-one.example.com/tcp/31337/p2p/{PEER_ID_ONE}"]),
             lambda manifests: manifests,
             "at least one additional seed",
         ),
         (
             lambda: _documents(
                 initial_peers=[
-                    "/dns4/seed.example/tcp/31337/p2p/QmSeedOne",
-                    "/dns4/seed.example/tcp/31338/p2p/QmSeedTwo",
+                    f"/dns4/seed.example.com/tcp/31337/p2p/{PEER_ID_ONE}",
+                    f"/dns4/seed.example.com/tcp/31338/p2p/{PEER_ID_TWO}",
                 ]
             ),
             lambda manifests: manifests,
@@ -153,8 +178,8 @@ def test_publication_preflight_matches_signed_transport_and_exact_manifests():
         (
             lambda: _documents(
                 initial_peers=[
-                    "/dns4/seed-one.example/tcp/31337/p2p/QmSame",
-                    "/dns4/seed-two.example/tcp/31337/p2p/QmSame",
+                    f"/dns4/seed-one.example.com/tcp/31337/p2p/{PEER_ID_ONE}",
+                    f"/dns4/seed-two.example.com/tcp/31337/p2p/{PEER_ID_ONE}",
                 ]
             ),
             lambda manifests: manifests,

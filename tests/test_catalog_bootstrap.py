@@ -14,7 +14,9 @@ from drift.node.catalog_bootstrap import (
 from drift.node.config import NodeConfig
 
 NOW = 2_000_000_000.0
-PEER = "/dns4/bootstrap.communityai.example/tcp/31337/p2p/QmBootstrap"
+PEER_ID = "Qm" + "A" * 44
+PEER = f"/dns4/bootstrap.communityai.example.com/tcp/31337/p2p/{PEER_ID}"
+PUBLIC_IPV6 = "2606:4700:4700::1111"
 
 
 def _manifest(name: str, alias: str) -> ModelManifest:
@@ -77,7 +79,10 @@ def _release_documents(*, sequence: int = 1):
             "threshold": 1,
             "keys": [key.trusted_key.to_dict()],
         },
-        "catalog_mirrors": ["https://catalog-one.example/catalog.json", "https://catalog-two.example/catalog.json"],
+        "catalog_mirrors": [
+            "https://catalog-one.example.com/catalog.json",
+            "https://catalog-two.example.com/catalog.json",
+        ],
         "initial_peers": [PEER],
         "max_loaded_models": 1,
     }
@@ -242,8 +247,51 @@ def test_tampered_catalog_and_wrong_manifest_digest_fail_without_activation(tmp_
     "mutation, message",
     [
         (lambda value: value.update({"unknown": True}), "unknown field"),
-        (lambda value: value.update({"catalog_mirrors": ["http://unsafe.example/catalog"]}), "HTTPS"),
+        (lambda value: value.update({"catalog_mirrors": ["http://unsafe.example.com/catalog"]}), "HTTPS"),
+        (lambda value: value.update({"catalog_mirrors": ["https://localhost/catalog"]}), "public DNS"),
+        (lambda value: value.update({"catalog_mirrors": ["https://127.0.0.1/catalog"]}), "globally routable"),
+        (
+            lambda value: value.update({"catalog_mirrors": ["https://0177.0.0.1/catalog"]}),
+            "public DNS",
+        ),
+        (
+            lambda value: value.update({"catalog_mirrors": ["https://catalog.example.com/catalog.json\nignored"]}),
+            "whitespace or a control",
+        ),
+        (
+            lambda value: value.update({"catalog_mirrors": [f"https://[{PUBLIC_IPV6}%25eth0]/catalog.json"]}),
+            "canonical public host",
+        ),
+        (lambda value: value.update({"catalog_mirrors": ["https://catalog.onion/catalog"]}), "public DNS"),
+        (
+            lambda value: value.update({"catalog_mirrors": ["https://catalog.home.arpa/catalog"]}),
+            "public DNS",
+        ),
         (lambda value: value.update({"initial_peers": ["not-a-multiaddr"]}), "multiaddress"),
+        (
+            lambda value: value.update({"initial_peers": [f"/ip4/seed.example.com/tcp/31337/p2p/{PEER_ID}"]}),
+            "IPv4",
+        ),
+        (
+            lambda value: value.update({"initial_peers": [f"/dns4/8.8.8.8/tcp/31337/p2p/{PEER_ID}"]}),
+            "public DNS",
+        ),
+        (
+            lambda value: value.update({"initial_peers": [f"/dns4/0177.0.0.1/tcp/31337/p2p/{PEER_ID}"]}),
+            "public DNS",
+        ),
+        (
+            lambda value: value.update({"initial_peers": [f"/ip4/10.0.0.4/tcp/31337/p2p/{PEER_ID}"]}),
+            "globally routable",
+        ),
+        (
+            lambda value: value.update({"initial_peers": [f"/ip6/{PUBLIC_IPV6}%eth0/tcp/31337/p2p/{PEER_ID}"]}),
+            "canonical public host",
+        ),
+        (
+            lambda value: value.update({"initial_peers": ["/ip4/8.8.8.8/tcp/31337/p2p/" + "0" * 20]}),
+            "invalid PeerID",
+        ),
     ],
 )
 def test_bootstrap_config_is_strict(mutation, message):
@@ -251,3 +299,17 @@ def test_bootstrap_config_is_strict(mutation, message):
     mutation(bootstrap)
     with pytest.raises(CatalogBootstrapError, match=message):
         CatalogBootstrapConfig.from_dict(bootstrap)
+
+
+def test_bootstrap_accepts_each_public_host_protocol_with_canonical_peer_ids():
+    bootstrap, _, _ = _release_documents()
+    bootstrap["initial_peers"] = [
+        f"/ip4/8.8.8.8/tcp/31337/p2p/{PEER_ID}",
+        f"/ip6/{PUBLIC_IPV6}/tcp/31337/p2p/{PEER_ID}",
+        f"/dns4/bootstrap-one.example.com/tcp/31337/p2p/{PEER_ID}",
+        f"/dns6/bootstrap-two.example.com/tcp/31337/p2p/{PEER_ID}",
+    ]
+
+    config = CatalogBootstrapConfig.from_dict(bootstrap)
+
+    assert config.initial_peers == tuple(bootstrap["initial_peers"])

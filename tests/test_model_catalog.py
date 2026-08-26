@@ -340,9 +340,9 @@ def test_catalog_cli_keygen_root_sign_verify_and_rollback_state(tmp_path, monkey
         "--root",
         str(trust_root),
         "--catalog-mirror",
-        "https://catalog.example/catalog.signed.json",
+        "https://catalog.example.com/catalog.signed.json",
         "--initial-peer",
-        "/dns4/bootstrap.example/tcp/31337/p2p/QmExample",
+        "/dns4/bootstrap.example.com/tcp/31337/p2p/QmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "--output",
         str(bootstrap),
     )

@@ -25,17 +25,24 @@ The document contains only:
 - the optional positive `max_loaded_models`, defaulting to one.
 
 Unknown fields, duplicate JSON keys, unsafe catalog URLs, malformed seed addresses,
-invalid trust roots, and symbolic-link inputs fail closed. Catalog URLs and public seed
-addresses are intentionally outside ordinary `NodeConfig v1` until they have been
-verified and expanded into exact model entries.
+invalid trust roots, and symbolic-link inputs fail closed. Mirror hosts must be canonical,
+control-free public DNS names or unscoped global IP literals on HTTPS port 443. Seeds must
+be canonical direct IP/DNS TCP multiaddresses with a valid terminal Hivemind PeerID; an
+`ip4` or `ip6` component must contain a matching-version IP literal, while `dns4` or
+`dns6` must contain a DNS name rather than an IP literal. Local, private, link-local,
+multicast, reserved, scoped, type-confused, numeric DNS lookalikes (including dotted
+leading-zero IPv4 notation), and special-use hosts (including `.onion` and `home.arpa`)
+are rejected before any fetch. Catalog URLs and public seed addresses are
+intentionally outside ordinary `NodeConfig v1` until they have been verified and expanded
+into exact model entries.
 
 Create the release input after the offline root and catalog are ready:
 
 ```text
 drift catalog bootstrap-config \
   --root catalog-root.json \
-  --catalog-mirror https://mirror-one.example/communityai/catalog.signed.json \
-  --catalog-mirror https://mirror-two.example/communityai/catalog.signed.json \
+  --catalog-mirror https://mirror-one.example.com/communityai/catalog.signed.json \
+  --catalog-mirror https://mirror-two.example.com/communityai/catalog.signed.json \
   --initial-peer /dns4/bootstrap.communityai.flujo.com.co/tcp/31337/p2p/QmZhGcSVR6qPLZTq3TJPZEi734GbMkouv3kPxQLdDY2qUo \
   --output catalog-bootstrap.json
 ```
@@ -55,9 +62,9 @@ requires catalog mirrors on distinct hosts plus distinct seed addresses and peer
 identities, matches every catalog digest and manifested weight-byte total, rejects
 extra manifests and selector collisions, and requires redundant promotion policies.
 Its report binds the exact canonical bootstrap digest and always retains
-`complete_release_qualification=false`: different endpoints do not prove independent
-operators, and real qualification, worker soak, and packaged inference remain separate
-gates.
+`complete_release_qualification=false`: different endpoint strings do not prove live
+DNS resolution, reachability, shared hosting, or independent operators, and real
+qualification, worker soak, and packaged inference remain separate gates.
 
 Assemble the repository-auditable handoff as a deterministic directory:
 

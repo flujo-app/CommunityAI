@@ -82,12 +82,12 @@ def _release_bundle(tmp_path: Path):
                 "keys": [key.trusted_key.to_dict()],
             },
             "catalog_mirrors": [
-                "https://catalog-one.example/catalog.signed.json",
-                "https://catalog-two.example/catalog.signed.json",
+                "https://catalog-one.example.com/catalog.signed.json",
+                "https://catalog-two.example.com/catalog.signed.json",
             ],
             "initial_peers": [
-                "/dns4/seed-one.example/tcp/31337/p2p/QmSeedOne",
-                "/dns4/seed-two.example/tcp/31337/p2p/QmSeedTwo",
+                "/dns4/seed-one.example.com/tcp/31337/p2p/QmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "/dns4/seed-two.example.com/tcp/31337/p2p/QmBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
             ],
         }
     )

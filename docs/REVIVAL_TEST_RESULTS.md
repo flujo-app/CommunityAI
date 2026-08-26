@@ -126,8 +126,7 @@ for discovery recovery. Each entry is keyed by the SHA-256 of the exact ordered 
 seed set, so peers learned through one configured swarm cannot bootstrap another. After
 a successful coverage query, the node snapshots only peers present in Hivemind's DHT
 routing table and retains bounded global-IP TCP multiaddresses with canonically parsed
-PeerIDs. At the next
-startup or policy reload, fresh cached addresses are appended after the configured seeds
+PeerIDs. At the next startup or policy reload, fresh cached addresses are appended after the configured seeds
 for coverage discovery, inference clients, and contribution workers without changing the
 persisted node configuration.
 
@@ -141,6 +140,32 @@ worker-supervisor, and catalog-bootstrap tests pass locally, including the real
 asynchronous Hivemind routing-table peer selection, original-scope retention after
 runtime merging, lifecycle propagation, invalid PeerID/private/DNS rejection, stale and
 malformed cache handling, and persisted-config immutability.
+
+The second provider-independent slice upgraded the shared cost authorization to schema
+v2. Its ledger identity binds provider, workload, purpose, source commit, and the SHA-256
+digest of the complete canonical provider plan. The new Fly discovery-seed plan
+additionally requires its dedicated app name to derive from the run ID; allowlists the
+reviewed `ghcr.io/flujo-app/communityai-discovery-seed` digest repository; binds an
+expected publication-evidence digest and source commit; and fixes the region, one shared-CPU 1 GB
+Machine, 8 GB rootfs, 1 GB identity volume, raw public TCP 31337, shared IPv4, Anycast
+IPv6, exact failure cleanup, and a finite retention horizon of no more than 744 hours.
+Before that deadline, the resources require cleanup, an exact renewed reservation, or a
+separately authorized baseline transition. A recovery reservation or a reservation for
+mutated target inputs cannot authorize this workload. Current Fly compute, volume, IP,
+and egress pricing was reviewed, but no maximum was reserved because the immutable image
+and lifecycle adapter do not exist yet. The cost guard explicitly does not attest the
+opaque evidence digest: its report requires the future adapter to load, hash, and
+semantically validate that bounded evidence before provider authentication or calls.
+
+The release bootstrap now rejects private, loopback, link-local, multicast, reserved,
+special-use, scoped, control-bearing, noncanonical, type-confused, dotted-numeric DNS
+lookalikes, or malformed mirror and seed hosts before fetching. It requires HTTPS port 443, forces `ip4`/`ip6` components
+to carry matching-version global IP literals, forces `dns4`/`dns6` components to carry
+DNS names, and requires terminal TCP plus a canonically parsed Hivemind PeerID. Live DNS
+resolution, endpoint reachability, shared infrastructure, and operator independence
+remain external evidence. The four cost/catalog suites pass all 113 focused tests; the
+combined discovery, node, worker, catalog, cost, and desktop release-input selection
+passes all 207 tests locally.
 
 This is deterministic implementation evidence, not the provider-diversity gate. No
 provider resource was created, no paid run was recorded, and no real seed-loss recovery

@@ -7,6 +7,10 @@ import pytest
 from scripts import qualification_cost_guard as guard
 
 SOURCE_COMMIT = "a" * 40
+FLY_RUN_ID = "seed-20260826-a"
+FLY_APP = f"communityai-{FLY_RUN_ID}"
+FLY_IMAGE = guard.FLY_DISCOVERY_IMAGE_REPOSITORY + "@sha256:" + "b" * 64
+FLY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "c" * 64
 
 
 def _ledger(*rows: str) -> str:
@@ -25,12 +29,39 @@ def _authorization(entries=(), **overrides):
         "entries": entries,
         "run_id": "qual-20260826-a",
         "provider": "gcp",
+        "workload": guard.GCP_QUALIFICATION_WORKLOAD,
         "purpose": "Four-host Windows/Linux qualification fleet",
         "source_commit": SOURCE_COMMIT,
         "maximum_hours": Decimal("14"),
         "project": "community-ai-506321",
         "zone": "us-central1-a",
         "manual_maximum_usd": None,
+        "fly_app": None,
+        "fly_region": None,
+        "fly_image": None,
+        "fly_image_evidence_digest": None,
+        "today": date(2026, 8, 26),
+    }
+    values.update(overrides)
+    return guard.build_authorization(**values)
+
+
+def _fly_discovery_authorization(entries=(), **overrides):
+    values = {
+        "entries": entries,
+        "run_id": FLY_RUN_ID,
+        "provider": "fly",
+        "workload": guard.FLY_DISCOVERY_SEED_WORKLOAD,
+        "purpose": "Gate 11 second-provider discovery seed",
+        "source_commit": SOURCE_COMMIT,
+        "maximum_hours": Decimal("168"),
+        "project": None,
+        "zone": None,
+        "manual_maximum_usd": Decimal("10"),
+        "fly_app": FLY_APP,
+        "fly_region": "iad",
+        "fly_image": FLY_IMAGE,
+        "fly_image_evidence_digest": FLY_IMAGE_EVIDENCE_DIGEST,
         "today": date(2026, 8, 26),
     }
     values.update(overrides)
@@ -104,7 +135,9 @@ def test_gcp_plan_is_exact_bounded_and_does_not_authorize_unreserved_provisionin
     assert report["reservation_recorded"] is False
     assert report["provisioning_authorized"] is False
     assert "USD 69.00" in report["required_ledger_row"]
+    assert f"[workload {guard.GCP_QUALIFICATION_WORKLOAD}]" in report["required_ledger_row"]
     assert f"[source {SOURCE_COMMIT}]" in report["required_ledger_row"]
+    assert report["workload"] == guard.GCP_QUALIFICATION_WORKLOAD
     assert report["pricing_as_of"] == "2026-08-26"
 
     plan = report["provider_plan"]
@@ -130,10 +163,11 @@ def test_gcp_plan_is_exact_bounded_and_does_not_authorize_unreserved_provisionin
 
 
 def test_matching_planned_ledger_reservation_authorizes_exact_plan_without_double_counting():
+    planned = _authorization()
     reservation = guard.LedgerEntry(
         run_id="qual-20260826-a",
         provider="GCP",
-        purpose=f"Four-host Windows/Linux qualification fleet [source {SOURCE_COMMIT}]",
+        purpose=planned["ledger_purpose"],
         maximum_usd=Decimal("69"),
         observed_usd=None,
         cleanup_proof="Not provisioned",
@@ -146,6 +180,23 @@ def test_matching_planned_ledger_reservation_authorizes_exact_plan_without_doubl
     assert report["provisioning_authorized"] is True
     assert report["remaining_before_run_usd"] == "100.00"
     assert report["remaining_after_run_maximum_usd"] == "31.00"
+
+
+def test_gcp_reservation_cannot_authorize_a_mutated_provider_plan():
+    planned = _authorization()
+    reservation = guard.LedgerEntry(
+        run_id="qual-20260826-a",
+        provider="GCP",
+        purpose=planned["ledger_purpose"],
+        maximum_usd=Decimal("69"),
+        observed_usd=None,
+        cleanup_proof="Not provisioned",
+        state="PLANNED",
+    )
+
+    for mutation in ({"zone": "us-central1-b"}, {"project": "community-ai-506322"}):
+        with pytest.raises(guard.CostGuardError, match="purpose/source/plan"):
+            _authorization(entries=(reservation,), **mutation)
 
 
 def test_reservation_must_match_the_exact_purpose_and_source_commit():
@@ -220,10 +271,16 @@ def test_plan_rejects_unsafe_identity_or_target(overrides, message):
 
 def test_fly_plan_requires_manual_current_maximum_and_uses_combined_ledger():
     with pytest.raises(guard.CostGuardError, match="manual maximum"):
-        _authorization(provider="fly", project=None, zone=None)
+        _authorization(
+            provider="fly",
+            workload=guard.FLY_RECOVERY_WORKLOAD,
+            project=None,
+            zone=None,
+        )
 
     report = _authorization(
         provider="fly",
+        workload=guard.FLY_RECOVERY_WORKLOAD,
         project=None,
         zone=None,
         manual_maximum_usd=Decimal("12.345"),
@@ -233,6 +290,106 @@ def test_fly_plan_requires_manual_current_maximum_and_uses_combined_ledger():
     assert report["maximum_estimate_usd"] == "12.35"
     assert report["remaining_after_run_maximum_usd"] == "87.65"
     assert report["provider_plan"]["resource_count"] == 5
+    assert report["provider_plan"]["adapter"] == "scripts/fly_qualification_adapter.py"
+
+
+def test_fly_discovery_seed_plan_is_exact_and_cannot_reuse_recovery_authorization():
+    report = _fly_discovery_authorization()
+
+    assert report["schema_version"] == 2
+    assert report["workload"] == guard.FLY_DISCOVERY_SEED_WORKLOAD
+    assert report["provisioning_authorized"] is False
+    assert report["cleanup_required_for_pass"] is False
+    assert report["failure_cleanup_required"] is True
+    assert report["persistent_resources_after_pass"] is True
+    assert report["provider_plan"]["app"] == FLY_APP
+    assert report["provider_plan"]["image"] == FLY_IMAGE
+    evidence = report["provider_plan"]["image_publication_evidence"]
+    assert evidence["expected_digest"] == FLY_IMAGE_EVIDENCE_DIGEST
+    assert evidence["required_repository"] == guard.FLY_DISCOVERY_IMAGE_REPOSITORY
+    assert evidence["source_commit"] == SOURCE_COMMIT
+    assert evidence["validated_by_cost_guard"] is False
+    assert "before provider authentication or calls" in evidence["adapter_validation_contract"]
+    assert report["cost_authorization_only"] is True
+    assert report["provider_calls_authorized_without_preflight"] is False
+    assert report["provider_plan"]["maximum_runtime_hours"] == "168"
+    assert report["provider_plan"]["renewal_or_cleanup_deadline"] == ("provisioned_at + maximum_runtime_hours")
+    assert report["provider_plan_digest"] in report["ledger_purpose"]
+    assert report["provider_plan"]["resource_count"] == 5
+    assert {resource["type"] for resource in report["provider_plan"]["resources"]} == {
+        "app",
+        "machine",
+        "volume",
+        "shared_ipv4",
+        "anycast_ipv6",
+    }
+
+    recovery_reservation = guard.LedgerEntry(
+        run_id=FLY_RUN_ID,
+        provider="FLY",
+        purpose="Gate 11 recovery authorization",
+        maximum_usd=Decimal("10"),
+        observed_usd=None,
+        cleanup_proof="Not provisioned",
+        state="PLANNED",
+    )
+    with pytest.raises(guard.CostGuardError, match="purpose/source/plan"):
+        _fly_discovery_authorization(entries=(recovery_reservation,))
+
+
+def test_fly_discovery_exact_reservation_binds_every_mutable_plan_input():
+    planned = _fly_discovery_authorization()
+    reservation = guard.LedgerEntry(
+        run_id=FLY_RUN_ID,
+        provider="FLY",
+        purpose=planned["ledger_purpose"],
+        maximum_usd=Decimal("10"),
+        observed_usd=None,
+        cleanup_proof="Not provisioned",
+        state="PLANNED",
+    )
+
+    authorized = _fly_discovery_authorization(entries=(reservation,))
+    assert authorized["provisioning_authorized"] is True
+    assert authorized["provider_preflight_required"] is True
+    assert authorized["provider_calls_authorized_without_preflight"] is False
+
+    mutations = (
+        {"fly_region": "ord"},
+        {"fly_image": guard.FLY_DISCOVERY_IMAGE_REPOSITORY + "@sha256:" + "d" * 64},
+        {"fly_image_evidence_digest": "sha256:" + "e" * 64},
+        {"maximum_hours": Decimal("169")},
+    )
+    for mutation in mutations:
+        with pytest.raises(guard.CostGuardError, match="purpose/source/plan"):
+            _fly_discovery_authorization(entries=(reservation,), **mutation)
+
+
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        ({"fly_app": "other-app"}, "run-derived name"),
+        ({"fly_region": "us-east"}, "three-letter region"),
+        ({"fly_image": guard.FLY_DISCOVERY_IMAGE_REPOSITORY + ":latest"}, "reviewed GHCR"),
+        ({"fly_image": "ghcr.io/other/image@sha256:" + "b" * 64}, "reviewed GHCR"),
+        (
+            {"fly_image": "ghcr.io/flujo-app//communityai-discovery-seed@sha256:" + "b" * 64},
+            "reviewed GHCR",
+        ),
+        ({"fly_image_evidence_digest": None}, "publication-evidence digest"),
+        ({"fly_image_evidence_digest": "SHA256:" + "c" * 64}, "publication-evidence digest"),
+        ({"maximum_hours": Decimal("0")}, "greater than zero"),
+        ({"maximum_hours": Decimal("744.01")}, "no more than 744"),
+    ],
+)
+def test_fly_discovery_seed_plan_rejects_unsafe_targets(overrides, message):
+    with pytest.raises(guard.CostGuardError, match=message):
+        _fly_discovery_authorization(**overrides)
+
+
+def test_provider_and_workload_must_match():
+    with pytest.raises(guard.CostGuardError, match="not valid for provider"):
+        _authorization(workload=guard.FLY_DISCOVERY_SEED_WORKLOAD)
 
 
 def test_cli_writes_bounded_plan_without_provider_calls(tmp_path, capsys):
@@ -250,6 +407,8 @@ def test_cli_writes_bounded_plan_without_provider_calls(tmp_path, capsys):
                 "qual-20260826-a",
                 "--provider",
                 "gcp",
+                "--workload",
+                "gcp-qualification-fleet",
                 "--purpose",
                 "Four-host Windows/Linux qualification fleet",
                 "--source-commit",
