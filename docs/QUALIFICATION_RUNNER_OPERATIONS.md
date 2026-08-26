@@ -77,11 +77,18 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
 This Fly example is not a USD 20 authorization: current provider pricing must justify
 the chosen maximum, and the exact row still must be recorded before the adapter runs.
 
+Gate 11 is paused behind the mandatory Gate 4–10 launch sequence. The commands in this
+subsection document the preserved checkpoint for later resumption; do not execute the
+build or reserve/provision the seed while the live readiness tracker keeps Gate 11 paused.
+
 Gate 11 uses a separate `fly-discovery-seed` workload. Its exact plan binds the
 run-derived dedicated app, one shared-CPU 1 GB Machine, one 1 GB identity volume, shared
 IPv4, Anycast IPv6, region, an immutable image from the reviewed GHCR repository, the
-publication-evidence digest and source commit, TCP 31337, a finite priced retention
-horizon, and persistent-versus-failure-cleanup behavior.
+publication-evidence digest and source commit, TCP 31337, the existing GCP seed's exact
+public PeerID/address, the app-derived Fly announcement address, a finite priced retention
+horizon, and persistent-versus-failure-cleanup behavior. The initial peer and announcement
+are repository-owned plan constants, so changing either changes the canonical plan digest
+and invalidates any earlier ledger reservation.
 Fly's current list prices are region-dependent; compute, the USD 0.15/GB-month volume,
 included shared IPv4/IPv6 allocations, and variable egress must all fit the chosen
 maximum ([current Fly pricing](https://fly.io/docs/about/pricing/)). Generate but do not
@@ -112,6 +119,30 @@ semantically attest a not-yet-created seed-image report. The JSON therefore sets
 load a bounded regular evidence file, recompute the expected digest, and validate its
 schema, source commit, reviewed repository, and immutable image digest before provider
 authentication or any provider call.
+
+Prepare the discovery-only image from its exact committed inputs before generating a
+reservation. The contract reads the Dockerfile, strict bootstrap, privilege-dropping
+entrypoint, input requirements, and hash-locked Linux/amd64 dependency set directly from
+Git. It materializes only those files and emits a shell-free Buildx plan; it does not call
+Docker, GHCR, Fly, or GCP:
+
+```powershell
+$sourceCommit = git rev-parse HEAD
+uv run --no-sync python scripts/discovery_seed_image_contract.py prepare `
+  --source-commit $sourceCommit `
+  --image-tag "ghcr.io/flujo-app/communityai-discovery-seed:source-$sourceCommit" `
+  --output-dir "discovery-seed-image-inputs/$sourceCommit"
+```
+
+Review `build-plan.json` before executing it on a Docker/Buildx-capable authenticated
+builder. A publication collector must still bind its metadata to the immutable runtime
+manifest, SLSA provenance, SPDX SBOM, OCI labels, compressed and pulled sizes, and the
+fixed 8 GB rootfs ceiling before the runtime digest can be used in the cost plan. The
+strict seed runtime requires exactly the repository-bound GCP initial peer; it writes no
+readiness evidence until Hivemind bootstrap succeeds. Its root entrypoint only prepares
+the new `/data` volume, clears supplementary groups, and drops to UID/GID 65532 before
+starting Hivemind. The existing GCP service remains compatible because strict mode is
+opt-in.
 
 A successful discovery seed is intentional retained alpha infrastructure only through
 the plan's `maximum_runtime_hours` deadline. Before that deadline, clean up the exact

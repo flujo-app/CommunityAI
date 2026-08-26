@@ -157,6 +157,31 @@ and lifecycle adapter do not exist yet. The cost guard explicitly does not attes
 opaque evidence digest: its report requires the future adapter to load, hash, and
 semantically validate that bounded evidence before provider authentication or calls.
 
+The preserved Gate 11 checkpoint closes the topology gap that could otherwise let the Fly seed form
+an isolated DHT. The canonical cost plan now binds the existing GCP bootstrap's exact
+public multiaddress and an announcement multiaddress derived from the dedicated Fly app;
+both are also fixed in the Machine environment, so changing either changes the plan
+digest and invalidates a prior reservation. The existing bootstrap process keeps its GCP
+defaults, while opt-in strict first-start mode requires exactly one initial peer, enables
+Hivemind bootstrap-success enforcement, and atomically writes bounded readiness containing
+only the public PeerID/address, source commit, join inputs, and effective non-root UID.
+
+A dedicated discovery-only Linux/amd64 image surface now uses digest-pinned Python and uv
+bases plus a separate hash-locked Hivemind and CPU Torch 2.6 dependency set instead of
+installing the model runtime. It does not select a mutable Dockerfile frontend. Its
+entrypoint begins as root only to prepare the newly mounted identity volume, rejects an
+existing identity unless it is a bounded, nonempty, single-link mode-0600 regular file
+owned by UID/GID 65532, then clears supplementary groups and drops to that UID/GID before
+Hivemind starts. The post-drop proof checks UID, GID, and an empty supplementary-group
+set. The exact-source image contract reads five reviewed runtime inputs directly from one
+matching Git commit, inventories and atomically materializes them, and emits a
+credential-free shell-free Buildx push command with maximum provenance and an SPDX SBOM.
+All 65 focused runtime, image-contract, and cost-guard tests pass locally; the broader
+discovery, node-config, catalog, model-catalog, and desktop release-input selection passes
+203 tests. Docker was not called, so no image, registry digest, publication evidence, or
+rootfs measurement is claimed; publication verification and the lifecycle adapter remain
+deferred until Gate 11 resumes.
+
 The release bootstrap now rejects private, loopback, link-local, multicast, reserved,
 special-use, scoped, control-bearing, noncanonical, type-confused, dotted-numeric DNS
 lookalikes, or malformed mirror and seed hosts before fetching. It requires HTTPS port 443, forces `ip4`/`ip6` components

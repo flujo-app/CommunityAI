@@ -304,6 +304,14 @@ def test_fly_discovery_seed_plan_is_exact_and_cannot_reuse_recovery_authorizatio
     assert report["persistent_resources_after_pass"] is True
     assert report["provider_plan"]["app"] == FLY_APP
     assert report["provider_plan"]["image"] == FLY_IMAGE
+    assert report["provider_plan"]["initial_peer"] == guard.GCP_DISCOVERY_INITIAL_PEER
+    assert report["provider_plan"]["announce_maddr"] == f"/dns4/{FLY_APP}.fly.dev/tcp/31337"
+    environment = report["provider_plan"]["machine"]["environment"]
+    assert environment == {
+        "COMMUNITYAI_SOURCE_COMMIT": SOURCE_COMMIT,
+        "COMMUNITYAI_DISCOVERY_INITIAL_PEER": guard.GCP_DISCOVERY_INITIAL_PEER,
+        "COMMUNITYAI_DISCOVERY_ANNOUNCE_MADDR": f"/dns4/{FLY_APP}.fly.dev/tcp/31337",
+    }
     evidence = report["provider_plan"]["image_publication_evidence"]
     assert evidence["expected_digest"] == FLY_IMAGE_EVIDENCE_DIGEST
     assert evidence["required_repository"] == guard.FLY_DISCOVERY_IMAGE_REPOSITORY
@@ -365,6 +373,27 @@ def test_fly_discovery_exact_reservation_binds_every_mutable_plan_input():
             _fly_discovery_authorization(entries=(reservation,), **mutation)
 
 
+def test_fly_discovery_reservation_binds_repository_seed_topology(monkeypatch):
+    planned = _fly_discovery_authorization()
+    reservation = guard.LedgerEntry(
+        run_id=FLY_RUN_ID,
+        provider="FLY",
+        purpose=planned["ledger_purpose"],
+        maximum_usd=Decimal("10"),
+        observed_usd=None,
+        cleanup_proof="Not provisioned",
+        state="PLANNED",
+    )
+
+    monkeypatch.setattr(
+        guard,
+        "GCP_DISCOVERY_INITIAL_PEER",
+        "/ip4/8.8.8.8/tcp/31337/p2p/QmYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
+    )
+    with pytest.raises(guard.CostGuardError, match="purpose/source/plan"):
+        _fly_discovery_authorization(entries=(reservation,))
+
+
 @pytest.mark.parametrize(
     "overrides, message",
     [
@@ -390,6 +419,12 @@ def test_fly_discovery_seed_plan_rejects_unsafe_targets(overrides, message):
 def test_provider_and_workload_must_match():
     with pytest.raises(guard.CostGuardError, match="not valid for provider"):
         _authorization(workload=guard.FLY_DISCOVERY_SEED_WORKLOAD)
+
+
+def test_provider_resource_names_cannot_end_with_hyphens():
+    with pytest.raises(guard.CostGuardError, match="run ID"):
+        _authorization(run_id="qual-")
+    assert guard._FLY_APP_RE.fullmatch("communityai-seed-") is None
 
 
 def test_cli_writes_bounded_plan_without_provider_calls(tmp_path, capsys):

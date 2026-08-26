@@ -83,6 +83,9 @@ ipython_config.py
 # pyenv / uv interpreter pin — tracked so the dev environment is reproducible
 # .python-version
 
+# Dedicated discovery runtime lock is an immutable image input.
+!deploy/discovery/requirements.lock
+
 # pipenv
 #   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
 #   However, in case of collaboration, if having platform-specific dependencies or dependencies

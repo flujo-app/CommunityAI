@@ -40,15 +40,17 @@ GCP_IAP_SOURCE_RANGE = "35.235.240.0/20"
 MAX_LEDGER_BYTES = 200_000
 MAX_OUTPUT_BYTES = 1_000_000
 
-_RUN_ID_RE = re.compile(r"^[a-z][a-z0-9-]{2,19}$")
+_RUN_ID_RE = re.compile(r"^[a-z](?:[a-z0-9-]{1,18}[a-z0-9])$")
 _SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 _ZONE_RE = re.compile(r"^[a-z]+(?:-[a-z0-9]+)+-[a-z]$")
 _USD_RE = re.compile(r"^USD ([0-9]+(?:\.[0-9]{1,2})?)$")
-_FLY_APP_RE = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
+_FLY_APP_RE = re.compile(r"^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$")
 _FLY_REGION_RE = re.compile(r"^[a-z]{3}$")
 _SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 FLY_DISCOVERY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-discovery-seed"
+GCP_DISCOVERY_INITIAL_PEER = "/ip4/35.209.21.129/tcp/31337/p2p/QmZhGcSVR6qPLZTq3TJPZEi734GbMkouv3kPxQLdDY2qUo"
+FLY_DISCOVERY_ANNOUNCE_TEMPLATE = "/dns4/{app}.fly.dev/tcp/31337"
 _FLY_DISCOVERY_IMAGE_RE = re.compile(rf"^{re.escape(FLY_DISCOVERY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
 
 GCP_QUALIFICATION_WORKLOAD = "gcp-qualification-fleet"
@@ -199,7 +201,7 @@ def load_spend_ledger(path: Path) -> tuple[LedgerEntry, ...]:
 
 def _require_run_identity(run_id: str, source_commit: str) -> None:
     if not _RUN_ID_RE.fullmatch(run_id):
-        raise CostGuardError("run ID must be 3-20 lowercase letters, digits, or hyphens")
+        raise CostGuardError("run ID must be 3-20 lowercase letters, digits, or interior hyphens")
     if not _SOURCE_COMMIT_RE.fullmatch(source_commit):
         raise CostGuardError("source commit must be one exact lowercase 40-character SHA-1")
 
@@ -597,6 +599,7 @@ def build_authorization(
                 raise CostGuardError("Fly discovery-seed maximum hours must be greater than zero and no more than 744")
             machine = f"{run_id}-seed"
             volume = f"{run_id}-identity"
+            announce_maddr = FLY_DISCOVERY_ANNOUNCE_TEMPLATE.format(app=fly_app)
             assumptions = {
                 "resource_count": "5",
                 "topology": "one public discovery-only Machine with persistent identity and dual-stack app service",
@@ -621,6 +624,8 @@ def build_authorization(
                 },
                 "maximum_runtime_hours": str(maximum_hours),
                 "renewal_or_cleanup_deadline": "provisioned_at + maximum_runtime_hours",
+                "initial_peer": GCP_DISCOVERY_INITIAL_PEER,
+                "announce_maddr": announce_maddr,
                 "resource_count": 5,
                 "resources": [
                     {"type": "app", "name": fly_app},
@@ -637,6 +642,11 @@ def build_authorization(
                     "auto_stop": False,
                     "restart_policy": "always",
                     "identity_mount": "/data",
+                    "environment": {
+                        "COMMUNITYAI_SOURCE_COMMIT": source_commit,
+                        "COMMUNITYAI_DISCOVERY_INITIAL_PEER": GCP_DISCOVERY_INITIAL_PEER,
+                        "COMMUNITYAI_DISCOVERY_ANNOUNCE_MADDR": announce_maddr,
+                    },
                 },
                 "failure_cleanup_contract": (
                     "remove only the exact run-bound Machine, volume, IP allocations, and dedicated app; "

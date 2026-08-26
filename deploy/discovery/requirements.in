@@ -1,0 +1,4 @@
+# Minimal public discovery-seed runtime; keep model/inference dependencies out.
+# Match the tested CommunityAI CPU floor; discovery does not need CUDA artifacts.
+torch==2.6.0+cpu
+hivemind==1.1.12

@@ -33,6 +33,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Fail-closed qualification-image publication evidence that binds Buildx metadata to an
   immutable GHCR index, exact Linux runtime, SLSA provenance, SPDX SBOM, contract labels,
   every compressed layer, measured uncompressed size, and a bounded Fly rootfs plan.
+- A preserved discovery-only container checkpoint with a dedicated hash-locked CPU
+  dependency set, exact-Git-source Buildx provenance/SBOM plan, strict existing-seed join,
+  bounded public readiness, fail-closed existing-identity validation, and a verified
+  root-to-UID/GID-65532 privilege drop with no supplementary groups.
 - A public-alpha operations runbook with privacy-safe aggregate health reconstruction,
   finite admission defaults, rollout stop conditions, and reversible disable/rollback
   steps.
@@ -56,7 +60,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Cloud cost authorization now binds the complete canonical provider-plan digest into
   the ledger identity and emits a separate finite-horizon Fly discovery-seed plan. The
   plan requires a run-derived app plus the expected reviewed-GHCR image/evidence identity,
-  while explicitly requiring the provider adapter to hash and semantically validate the
+  the exact existing GCP join peer, and an app-derived Fly announcement, while explicitly
+  requiring the provider adapter to hash and semantically validate the
   actual evidence before provider authentication. An unrelated or target-mutated
   reservation cannot authorize provisioning.
 - Release bootstrap inputs now reject local, private, reserved, special-use, scoped,

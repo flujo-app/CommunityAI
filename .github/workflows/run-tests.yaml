@@ -103,6 +103,8 @@ jobs:
           # The production desktop workflow separately exercises the packaged Windows node.
           # macOS remains outside the supported release matrix.
           python -m pytest -v --durations=0 --durations-min=1.0 \
+            tests/test_discovery_seed_image_contract.py \
+            tests/test_discovery_seed_runtime.py \
             tests/test_policy_store.py \
             tests/test_server_admission.py
 
