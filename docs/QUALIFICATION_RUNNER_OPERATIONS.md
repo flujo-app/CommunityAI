@@ -1,8 +1,8 @@
 # Qualification runner operations
 
-Status: repository-side host preparation is implemented. No Windows/Linux
-qualification fleet, four-profile candidate matrix, or separate-machine recovery
-result is claimed by this runbook.
+Status: repository-side host preparation and a fail-closed combined-cloud cost
+guard are implemented. No Windows/Linux qualification fleet, four-profile candidate
+matrix, or separate-machine recovery result is claimed by this runbook.
 
 This procedure prepares one dedicated repository-level GitHub Actions runner for
 exactly one qualification profile. Repeat it on separate hosts for
@@ -10,6 +10,102 @@ exactly one qualification profile. Repeat it on separate hosts for
 register one physical or virtual machine under multiple opaque machine identities.
 Deferred macOS qualification is a separate operation that requires distinct
 `macos-cpu` and `macos-mps` hosts and does not gate the public alpha.
+
+## Combined-cloud cost guard
+
+Run `scripts/qualification_cost_guard.py` before any new GCP or Fly resource is
+created. It parses the spend ledger in `RELEASE_READINESS.md`, counts unresolved
+maximums and cleaned observed costs across both providers, and refuses a plan that
+could exceed USD 100. A cleaned row cannot discount its maximum without cleanup proof,
+and unresolved observed cost above an estimate counts at the higher amount. It never
+contacts a provider or prints provider responses.
+
+For the four-host GCP fleet, the 2026-08-26 on-demand price snapshot uses four
+`n1-highmem-8` VMs, two T4 GPUs, two 8-vCPU Windows licenses, and four 150 GiB
+standard persistent disks. The base is approximately USD 3.36/hour. A 14-hour
+lifecycle, 25 percent headroom, and USD 10 network/setup contingency produce USD
+68.83, rounded up to a **USD 69 maximum**. The pinned inputs come from Google's
+[current N1 resource rates](https://cloud.google.com/products/compute/resources/pricing),
+[T4 rates](https://cloud.google.com/products/compute/gpus-pricing), and
+[Windows/disk rates](https://cloud.google.com/compute/disks-image-pricing).
+The guard fails after 2026-09-25 until those rates are reviewed and updated.
+
+Generate the exact plan from the source commit that will be dispatched:
+
+```powershell
+$sourceCommit = git rev-parse HEAD
+uv run --no-sync python scripts/qualification_cost_guard.py `
+  --run-id qual-20260826-a `
+  --provider gcp `
+  --purpose "Four-host Windows/Linux qualification fleet" `
+  --source-commit $sourceCommit `
+  --project community-ai-506321 `
+  --zone us-central1-a `
+  --maximum-hours 14 `
+  --ledger docs/RELEASE_READINESS.md `
+  --output qualification-cost-plan.json
+```
+
+The first plan reports `provisioning_authorized=false` and supplies one exact
+`required_ledger_row`. Add that row to the ledger, commit it, and rerun the same
+command. Only the matching `PLANNED` run ID, provider, purpose/source commit, and
+maximum changes the cost authorization to true. Provider authentication, target
+availability, quota, and absence checks remain mandatory even after cost authorization.
+
+For Fly, calculate a conservative maximum from current Fly pricing for the exact
+image, five-Machine topology, regions, CPU, memory, and maximum lifetime, then pass
+it explicitly:
+
+```powershell
+uv run --no-sync python scripts/qualification_cost_guard.py `
+  --run-id fly-recovery-a `
+  --provider fly `
+  --purpose "Candidate separate-machine recovery" `
+  --source-commit $sourceCommit `
+  --manual-maximum-usd 20 `
+  --ledger docs/RELEASE_READINESS.md `
+  --output fly-cost-plan.json
+```
+
+This Fly example is not a USD 20 authorization: current provider pricing must justify
+the chosen maximum, and the exact row still must be recorded before the adapter runs.
+
+## Exact temporary GCP fleet lifecycle
+
+The GCP plan contains shell-free argument arrays for every create, cleanup, and
+cleanup-verification command. Its resolved resources are isolated from the existing
+bootstrap:
+
+- one run-labelled custom VPC, subnet, router, Cloud NAT, and IAP-only firewall rule;
+- four uniquely named `n1-highmem-8` hosts for `windows-cpu`, `windows-cuda`,
+  `linux-cpu`, and `linux-cuda`;
+- one T4 on each CUDA host, a private 150 GiB auto-delete boot disk per host, no
+  external VM address, and no VM service account or API scopes; and
+- only IAP-source TCP 22/3389 ingress. No inference or DHT port is opened.
+
+Before create, use native `gcloud` authentication and the plan's explicit project
+and zone to prove the account, project, images, `n1-highmem-8`, T4 availability,
+GPU/CPU/address quota, and all planned names. Prove separately that
+`communityai-bootstrap-1` is present and healthy; do not pass its name to any
+create, update, stop, or delete command. Provider responses and account details stay
+out of committed reports.
+
+Execute the plan's `create_commands` in order and stop at the first failure. If any
+create command was attempted, immediately run every `cleanup_commands` entry in
+order even when setup, snapshot transfer, runner registration, preflight, or a
+workflow fails. The 14-hour maximum is a destruction deadline, not permission to
+leave idle hosts running.
+
+Prepare and register each host using the profile-specific procedure below, dispatch
+both exact public-alpha candidate matrices from the same source commit, and retain
+the bounded GitHub reports. Host readiness output is not qualification evidence.
+
+Cleanup succeeds only when every `verify_cleanup_commands` entry returns empty
+stdout after all four VMs/disks, the firewall, NAT, router, subnet, and VPC are
+deleted. If any output remains, mark the run failed, record the surviving exact
+resource names privately, stop new provisioning, and recover them before proceeding.
+After proven cleanup, replace the unresolved ledger maximum with observed cost when
+billing is available; otherwise keep the USD 69 maximum reserved.
 
 ## Security boundary
 
