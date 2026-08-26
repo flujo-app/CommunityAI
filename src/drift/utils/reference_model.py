@@ -5,7 +5,6 @@ from typing import Any, Union
 
 from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
 
-
 _WRAPPED_TEXT_WEIGHT_PREFIXES = {
     "gemma4": r"^model\.language_model\.",
     "gemma4_unified": r"^model\.language_model\.",

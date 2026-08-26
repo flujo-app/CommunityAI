@@ -31,6 +31,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   requiring a manually supplied token environment variable.
 - Model qualification dispatch no longer requires a persistent GitHub runner-inventory
   administration token.
+- Production desktop CI now packages the public alpha on Windows and Linux only; macOS
+  packaging remains explicitly deferred.
 - Root product messaging now describes public inference and optional compute sharing
   without claiming that credits, earnings, or spending already exist.
 

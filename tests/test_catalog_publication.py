@@ -5,6 +5,7 @@ import sys
 import time
 
 import pytest
+
 from drift.catalog_release import (
     catalog_bootstrap_digest,
     load_catalog_publication_bundle,
