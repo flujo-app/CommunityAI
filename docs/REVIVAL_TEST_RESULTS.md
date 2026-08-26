@@ -945,10 +945,15 @@ The duplicate Drift traceback for routine later-message rejection was removed.
 
 The expanded focused selection passes 79 tests, and the exact combined Windows/Linux
 offline selection passes 525 tests with 7 expected skips. Black, isort, and the
-whitespace gate pass. No cloud, Docker, registry, model, provider, public worker, or
-hardware action was executed, and the cloud ledger remains USD 0. Gate 16 remains
-`IN PROGRESS` until the malicious-load canary, monitored limited rollout, and
-disable/rollback drill produce immutable evidence.
+whitespace gate pass. [PR #14](https://github.com/flujo-app/CommunityAI/pull/14)
+integrated the slice as [commit `b8ece75`](https://github.com/flujo-app/CommunityAI/commit/b8ece754a72da2942c78552d7d6db3985238543b)
+after [style](https://github.com/flujo-app/CommunityAI/actions/runs/32977684287),
+[tests](https://github.com/flujo-app/CommunityAI/actions/runs/32977684150), and
+[Windows/Linux production packaging](https://github.com/flujo-app/CommunityAI/actions/runs/32977684092)
+passed. No cloud, Docker, registry, model, provider, public worker, or hardware action
+was executed, and the cloud ledger remains USD 0. Gate 16 remains `IN PROGRESS` until
+the malicious-load canary, monitored limited rollout, and disable/rollback drill
+produce immutable evidence.
 
 ## Follow-up issues
 
