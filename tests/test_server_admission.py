@@ -1,10 +1,12 @@
 import asyncio
+import logging
 import multiprocessing as mp
 import queue
 import threading
 from types import SimpleNamespace
 
 import pytest
+from hivemind.p2p import P2P, P2PHandlerError
 from hivemind.proto import runtime_pb2
 from hivemind.utils.serializer import MSGPackSerializer
 
@@ -14,6 +16,13 @@ from drift.server.handler import (
     MAX_PUSH_METADATA_BYTES,
     Event,
     TransformerConnectionHandler,
+)
+from drift.server.rejection_logging import (
+    P2P_DAEMON_LOGGER_NAME,
+    P2P_HANDLER_FAILURE_MESSAGE,
+    PUBLIC_REJECTION_LOG_MESSAGE,
+    RoutinePublicRejectionLogFilter,
+    install_public_rejection_log_filter,
 )
 from drift.server.server import ModuleContainer
 
@@ -372,7 +381,7 @@ async def test_inference_acquires_before_waiting_for_the_first_stream_message():
 
 
 @pytest.mark.asyncio
-async def test_public_inference_size_checks_precede_parsing_and_cover_later_messages():
+async def test_public_inference_size_checks_precede_parsing_and_cover_later_messages(caplog):
     state = AdmissionState.local(_policy())
     handler = object.__new__(TransformerConnectionHandler)
     handler.session_timeout = 5
@@ -397,8 +406,10 @@ async def test_public_inference_size_checks_precede_parsing_and_cover_later_mess
 
     steps = handler._iterate_inference_steps(first, oversized_second(), None, (), SimpleNamespace(remote_id="peer"))
     assert await anext(steps) == (first, {})
-    with pytest.raises(AdmissionRejected, match="too large"):
-        await anext(steps)
+    with caplog.at_level(logging.WARNING, logger="drift.server.handler"):
+        with pytest.raises(AdmissionRejected, match="too large"):
+            await anext(steps)
+    assert not any("_iterate_inference_steps() exception" in record.getMessage() for record in caplog.records)
 
 
 def test_public_request_logs_do_not_retain_raw_peer_identity(monkeypatch):
@@ -649,3 +660,301 @@ def test_full_public_push_queue_cannot_block_shutdown():
     assert event_queue.get_nowait()[0] == Event.SHUTDOWN
     assert state.snapshot()["pending_pushes"] == 0
     state.unregister_session(session_key, 0, route_token)
+
+
+def _handler_failure_record(exception, *, name=P2P_DAEMON_LOGGER_NAME, message=P2P_HANDLER_FAILURE_MESSAGE):
+    return logging.LogRecord(
+        name,
+        logging.WARNING,
+        __file__,
+        1,
+        message,
+        (),
+        (type(exception), exception, None),
+    )
+
+
+def test_routine_rejection_filter_bounds_each_category_and_sanitizes_output():
+    clock = Clock()
+    rejection_filter = RoutinePublicRejectionLogFilter(clock=clock, window_seconds=60, max_suppressed=2)
+
+    first = _handler_failure_record(AdmissionRejected("public worker inference metadata is invalid"))
+    assert rejection_filter.filter(first) is True
+    assert first.exc_info is None
+    assert first.exc_text is None
+    assert first.stack_info is None
+    assert first.getMessage() == PUBLIC_REJECTION_LOG_MESSAGE % 0
+
+    repeated = _handler_failure_record(AdmissionRejected("public worker inference request is too large"))
+    overflow = _handler_failure_record(AdmissionRejected("public worker inference metadata is invalid"))
+    assert rejection_filter.filter(repeated) is False
+    assert rejection_filter.filter(overflow) is False
+
+    other_category = _handler_failure_record(AdmissionRejected("public worker push target is unavailable"))
+    assert rejection_filter.filter(other_category) is True
+    assert other_category.getMessage() == PUBLIC_REJECTION_LOG_MESSAGE % 0
+
+    for _ in range(3):
+        assert (
+            rejection_filter.filter(
+                _handler_failure_record(AdmissionRejected("public worker inference request is too large"))
+            )
+            is False
+        )
+    clock.advance(60)
+    next_window = _handler_failure_record(AdmissionRejected("public worker inference metadata is invalid"))
+    assert rejection_filter.filter(next_window) is True
+    assert next_window.getMessage() == PUBLIC_REJECTION_LOG_MESSAGE % 2
+    assert len(next_window.getMessage()) == len(first.getMessage())
+    assert "metadata" not in next_window.getMessage()
+
+
+def test_invalid_or_backwards_clocks_preserve_diagnostic_tracebacks_and_state():
+    clock = Clock()
+    rejection_filter = RoutinePublicRejectionLogFilter(clock=clock)
+    routine_message = "public worker inference metadata is invalid"
+    assert rejection_filter.filter(_handler_failure_record(AdmissionRejected(routine_message))) is True
+    assert rejection_filter.filter(_handler_failure_record(AdmissionRejected(routine_message))) is False
+    state_before_regression = dict(rejection_filter._categories)
+
+    clock.value -= 1
+    backwards = _handler_failure_record(AdmissionRejected(routine_message))
+    original_exc_info = backwards.exc_info
+    assert rejection_filter.filter(backwards) is True
+    assert backwards.getMessage() == P2P_HANDLER_FAILURE_MESSAGE
+    assert backwards.exc_info is original_exc_info
+    assert rejection_filter._categories == state_before_regression
+
+    def broken_clock():
+        raise RuntimeError("clock failed")
+
+    for bad_clock in (broken_clock, lambda: float("nan"), lambda: float("inf")):
+        record = _handler_failure_record(AdmissionRejected(routine_message))
+        original_exc_info = record.exc_info
+        assert RoutinePublicRejectionLogFilter(clock=bad_clock).filter(record) is True
+        assert record.getMessage() == P2P_HANDLER_FAILURE_MESSAGE
+        assert record.exc_info is original_exc_info
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "public worker admission is temporarily unavailable",
+        "public worker inference request is too large",
+        "public worker inference metadata is invalid",
+        "public worker session identity is invalid",
+        "public worker session identity is already active",
+        "public worker push target is unavailable",
+        "public worker push request is too large",
+        "public worker push metadata is invalid",
+        "training RPCs are disabled on manifested public workers",
+    ],
+)
+def test_fixed_routine_rejection_messages_are_sanitized(message):
+    record = _handler_failure_record(AdmissionRejected(message))
+
+    assert RoutinePublicRejectionLogFilter().filter(record) is True
+    assert record.getMessage() == PUBLIC_REJECTION_LOG_MESSAGE % 0
+    assert record.exc_info is None
+    assert message not in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        _handler_failure_record(AdmissionRejected("public worker admission state is unavailable")),
+        _handler_failure_record(AdmissionRejected("future rejection category")),
+        _handler_failure_record(AdmissionRejected("session identity is invalid")),
+        _handler_failure_record(RuntimeError("unexpected failure")),
+        _handler_failure_record(
+            AdmissionRejected("public worker admission is temporarily unavailable"),
+            name="unrelated.logger",
+        ),
+        _handler_failure_record(
+            AdmissionRejected("public worker admission is temporarily unavailable"),
+            message="Different failure message",
+        ),
+    ],
+)
+def test_rejection_filter_preserves_unknown_or_internal_tracebacks(record):
+    rejection_filter = RoutinePublicRejectionLogFilter()
+    original_message = record.getMessage()
+    original_exc_info = record.exc_info
+
+    assert rejection_filter.filter(record) is True
+    assert record.getMessage() == original_message
+    assert record.exc_info is original_exc_info
+
+
+def test_unexpected_failures_are_never_rate_limited():
+    rejection_filter = RoutinePublicRejectionLogFilter()
+    for _ in range(3):
+        record = _handler_failure_record(RuntimeError("unexpected failure"))
+        assert rejection_filter.filter(record) is True
+        assert record.exc_info is not None
+        assert record.getMessage() == P2P_HANDLER_FAILURE_MESSAGE
+
+
+def test_public_rejection_filter_installation_is_thread_safe_and_idempotent():
+    target = logging.getLogger(P2P_DAEMON_LOGGER_NAME)
+    original_filters = list(target.filters)
+    target.filters[:] = [
+        existing for existing in target.filters if not isinstance(existing, RoutinePublicRejectionLogFilter)
+    ]
+    installed = []
+
+    try:
+        threads = [
+            threading.Thread(target=lambda: installed.append(install_public_rejection_log_filter())) for _ in range(8)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=1)
+        assert all(not thread.is_alive() for thread in threads)
+        assert len(installed) == 8
+        assert len({id(item) for item in installed}) == 1
+        assert sum(isinstance(item, RoutinePublicRejectionLogFilter) for item in target.filters) == 1
+    finally:
+        target.filters[:] = original_filters
+
+
+@pytest.mark.asyncio
+async def test_only_public_handlers_install_the_rejection_filter(monkeypatch):
+    installed = []
+
+    async def no_op_add_p2p_handlers(self, *args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "hivemind.moe.server.connection_handler.ConnectionHandler.add_p2p_handlers",
+        no_op_add_p2p_handlers,
+    )
+    monkeypatch.setattr(
+        "drift.server.handler.install_public_rejection_log_filter",
+        lambda: installed.append("installed"),
+    )
+    handler = object.__new__(TransformerConnectionHandler)
+    handler._listener_task = object()
+    handler._handler_event_queues = []
+
+    handler._admission_state = None
+    await handler.add_p2p_handlers()
+    assert installed == []
+
+    handler._admission_state = object()
+    await handler.add_p2p_handlers()
+    assert installed == ["installed"]
+
+
+@pytest.mark.asyncio
+async def test_hivemind_stream_preserves_rpc_errors_while_bounding_expected_tracebacks():
+    target = logging.getLogger(P2P_DAEMON_LOGGER_NAME)
+    original_filters = list(target.filters)
+    original_level = target.level
+    target.filters[:] = [
+        existing for existing in target.filters if not isinstance(existing, RoutinePublicRejectionLogFilter)
+    ]
+    records = []
+
+    class RecordHandler(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    record_handler = RecordHandler(level=logging.WARNING)
+    target.addHandler(record_handler)
+    target.setLevel(logging.WARNING)
+    install_public_rejection_log_filter()
+    server = client = None
+
+    async def one_request():
+        yield runtime_pb2.ExpertRequest()
+
+    async def routine_rejection(requests, context):
+        async for _ in requests:
+            raise AdmissionRejected("public worker admission is temporarily unavailable")
+        if False:
+            yield runtime_pb2.ExpertResponse()
+
+    async def unexpected_failure(requests, context):
+        async for _ in requests:
+            raise RuntimeError("unexpected transport failure")
+        if False:
+            yield runtime_pb2.ExpertResponse()
+
+    async def call(client, server, name):
+        responses = await client.iterate_protobuf_handler(
+            server.peer_id,
+            name,
+            one_request(),
+            runtime_pb2.ExpertResponse,
+        )
+        with pytest.raises(P2PHandlerError) as error:
+            await asyncio.wait_for(anext(responses), timeout=10)
+        return str(error.value)
+
+    try:
+        common_options = {
+            "host_maddrs": ("/ip4/127.0.0.1/tcp/0",),
+            "auto_nat": False,
+            "conn_manager": False,
+            "nat_port_map": False,
+            "use_relay": False,
+            "tls": True,
+        }
+        server = await P2P.create(initial_peers=[], **common_options)
+        await server.add_protobuf_handler(
+            "routine_rejection",
+            routine_rejection,
+            runtime_pb2.ExpertRequest,
+            stream_input=True,
+            stream_output=True,
+        )
+        await server.add_protobuf_handler(
+            "unexpected_failure",
+            unexpected_failure,
+            runtime_pb2.ExpertRequest,
+            stream_input=True,
+            stream_output=True,
+        )
+        client = await P2P.create(initial_peers=await server.get_visible_maddrs(), **common_options)
+
+        first_error = await call(client, server, "routine_rejection")
+        second_error = await call(client, server, "routine_rejection")
+        unexpected_error = await call(client, server, "unexpected_failure")
+
+        assert "public worker admission is temporarily unavailable" in first_error
+        assert second_error == first_error
+        assert "unexpected transport failure" in unexpected_error
+
+        handler_failures = [
+            record
+            for record in records
+            if record.name == P2P_DAEMON_LOGGER_NAME
+            and (
+                record.getMessage().startswith("Routine public-worker request rejected")
+                or record.getMessage() == P2P_HANDLER_FAILURE_MESSAGE
+            )
+        ]
+        routine_records = [
+            record
+            for record in handler_failures
+            if record.getMessage().startswith("Routine public-worker request rejected")
+        ]
+        unexpected_records = [
+            record for record in handler_failures if record.getMessage() == P2P_HANDLER_FAILURE_MESSAGE
+        ]
+        assert len(routine_records) == 1
+        assert routine_records[0].exc_info is None
+        assert "public-worker" in routine_records[0].getMessage()
+        assert len(unexpected_records) == 1
+        assert unexpected_records[0].exc_info is not None
+        assert isinstance(unexpected_records[0].exc_info[1], RuntimeError)
+    finally:
+        if client is not None:
+            await client.shutdown()
+        if server is not None:
+            await server.shutdown()
+        target.removeHandler(record_handler)
+        target.filters[:] = original_filters
+        target.setLevel(original_level)
