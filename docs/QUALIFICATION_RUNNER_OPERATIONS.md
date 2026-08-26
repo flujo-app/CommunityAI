@@ -8,8 +8,8 @@ This procedure prepares one dedicated repository-level GitHub Actions runner for
 exactly one qualification profile. Repeat it on separate hosts for
 `windows-cpu`, `windows-cuda`, `linux-cpu`, and `linux-cuda`. Do not
 register one physical or virtual machine under multiple opaque machine identities.
-The strict release scope additionally requires separate `macos-cpu` and
-`macos-mps` hosts.
+Deferred macOS qualification is a separate operation that requires distinct
+`macos-cpu` and `macos-mps` hosts and does not gate the public alpha.
 
 ## Security boundary
 
@@ -134,22 +134,23 @@ An operator may inspect runner readiness before dispatch with an existing local 
 login and the optional inventory validator, but that check is not qualification evidence.
 
 First dispatch `qualify-model-matrix.yaml` for one candidate with
-`incomplete-windows-linux`. The workflow:
+`public-alpha`. The workflow:
 
-1. selects the four declared profiles without reading the private runner inventory;
+1. selects exactly the four Windows/Linux profiles without reading the private runner inventory;
 2. preflights every dispatched host against its OS, device, source commit, machine label, and
    exact private snapshot;
 3. runs full artifact audit, stock-token parity, and selected-worker recovery;
 4. uploads one immutable host report per profile; and
-5. emits only the exact bounded `incomplete` aggregate with macOS CPU/MPS listed
-   as missing.
+5. emits a passing aggregate only with exact four-profile coverage, no missing or extra
+   evidence, and four unique normalized machine identities.
 
-Review the aggregate before dispatching the other candidate. Do not use
-`strict-six-profile` until the two separate macOS runners exist. Neither a
-passed preparation report nor an incomplete matrix authorizes catalog publication
-or a release claim.
+Review the aggregate before dispatching the other candidate. Use `deferred-macos`
+only when the two separate macOS runners exist; it schedules and aggregates only
+`macos-cpu` and `macos-mps`, and its result cannot satisfy the public-alpha
+multi-machine controller. Neither a passed preparation report nor a deferred macOS
+matrix authorizes catalog publication or a release claim.
 
-After both bounded matrices exist, build credential-free immutable Fly images
+After both public-alpha matrices exist, build credential-free immutable Fly images
 bound to the same source and candidate manifests, then follow the controlled
 multi-machine procedure in
 [MODEL_QUALIFICATION_V1.md](MODEL_QUALIFICATION_V1.md#opt-in-fly-machines-adapter).

@@ -733,13 +733,23 @@ the expanded runner, matrix, multi-machine controller, and Fly adapter slice pas
 Black, isort, and the diff whitespace gate are clean. No runner was registered and no
 external candidate result is claimed.
 
+On 2026-08-26, the qualification contract was aligned with the settled public-alpha
+scope. Default dispatch and fleet validation now select exactly Windows CPU/CUDA and
+Linux CPU/CUDA; aggregation fails on missing or extra profiles; and the controlled
+recovery gate independently requires that exact passed matrix and four distinct,
+case-insensitively normalized machine identities. macOS CPU/MPS is an explicit separate
+deferred workflow scope and cannot satisfy the public-alpha controller. The four focused
+workflow, matrix, controller, and fleet suites pass 43 tests; the CI-listed offline
+selection passes 409 tests with 10 expected skips. Black, isort, YAML parsing, and the
+diff whitespace gate are clean. This is deterministic contract evidence only: no external
+runner, model matrix, provider recovery, or cleanup gate was executed.
+
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts
-   and collect both bounded
-   incomplete candidate matrices. Build each immutable Fly qualification image and execute
-   the explicitly incomplete adapter/controller gate for both candidates. Obtain separate
-   macOS CPU/MPS capacity before rerunning the strict six-profile matrices and release gates.
+   and collect both exact public-alpha candidate matrices. Build each immutable Fly
+   qualification image and execute the strict adapter/controller gate for both candidates.
+   macOS CPU/MPS capacity and qualification remain a separate deferred gate.
 2. Exercise the changed-boundary replacement route in the controlled separate-machine
    interruption gate; beam-search recovery needs a reorder-aware activation history before
    it can be enabled safely.

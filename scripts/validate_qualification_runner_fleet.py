@@ -3,7 +3,8 @@
 The GitHub API inventory contains private runner names and identifiers. This
 validator consumes that inventory locally and emits only profile-level coverage,
 so operators can fail a manual matrix before jobs wait on missing or ambiguous
-self-hosted runner labels. The default remains the strict six-profile release fleet.
+self-hosted runner labels. The default is the exact four-profile Windows/Linux
+public-alpha fleet; deferred macOS profiles remain explicitly selectable.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ PROFILE_SYSTEMS: Mapping[str, str] = {
     "macos-cpu": "macos",
     "macos-mps": "macos",
 }
+PUBLIC_ALPHA_PROFILES = ("windows-cpu", "windows-cuda", "linux-cpu", "linux-cuda")
 
 
 class RunnerFleetError(ValueError):
@@ -33,7 +35,7 @@ class RunnerFleetError(ValueError):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Validate an API snapshot of the six self-hosted model qualification runners",
+        description="Validate an API snapshot of self-hosted model qualification runners",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("inventory", type=Path, help="JSON from GET /repos/{owner}/{repo}/actions/runners")
@@ -41,7 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-profile",
         action="append",
         choices=tuple(PROFILE_SYSTEMS),
-        help="Profile that must have exactly one online runner; repeatable (default: all six release profiles)",
+        help=(
+            "Profile that must have exactly one online runner; repeatable "
+            "(default: four Windows/Linux public-alpha profiles)"
+        ),
     )
     parser.add_argument("--output", type=Path, required=True, help="Write a bounded, identity-free readiness report")
     return parser
@@ -95,7 +100,7 @@ def _runner_labels(runner: Mapping[str, Any]) -> set[str]:
     return names
 
 
-def _empty_report(error: str, required_profiles: Sequence[str] = tuple(PROFILE_SYSTEMS)) -> dict[str, Any]:
+def _empty_report(error: str, required_profiles: Sequence[str] = PUBLIC_ALPHA_PROFILES) -> dict[str, Any]:
     return {
         "schema_version": RUNNER_FLEET_SCHEMA_VERSION,
         "scope": "qualification-runner-fleet-readiness",
@@ -110,7 +115,7 @@ def _empty_report(error: str, required_profiles: Sequence[str] = tuple(PROFILE_S
 
 def validate_inventory(
     value: Any,
-    required_profiles: Sequence[str] = tuple(PROFILE_SYSTEMS),
+    required_profiles: Sequence[str] = PUBLIC_ALPHA_PROFILES,
 ) -> dict[str, Any]:
     required_profiles = tuple(required_profiles)
     if (
@@ -203,7 +208,7 @@ def _write_report(path: Path, report: Mapping[str, Any]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    required_profiles = args.require_profile or list(PROFILE_SYSTEMS)
+    required_profiles = args.require_profile or list(PUBLIC_ALPHA_PROFILES)
     try:
         report = validate_inventory(_load_inventory(args.inventory), required_profiles)
     except RunnerFleetError as exc:

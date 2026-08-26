@@ -11,13 +11,13 @@ on:
           - qwen3.5-2b
           - gemma-4-e2b
       qualification_scope:
-        description: Strict release matrix or bounded Windows/Linux evidence collection
+        description: Public-alpha Windows/Linux matrix or deferred macOS evidence
         required: true
         type: choice
-        default: strict-six-profile
+        default: public-alpha
         options:
-          - strict-six-profile
-          - incomplete-windows-linux
+          - public-alpha
+          - deferred-macos
 
 permissions:
   contents: read
@@ -38,10 +38,10 @@ jobs:
         id: scope
         shell: bash
         run: |
-          if [[ "${{ inputs.qualification_scope }}" == "strict-six-profile" ]]; then
-            echo 'profiles=["windows-cpu","windows-cuda","linux-cpu","linux-cuda","macos-cpu","macos-mps"]' >> "$GITHUB_OUTPUT"
-          else
+          if [[ "${{ inputs.qualification_scope }}" == "public-alpha" ]]; then
             echo 'profiles=["windows-cpu","windows-cuda","linux-cpu","linux-cuda"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'profiles=["macos-cpu","macos-mps"]' >> "$GITHUB_OUTPUT"
           fi
 
   preflight:
@@ -189,18 +189,20 @@ jobs:
           shopt -s nullglob
           reports=(qualification-reports/*.json)
           drift_version="$(uv run --no-sync python -c 'import drift; print(drift.__version__)')"
-          incomplete_args=()
-          if [[ "${{ inputs.qualification_scope }}" == "incomplete-windows-linux" ]]; then
-            incomplete_args+=(--allow-incomplete)
+          if [[ "${{ inputs.qualification_scope }}" == "public-alpha" ]]; then
+            required_profiles=(windows:cpu windows:cuda linux:cpu linux:cuda)
+          else
+            required_profiles=(macos:cpu macos:mps)
           fi
+          profile_args=()
+          for profile in "${required_profiles[@]}"; do
+            profile_args+=(--require-profile "$profile")
+          done
           uv run --no-sync python scripts/aggregate_model_qualification.py \
             "$MANIFEST" "${reports[@]}" \
-            --require-profile windows:cpu --require-profile windows:cuda \
-            --require-profile linux:cpu --require-profile linux:cuda \
-            --require-profile macos:cpu --require-profile macos:mps \
+            "${profile_args[@]}" \
             --require-source-commit "$GITHUB_SHA" \
             --require-drift-version "$drift_version" \
-            "${incomplete_args[@]}" \
             --output qualification-matrix.json
 
       - name: Upload immutable matrix report

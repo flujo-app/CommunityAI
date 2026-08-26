@@ -2,9 +2,8 @@
 
 The combiner is deliberately narrower than release approval. It proves that exact
 manifest/runtime reports exist for explicitly requested operating-system/device
-profiles. An explicit incomplete mode can accept exactly the four Windows/Linux
-profiles while retaining the missing macOS profiles. Multi-machine routing, resource
-envelopes, public-worker soak, and catalog publication remain independent gates.
+profiles. Multi-machine routing, resource envelopes, public-worker soak, and catalog
+publication remain independent gates.
 """
 
 from __future__ import annotations
@@ -32,16 +31,6 @@ _SYSTEM_ALIASES = {
     "windows": "windows",
 }
 _DEVICE_PROFILES = {"cpu", "cuda", "mps"}
-RELEASE_MATRIX_PROFILES = (
-    "windows:cpu",
-    "windows:cuda",
-    "linux:cpu",
-    "linux:cuda",
-    "macos:cpu",
-    "macos:mps",
-)
-INCOMPLETE_MATRIX_PROFILES = frozenset(RELEASE_MATRIX_PROFILES[:4])
-INCOMPLETE_MISSING_PROFILES = list(RELEASE_MATRIX_PROFILES[4:])
 
 
 class EvidenceError(ValueError):
@@ -101,11 +90,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--require-drift-version",
         help="Require every report to record this exact non-empty DRIFT version",
-    )
-    parser.add_argument(
-        "--allow-incomplete",
-        action="store_true",
-        help=("Accept only the bounded four-profile Windows/Linux matrix, while retaining both missing macOS profiles"),
     )
     parser.add_argument("--output", type=Path, help="Write the matrix report atomically; otherwise print JSON")
     return parser
@@ -368,18 +352,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 matrix_errors.append("matrix DRIFT version does not match --require-drift-version")
 
     missing_profiles = [profile for profile in required_profiles if profile not in coverage]
-    if args.allow_incomplete and set(required_profiles) != set(RELEASE_MATRIX_PROFILES):
-        matrix_errors.append("--allow-incomplete requires the exact six-profile release matrix")
+    unexpected_profiles = sorted(set(coverage) - set(required_profiles))
+    if unexpected_profiles:
+        matrix_errors.append(
+            "matrix contains profiles that were not explicitly required: " + ", ".join(unexpected_profiles)
+        )
     passed = not report_errors and not matrix_errors and not missing_profiles
-    incomplete = (
-        args.allow_incomplete
-        and not report_errors
-        and not matrix_errors
-        and len(missing_profiles) == len(INCOMPLETE_MISSING_PROFILES)
-        and set(missing_profiles) == set(INCOMPLETE_MISSING_PROFILES)
-        and set(coverage) == INCOMPLETE_MATRIX_PROFILES
-    )
-    result = "passed" if passed else "incomplete" if incomplete else "failed"
+    result = "passed" if passed else "failed"
     report: dict[str, Any] = {
         "schema_version": MATRIX_QUALIFICATION_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -418,7 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         json.dump(report, sys.stdout, ensure_ascii=False, allow_nan=False, indent=2, sort_keys=True)
         sys.stdout.write("\n")
-    return 0 if result in {"passed", "incomplete"} else 1
+    return 0 if result == "passed" else 1
 
 
 if __name__ == "__main__":

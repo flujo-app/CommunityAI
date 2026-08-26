@@ -68,18 +68,14 @@ _URL_RE = re.compile(r"(?i)\b(?:https?|tcp)://[^\s]+")
 _MULTIADDR_RE = re.compile(r"/(?:ip4|ip6|dns4|dns6|dnsaddr)/[^\s]+")
 _IP_ENDPOINT_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b")
 _SECRET_ASSIGNMENT_RE = re.compile(r"(?i)\b(token|secret|password|api[-_ ]?key|authorization)\s*([:=])\s*[^\s,;]+")
-REQUIRED_MATRIX_PROFILES = frozenset(
+PUBLIC_ALPHA_MATRIX_PROFILES = frozenset(
     {
         "windows:cpu",
         "windows:cuda",
         "linux:cpu",
         "linux:cuda",
-        "macos:cpu",
-        "macos:mps",
     }
 )
-INCOMPLETE_MISSING_PROFILES = ("macos:cpu", "macos:mps")
-INCOMPLETE_MATRIX_PROFILES = REQUIRED_MATRIX_PROFILES.difference(INCOMPLETE_MISSING_PROFILES)
 
 
 class QualificationError(ValueError):
@@ -169,11 +165,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("manifest", type=Path, help="Exact ModelManifest v1 candidate")
-    parser.add_argument("--matrix-report", type=Path, required=True, help="Passed strict local cross-platform matrix")
     parser.add_argument(
-        "--allow-incomplete-matrix",
-        action="store_true",
-        help="Authorize only the four-profile Windows/Linux recovery exercise with both macOS profiles missing",
+        "--matrix-report",
+        type=Path,
+        required=True,
+        help="Passed exact Windows/Linux public-alpha matrix",
     )
     parser.add_argument("--topology", type=Path, required=True, help="Public run topology JSON")
     parser.add_argument("--control-plan", type=Path, required=True, help="Private shell-free interruption/cleanup plan")
@@ -484,7 +480,6 @@ def validate_matrix_report(
     manifest: ModelManifest,
     *,
     source_commit: str,
-    allow_incomplete: bool = False,
 ) -> dict[str, Any]:
     raw = _require_object(_load_json(path, "matrix report"), "matrix report")
     _require_exact_keys(
@@ -510,11 +505,8 @@ def validate_matrix_report(
         raise QualificationError(f"matrix report schema_version must be {MATRIX_SCHEMA_VERSION}")
     if raw.get("scope") != "cross-platform-local-matrix":
         raise QualificationError("matrix report scope must be cross-platform-local-matrix")
-    expected_result = "incomplete" if allow_incomplete else "passed"
-    if raw.get("result") != expected_result:
-        raise QualificationError(
-            f"matrix report result must be {expected_result!r} for the selected qualification mode"
-        )
+    if raw.get("result") != "passed":
+        raise QualificationError("matrix report result must be 'passed'")
     if raw.get("complete_release_qualification") is not False:
         raise QualificationError("matrix report must retain complete_release_qualification=false")
     if raw.get("not_covered") != [
@@ -550,15 +542,8 @@ def validate_matrix_report(
         raise QualificationError("matrix report DRIFT build does not match the running controller")
     if raw.get("report_errors") != [] or raw.get("matrix_errors") != []:
         raise QualificationError("matrix report contains validation errors")
-    missing_profiles = raw.get("missing_profiles")
-    expected_missing_profiles = list(INCOMPLETE_MISSING_PROFILES) if allow_incomplete else []
-    if (
-        not isinstance(missing_profiles, list)
-        or any(not isinstance(profile, str) for profile in missing_profiles)
-        or len(missing_profiles) != len(set(missing_profiles))
-        or set(missing_profiles) != set(expected_missing_profiles)
-    ):
-        raise QualificationError("matrix report missing profiles do not match the selected qualification mode")
+    if raw.get("missing_profiles") != []:
+        raise QualificationError("public-alpha matrix report must not have missing profiles")
     requirements = _require_object(raw.get("requirements"), "matrix report.requirements")
     _require_exact_keys(
         requirements,
@@ -574,39 +559,43 @@ def validate_matrix_report(
         not isinstance(profiles, list)
         or any(not isinstance(profile, str) for profile in profiles)
         or len(profiles) != len(set(profiles))
-        or set(profiles) != set(REQUIRED_MATRIX_PROFILES)
+        or set(profiles) != set(PUBLIC_ALPHA_MATRIX_PROFILES)
     ):
-        raise QualificationError("matrix report must require the exact six release profiles")
+        raise QualificationError("matrix report must require the exact four Windows/Linux public-alpha profiles")
     coverage = _require_object(raw.get("coverage"), "matrix report.coverage")
-    expected_coverage = INCOMPLETE_MATRIX_PROFILES if allow_incomplete else REQUIRED_MATRIX_PROFILES
-    if set(coverage) != set(expected_coverage) or any(
-        not isinstance(coverage[profile], list) or not coverage[profile] for profile in expected_coverage
+    if set(coverage) != set(PUBLIC_ALPHA_MATRIX_PROFILES) or any(
+        not isinstance(coverage[profile], list) or not coverage[profile] for profile in PUBLIC_ALPHA_MATRIX_PROFILES
     ):
-        requirement = "the four Windows/Linux profiles" if allow_incomplete else "all six release profiles"
-        raise QualificationError(f"matrix report must contain evidence for exactly {requirement}")
-    machine_systems: dict[str, str] = {}
+        raise QualificationError(
+            "matrix report must contain evidence for exactly the four Windows/Linux public-alpha profiles"
+        )
+    machine_profiles: dict[str, str] = {}
     report_ids: set[str] = set()
-    for profile in sorted(expected_coverage):
+    for profile in sorted(PUBLIC_ALPHA_MATRIX_PROFILES):
         profile_machines: set[str] = set()
         for entry in coverage[profile]:
-            machine_id, system = _validate_matrix_coverage_entry(
+            machine_id, _system = _validate_matrix_coverage_entry(
                 entry,
                 profile=profile,
                 source_commit=source_commit,
             )
-            if machine_id in profile_machines:
-                raise QualificationError(f"matrix profile {profile} repeats a machine")
-            profile_machines.add(machine_id)
-            previous_system = machine_systems.setdefault(machine_id, system)
-            if previous_system != system:
-                raise QualificationError("matrix reuses one machine ID across operating systems")
+            normalized_machine_id = machine_id.casefold()
+            if normalized_machine_id in profile_machines:
+                raise QualificationError(f"matrix profile {profile} repeats a normalized machine ID")
+            profile_machines.add(normalized_machine_id)
+            previous_profile = machine_profiles.get(normalized_machine_id)
+            if previous_profile is not None:
+                raise QualificationError(
+                    "matrix reuses one normalized machine ID across profiles " f"{previous_profile!r} and {profile!r}"
+                )
+            machine_profiles[normalized_machine_id] = profile
             report_id = entry["report"]
             if report_id in report_ids:
                 raise QualificationError("matrix coverage repeats a report ID")
             report_ids.add(report_id)
     return {
-        "result": expected_result,
-        "missing_profiles": expected_missing_profiles,
+        "result": "passed",
+        "missing_profiles": [],
         "source_identity": {"source_commit": source_commit, "drift": drift.__version__},
     }
 
@@ -1219,10 +1208,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "schema_version": MULTI_MACHINE_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "scope": "controlled-multi-machine",
-        "qualification_mode": (
-            "incomplete-windows-linux-recovery" if args.allow_incomplete_matrix else "strict-six-profile-recovery"
-        ),
-        "missing_profiles": list(INCOMPLETE_MISSING_PROFILES) if args.allow_incomplete_matrix else [],
+        "qualification_mode": "public-alpha-windows-linux-recovery",
+        "missing_profiles": [],
         "run_id": topology.run_id,
         "model": {
             "name": manifest.name,
@@ -1238,7 +1225,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             "independent_machine_redundancy": True,
             "selected_worker_hard_interruption": True,
             "exact_stock_token_parity": True,
-            "allow_incomplete_matrix": args.allow_incomplete_matrix,
             "device": args.device,
             "tokens": args.tokens,
             "request_timeout_seconds": args.request_timeout,
@@ -1260,7 +1246,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             matrix_path,
             manifest,
             source_commit=args.source_commit,
-            allow_incomplete=args.allow_incomplete_matrix,
         )
         manifest.verify_artifacts(artifact_root)
         report["stages"].append(
@@ -1350,12 +1335,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     stages_passed = all(stage["status"] == "passed" for stage in report["stages"])
     if stages_passed:
-        report["result"] = "incomplete" if args.allow_incomplete_matrix else "passed"
+        report["result"] = "passed"
     else:
         report["result"] = "failed"
     report["complete_release_qualification"] = False
     _write_report(args.output, report)
-    return 0 if report["result"] in {"passed", "incomplete"} else 1
+    return 0 if report["result"] == "passed" else 1
 
 
 if __name__ == "__main__":

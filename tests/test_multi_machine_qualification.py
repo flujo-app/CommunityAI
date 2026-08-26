@@ -74,13 +74,13 @@ def _control(topology: dict) -> dict:
 def _matrix(manifest: ModelManifest) -> dict:
     generated_at = "2026-08-25T20:00:00+00:00"
     coverage = {}
-    for index, profile in enumerate(sorted(multi.REQUIRED_MATRIX_PROFILES), start=1):
+    for index, profile in enumerate(sorted(multi.PUBLIC_ALPHA_MATRIX_PROFILES), start=1):
         system, device = profile.split(":")
         coverage[profile] = [
             {
                 "report": f"input-{index}",
                 "generated_at": generated_at,
-                "machine_id": f"{system}-machine",
+                "machine_id": f"{system}-{device}-machine",
                 "system": system,
                 "device": device,
                 "profile": profile,
@@ -103,7 +103,7 @@ def _matrix(manifest: ModelManifest) -> dict:
         },
         "source_identity": {"source_commit": SOURCE_COMMIT, "drift": multi.drift.__version__},
         "requirements": {
-            "profiles": sorted(multi.REQUIRED_MATRIX_PROFILES),
+            "profiles": sorted(multi.PUBLIC_ALPHA_MATRIX_PROFILES),
             "source_commit": SOURCE_COMMIT,
             "drift_version": multi.drift.__version__,
         },
@@ -118,15 +118,6 @@ def _matrix(manifest: ModelManifest) -> dict:
             "signed catalog publication and release bootstrap",
         ],
     }
-
-
-def _incomplete_matrix(manifest: ModelManifest) -> dict:
-    document = _matrix(manifest)
-    document["result"] = "incomplete"
-    document["missing_profiles"] = list(multi.INCOMPLETE_MISSING_PROFILES)
-    for profile in multi.INCOMPLETE_MISSING_PROFILES:
-        document["coverage"].pop(profile)
-    return document
 
 
 def _gate_evidence(manifest: ModelManifest) -> dict:
@@ -352,36 +343,42 @@ def test_matrix_binding_rejects_runtime_or_source_drift(tmp_path):
         },
     }
 
+    reused_machine = copy.deepcopy(document)
+    reused_machine["coverage"]["windows:cuda"][0]["machine_id"] = "WINDOWS-CPU-MACHINE"
+    _write_json(matrix_path, reused_machine)
+    with pytest.raises(multi.QualificationError, match="normalized machine ID across profiles"):
+        multi.validate_matrix_report(matrix_path, manifest, source_commit=SOURCE_COMMIT)
+
     incomplete = copy.deepcopy(document)
-    incomplete["requirements"]["profiles"].remove("macos:mps")
-    incomplete["coverage"].pop("macos:mps")
+    incomplete["requirements"]["profiles"].remove("linux:cuda")
+    incomplete["coverage"].pop("linux:cuda")
     _write_json(matrix_path, incomplete)
-    with pytest.raises(multi.QualificationError, match="six release profiles"):
+    with pytest.raises(multi.QualificationError, match="four Windows/Linux public-alpha profiles"):
         multi.validate_matrix_report(matrix_path, manifest, source_commit=SOURCE_COMMIT)
 
-    bounded_incomplete = _incomplete_matrix(manifest)
-    _write_json(matrix_path, bounded_incomplete)
-    with pytest.raises(multi.QualificationError, match="result"):
-        multi.validate_matrix_report(matrix_path, manifest, source_commit=SOURCE_COMMIT)
-    assert multi.validate_matrix_report(matrix_path, manifest, source_commit=SOURCE_COMMIT, allow_incomplete=True,) == {
-        "result": "incomplete",
-        "missing_profiles": ["macos:cpu", "macos:mps"],
-        "source_identity": {
-            "source_commit": SOURCE_COMMIT,
-            "drift": multi.drift.__version__,
-        },
+    deferred_macos = copy.deepcopy(document)
+    deferred_macos["requirements"]["profiles"] = ["macos:cpu", "macos:mps"]
+    deferred_macos["coverage"] = {
+        profile: [
+            {
+                **document["coverage"]["windows:cpu"][0],
+                "system": "macos",
+                "device": profile.split(":")[1],
+                "profile": profile,
+                "machine_id": f"deferred-{profile.split(':')[1]}",
+            }
+        ]
+        for profile in ("macos:cpu", "macos:mps")
     }
+    _write_json(matrix_path, deferred_macos)
+    with pytest.raises(multi.QualificationError, match="four Windows/Linux public-alpha profiles"):
+        multi.validate_matrix_report(matrix_path, manifest, source_commit=SOURCE_COMMIT)
 
-    false_complete = copy.deepcopy(bounded_incomplete)
+    false_complete = copy.deepcopy(document)
     false_complete["complete_release_qualification"] = True
     _write_json(matrix_path, false_complete)
     with pytest.raises(multi.QualificationError, match="complete_release_qualification=false"):
-        multi.validate_matrix_report(
-            matrix_path,
-            manifest,
-            source_commit=SOURCE_COMMIT,
-            allow_incomplete=True,
-        )
+        multi.validate_matrix_report(matrix_path, manifest, source_commit=SOURCE_COMMIT)
 
     changed = copy.deepcopy(document)
     changed["source_identity"]["source_commit"] = "b" * 40
@@ -459,20 +456,7 @@ def test_control_command_is_shell_free_and_requires_one_ack_line(tmp_path):
     assert observed["peer_id"] == worker.peer_id
 
 
-@pytest.mark.parametrize(
-    ("allow_incomplete", "expected_result", "expected_missing"),
-    [
-        (False, "passed", []),
-        (True, "incomplete", ["macos:cpu", "macos:mps"]),
-    ],
-)
-def test_main_writes_path_free_report_and_always_cleans_up(
-    tmp_path,
-    monkeypatch,
-    allow_incomplete,
-    expected_result,
-    expected_missing,
-):
+def test_main_writes_path_free_report_and_always_cleans_up(tmp_path, monkeypatch):
     manifest = ModelManifest.load(VECTOR_MANIFEST)
     topology_document = _topology(manifest)
     topology_path = tmp_path / "private-topology.json"
@@ -483,7 +467,7 @@ def test_main_writes_path_free_report_and_always_cleans_up(
     artifact_root.mkdir()
     _write_json(topology_path, topology_document)
     _write_json(control_path, _control(topology_document))
-    _write_json(matrix_path, _incomplete_matrix(manifest) if allow_incomplete else _matrix(manifest))
+    _write_json(matrix_path, _matrix(manifest))
 
     monkeypatch.setattr(multi, "infer_source_commit", lambda: SOURCE_COMMIT)
     monkeypatch.setattr(ModelManifest, "verify_artifacts", lambda self, root: None)
@@ -506,7 +490,6 @@ def test_main_writes_path_free_report_and_always_cleans_up(
         multi.main(
             [
                 str(VECTOR_MANIFEST),
-                *(["--allow-incomplete-matrix"] if allow_incomplete else []),
                 "--matrix-report",
                 str(matrix_path),
                 "--topology",
@@ -526,10 +509,11 @@ def test_main_writes_path_free_report_and_always_cleans_up(
 
     report_text = output.read_text(encoding="utf-8")
     report = json.loads(report_text)
-    assert report["result"] == expected_result
-    assert report["missing_profiles"] == expected_missing
-    assert report["requested"]["allow_incomplete_matrix"] is allow_incomplete
-    assert report["stages"][0]["evidence"]["missing_profiles"] == expected_missing
+    assert report["result"] == "passed"
+    assert report["qualification_mode"] == "public-alpha-windows-linux-recovery"
+    assert report["missing_profiles"] == []
+    assert "allow_incomplete_matrix" not in report["requested"]
+    assert report["stages"][0]["evidence"]["missing_profiles"] == []
     assert report["complete_release_qualification"] is False
     assert report["stages"][-1]["name"] == "provisioned_resource_cleanup"
     assert report["stages"][-1]["status"] == "passed"

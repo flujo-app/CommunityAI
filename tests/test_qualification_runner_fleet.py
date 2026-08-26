@@ -31,7 +31,7 @@ def _write(path: Path, value: object) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def test_runner_fleet_accepts_exact_online_six_profile_inventory_without_private_identity(tmp_path):
+def test_runner_fleet_defaults_to_exact_online_public_alpha_inventory_without_private_identity(tmp_path):
     inventory = tmp_path / "private-runner-inventory.json"
     output = tmp_path / "readiness.json"
     _write(inventory, _inventory())
@@ -41,7 +41,7 @@ def test_runner_fleet_accepts_exact_online_six_profile_inventory_without_private
     serialized = output.read_text(encoding="utf-8")
     report = json.loads(serialized)
     assert report["result"] == "passed"
-    assert report["required_profiles"] == list(fleet.PROFILE_SYSTEMS)
+    assert report["required_profiles"] == list(fleet.PUBLIC_ALPHA_PROFILES)
     assert report["errors"] == []
     assert all(value["registered"] == 1 for value in report["coverage"].values())
     assert report["qualification_evidence"] is False
@@ -51,8 +51,8 @@ def test_runner_fleet_accepts_exact_online_six_profile_inventory_without_private
     assert str(tmp_path) not in serialized
 
 
-def test_runner_fleet_accepts_declared_windows_linux_subset_without_macos_runners(tmp_path):
-    required_profiles = list(fleet.PROFILE_SYSTEMS)[:4]
+def test_runner_fleet_accepts_explicit_deferred_macos_profiles_separately(tmp_path):
+    required_profiles = ["macos-cpu", "macos-mps"]
     value = _inventory()
     value["runners"] = [
         runner for runner in value["runners"] if any(label["name"] in required_profiles for label in runner["labels"])
@@ -94,7 +94,7 @@ def test_runner_fleet_never_serializes_api_supplied_operating_system(tmp_path):
 def test_runner_fleet_rejects_missing_offline_and_wrong_system_profiles(tmp_path):
     value = _inventory()
     value["runners"] = [
-        runner for runner in value["runners"] if not any(label["name"] == "macos-mps" for label in runner["labels"])
+        runner for runner in value["runners"] if not any(label["name"] == "linux-cuda" for label in runner["labels"])
     ]
     value["runners"][0]["status"] = "offline"
     value["runners"][1]["os"] = "linux"
@@ -108,7 +108,7 @@ def test_runner_fleet_rejects_missing_offline_and_wrong_system_profiles(tmp_path
     assert report["result"] == "failed"
     assert "windows-cpu runner is not online" in report["errors"]
     assert "windows-cuda runner operating system does not match its profile" in report["errors"]
-    assert "macos-mps must have exactly one registered qualification runner" in report["errors"]
+    assert "linux-cuda must have exactly one registered qualification runner" in report["errors"]
 
 
 def test_runner_fleet_rejects_duplicate_and_multi_profile_routing(tmp_path):

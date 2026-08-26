@@ -906,19 +906,21 @@ implementation.
    profile has a complete exact-manifest parity and failover report from a unique normalized
    machine identity. A manual self-hosted
    workflow dispatches exact qualification profile labels without a persistent repository
-   administration credential. It then preflights
-   all six hosts for every declared snapshot file and size, an actual checkout matching the
-   claimed source commit, and real CUDA/MPS availability before any qualification job starts.
-   Only after those readiness gates pass does it run one exact candidate across all profiles
-   with Hub access forced offline, upload immutable bounded reports, and emit a strict aggregate
-   bound to one source commit and DRIFT build. Readiness reports retain neither runner names nor
+   administration credential. Its public-alpha scope preflights the four Windows/Linux hosts
+   for every declared snapshot file and size, an actual checkout matching the claimed source
+   commit, and real CUDA availability before any qualification job starts. Only after those
+   readiness gates pass does it run one exact candidate across all four profiles with Hub
+   access forced offline, upload immutable bounded reports, and emit a strict aggregate bound
+   to one source commit and DRIFT build. A separate deferred scope can collect macOS CPU/MPS
+   evidence without satisfying the public-alpha gate. Readiness reports retain neither runner names nor
    API identifiers and explicitly are not qualification evidence. Both Windows preflight and
    qualification build and install the patched Hivemind wheel after the locked environment sync
    and run without resynchronizing it away; aggregation also runs in that locked project
    environment instead of an incomplete isolated dependency set.
    This completes repository-side cross-platform collection automation, not the external
-   hardware gate; no six-profile candidate matrix has been claimed. The provider-neutral
-   multi-machine controller now consumes that passed matrix plus a strict private run
+   hardware gate; no four-profile public-alpha candidate matrix has been claimed. The
+   provider-neutral multi-machine controller consumes only that exact passed matrix plus a
+   strict private run
    topology and shell-free control adapter. It requires two disjoint split routes on unique
    machines, exact manifested DHT membership, a nonce-bound hard kill of the selected active
    PeerID, activation replay and continued session progress through another machine, direct
@@ -955,15 +957,14 @@ implementation.
    selection, snapshot placement, runner registration/labels, workflow dispatch, and report
    retention are operational prerequisites, not hardware blockers.
 
-   Windows/Linux profile collection and Fly topology provisioning are now decoupled from the
-   final release gate. The manual workflow has an explicit incomplete scope that schedules only
-   the four Windows/Linux profiles while its aggregate still declares all six release profiles.
-   It succeeds only with `result: incomplete`, exactly `macos:cpu` and `macos:mps` missing, no
-   validation errors, and `complete_release_qualification=false`. The multi-machine controller
-   accepts that artifact only with `--allow-incomplete-matrix`; a successful recovery exercise
-   also emits `result: incomplete` and lists both missing macOS profiles. The default aggregate
-   and controller paths still require the exact complete six-profile evidence and reject partial
-   mode artifacts. No real Windows/Linux matrix or separate-host recovery run has yet been made.
+   Windows/Linux is now the exact public-alpha qualification matrix. The manual workflow's
+   default scope schedules only those four profiles and succeeds only with `result: passed`,
+   no missing or extra profiles, no validation errors, four unique normalized machine
+   identities, and `complete_release_qualification=false`. The multi-machine controller
+   accepts only that exact passed matrix and independently revalidates its profile coverage,
+   machine uniqueness, source, runtime, and evidence schema. macOS CPU/MPS uses a separate
+   deferred scope whose aggregate cannot satisfy the controller. No real Windows/Linux matrix
+   or separate-host recovery run has yet been made.
 
    Final Qwen3.5 2B and Gemma 4 E2B qualification on macOS CPU and macOS MPS is therefore
    deferred until Apple/macOS runner capacity is available or the supported release matrix is
@@ -979,24 +980,23 @@ implementation.
    dispatch, evidence-review, and teardown boundaries. No external host was provisioned or
    registered and no hardware result is claimed.
 
-   **Next implementation sequence.** The bounded partial-matrix path and explicitly incomplete
-   recovery authorization are implemented, with the exact-six release path preserved. Next
+   **Next implementation sequence.** The exact four-profile public-alpha matrix and strict
+   recovery authorization are implemented, with macOS isolated as a deferred gate. Next
    provision and register the uniquely labelled Windows and Linux qualification runners using
-   the local machine and GCP, and collect
-   Qwen3.5 2B and Gemma 4 E2B evidence on those profiles. Use Fly to execute the controlled separate-machine interruption/recovery
-   exercise for both exact candidates and preserve its bounded evidence. In parallel, obtain
-   macOS CPU/MPS capacity or explicitly revise the supported release matrix. Only after every
-   profile in that declared release matrix and both separate-machine recovery gates pass may
+   the local machine and GCP, and collect Qwen3.5 2B and Gemma 4 E2B evidence on those
+   profiles. Use Fly to execute the controlled separate-machine interruption/recovery
+   exercise for both exact candidates and preserve its bounded evidence. Only after every
+   public-alpha profile and both separate-machine recovery gates pass may
    the roadmap proceed to operating redundant public model workers, publishing the initial
    signed catalog through interchangeable HTTPS mirrors, and building the release bootstrap
    with the published DNS peer plus at least one independent seed. Then pass real packaged
    clean-install inference and prove the native credential and owned-process path against real
-   packaged Windows, Linux, and macOS credential backends. After that, validate the
-   source-complete single-instance and login-startup behavior in each packaged OS,
+   packaged Windows and Linux credential backends. After that, validate the
+   source-complete single-instance and login-startup behavior on each supported packaged OS,
    feed privacy-safe peer-region observations into the region view, validate VRAM, bandwidth,
    and power enforcement against real packaged hardware and its unavailable-telemetry paths,
    and complete resource, accessibility, signed installer, upgrade, rollback,
-   uninstall, and retained-data gates on all three operating systems.
+   uninstall, and retained-data gates on both public-alpha operating systems.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and
    LAN discovery; define threshold-signed, forkable catalogs; publish privacy-safe

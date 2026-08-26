@@ -72,8 +72,7 @@ python scripts/aggregate_model_qualification.py \
   /path/to/qualification-reports/*.json \
   --require-profile windows:cpu --require-profile windows:cuda \
   --require-profile linux:cpu --require-profile linux:cuda \
-  --require-profile macos:cpu --require-profile macos:mps \
-  --output qwen3.5-2b-cross-platform-matrix.json
+  --output qwen3.5-2b-public-alpha-matrix.json
 ```
 
 The validator fails closed on a wrong manifest or source identity, a changed runtime
@@ -84,24 +83,26 @@ also rejects missing or mixed source commits and mixed DRIFT builds;
 `--require-source-commit` binds every input to the dispatched checkout.
 The caller states the supported matrix explicitly; the tool does not infer platform
 claims from a model manifest. An empty report set still writes a failed matrix artifact
-with every requested profile listed as missing. A passing matrix still sets
+with every requested profile listed as missing, and any valid report for a profile that
+was not explicitly required also fails the aggregate. A passing matrix still sets
 `complete_release_qualification=false` and retains multi-machine routing, cold-client
 envelopes, public-worker soak, and catalog publication as separate gates.
-`--allow-incomplete` is narrower: all six release profiles must still be declared, the
-only accepted coverage is Windows CPU/CUDA plus Linux CPU/CUDA, the only accepted missing
-profiles are `macos:cpu` and `macos:mps`, and the result is `incomplete` rather than
-`passed`. Any other missing, extra, or invalid evidence still fails. The recorded Windows
-CPU reports above predate the explicit host/runtime observations, so they remain historical
-evidence and must be rerun before they can satisfy this strict matrix.
+
+The public-alpha gate requires exactly Windows CPU/CUDA and Linux CPU/CUDA. macOS CPU/MPS
+is deferred and must be aggregated separately with only those two explicit profile
+requirements; a passing deferred matrix does not satisfy the public-alpha controller or
+claim macOS support. The recorded Windows CPU reports above predate the explicit
+host/runtime observations, so they remain historical evidence and must be rerun before
+they can satisfy the strict public-alpha matrix.
 
 ### Self-hosted execution workflow
 
 [`.github/workflows/qualify-model-matrix.yaml`](../.github/workflows/qualify-model-matrix.yaml)
-is a manual, one-candidate-at-a-time workflow. Its default `strict-six-profile` scope
-schedules the full release matrix. The explicit `incomplete-windows-linux` scope schedules
-only Windows CPU/CUDA and Linux CPU/CUDA, but its aggregate still declares all six profiles
-and can emit only the bounded `incomplete` result with both macOS profiles listed as
-missing. Self-hosted runners use the `model-qualification` label plus one of
+is a manual, one-candidate-at-a-time workflow. Its default `public-alpha` scope
+schedules exactly Windows CPU/CUDA and Linux CPU/CUDA and requires a passing four-profile
+aggregate with no missing or extra evidence. The explicit `deferred-macos` scope schedules
+only macOS CPU/MPS and produces a separate non-alpha matrix. Self-hosted runners use the
+`model-qualification` label plus one of
 `windows-cpu`, `windows-cuda`, `linux-cpu`, `linux-cuda`, `macos-cpu`, or `macos-mps`.
 Register exactly one repository runner for each selected profile and never place two profile
 labels on one runner.
@@ -147,13 +148,13 @@ Windows-only runtime remains installed. Qualification runs with Hugging Face and
 Transformers offline, performs the full artifact audit plus parity and local interruption
 stages, and uploads one immutable, path-redacted report per host. The aggregate job runs
 even when hosts fail or produce no artifact, installs the locked project environment,
-combines only this workflow run's reports, binds them to `GITHUB_SHA`, uploads the failed,
-explicitly incomplete, or passing matrix, and then enforces its selected scope.
+combines only this workflow run's reports, binds them to `GITHUB_SHA`, uploads the failed
+or passing exact-scope matrix, and then enforces its selected scope.
 
 The workflow automates evidence collection; it has not yet produced the real Qwen3.5 or
-Gemma four-profile partial evidence or six-profile matrix. Runner provisioning, artifact
-placement, hardware execution, and review of the resulting immutable evidence remain
-external release operations.
+Gemma four-profile public-alpha matrix or the deferred macOS matrix. Runner provisioning,
+artifact placement, hardware execution, and review of the resulting immutable evidence
+remain external release operations.
 
 ## Controlled multi-machine recovery gate
 
@@ -163,8 +164,7 @@ machines or embed a Fly, SSH, or cloud API. An operator first provisions an isol
 bootstrap plus two disjoint, complete split routes with stable manifested worker
 identities. The controller then:
 
-1. binds the run to either the passed strict matrix or, only with
-   `--allow-incomplete-matrix`, the exact bounded Windows/Linux `incomplete` matrix,
+1. binds the run to the passed exact four-profile Windows/Linux public-alpha matrix,
    plus the exact source commit, DRIFT build, manifest/runtime, and a fully verified
    local publisher snapshot;
 2. waits until the DHT exposes exactly the signed PeerIDs declared for every block;
@@ -225,12 +225,12 @@ output are bounded. Commands, provider output, private paths, network endpoints,
 bootstrap addresses, the synthetic prompt, and credentials are not copied into the
 report.
 
-After the real six-profile matrix exists, run the pre-provisioned gate with:
+After the real four-profile public-alpha matrix exists, run the pre-provisioned gate with:
 
 ```text
 python scripts/qualify_model_multimachine.py \
   manifests/candidates/qwen3.5-2b-bfloat16-eager.json \
-  --matrix-report qwen3.5-2b-cross-platform-matrix.json \
+  --matrix-report qwen3.5-2b-public-alpha-matrix.json \
   --topology private-run/topology.json \
   --control-plan private-run/control.json \
   --artifact-root /path/to/complete/publisher/snapshot \
@@ -238,11 +238,10 @@ python scripts/qualify_model_multimachine.py \
   --output qwen3.5-2b-multimachine.json
 ```
 
-For the bounded exercise, use the same command with `--allow-incomplete-matrix` and the
-`incomplete` aggregate. A successful exercise emits `result: incomplete`, lists
-`macos:cpu` and `macos:mps`, and exits successfully without becoming release evidence.
-The default command rejects that matrix, and the opt-in command rejects a strict `passed`
-matrix so the two paths cannot be confused.
+The controller rejects a deferred macOS-only matrix, any incomplete or extra-profile
+aggregate, and any case-insensitively reused machine identity. A successful exercise emits
+`result: passed` for this controlled recovery gate while retaining
+`complete_release_qualification=false` because the remaining alpha gates are independent.
 
 The offline tests exercise topology independence, exact matrix-evidence binding,
 selected replacement, fresh hard-kill and cleanup acknowledgements, direct token
@@ -276,9 +275,8 @@ provisioning failures before controller preflight. Provider machine IDs, the app
 private IPv6 addresses, and generated paths remain in the private inputs and are never
 copied into the bounded qualification report.
 
-After either the bounded four-profile aggregate exists for an explicitly incomplete
-exercise or the six-profile matrix has passed, and the candidate image is available,
-provision the private inputs with:
+After the exact four-profile public-alpha matrix has passed and the candidate image is
+available, provision the private inputs with:
 
 ```text
 python scripts/fly_qualification_adapter.py provision \

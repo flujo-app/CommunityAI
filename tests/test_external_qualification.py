@@ -121,13 +121,15 @@ def test_external_runner_rejects_a_source_commit_not_matching_the_checkout(tmp_p
         )
 
 
-def test_manual_workflow_covers_strict_and_incomplete_declared_profile_sets():
+def test_manual_workflow_separates_public_alpha_and_deferred_macos_profiles():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     for profile in external_runner.HOST_PROFILES:
         assert f'"{profile}"' in workflow
-    assert "default: strict-six-profile" in workflow
-    assert "incomplete-windows-linux" in workflow
+    assert "default: public-alpha" in workflow
+    assert "options:\n          - public-alpha\n          - deferred-macos" in workflow
+    assert 'profiles=["windows-cpu","windows-cuda","linux-cpu","linux-cuda"]' in workflow
+    assert 'profiles=["macos-cpu","macos-mps"]' in workflow
     assert workflow.count("profile: ${{ fromJSON(needs.scope.outputs.profiles) }}") == 2
     assert "runs-on:\n      - self-hosted\n      - model-qualification" in workflow
     assert 'HF_HUB_OFFLINE: "1"' in workflow
@@ -139,7 +141,9 @@ def test_manual_workflow_covers_strict_and_incomplete_declared_profile_sets():
     assert "--preflight-only" in workflow
     assert "needs: scope" in workflow
     assert "needs:\n      - scope\n      - preflight" in workflow
-    assert "incomplete_args+=(--allow-incomplete)" in workflow
+    assert "required_profiles=(windows:cpu windows:cuda linux:cpu linux:cuda)" in workflow
+    assert "required_profiles=(macos:cpu macos:mps)" in workflow
+    assert "--allow-incomplete" not in workflow
     assert '--require-source-commit "$GITHUB_SHA"' in workflow
     assert "continue-on-error: true" in workflow
 

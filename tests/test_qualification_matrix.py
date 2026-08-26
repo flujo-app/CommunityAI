@@ -120,58 +120,56 @@ def test_matrix_requires_exact_profiles_and_remains_partial(tmp_path):
     assert "multi-machine routing and interruption recovery" in matrix["not_covered"]
 
 
-def test_matrix_explicitly_accepts_only_the_bounded_windows_linux_incomplete_path(tmp_path):
+def test_matrix_treats_exact_windows_linux_alpha_profiles_as_a_strict_pass(tmp_path):
     manifest = ModelManifest.load(VECTOR_MANIFEST)
+    profiles = ("windows:cpu", "windows:cuda", "linux:cpu", "linux:cuda")
     reports = []
-    for profile, machine_id in (
-        ("windows:cpu", "win-cpu"),
-        ("windows:cuda", "win-cuda"),
-        ("linux:cpu", "linux-cpu"),
-        ("linux:cuda", "linux-cuda"),
-    ):
+    for profile in profiles:
         system, device = profile.split(":")
         report_path = tmp_path / f"{system}-{device}.json"
         _write_json(
             report_path,
-            _local_report(manifest, system=system, device=device, machine_id=machine_id),
+            _local_report(
+                manifest,
+                system=system,
+                device=device,
+                machine_id=f"{system}-{device}",
+            ),
         )
         reports.append(report_path)
 
-    strict_output = tmp_path / "strict-matrix.json"
-    base_args = [str(VECTOR_MANIFEST), *(str(report) for report in reports)]
-    for profile in (
-        "windows:cpu",
-        "windows:cuda",
-        "linux:cpu",
-        "linux:cuda",
-        "macos:cpu",
-        "macos:mps",
-    ):
-        base_args.extend(("--require-profile", profile))
-    base_args.extend(("--require-source-commit", "a" * 40))
+    def matrix_args(selected_reports):
+        args = [str(VECTOR_MANIFEST), *(str(report) for report in selected_reports)]
+        for profile in profiles:
+            args.extend(("--require-profile", profile))
+        args.extend(("--require-source-commit", "a" * 40))
+        return args
 
-    assert aggregate_main([*base_args, "--output", str(strict_output)]) == 1
-    strict = json.loads(strict_output.read_text(encoding="utf-8"))
-    assert strict["result"] == "failed"
-    assert strict["missing_profiles"] == ["macos:cpu", "macos:mps"]
+    alpha_output = tmp_path / "public-alpha-matrix.json"
+    assert aggregate_main([*matrix_args(reports), "--output", str(alpha_output)]) == 0
+    alpha = json.loads(alpha_output.read_text(encoding="utf-8"))
+    assert alpha["result"] == "passed"
+    assert alpha["missing_profiles"] == []
+    assert set(alpha["coverage"]) == set(profiles)
+    assert alpha["complete_release_qualification"] is False
 
-    incomplete_output = tmp_path / "incomplete-matrix.json"
-    assert (
-        aggregate_main(
-            [
-                *base_args,
-                "--allow-incomplete",
-                "--output",
-                str(incomplete_output),
-            ]
-        )
-        == 0
+    missing_output = tmp_path / "missing-profile-matrix.json"
+    assert aggregate_main([*matrix_args(reports[:-1]), "--output", str(missing_output)]) == 1
+    missing = json.loads(missing_output.read_text(encoding="utf-8"))
+    assert missing["result"] == "failed"
+    assert missing["missing_profiles"] == ["linux:cuda"]
+
+    macos_report = tmp_path / "macos-cpu.json"
+    _write_json(
+        macos_report,
+        _local_report(manifest, system="macos", device="cpu", machine_id="deferred-macos-cpu"),
     )
-    incomplete = json.loads(incomplete_output.read_text(encoding="utf-8"))
-    assert incomplete["result"] == "incomplete"
-    assert incomplete["missing_profiles"] == ["macos:cpu", "macos:mps"]
-    assert set(incomplete["coverage"]) == {"windows:cpu", "windows:cuda", "linux:cpu", "linux:cuda"}
-    assert incomplete["complete_release_qualification"] is False
+    extra_output = tmp_path / "unexpected-profile-matrix.json"
+    assert aggregate_main([*matrix_args([*reports, macos_report]), "--output", str(extra_output)]) == 1
+    extra = json.loads(extra_output.read_text(encoding="utf-8"))
+    assert extra["result"] == "failed"
+    assert extra["missing_profiles"] == []
+    assert extra["matrix_errors"] == ["matrix contains profiles that were not explicitly required: macos:cpu"]
 
 
 def test_matrix_rejects_a_normalized_machine_id_reused_across_profiles(tmp_path):
