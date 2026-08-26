@@ -184,6 +184,28 @@ Billing is delayed, so the USD 20 retry maximum and USD 10 attempt-A maximum rem
 reserved; USD 70 is unreserved under the combined ceiling. Gate 4 is `PASSED`, making
 Gates 5 and 6 ready for their real distinct-host Windows/Linux CPU/CUDA matrices.
 
+## Gate 5/6 split-region provider preflight
+
+The first paid-fleet preflight stopped before reservation or creation because
+`us-central1` had only one of the two T4 quota slots required by the original
+single-region plan. Read-only quota checks found a second existing T4 slot and the
+accelerator type in `us-east1-c`, while both regions retained enough CPU quota.
+The cost guard now supports a bounded split-region topology: Windows CPU/CUDA and
+Linux CPU remain in `us-central1-a`, while only Linux CUDA uses the fallback
+`us-east1-c` subnet/router/NAT stack. One additional NAT address-hour is priced at
+USD 0.005; the conservative 14-hour maximum remains USD 69 and fits the live USD 70
+remainder with USD 1 unreserved.
+
+The provider plan now requires exact resolved Windows Server 2022 and Ubuntu 24.04
+image names and emits `--image` create arguments instead of mutable image families.
+It records one boot-disk `sourceImage` verification per host, groups deletion by
+zone, verifies all four exact disks as well as both regional network stacks, and
+sets a provider-enforced 14-hour `DELETE` deadline on every VM. Twenty-five cost
+guard tests cover the original ledger/ceiling contract plus exact images,
+split-region assignment, disjoint subnets, zone-scoped cleanup, hard deadlines, and
+same-region fallback rejection. No ledger reservation or paid resource was created
+by this implementation/preflight slice.
+
 ## Desktop milestone: control authority separation
 
 The first milestone-5 production prerequisite separates the local authorization

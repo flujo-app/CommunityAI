@@ -7,6 +7,8 @@ import pytest
 from scripts import qualification_cost_guard as guard
 
 SOURCE_COMMIT = "a" * 40
+WINDOWS_IMAGE = "windows-server-2022-dc-v20260814"
+LINUX_IMAGE = "ubuntu-2404-noble-amd64-v20260826"
 
 
 def _ledger(*rows: str) -> str:
@@ -30,6 +32,9 @@ def _authorization(entries=(), **overrides):
         "maximum_hours": Decimal("14"),
         "project": "community-ai-506321",
         "zone": "us-central1-a",
+        "windows_image": WINDOWS_IMAGE,
+        "linux_image": LINUX_IMAGE,
+        "cuda_fallback_zone": None,
         "manual_maximum_usd": None,
         "today": date(2026, 8, 26),
     }
@@ -119,6 +124,21 @@ def test_gcp_plan_is_exact_bounded_and_does_not_authorize_unreserved_provisionin
     assert sum(resource["gpu"] is not None for resource in plan["resources"]) == 2
     assert all(resource["external_address"] is False for resource in plan["resources"])
     assert all(resource["service_account"] is False for resource in plan["resources"])
+    assert {resource["image"] for resource in plan["resources"]} == {
+        WINDOWS_IMAGE,
+        LINUX_IMAGE,
+    }
+    assert len(plan["verify_create_commands"]) == 4
+    assert all("--image-family" not in command for command in plan["create_commands"])
+    instance_creates = [
+        command for command in plan["create_commands"] if command[:4] == ["gcloud", "compute", "instances", "create"]
+    ]
+    assert len(instance_creates) == 4
+    assert all(
+        command[command.index("--max-run-duration") + 1] == "50400s"
+        and command[command.index("--instance-termination-action") + 1] == "DELETE"
+        for command in instance_creates
+    )
 
     encoded = guard.json.dumps(plan, sort_keys=True)
     assert "communityai-bootstrap-1" not in encoded
@@ -126,7 +146,49 @@ def test_gcp_plan_is_exact_bounded_and_does_not_authorize_unreserved_provisionin
     assert "*" not in encoded
     assert all(isinstance(command, list) for command in plan["create_commands"])
     assert all(isinstance(argument, str) for command in plan["create_commands"] for argument in command)
-    assert len(plan["verify_cleanup_commands"]) == 5
+    assert len(plan["verify_cleanup_commands"]) == 9
+
+
+def test_split_region_plan_uses_exact_images_and_zone_scoped_cleanup():
+    report = _authorization(cuda_fallback_zone="us-east1-c")
+
+    assert report["maximum_estimate_usd"] == "69.00"
+    assert report["cost_assumptions"]["region_count"] == "2"
+    assert report["cost_assumptions"]["fallback_nat_ip_hourly_usd"] == "0.005"
+
+    plan = report["provider_plan"]
+    assert plan["cuda_fallback_zone"] == "us-east1-c"
+    assert {regional["region"] for regional in plan["regional_networks"]} == {
+        "us-central1",
+        "us-east1",
+    }
+    assert {regional["subnet_range"] for regional in plan["regional_networks"]} == {
+        guard.GCP_PRIMARY_SUBNET_RANGE,
+        guard.GCP_FALLBACK_SUBNET_RANGE,
+    }
+    resources = {resource["profile"]: resource for resource in plan["resources"]}
+    assert resources["windows-cuda"]["zone"] == "us-central1-a"
+    assert resources["linux-cuda"]["zone"] == "us-east1-c"
+    assert resources["windows-cpu"]["image"] == WINDOWS_IMAGE
+    assert resources["linux-cpu"]["image"] == LINUX_IMAGE
+    assert len(plan["verify_cleanup_commands"]) == 11
+
+    instance_deletes = [
+        command for command in plan["cleanup_commands"] if command[:4] == ["gcloud", "compute", "instances", "delete"]
+    ]
+    assert {command[command.index("--zone") + 1] for command in instance_deletes} == {
+        "us-central1-a",
+        "us-east1-c",
+    }
+    encoded = guard.json.dumps(plan, sort_keys=True)
+    assert "--image-family" not in encoded
+    assert WINDOWS_IMAGE in encoded
+    assert LINUX_IMAGE in encoded
+
+
+def test_split_region_plan_rejects_a_fallback_in_the_primary_region():
+    with pytest.raises(guard.CostGuardError, match="different region"):
+        _authorization(cuda_fallback_zone="us-central1-b")
 
 
 def test_matching_planned_ledger_reservation_authorizes_exact_plan_without_double_counting():
@@ -210,6 +272,7 @@ def test_gcp_plan_rejects_stale_prices_and_overlong_lifetime():
         ({"source_commit": "abc"}, "source commit"),
         ({"project": "INVALID_PROJECT"}, "project"),
         ({"zone": "central"}, "zone"),
+        ({"windows_image": "family/windows-2022"}, "image names"),
         ({"purpose": "unsafe|purpose"}, "purpose"),
     ],
 )
@@ -220,12 +283,22 @@ def test_plan_rejects_unsafe_identity_or_target(overrides, message):
 
 def test_fly_plan_requires_manual_current_maximum_and_uses_combined_ledger():
     with pytest.raises(guard.CostGuardError, match="manual maximum"):
-        _authorization(provider="fly", project=None, zone=None)
+        _authorization(
+            provider="fly",
+            project=None,
+            zone=None,
+            windows_image=None,
+            linux_image=None,
+            cuda_fallback_zone=None,
+        )
 
     report = _authorization(
         provider="fly",
         project=None,
         zone=None,
+        windows_image=None,
+        linux_image=None,
+        cuda_fallback_zone=None,
         manual_maximum_usd=Decimal("12.345"),
     )
 
@@ -258,6 +331,10 @@ def test_cli_writes_bounded_plan_without_provider_calls(tmp_path, capsys):
                 "community-ai-506321",
                 "--zone",
                 "us-central1-a",
+                "--windows-image",
+                WINDOWS_IMAGE,
+                "--linux-image",
+                LINUX_IMAGE,
                 "--ledger",
                 str(ledger),
                 "--output",

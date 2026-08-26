@@ -31,9 +31,11 @@ GCP_WINDOWS_VCPU_HOURLY_USD = Decimal("0.046")
 GCP_DISK_GIB_HOURLY_USD = Decimal("0.000054795")
 GCP_HEADROOM_MULTIPLIER = Decimal("1.25")
 GCP_FIXED_CONTINGENCY_USD = Decimal("10.00")
+GCP_FALLBACK_NAT_IP_HOURLY_USD = Decimal("0.005")
 GCP_MACHINE_VCPUS = 8
 GCP_DISK_GIB = 150
-GCP_SUBNET_RANGE = "10.210.0.0/24"
+GCP_PRIMARY_SUBNET_RANGE = "10.210.0.0/24"
+GCP_FALLBACK_SUBNET_RANGE = "10.210.1.0/24"
 GCP_IAP_SOURCE_RANGE = "35.235.240.0/20"
 MAX_LEDGER_BYTES = 200_000
 MAX_OUTPUT_BYTES = 1_000_000
@@ -42,6 +44,7 @@ _RUN_ID_RE = re.compile(r"^[a-z][a-z0-9-]{2,19}$")
 _SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 _ZONE_RE = re.compile(r"^[a-z]+(?:-[a-z0-9]+)+-[a-z]$")
+_IMAGE_RE = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
 _USD_RE = re.compile(r"^USD ([0-9]+(?:\.[0-9]{1,2})?)$")
 
 _GCP_PROFILES = (
@@ -197,7 +200,7 @@ def _require_gcp_target(project: str, zone: str) -> str:
     return zone.rsplit("-", 1)[0]
 
 
-def _gcp_cost(maximum_hours: Decimal) -> tuple[Decimal, Mapping[str, str]]:
+def _gcp_cost(maximum_hours: Decimal, *, split_region: bool) -> tuple[Decimal, Mapping[str, str]]:
     if not maximum_hours.is_finite() or maximum_hours <= 0 or maximum_hours > MAX_GCP_FLEET_HOURS:
         raise CostGuardError("GCP maximum hours must be greater than zero and no more than 14")
     machine_hourly = GCP_MACHINE_HOURLY_USD * len(_GCP_PROFILES)
@@ -208,7 +211,8 @@ def _gcp_cost(maximum_hours: Decimal) -> tuple[Decimal, Mapping[str, str]]:
         * sum(profile[0].startswith("windows-") for profile in _GCP_PROFILES)
     )
     disk_hourly = GCP_DISK_GIB_HOURLY_USD * GCP_DISK_GIB * len(_GCP_PROFILES)
-    hourly = machine_hourly + gpu_hourly + windows_hourly + disk_hourly
+    fallback_nat_ip_hourly = GCP_FALLBACK_NAT_IP_HOURLY_USD if split_region else Decimal("0")
+    hourly = machine_hourly + gpu_hourly + windows_hourly + disk_hourly + fallback_nat_ip_hourly
     raw_maximum = hourly * maximum_hours * GCP_HEADROOM_MULTIPLIER + GCP_FIXED_CONTINGENCY_USD
     maximum = raw_maximum.quantize(Decimal("1"), rounding=ROUND_CEILING)
     assumptions = {
@@ -223,6 +227,8 @@ def _gcp_cost(maximum_hours: Decimal) -> tuple[Decimal, Mapping[str, str]]:
         "windows_vcpu_hourly_usd_each": _usd(GCP_WINDOWS_VCPU_HOURLY_USD),
         "disk_gib_each": str(GCP_DISK_GIB),
         "disk_gib_hourly_usd": str(GCP_DISK_GIB_HOURLY_USD),
+        "region_count": "2" if split_region else "1",
+        "fallback_nat_ip_hourly_usd": str(fallback_nat_ip_hourly),
         "maximum_hours": str(maximum_hours),
         "headroom_multiplier": str(GCP_HEADROOM_MULTIPLIER),
         "fixed_network_and_setup_contingency_usd": _usd(GCP_FIXED_CONTINGENCY_USD),
@@ -237,52 +243,109 @@ def _command(*parts: str) -> list[str]:
     return list(parts)
 
 
-def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mapping[str, Any]:
-    region = _require_gcp_target(project, zone)
+def _gcp_plan(
+    run_id: str,
+    project: str,
+    zone: str,
+    source_commit: str,
+    maximum_hours: Decimal,
+    *,
+    windows_image: str,
+    linux_image: str,
+    cuda_fallback_zone: str | None,
+) -> Mapping[str, Any]:
+    primary_region = _require_gcp_target(project, zone)
+    max_run_seconds = int((maximum_hours * Decimal("3600")).to_integral_value(rounding=ROUND_CEILING))
+    if not _IMAGE_RE.fullmatch(windows_image) or not _IMAGE_RE.fullmatch(linux_image):
+        raise CostGuardError("GCP image names must be exact bounded image resources")
+
+    fallback_region = None
+    if cuda_fallback_zone is not None:
+        fallback_region = _require_gcp_target(project, cuda_fallback_zone)
+        if fallback_region == primary_region:
+            raise CostGuardError("CUDA fallback zone must use a different region")
+
     prefix = f"caiq-{run_id}"
     network = f"{prefix}-net"
-    subnet = f"{prefix}-subnet"
-    router = f"{prefix}-router"
-    nat = f"{prefix}-nat"
     firewall = f"{prefix}-iap"
     target_tag = prefix
     labels = f"communityai_run={run_id},communityai_purpose=qualification,communityai_source={source_commit}"
     common = ("--project", project, "--quiet")
 
-    create_commands = [
-        _command("gcloud", "compute", "networks", "create", network, "--subnet-mode", "custom", *common),
-        _command(
-            "gcloud",
-            "compute",
-            "networks",
-            "subnets",
-            "create",
-            subnet,
-            "--network",
-            network,
-            "--region",
-            region,
-            "--range",
-            GCP_SUBNET_RANGE,
-            "--enable-private-ip-google-access",
-            *common,
-        ),
-        _command("gcloud", "compute", "routers", "create", router, "--network", network, "--region", region, *common),
-        _command(
-            "gcloud",
-            "compute",
-            "routers",
-            "nats",
-            "create",
-            nat,
-            "--router",
-            router,
-            "--region",
-            region,
-            "--nat-all-subnet-ip-ranges",
-            "--auto-allocate-nat-external-ips",
-            *common,
-        ),
+    regional_networks = [
+        {
+            "role": "primary",
+            "zone": zone,
+            "region": primary_region,
+            "subnet": f"{prefix}-subnet",
+            "subnet_range": GCP_PRIMARY_SUBNET_RANGE,
+            "router": f"{prefix}-router",
+            "nat": f"{prefix}-nat",
+        }
+    ]
+    if cuda_fallback_zone is not None:
+        regional_networks.append(
+            {
+                "role": "cuda-fallback",
+                "zone": cuda_fallback_zone,
+                "region": fallback_region,
+                "subnet": f"{prefix}-cuda-subnet",
+                "subnet_range": GCP_FALLBACK_SUBNET_RANGE,
+                "router": f"{prefix}-cuda-router",
+                "nat": f"{prefix}-cuda-nat",
+            }
+        )
+
+    create_commands = [_command("gcloud", "compute", "networks", "create", network, "--subnet-mode", "custom", *common)]
+    for regional in regional_networks:
+        create_commands.extend(
+            [
+                _command(
+                    "gcloud",
+                    "compute",
+                    "networks",
+                    "subnets",
+                    "create",
+                    regional["subnet"],
+                    "--network",
+                    network,
+                    "--region",
+                    regional["region"],
+                    "--range",
+                    regional["subnet_range"],
+                    "--enable-private-ip-google-access",
+                    *common,
+                ),
+                _command(
+                    "gcloud",
+                    "compute",
+                    "routers",
+                    "create",
+                    regional["router"],
+                    "--network",
+                    network,
+                    "--region",
+                    regional["region"],
+                    *common,
+                ),
+                _command(
+                    "gcloud",
+                    "compute",
+                    "routers",
+                    "nats",
+                    "create",
+                    regional["nat"],
+                    "--router",
+                    regional["router"],
+                    "--region",
+                    regional["region"],
+                    "--nat-all-subnet-ip-ranges",
+                    "--auto-allocate-nat-external-ips",
+                    *common,
+                ),
+            ]
+        )
+    create_commands.append(
         _command(
             "gcloud",
             "compute",
@@ -302,17 +365,23 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
             "--target-tags",
             target_tag,
             *common,
-        ),
-    ]
+        )
+    )
 
     resources = []
-    instance_names = []
-    for profile, image_family, image_project, cuda in _GCP_PROFILES:
+    instance_names_by_zone: dict[str, list[str]] = {}
+    verify_create_commands = []
+    expected_source_images = {}
+    for profile, _image_family, image_project, cuda in _GCP_PROFILES:
         name = f"{prefix}-{profile.replace('windows', 'win').replace('linux', 'lin')}"
         if name == "communityai-bootstrap-1" or len(name) > 63:
             raise CostGuardError("resolved GCP instance name is unsafe")
-        instance_names.append(name)
+        use_fallback = profile == "linux-cuda" and cuda_fallback_zone is not None
+        regional = regional_networks[1] if use_fallback else regional_networks[0]
+        profile_zone = regional["zone"]
+        image = windows_image if profile.startswith("windows-") else linux_image
         profile_labels = f"{labels},communityai_profile={profile}"
+        instance_names_by_zone.setdefault(profile_zone, []).append(name)
         command = [
             "gcloud",
             "compute",
@@ -322,13 +391,13 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
             "--project",
             project,
             "--zone",
-            zone,
+            profile_zone,
             "--machine-type",
             "n1-highmem-8",
             "--network-interface",
-            f"network={network},subnet={subnet},no-address",
-            "--image-family",
-            image_family,
+            f"network={network},subnet={regional['subnet']},no-address",
+            "--image",
+            image,
             "--image-project",
             image_project,
             "--boot-disk-size",
@@ -340,6 +409,10 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
             "--no-scopes",
             "--provisioning-model",
             "STANDARD",
+            "--max-run-duration",
+            f"{max_run_seconds}s",
+            "--instance-termination-action",
+            "DELETE",
             "--tags",
             target_tag,
             "--labels",
@@ -358,14 +431,34 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
             )
         command.append("--quiet")
         create_commands.append(_command(*command))
+        verify_create_commands.append(
+            _command(
+                "gcloud",
+                "compute",
+                "disks",
+                "describe",
+                name,
+                "--zone",
+                profile_zone,
+                "--project",
+                project,
+                "--format",
+                "value(sourceImage)",
+            )
+        )
+        expected_source_images[name] = (
+            f"https://www.googleapis.com/compute/v1/projects/{image_project}/" f"global/images/{image}"
+        )
         resources.append(
             {
                 "profile": profile,
                 "instance": name,
-                "zone": zone,
+                "zone": profile_zone,
+                "region": regional["region"],
+                "subnet": regional["subnet"],
                 "machine_type": "n1-highmem-8",
                 "gpu": "nvidia-tesla-t4" if cuda else None,
-                "image_family": image_family,
+                "image": image,
                 "image_project": image_project,
                 "boot_disk_gib": GCP_DISK_GIB,
                 "external_address": False,
@@ -373,37 +466,64 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
             }
         )
 
-    cleanup_commands = [
-        _command(
-            "gcloud",
-            "compute",
-            "instances",
-            "delete",
-            *instance_names,
-            "--zone",
-            zone,
-            "--delete-disks",
-            "all",
-            *common,
-        ),
-        _command("gcloud", "compute", "firewall-rules", "delete", firewall, *common),
-        _command(
-            "gcloud",
-            "compute",
-            "routers",
-            "nats",
-            "delete",
-            nat,
-            "--router",
-            router,
-            "--region",
-            region,
-            *common,
-        ),
-        _command("gcloud", "compute", "routers", "delete", router, "--region", region, *common),
-        _command("gcloud", "compute", "networks", "subnets", "delete", subnet, "--region", region, *common),
-        _command("gcloud", "compute", "networks", "delete", network, *common),
-    ]
+    cleanup_commands = []
+    for profile_zone, instance_names in instance_names_by_zone.items():
+        cleanup_commands.append(
+            _command(
+                "gcloud",
+                "compute",
+                "instances",
+                "delete",
+                *instance_names,
+                "--zone",
+                profile_zone,
+                "--delete-disks",
+                "all",
+                *common,
+            )
+        )
+    cleanup_commands.append(_command("gcloud", "compute", "firewall-rules", "delete", firewall, *common))
+    for regional in reversed(regional_networks):
+        cleanup_commands.extend(
+            [
+                _command(
+                    "gcloud",
+                    "compute",
+                    "routers",
+                    "nats",
+                    "delete",
+                    regional["nat"],
+                    "--router",
+                    regional["router"],
+                    "--region",
+                    regional["region"],
+                    *common,
+                ),
+                _command(
+                    "gcloud",
+                    "compute",
+                    "routers",
+                    "delete",
+                    regional["router"],
+                    "--region",
+                    regional["region"],
+                    *common,
+                ),
+                _command(
+                    "gcloud",
+                    "compute",
+                    "networks",
+                    "subnets",
+                    "delete",
+                    regional["subnet"],
+                    "--region",
+                    regional["region"],
+                    *common,
+                ),
+            ]
+        )
+    cleanup_commands.append(_command("gcloud", "compute", "networks", "delete", network, *common))
+
     verify_cleanup_commands = [
         _command(
             "gcloud",
@@ -417,6 +537,21 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
             "--format",
             "value(name)",
         ),
+        *[
+            _command(
+                "gcloud",
+                "compute",
+                "disks",
+                "list",
+                "--project",
+                project,
+                "--filter",
+                f"name={resource['instance']}",
+                "--format",
+                "value(name)",
+            )
+            for resource in resources
+        ],
         _command(
             "gcloud",
             "compute",
@@ -429,31 +564,38 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
             "--format",
             "value(name)",
         ),
-        _command(
-            "gcloud",
-            "compute",
-            "routers",
-            "list",
-            "--project",
-            project,
-            "--filter",
-            f"name={router} AND region:{region}",
-            "--format",
-            "value(name)",
-        ),
-        _command(
-            "gcloud",
-            "compute",
-            "networks",
-            "subnets",
-            "list",
-            "--project",
-            project,
-            "--filter",
-            f"name={subnet} AND region:{region}",
-            "--format",
-            "value(name)",
-        ),
+    ]
+    for regional in regional_networks:
+        verify_cleanup_commands.extend(
+            [
+                _command(
+                    "gcloud",
+                    "compute",
+                    "routers",
+                    "list",
+                    "--project",
+                    project,
+                    "--filter",
+                    f"name={regional['router']} AND region:{regional['region']}",
+                    "--format",
+                    "value(name)",
+                ),
+                _command(
+                    "gcloud",
+                    "compute",
+                    "networks",
+                    "subnets",
+                    "list",
+                    "--project",
+                    project,
+                    "--filter",
+                    f"name={regional['subnet']} AND region:{regional['region']}",
+                    "--format",
+                    "value(name)",
+                ),
+            ]
+        )
+    verify_cleanup_commands.append(
         _command(
             "gcloud",
             "compute",
@@ -465,13 +607,15 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
             f"name={network}",
             "--format",
             "value(name)",
-        ),
-    ]
+        )
+    )
+
     serialized = json.dumps(
         {
             "create": create_commands,
+            "verify_create": verify_create_commands,
             "cleanup": cleanup_commands,
-            "verify": verify_cleanup_commands,
+            "verify_cleanup": verify_cleanup_commands,
         },
         sort_keys=True,
     )
@@ -480,17 +624,21 @@ def _gcp_plan(run_id: str, project: str, zone: str, source_commit: str) -> Mappi
     return {
         "project": project,
         "zone": zone,
-        "region": region,
+        "region": primary_region,
+        "cuda_fallback_zone": cuda_fallback_zone,
         "network": network,
-        "subnet": subnet,
-        "router": router,
-        "nat": nat,
+        "subnet": regional_networks[0]["subnet"],
+        "router": regional_networks[0]["router"],
+        "nat": regional_networks[0]["nat"],
+        "regional_networks": regional_networks,
         "iap_firewall_rule": firewall,
         "resources": resources,
         "create_commands": create_commands,
+        "verify_create_commands": verify_create_commands,
+        "expected_source_images": expected_source_images,
         "cleanup_commands": cleanup_commands,
         "verify_cleanup_commands": verify_cleanup_commands,
-        "cleanup_success_condition": "every verification command returns empty stdout",
+        "cleanup_success_condition": "every cleanup verification command returns empty stdout",
     }
 
 
@@ -504,6 +652,9 @@ def build_authorization(
     maximum_hours: Decimal,
     project: str | None,
     zone: str | None,
+    windows_image: str | None,
+    linux_image: str | None,
+    cuda_fallback_zone: str | None,
     manual_maximum_usd: Decimal | None,
     today: date | None = None,
 ) -> Mapping[str, Any]:
@@ -521,12 +672,24 @@ def build_authorization(
         effective_today = today or date.today()
         if effective_today > PRICING_REVALIDATE_BY:
             raise CostGuardError("GCP pricing snapshot is stale and must be revalidated before planning")
-        if project is None or zone is None:
-            raise CostGuardError("GCP planning requires an exact project and zone")
-        maximum_usd, assumptions = _gcp_cost(maximum_hours)
-        provider_plan = _gcp_plan(run_id, project, zone, source_commit)
+        if project is None or zone is None or windows_image is None or linux_image is None:
+            raise CostGuardError("GCP planning requires an exact project, zone, and immutable OS images")
+        maximum_usd, assumptions = _gcp_cost(
+            maximum_hours,
+            split_region=cuda_fallback_zone is not None,
+        )
+        provider_plan = _gcp_plan(
+            run_id,
+            project,
+            zone,
+            source_commit,
+            maximum_hours,
+            windows_image=windows_image,
+            linux_image=linux_image,
+            cuda_fallback_zone=cuda_fallback_zone,
+        )
     else:
-        if project is not None or zone is not None:
+        if any(value is not None for value in (project, zone, windows_image, linux_image, cuda_fallback_zone)):
             raise CostGuardError("Fly planning must not contain GCP target fields")
         if manual_maximum_usd is None or not manual_maximum_usd.is_finite() or manual_maximum_usd <= 0:
             raise CostGuardError("Fly planning requires a finite positive manual maximum estimate")
@@ -644,6 +807,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--maximum-hours", type=_decimal_argument, default=MAX_GCP_FLEET_HOURS)
     parser.add_argument("--project")
     parser.add_argument("--zone")
+    parser.add_argument("--windows-image")
+    parser.add_argument("--linux-image")
+    parser.add_argument("--cuda-fallback-zone")
     parser.add_argument("--manual-maximum-usd", type=_decimal_argument)
     return parser
 
@@ -660,6 +826,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             maximum_hours=args.maximum_hours,
             project=args.project,
             zone=args.zone,
+            windows_image=args.windows_image,
+            linux_image=args.linux_image,
+            cuda_fallback_zone=args.cuda_fallback_zone,
             manual_maximum_usd=args.manual_maximum_usd,
         )
         _atomic_json(args.output, report)

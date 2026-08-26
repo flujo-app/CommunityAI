@@ -49,6 +49,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   layers, measured image sizes, and evidence-derived 9 GB and 13 GB Fly rootfs plans.
 - Model qualification now treats exact Windows/Linux CPU/CUDA coverage as the strict
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
+- The bounded GCP qualification plan now binds exact Windows/Ubuntu images, verifies
+  created boot-disk sources, enforces a provider-side deletion deadline, and can place
+  Linux CUDA in a second region when each region has only one T4 quota slot.
 - Fly qualification now reuses the existing native `flyctl` login by default instead of
   requiring a manually supplied token environment variable.
 - Model qualification dispatch no longer requires a persistent GitHub runner-inventory
