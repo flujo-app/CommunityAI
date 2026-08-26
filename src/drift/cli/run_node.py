@@ -139,9 +139,9 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error("native credential service and account must not be empty")
 
 
-def _load_node_config(args: argparse.Namespace) -> NodeConfig:
+def _load_node_config(args: argparse.Namespace, *, persisted_config: NodeConfig | None = None) -> NodeConfig:
     if args.config:
-        configured = NodeConfig.load(args.config)
+        configured = persisted_config if persisted_config is not None else NodeConfig.load(args.config)
         if args.max_loaded_models is None:
             return configured
         return NodeConfig(
@@ -170,6 +170,13 @@ def _load_node_config(args: argparse.Namespace) -> NodeConfig:
             ),
         ),
     )
+
+
+def _load_persisted_and_runtime_config(
+    args: argparse.Namespace,
+) -> tuple[NodeConfig | None, NodeConfig]:
+    persisted = NodeConfig.load(args.config) if args.config is not None else None
+    return persisted, _load_node_config(args, persisted_config=persisted)
 
 
 def _build_model_manager(
@@ -503,7 +510,7 @@ def main() -> None:
     _validate_args(parser, args)
 
     try:
-        config = _load_node_config(args)
+        persisted_config, config = _load_persisted_and_runtime_config(args)
         manager, descriptors, discovery = _build_model_manager(config, token=args.token)
         worker_supervisor = _build_worker_supervisor(config, manager, token=args.token)
         policy_store = (
@@ -513,7 +520,7 @@ def main() -> None:
                 args.config,
                 worker_supervisor,
                 lambda candidate: _prepare_worker_supervisor_settings(candidate, manager, token=args.token),
-                expected_config=config,
+                expected_config=persisted_config,
             )
         )
     except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
