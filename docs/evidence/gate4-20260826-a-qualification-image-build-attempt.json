@@ -22,7 +22,8 @@
     "zone": "us-central1-a",
     "machine_type": "e2-standard-4",
     "boot_disk_gb": 200,
-    "external_ip": false,
+    "external_ip": true,
+    "external_ip_lifecycle": "ephemeral; released with instance cleanup",
     "service_account": false,
     "max_run_seconds": 14400
   },
@@ -79,6 +80,7 @@
   "cleanup": {
     "registry_logout": true,
     "instance_absent": true,
+    "ephemeral_external_ip_released": true,
     "boot_disk_absent": true,
     "excluded_bootstrap_present": true
   }

@@ -81,9 +81,10 @@ maximum estimate until actual cost is known.
 
 | Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| gate4-20260826-a | GCP | Gate 4 immutable image builder: exact `cai-g4-20260826-a`, e2-standard-4, 200 GB pd-standard, at most 4 hours including network-egress contingency | USD 10 | — | [Attempt report](evidence/gate4-20260826-a-qualification-image-build-attempt.json): billing delayed, retain maximum; registry logout succeeded; exact instance and auto-delete boot disk absent at 2026-08-26T20:58:20Z; excluded bootstrap remained present | CLEANED |
+| gate4-20260826-a | GCP | Gate 4 immutable image builder: exact `cai-g4-20260826-a`, e2-standard-4, 200 GB pd-standard, at most 4 hours including network-egress contingency | USD 10 | — | [Attempt report](evidence/gate4-20260826-a-qualification-image-build-attempt.json): billing delayed, retain maximum; registry logout succeeded; exact instance, ephemeral address, and auto-delete boot disk absent at 2026-08-26T20:58:20Z; excluded bootstrap remained present | CLEANED |
+| gate4-20260826-b | GCP | Gate 4 parallel retry at source `7660e33`: two e2-standard-4 no-address builders with 200 GB disks and shared NAT, at most 6 hours | USD 20 | — | [Plan](evidence/gate4-20260826-b-cost-plan.json); required: registry logout, exact full-stack deletion/absence, bootstrap present | PLANNED |
 
-Remaining authorized maximum: **USD 90**, less any later unresolved maximum estimates
+Remaining authorized maximum: **USD 70**, less any later unresolved maximum estimates
 or observed new-resource cost recorded above.
 
 ## Evidence update rules

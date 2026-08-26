@@ -132,10 +132,14 @@ or publication report is claimed.
 The non-secret [attempt report](evidence/gate4-20260826-a-qualification-image-build-attempt.json)
 and exact [Qwen](evidence/qwen3.5-2b-qualification-image-contract.json) and
 [Gemma](evidence/gemma-4-e2b-qualification-image-contract.json) contracts are retained.
-GHCR credentials were removed from the builder before deletion. At
-2026-08-26T20:58:20Z, both the exact temporary instance and its auto-delete boot disk were
-absent, while the excluded bootstrap remained present. Billing is delayed, so the USD 10
-maximum remains reserved and the combined ceiling has USD 90 unreserved.
+GHCR credentials were removed from the builder before deletion. Provider audit later
+confirmed that the instance had an ephemeral external NAT address; it was released with
+the instance deletion. At 2026-08-26T20:58:20Z, both the exact temporary instance and its
+auto-delete boot disk were absent, while the excluded bootstrap remained present. Billing is delayed, so the USD 10
+maximum remains reserved; immediately after attempt A, the combined ceiling had USD 90
+unreserved. The follow-up [parallel-builder plan](evidence/gate4-20260826-b-cost-plan.json)
+now reserves another USD 20, for USD 30 committed maximum and USD 70 currently
+unreserved.
 
 Gate 4 stays `IN PROGRESS`. A follow-up run must budget independent scanner/export margin,
 complete both provenance/SBOM pushes, and pass both fail-closed publication collectors
