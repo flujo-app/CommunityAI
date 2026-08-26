@@ -41,6 +41,7 @@ WORKDIR /workspace
 COPY Dockerfile.qualification pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY scripts/fly_qualification_node.py scripts/qualification_image_contract.py ./scripts/
+COPY . /qualification-source
 
 RUN test -n "${SOURCE_COMMIT}" \
     && test -n "${CANDIDATE}" \
@@ -64,14 +65,15 @@ RUN python scripts/qualification_image_contract.py verify \
       --contract /workspace/qualification/image-contract.json \
       --manifest /workspace/qualification/model-manifest.json \
       --snapshot-root /cache/model \
-      --source-tree-root /workspace \
+      --source-tree-root /qualification-source \
       --source-commit "${SOURCE_COMMIT}" \
       --candidate "${CANDIDATE}" \
       --manifest-digest "${MANIFEST_DIGEST}" \
       --declared-artifact-bytes "${DECLARED_ARTIFACT_BYTES}" \
       --source-tree-digest "${SOURCE_TREE_DIGEST}" \
       --dockerfile-digest "${DOCKERFILE_DIGEST}" \
-    && test "$(python -c 'from drift import __version__; print(__version__)')" = "2.3.0.dev0"
+    && test "$(python -c 'from drift import __version__; print(__version__)')" = "2.3.0.dev0" \
+    && rm -rf /qualification-source
 
 USER 65532:65532
 

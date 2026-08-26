@@ -632,6 +632,10 @@ def test_public_alpha_candidates_and_dockerfile_are_immutable_and_offline():
     assert '--source-tree-digest "${SOURCE_TREE_DIGEST}"' in dockerfile
     assert '--dockerfile-digest "${DOCKERFILE_DIGEST}"' in dockerfile
     assert "COPY Dockerfile.qualification pyproject.toml uv.lock README.md ./" in dockerfile
+    assert "COPY . /qualification-source" in dockerfile
+    assert "--source-tree-root /qualification-source" in dockerfile
+    assert "--source-tree-root /workspace" not in dockerfile
+    assert "rm -rf /qualification-source" in dockerfile
     build_toolchain_install = "apt-get install --no-install-recommends -y build-essential"
     build_toolchain_purge = "apt-get purge --auto-remove -y build-essential"
     assert build_toolchain_install in dockerfile
