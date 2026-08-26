@@ -45,6 +45,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
 - Fly qualification now reuses the existing native `flyctl` login by default instead of
   requiring a manually supplied token environment variable.
+- Fly Machine provisioning now derives its immutable runtime manifest and measured rootfs
+  size from exact Gate 4 publication evidence and rejects altered manifests, references,
+  layers, or ceilings before provider authentication or resource creation.
 - Model qualification dispatch no longer requires a persistent GitHub runner-inventory
   administration token.
 - Production desktop CI now packages the public alpha on Windows and Linux only; macOS

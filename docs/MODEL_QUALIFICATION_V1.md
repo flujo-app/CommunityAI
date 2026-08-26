@@ -264,11 +264,19 @@ state, and emits the exact nonce-bound acknowledgement. Cleanup destroys every
 run-tagged Machine and reports success only after no tagged resource remains.
 
 [`scripts/fly_qualification_node.py`](../scripts/fly_qualification_node.py) is the
-image-side bootstrap/worker entrypoint. The operator-supplied image must contain this
-script, the exact candidate manifest at the configured container path, the matching
-immutable Hub/runtime cache, and the repository build bound by the matrix. Hub access
-is forced offline on every Machine. The adapter uses the existing `flyctl` login by
-default and accepts `FLY_API_TOKEN` only as an optional headless-CI override. It requires
+image-side bootstrap/worker entrypoint. Provisioning accepts no free-form image reference:
+it requires the Gate 4 publication report, binds its candidate/repository/revision and
+manifest digest to the selected manifest, and independently enforces the exact GHCR
+source-bound tag, immutable index and runtime references, SLSA/SPDX result, compressed
+layer inventory, measured uncompressed size, and reviewed GHCR/Fly ceilings. The adapter
+passes only the immutable runtime manifest to Fly and sets every Machine's
+`rootfs.size_gb` to the measured bounded requirement in that report.
+
+The exact candidate image must contain this script, the manifest at the configured
+container path, the matching immutable Hub/runtime cache, and the repository build bound
+by the matrix. Hub access is forced offline on every Machine. The adapter uses the
+existing `flyctl` login by default and accepts `FLY_API_TOKEN` only as an optional
+headless-CI override. It requires
 an existing app rather than creating or deleting one, never puts credentials in argv or
 JSON, and retains an outer exception/SIGTERM cleanup trap for
 provisioning failures before controller preflight. Provider machine IDs, the app name,
@@ -283,7 +291,7 @@ python scripts/fly_qualification_adapter.py provision \
   manifests/candidates/qwen3.5-2b-bfloat16-eager.json \
   --run-id qwen35-multihost-001 \
   --app <existing-isolated-fly-app> \
-  --image <credential-free-immutable-image-reference> \
+  --image-evidence qualification-image-inputs/qwen3.5-2b-<source-commit>-publication-evidence.json \
   --region iad \
   --remote-manifest /workspace/qwen3.5-2b-bfloat16-eager.json \
   --state-output private-run/fly-state.json \
@@ -291,8 +299,10 @@ python scripts/fly_qualification_adapter.py provision \
   --control-output private-run/control.json
 ```
 
-Repeat with the Gemma candidate and its image-contained manifest/cache. A real provider
-run is deliberately not claimed by the repository-only adapter tests.
+Repeat with the Gemma candidate and its own publication report and image-contained
+manifest/cache. The evidence file is validated before native authentication or any
+Machine create call. A real provider run is deliberately not claimed by the
+repository-only adapter tests.
 
 ## Bootstrap local result
 

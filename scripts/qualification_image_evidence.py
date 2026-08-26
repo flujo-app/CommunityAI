@@ -465,6 +465,7 @@ def collect_evidence(
         "contract_digest": contract["contract_digest"],
         "image_tag": image_tag,
         "image_reference": immutable_index,
+        "runtime_image_reference": immutable_runtime,
         "index_digest": index_digest,
         "index_size": len(raw_index),
         "runtime_manifest_digest": runtime_digest,

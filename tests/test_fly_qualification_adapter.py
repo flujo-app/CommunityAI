@@ -197,6 +197,73 @@ class RepeatedIdentityReader:
         return _peer("R")
 
 
+def _publication_evidence(tmp_path, manifest):
+    if manifest.source.repository == "Qwen/Qwen3.5-2B":
+        candidate = "qwen3.5-2b"
+    else:
+        candidate = "gemma-4-e2b"
+    image_repository = adapter._CANDIDATE_PUBLICATIONS[candidate][2]
+    source_commit = "1" * 40
+    index_digest = "sha256:" + "2" * 64
+    runtime_digest = "sha256:" + "3" * 64
+    layers = [
+        {
+            "digest": "sha256:" + "6" * 64,
+            "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "compressed_size": 1_000_000_000,
+        },
+        {
+            "digest": "sha256:" + "7" * 64,
+            "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "compressed_size": 3_500_000_000,
+        },
+    ]
+    report = {
+        "schema_version": 1,
+        "scope": "qualification-image-publication-evidence",
+        "result": "passed",
+        "candidate": candidate,
+        "source_commit": source_commit,
+        "model_repository": manifest.source.repository,
+        "model_revision": manifest.source.revision,
+        "manifest_digest": manifest.digest_id,
+        "contract_digest": "sha256:" + "4" * 64,
+        "image_tag": f"{image_repository}:source-{source_commit}",
+        "image_reference": f"{image_repository}@{index_digest}",
+        "runtime_image_reference": f"{image_repository}@{runtime_digest}",
+        "index_digest": index_digest,
+        "index_size": 1024,
+        "runtime_manifest_digest": runtime_digest,
+        "runtime_manifest_size": 512,
+        "attestation_manifest_digest": "sha256:" + "5" * 64,
+        "attestation_manifest_size": 256,
+        "platform": "linux/amd64",
+        "provenance": "slsa",
+        "sbom": "spdx",
+        "layers": layers,
+        "compressed_layer_bytes": 4_500_000_000,
+        "uncompressed_image_bytes": 8_000_000_000,
+        "required_fly_rootfs_gb": 10,
+        "limits": {
+            "reviewed_on": "2026-08-26",
+            "ghcr_max_layer_bytes": 10_000_000_000,
+            "maximum_compressed_bytes": 8_000_000_000 if candidate == "qwen3.5-2b" else 16_000_000_000,
+            "maximum_uncompressed_bytes": 16 * 1024**3 if candidate == "qwen3.5-2b" else 24 * 1024**3,
+            "maximum_fly_rootfs_gb": 20 if candidate == "qwen3.5-2b" else 28,
+            "ghcr_source": "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#troubleshooting",
+            "fly_rootfs_source": "https://fly.io/docs/machines/flyctl/fly-machine-create/",
+        },
+        "artifact_hashes_verified": True,
+        "image_built": True,
+        "image_published": True,
+        "qualification_evidence": True,
+        "complete_release_qualification": False,
+    }
+    path = tmp_path / "publication-evidence.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    return path, report
+
+
 def _options(tmp_path, *, run_id="fly-qualification-a"):
     return adapter.ProvisionOptions(
         run_id=run_id,
@@ -213,12 +280,61 @@ def _options(tmp_path, *, run_id="fly-qualification-a"):
         cpu_kind="performance",
         cpus=4,
         memory_mb=16384,
+        rootfs_gb=10,
         machine_timeout=30,
         identity_timeout=30,
         state_output=tmp_path / "private" / "state.json",
         topology_output=tmp_path / "private" / "topology.json",
         control_output=tmp_path / "private" / "control.json",
     )
+
+
+@pytest.mark.parametrize("manifest_path", CANDIDATES)
+def test_publication_binding_selects_exact_runtime_and_measured_rootfs(tmp_path, manifest_path):
+    manifest = ModelManifest.load(manifest_path)
+    path, report = _publication_evidence(tmp_path, manifest)
+
+    binding = adapter.load_publication_binding(path, manifest)
+
+    assert binding.image == report["runtime_image_reference"]
+    assert binding.rootfs_gb == 10
+
+
+@pytest.mark.parametrize(
+    "mutation, error",
+    [
+        (lambda report: report.update({"qualification_evidence": False}), "result is invalid"),
+        (lambda report: report.update({"manifest_digest": "sha256:" + "9" * 64}), "exact manifest"),
+        (
+            lambda report: report.update({"runtime_image_reference": "ghcr.io/owner/other@sha256:" + "3" * 64}),
+            "references are not exactly bound",
+        ),
+        (
+            lambda report: report["limits"].update({"maximum_fly_rootfs_gb": 33}),
+            "exceeds the reviewed limits",
+        ),
+        (
+            lambda report: report["limits"].update({"ghcr_max_layer_bytes": 20_000_000_000}),
+            "exceeds the reviewed limits",
+        ),
+        (
+            lambda report: report["layers"][0].update({"media_type": "application/octet-stream"}),
+            "layer 0 exceeds its contract",
+        ),
+        (
+            lambda report: report["layers"][0].update({"compressed_size": 1_000_000_001}),
+            "compressed total does not match",
+        ),
+    ],
+)
+def test_publication_binding_rejects_untrusted_or_unbounded_reports(tmp_path, mutation, error):
+    manifest = ModelManifest.load(CANDIDATES[0])
+    path, report = _publication_evidence(tmp_path, manifest)
+    mutation(report)
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(adapter.AdapterError, match=error):
+        adapter.load_publication_binding(path, manifest)
 
 
 @pytest.mark.parametrize("manifest_path", CANDIDATES)
@@ -232,6 +348,7 @@ def test_provision_builds_controller_accepted_disjoint_split_topology(tmp_path, 
     assert state.status == "ready"
     assert len(state.resources) == 5
     assert len({record.provider_machine_id for record in state.resources}) == 5
+    assert {machine["config"]["rootfs"]["size_gb"] for machine in api.machines.values()} == {10}
     topology = multi.load_topology(options.topology_output, manifest)
     assert topology.num_blocks == manifest.model.num_blocks
     assert topology.routes[0].peer_ids == (_peer("B"), _peer("C"))
