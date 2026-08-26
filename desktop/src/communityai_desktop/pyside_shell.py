@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 import time
@@ -148,6 +149,9 @@ def run(
         QApplication,
         QButtonGroup,
         QCheckBox,
+        QDialog,
+        QDialogButtonBox,
+        QFormLayout,
         QFrame,
         QHBoxLayout,
         QInputDialog,
@@ -155,6 +159,7 @@ def run(
         QLineEdit,
         QMainWindow,
         QMessageBox,
+        QPlainTextEdit,
         QProgressBar,
         QPushButton,
         QScrollArea,
@@ -489,12 +494,19 @@ def run(
             layout.addWidget(memory_card)
 
             policy_card, policy_layout = card()
-            policy_layout.addLayout(
+            policy_header = QHBoxLayout()
+            policy_header.addLayout(
                 self._section_header(
                     "Node-enforced sharing limits",
                     "These values and admission decisions come from the authenticated local node.",
-                )
+                ),
+                1,
             )
+            self.edit_policy_button = QPushButton("Edit sharing limits")
+            self.edit_policy_button.setObjectName("ghostButton")
+            self.edit_policy_button.clicked.connect(self._edit_contribution_policy)
+            policy_header.addWidget(self.edit_policy_button)
+            policy_layout.addLayout(policy_header)
             self.policy_status = label("Contribution policy is unavailable.", "bodyStrong")
             self.policy_status.setWordWrap(True)
             policy_layout.addWidget(self.policy_status)
@@ -623,6 +635,12 @@ def run(
             self.retry_button.setDisabled(busy)
             self.create_key_button.setDisabled(busy or self._controller is None)
             contribution = self._snapshot.get("contribution", {})
+            self.edit_policy_button.setDisabled(
+                busy
+                or self._controller is None
+                or not contribution.get("editable", False)
+                or contribution.get("intent_enabled", False)
+            )
             action_available = (
                 contribution.get("can_pause") if contribution.get("intent_enabled") else contribution.get("can_start")
             )
@@ -943,6 +961,120 @@ def run(
                 QMessageBox.warning(self, "Login startup", str(exc)[:300])
                 return
             self.login_startup_detail.setText("Enabled for this user" if enabled else "Off")
+
+        def _edit_contribution_policy(self) -> None:
+            contribution = self._snapshot.get("contribution", {})
+            policy = contribution.get("policy")
+            revision = contribution.get("config_revision")
+            if (
+                self._controller is None
+                or self._busy
+                or not contribution.get("editable")
+                or not isinstance(policy, dict)
+                or not isinstance(revision, str)
+            ):
+                return
+            if contribution.get("intent_enabled"):
+                self._sharing_action_failed("Pause every contribution worker before editing sharing limits.")
+                return
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit sharing limits")
+            dialog.setMinimumWidth(620)
+            layout = QVBoxLayout(dialog)
+            explanation = label(
+                "All values are validated and enforced by the local node. Leave optional limits blank to clear them.",
+                "bodyMuted",
+            )
+            explanation.setWordWrap(True)
+            layout.addWidget(explanation)
+            form = QFormLayout()
+
+            sharing_enabled = QCheckBox("Allow this node to share compute")
+            sharing_enabled.setChecked(policy["sharing_enabled"])
+            form.addRow("Sharing", sharing_enabled)
+
+            selector_fields = {}
+            for field, title in (
+                ("allowed_models", "Allowed models"),
+                ("preferred_models", "Preferred models"),
+                ("denied_models", "Denied models"),
+            ):
+                editor = QPlainTextEdit()
+                editor.setPlainText("\n".join(policy[field]))
+                editor.setPlaceholderText("One exact model selector per line")
+                editor.setFixedHeight(64)
+                editor.setAccessibleName(title)
+                selector_fields[field] = editor
+                form.addRow(title, editor)
+
+            text_fields = {}
+            for field, title, placeholder in (
+                ("max_disk_space", "Storage ceiling", "20GiB"),
+                ("max_vram", "GPU memory ceiling", "50% or 8GiB"),
+                ("max_bandwidth_mbps", "Bandwidth ceiling (Mbps)", "optional"),
+                ("max_power_watts", "Power ceiling (W)", "optional"),
+                ("pause_timeout", "Pause timeout (seconds)", "10"),
+            ):
+                editor = QLineEdit()
+                value = policy[field]
+                editor.setText("" if value is None else f"{value:g}" if isinstance(value, float) else str(value))
+                editor.setPlaceholderText(placeholder)
+                editor.setAccessibleName(title)
+                text_fields[field] = editor
+                form.addRow(title, editor)
+
+            schedule = QPlainTextEdit()
+            schedule.setPlainText("" if policy["schedule"] is None else json.dumps(policy["schedule"], indent=2))
+            schedule.setPlaceholderText(
+                '{"timezone":"local","windows":[{"days":["mon"],"start":"22:00","end":"06:00"}]}'
+            )
+            schedule.setFixedHeight(130)
+            schedule.setAccessibleName("Contribution schedule JSON")
+            form.addRow("Schedule (JSON)", schedule)
+            layout.addLayout(form)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            layout.addWidget(buttons)
+            if dialog.exec() != QDialog.Accepted:
+                return
+
+            def optional_text(field: str):
+                raw = text_fields[field].text()
+                return raw if raw.strip() else None
+
+            try:
+                updated = {
+                    "sharing_enabled": sharing_enabled.isChecked(),
+                    **{
+                        field: [line for line in editor.toPlainText().splitlines() if line.strip()]
+                        for field, editor in selector_fields.items()
+                    },
+                    "max_disk_space": optional_text("max_disk_space"),
+                    "max_vram": optional_text("max_vram"),
+                    "max_bandwidth_mbps": (
+                        None
+                        if not text_fields["max_bandwidth_mbps"].text().strip()
+                        else float(text_fields["max_bandwidth_mbps"].text())
+                    ),
+                    "max_power_watts": (
+                        None
+                        if not text_fields["max_power_watts"].text().strip()
+                        else float(text_fields["max_power_watts"].text())
+                    ),
+                    "pause_timeout": float(text_fields["pause_timeout"].text()),
+                    "schedule": None if not schedule.toPlainText().strip() else json.loads(schedule.toPlainText()),
+                }
+            except (TypeError, ValueError) as exc:
+                self._sharing_action_failed(f"The sharing policy form is invalid: {str(exc)[:220]}")
+                return
+            self._submit(
+                lambda: self._controller.update_contribution_policy(updated, expected_revision=revision),
+                lambda result: self.refresh(),
+                self._sharing_action_failed,
+            )
 
         def _sharing_action_failed(self, message: str) -> None:
             self.sharing_title.setText("The node rejected the sharing change")

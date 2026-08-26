@@ -145,8 +145,12 @@ class DesktopController:
             vram_bytes = vram_pool_bytes = vram_percent = None
             vram_status = "unavailable"
 
+        policy_snapshot = contribution["policy"]
         return {
             "configured": contribution["configured"],
+            "editable": contribution["editable"],
+            "config_revision": policy_snapshot["config_revision"],
+            "policy": policy_snapshot["policy"],
             "enabled": bool(active_models),
             "intent_enabled": bool(selected_models),
             "can_start": any(worker["can_start"] for worker in workers),
@@ -163,6 +167,9 @@ class DesktopController:
 
     def worker_action(self, worker_id: str, action: str) -> Dict[str, Any]:
         return self.client.worker_action(worker_id, action)
+
+    def update_contribution_policy(self, policy: Dict[str, Any], *, expected_revision: str) -> Dict[str, Any]:
+        return self.client.update_contribution_policy(policy, expected_revision=expected_revision)
 
     def set_workers_enabled(self, worker_ids: list[str], enabled: bool) -> list[Dict[str, Any]]:
         action = "start" if enabled else "pause"

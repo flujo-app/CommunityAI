@@ -841,18 +841,57 @@ The Sharing page now renders the node's resolved limits and explicit unavailable
 telemetry reasons. Start and restart remain disabled whenever model, schedule, or
 resource admission fails, while pause stays available for the selected worker. The
 former Qt-local VRAM preference was removed because it never changed the enforced node
-policy; the replacement is deliberately read-only until an authenticated, atomic,
-validated persistence API exists. The packaged self-test now exercises the
+policy. At that evidence point, the replacement deliberately remained read-only until
+an authenticated, atomic, validated persistence API existed. The packaged self-test
+now exercises the
 contribution-policy contract, and the offscreen UI self-test renders the new sharing
 surface.
 
 The focused node and desktop-client selection passes 22 tests. The exact offline CI
 selection passes 458 tests with 8 expected skips; Black and isort accept all 262 tracked
 Python files, both desktop self-tests pass, and the whitespace gate is clean. This is
-source and package-wiring evidence only. Gate 14 remains `IN PROGRESS`: editing every
-policy value still needs atomic validated persistence, and real packaged Windows/Linux
-hardware must prove enforcement, suspension, bounded pause, and unsupported-telemetry
-behavior.
+source and package-wiring evidence only. The follow-up repository slice below closes
+the policy-editing implementation gap, but real packaged Windows/Linux hardware still
+must prove enforcement, suspension, bounded pause, and unsupported-telemetry behavior.
+
+## Atomic contribution-policy editing
+
+On 2026-08-26, the next Gate 14 repository slice added a control-key-only GET/PUT
+contract for the complete contribution policy. The response contains only schema
+version, a SHA-256 revision of the complete config bytes, and the ten secret-free
+policy fields. The request is a strict bounded whole-policy replacement: duplicate,
+unknown, non-finite, malformed, stale, or incomplete input is rejected, and OpenAI
+client keys cannot call it. The candidate policy is parsed through the complete
+`NodeConfig` and the production worker-settings compiler before mutation, so exact
+model resolution, schedules, node/worker ceilings, VRAM requirements, and unavailable
+telemetry stay fail-closed.
+
+The packaged Sharing page now edits sharing enablement, allowed/preferred/denied model
+selectors, disk, VRAM, bandwidth, power, pause timeout, and the complete weekly
+schedule from the node's authoritative projection. It submits one revision-bound
+replacement and refreshes from the node after success. All workers must be paused,
+while pause itself remains available. Bounded 409/412/422/501/503 failures are shown
+without marking the node offline or revealing the control credential, config paths,
+worker commands, private endpoints, prompts, or provider output.
+
+Policy persistence preserves unrelated config fields and mode, rejects linked or
+non-regular targets, and serializes both repository-owned config writers through one
+cross-process sidecar lock. A same-directory candidate is flushed before a Windows or
+Linux atomic exchange. The displaced document is then checked against the caller's
+revision; a commit-boundary mutation is atomically restored without changing the live
+supervisor. The Windows partial-failure path restores an original moved to the backup,
+and if restoration itself fails, retains that original-byte recovery backup instead of
+deleting it. Startup also compares the complete loaded `NodeConfig`, preventing a
+race in non-policy fields such as `max_loaded_models`.
+
+An independent adversarial review and the exact policy/node/desktop selection pass
+100 tests, including startup races, cross-process contention, exchange-boundary
+mutation, and both Windows partial-failure outcomes. The exact offline CI selection
+passes 472 tests with 8 expected skips; Black, isort, both desktop self-tests, and the
+whitespace gate pass. No cloud, Docker, registry, model, provider, or hardware action
+was executed. Gate 14 remains `IN PROGRESS` until real packaged Windows/Linux hosts
+prove enforcement, suspension, bounded pause, restart persistence, and explicit
+unsupported-telemetry behavior.
 
 ## Follow-up issues
 
@@ -863,9 +902,9 @@ behavior.
 2. Exercise the changed-boundary replacement route in the controlled separate-machine
    interruption gate; beam-search recovery needs a reorder-aware activation history before
    it can be enabled safely.
-3. Add authenticated atomic persistence for editing every contribution-policy value
-   from the packaged GUI; validate every budget against real OS resource behavior,
-   qualify clean-install NVIDIA NVML provider behavior, and either add trusted
+3. Validate every contribution-policy budget and persisted restart against real
+   packaged OS resource behavior, qualify clean-install NVIDIA NVML provider behavior,
+   and either add trusted
    CPU/XPU/MPS power providers or preserve their explicit fail-closed unsupported state
    in the release matrix.
 

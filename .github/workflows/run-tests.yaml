@@ -77,6 +77,7 @@ jobs:
             tests/test_native_credentials.py \
             tests/test_node_config.py \
             tests/test_node.py \
+            tests/test_policy_store.py \
             tests/test_openai_api.py \
             tests/test_official_openai_client.py \
             tests/test_paged_cache.py \

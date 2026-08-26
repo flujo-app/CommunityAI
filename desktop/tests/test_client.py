@@ -50,6 +50,7 @@ class NodeClientTests(unittest.TestCase):
         self.assertEqual(result["worker_actions"], 3)
         self.assertEqual(result["key_lifecycle"], "passed")
         self.assertEqual(result["contribution_policy"], "passed")
+        self.assertEqual(result["policy_update"], "passed")
 
     def test_rejects_incomplete_fail_open_contribution_status(self):
         with fake_node() as (url, token):
@@ -88,6 +89,63 @@ class NodeClientTests(unittest.TestCase):
         for value in invalid_values:
             with self.subTest(value=value), self.assertRaises(NodeClientError):
                 _normalize_contribution_status(value)
+
+    def test_rejects_malformed_editable_policy_projection(self):
+        with fake_node() as (url, token):
+            contribution = NodeClient(url, token).status()["contribution"]
+
+        invalid_values = []
+        stale_shape = copy.deepcopy(contribution)
+        stale_shape["policy"]["config_revision"] = None
+        invalid_values.append(stale_shape)
+
+        secret_field = copy.deepcopy(contribution)
+        secret_field["policy"]["policy"]["control_token"] = "must-not-be-accepted"
+        invalid_values.append(secret_field)
+
+        duplicate_selector = copy.deepcopy(contribution)
+        duplicate_selector["policy"]["policy"]["denied_models"] = ["Qwen 3 8B", "qwen 3 8b"]
+        invalid_values.append(duplicate_selector)
+
+        invalid_schedule = copy.deepcopy(contribution)
+        invalid_schedule["policy"]["policy"]["schedule"] = {
+            "timezone": "UTC",
+            "windows": [{"days": ["mon"], "start": "25:00", "end": "06:00"}],
+        }
+        invalid_values.append(invalid_schedule)
+
+        for value in invalid_values:
+            with self.subTest(value=value), self.assertRaises(NodeClientError):
+                _normalize_contribution_status(value)
+
+    def test_client_replaces_the_complete_policy_with_revision_binding(self):
+        with fake_node() as (url, token):
+            client = NodeClient(url, token)
+            current = client.get_contribution_policy()
+            policy = copy.deepcopy(current["policy"])
+            policy.update(
+                {
+                    "sharing_enabled": False,
+                    "allowed_models": [],
+                    "preferred_models": [],
+                    "denied_models": [],
+                    "max_disk_space": None,
+                    "max_vram": None,
+                    "max_bandwidth_mbps": None,
+                    "max_power_watts": None,
+                    "pause_timeout": 5.0,
+                    "schedule": {
+                        "timezone": "UTC",
+                        "windows": [{"days": ["sat", "sun"], "start": "08:00", "end": "20:00"}],
+                    },
+                }
+            )
+            result = client.update_contribution_policy(policy, expected_revision=current["config_revision"])
+            self.assertEqual(result["policy"], policy)
+            self.assertNotEqual(result["config_revision"], current["config_revision"])
+            with self.assertRaises(NodeApiError) as caught:
+                client.update_contribution_policy(policy, expected_revision=current["config_revision"])
+            self.assertEqual(caught.exception.status_code, 412)
 
     def test_controller_preserves_schedule_resource_blocks_and_pause(self):
         with fake_node() as (url, token):
@@ -170,6 +228,8 @@ class NodeClientTests(unittest.TestCase):
         self.assertEqual(len(snapshot["network"]["regions"]), 5)
         self.assertEqual(snapshot["contribution"]["active_models"], ["Qwen 3 8B"])
         self.assertEqual(snapshot["contribution"]["vram_percent"], 50)
+        self.assertTrue(snapshot["contribution"]["editable"])
+        self.assertEqual(snapshot["contribution"]["policy"]["max_vram"], "50%")
         blocked = next(worker for worker in snapshot["workers"] if worker["id"] == "worker-c")
         self.assertFalse(blocked["can_start"])
         self.assertEqual(blocked["blocked_reason"], "Model is denied by node policy")

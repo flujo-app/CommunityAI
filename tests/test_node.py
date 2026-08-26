@@ -102,7 +102,28 @@ def test_node_status_requires_auth_and_reports_lazy_model():
         assert body["runtime_budget"] == {"max_loaded_models": 1, "resident_models": 0}
         assert body["models"][0]["state"] == "known"
         assert body["models"][0]["aliases"] == ["tiny"]
-        assert body["contribution"] == {"schema_version": 1, "configured": False, "workers": []}
+        assert body["contribution"] == {
+            "schema_version": 2,
+            "configured": False,
+            "editable": False,
+            "policy": {
+                "schema_version": 1,
+                "config_revision": None,
+                "policy": {
+                    "sharing_enabled": False,
+                    "allowed_models": [],
+                    "preferred_models": [],
+                    "denied_models": [],
+                    "max_disk_space": None,
+                    "max_vram": None,
+                    "max_bandwidth_mbps": None,
+                    "max_power_watts": None,
+                    "pause_timeout": 10.0,
+                    "schedule": None,
+                },
+            },
+            "workers": [],
+        }
         assert loads == []
 
         response = client.post(
@@ -122,6 +143,81 @@ def test_node_status_requires_auth_and_reports_lazy_model():
         assert manager.snapshots()[0].state is ModelState.KNOWN
 
     assert manager.closed
+
+
+def test_contribution_policy_endpoint_requires_control_auth_and_strict_versioned_json():
+    revision = "sha256:" + "a" * 64
+    policy = {
+        "sharing_enabled": False,
+        "allowed_models": [],
+        "preferred_models": [],
+        "denied_models": [],
+        "max_disk_space": "20GiB",
+        "max_vram": None,
+        "max_bandwidth_mbps": None,
+        "max_power_watts": None,
+        "pause_timeout": 10.0,
+        "schedule": None,
+    }
+
+    class FakeSupervisor:
+        def snapshots(self):
+            return ()
+
+        def shutdown(self):
+            pass
+
+    class FakePolicyStore:
+        def __init__(self):
+            self.calls = []
+
+        def snapshot(self):
+            return {"schema_version": 1, "config_revision": revision, "policy": policy}
+
+        def update(self, source, *, expected_revision):
+            self.calls.append((source, expected_revision))
+            return self.snapshot()
+
+    manager = ModelManager()
+    manager.register(ModelDescriptor("model"), lambda: ModelRuntime(FakeModel(), FakeTokenizer()))
+    store = FakePolicyStore()
+    app = create_node_app(
+        manager,
+        api_keys=["client-secret"],
+        control_keys=["control-secret"],
+        worker_supervisor=FakeSupervisor(),
+        contribution_policy_store=store,
+    )
+    control = {"Authorization": "Bearer control-secret"}
+    json_control = {**control, "Content-Type": "application/json"}
+    client_key = {"Authorization": "Bearer client-secret"}
+    request = {
+        "schema_version": 1,
+        "expected_config_revision": revision,
+        "policy": policy,
+    }
+
+    with TestClient(app) as client:
+        assert client.get("/control/v1/contribution-policy").status_code == 401
+        assert client.get("/control/v1/contribution-policy", headers=client_key).status_code == 401
+        assert client.get("/control/v1/contribution-policy", headers=control).json()["policy"] == policy
+        response = client.put("/control/v1/contribution-policy", headers=control, json=request)
+        assert response.status_code == 200
+        assert store.calls == [(policy, revision)]
+
+        assert client.put("/control/v1/contribution-policy", headers=control, content="{}").status_code == 415
+        duplicate = '{"schema_version":1,"schema_version":1,"expected_config_revision":"' + revision + '","policy":{}}'
+        assert client.put("/control/v1/contribution-policy", headers=json_control, content=duplicate).status_code == 422
+        non_finite = duplicate.replace('"schema_version":1,"schema_version":1', '"schema_version":NaN')
+        assert (
+            client.put("/control/v1/contribution-policy", headers=json_control, content=non_finite).status_code == 422
+        )
+        assert (
+            client.put(
+                "/control/v1/contribution-policy", headers=json_control, content=b"x" * (256 * 1024 + 1)
+            ).status_code
+            == 413
+        )
 
 
 def test_node_refuses_to_unload_a_model_with_an_active_lease():

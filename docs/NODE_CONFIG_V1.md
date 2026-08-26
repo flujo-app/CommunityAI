@@ -205,7 +205,44 @@ states and include restart and bounded recent-log diagnostics. They also expose 
 resolved `policy_admitted`, `policy_reason`, `schedule_admitted`,
 `schedule_reason`, `schedule_suspended`, `preferred`, and `max_disk_bytes`
 values. A policy- or schedule-blocked start or restart returns HTTP 409; pause
-remains available so sharing can always be stopped. Key lifecycle uses:
+remains available so sharing can always be stopped.
+
+A node launched from a persistent `--config` also owns a versioned whole-policy
+control contract:
+
+```text
+GET /control/v1/contribution-policy
+PUT /control/v1/contribution-policy
+Authorization: Bearer <control key>
+Content-Type: application/json
+```
+
+GET returns only `schema_version`, a SHA-256 revision of the complete config bytes,
+and the ten secret-free `contribution_policy` fields. PUT accepts exactly those
+fields as one complete replacement plus the displayed revision. It does not expose
+or accept worker commands, paths, credentials, model configuration, or provider
+data. The privileged control key is required; OpenAI client keys are rejected.
+Nodes started through the single-model shorthand have no persistent policy editor.
+
+Every update is bounded, strict UTF-8 JSON. Unknown or duplicate fields, non-finite
+numbers, stale revisions, invalid model selectors, invalid schedules, unsafe resource
+limits, and a config changed during startup are rejected before persistence. Workers
+must be paused; start, restart, status, and policy replacement share the supervisor's
+transaction lock, so a successful write cannot leave a worker enforcing the previous
+limits. The complete candidate `NodeConfig` and resolved worker settings are compiled
+before any disk or active-state mutation.
+
+All repository-owned config writers share a cross-process sidecar lock. Policy
+persistence refuses symlinks, junctions, and non-regular targets, preserves unrelated
+config fields and target permissions, flushes a same-directory candidate, and atomically
+exchanges it with the target on Windows and Linux. The displaced bytes are compared with
+the expected revision after the exchange; a commit-boundary conflict is atomically
+restored and the active supervisor stays unchanged. Windows partial replacement failures
+restore the original target, or preserve its hidden recovery backup if restoration is
+itself unavailable. Stale revisions return HTTP 412, invalid policy returns 422, running
+workers return 409, a nonpersistent node returns 501, and persistence failures return 503.
+
+Key lifecycle uses:
 
 ```text
 GET    /control/v1/keys

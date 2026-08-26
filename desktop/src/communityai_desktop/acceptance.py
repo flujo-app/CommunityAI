@@ -31,6 +31,26 @@ class _FakeNodeState:
             }
         }
         self.next_key = 1
+        self.policy_revision = "sha256:" + "a" * 64
+        self.policy = {
+            "sharing_enabled": True,
+            "allowed_models": ["Llama 3.1 8B", "Qwen 3 8B"],
+            "preferred_models": ["Qwen 3 8B"],
+            "denied_models": ["Mistral Small"],
+            "max_disk_space": "100GiB",
+            "max_vram": "50%",
+            "max_bandwidth_mbps": 100.0,
+            "max_power_watts": 250.0,
+            "pause_timeout": 10.0,
+            "schedule": None,
+        }
+
+    def policy_response(self) -> Dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "config_revision": self.policy_revision,
+            "policy": self.policy,
+        }
 
     def worker(self, worker_id: str) -> Dict[str, Any]:
         model, worker_state = self.worker_states[worker_id]
@@ -155,12 +175,16 @@ def _handler(state: _FakeNodeState):
                             ],
                         },
                         "contribution": {
-                            "schema_version": 1,
+                            "schema_version": 2,
                             "configured": True,
+                            "editable": True,
+                            "policy": state.policy_response(),
                             "workers": state.contribution_workers(),
                         },
                     },
                 )
+            elif self.path == "/control/v1/contribution-policy":
+                self._send(200, state.policy_response())
             elif self.path == "/control/v1/workers":
                 self._send(200, {"workers": state.workers()})
             elif self.path == "/control/v1/keys":
@@ -194,6 +218,20 @@ def _handler(state: _FakeNodeState):
                     self._send(200, {"changed": True, "worker": state.worker(worker_id)})
                     return
             self._send(404, {"detail": "not found"})
+
+        def do_PUT(self):  # noqa: N802
+            if not self._authorized():
+                return
+            if self.path != "/control/v1/contribution-policy":
+                self._send(404, {"detail": "not found"})
+                return
+            body = self._body()
+            if body.get("expected_config_revision") != state.policy_revision:
+                self._send(412, {"detail": "stale policy revision"})
+                return
+            state.policy = body["policy"]
+            state.policy_revision = "sha256:" + "b" * 64
+            self._send(200, state.policy_response())
 
         def do_PATCH(self):  # noqa: N802
             if not self._authorized():
@@ -238,7 +276,7 @@ def run_contract(client: NodeClient) -> Dict[str, Any]:
     """Exercise every privileged protocol operation used by this desktop slice."""
     status = client.status()
     contribution = status["contribution"]
-    if contribution["schema_version"] != 1 or not contribution["configured"]:
+    if contribution["schema_version"] != 2 or not contribution["configured"] or not contribution["editable"]:
         raise AssertionError("acceptance node omitted the authoritative contribution contract")
     from communityai_desktop.controller import DesktopController
 
@@ -248,6 +286,16 @@ def run_contract(client: NodeClient) -> Dict[str, Any]:
         raise AssertionError("desktop did not preserve the node's model-policy decision")
     if desktop["contribution"]["vram_percent"] != 50:
         raise AssertionError("desktop did not preserve the node's resolved VRAM budget")
+    current_policy = client.get_contribution_policy()
+    updated_policy = dict(current_policy["policy"])
+    updated_policy["pause_timeout"] = 12.0
+    updated = client.update_contribution_policy(
+        updated_policy,
+        expected_revision=current_policy["config_revision"],
+    )
+    if updated["policy"]["pause_timeout"] != 12.0 or updated["config_revision"] == current_policy["config_revision"]:
+        raise AssertionError("contribution policy replacement did not persist")
+
     workers = client.list_workers()
     worker_a = next((worker for worker in workers if worker.get("id") == "worker-a"), None)
     if worker_a is None or worker_a.get("state") != "paused":
@@ -275,6 +323,7 @@ def run_contract(client: NodeClient) -> Dict[str, Any]:
         "worker_actions": 3,
         "key_lifecycle": "passed",
         "contribution_policy": "passed",
+        "policy_update": "passed",
     }
 
 
