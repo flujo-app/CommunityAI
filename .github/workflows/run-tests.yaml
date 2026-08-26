@@ -46,7 +46,8 @@ jobs:
           # external network. The node gates additionally use a loopback-only HTTP listener and
           # short isolated sleeper/crash subprocesses. They still finish quickly and guard the
           # parts of this fork most likely to regress (KV cache, paged cache, per-arch blocks,
-          # attention wiring, join tokens, device portability). The swarm/network tests
+          # attention wiring, join tokens, device portability). The catalog publication test
+          # also builds the same synthetic bundle twice and requires byte-identical output. The swarm/network tests
           # (test_full_model, test_remote_sequential, ...) require MODEL_NAME/INITIAL_PEERS and a
           # running swarm; the maintainer exercises those on real hardware.
           python -m pytest -v --durations=0 --durations-min=1.0 \
@@ -54,9 +55,13 @@ jobs:
             tests/test_api_keys.py \
             tests/test_cache.py \
             tests/test_catalog_bootstrap.py \
+            tests/test_catalog_publication.py \
+            desktop/tests/test_build_desktop.py \
+            desktop/tests/test_startup.py \
             tests/test_deepseek_v3.py \
             tests/test_discovery.py \
             tests/test_edge_benchmark.py \
+            tests/test_external_qualification.py \
             tests/test_device_portability.py \
             tests/test_gemma4_block.py \
             tests/test_gemma4_multimodal_loading.py \
@@ -68,6 +73,7 @@ jobs:
             tests/test_model_catalog.py \
             tests/test_model_manager.py \
             tests/test_model_manifest.py \
+            tests/test_multi_machine_qualification.py \
             tests/test_native_credentials.py \
             tests/test_node_config.py \
             tests/test_node.py \
@@ -78,6 +84,7 @@ jobs:
             tests/test_process_lifetime.py \
             tests/test_protocol_identity.py \
             tests/test_qualification_harness.py \
+            tests/test_qualification_matrix.py \
             tests/test_qwen3_5_block.py \
             tests/test_qwen3_5_multimodal_loading.py \
             tests/test_route_health.py \

@@ -45,7 +45,16 @@ class _Gemma4WrapperLoadMixin:
 
     @classmethod
     def from_pretrained(cls, model_name_or_path, *args, **kwargs):
-        if is_multimodal_wrapper_checkpoint(model_name_or_path, **kwargs):
+        checkpoint_source = model_name_or_path
+        detection_kwargs = kwargs
+        artifact_verifier = kwargs.get("artifact_verifier")
+        if artifact_verifier is not None:
+            checkpoint_source = artifact_verifier.ensure_startup_metadata()
+            detection_kwargs = dict(kwargs)
+            detection_kwargs["local_files_only"] = True
+            detection_kwargs.pop("revision", None)
+            detection_kwargs.pop("force_download", None)
+        if is_multimodal_wrapper_checkpoint(checkpoint_source, **detection_kwargs):
             key_mapping = kwargs.setdefault("key_mapping", {})
             key_mapping.setdefault(r"^model\.language_model\.", "model.")
         return super().from_pretrained(model_name_or_path, *args, **kwargs)

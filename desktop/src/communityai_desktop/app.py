@@ -26,6 +26,7 @@ from communityai_desktop.lifecycle import (
     NodeLifecycleSupervisor,
     default_bootstrap_config_path,
 )
+from communityai_desktop.startup import LOGIN_STARTUP_FLAG, SingleInstanceError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--bootstrap-config", type=Path, default=default_bootstrap_config_path(), help=argparse.SUPPRESS
     )
     parser.add_argument("--no-manage-node", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(LOGIN_STARTUP_FLAG, action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--capture-page", type=int, default=0, help=argparse.SUPPRESS)
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--store-control-key", action="store_true")
@@ -80,7 +82,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from communityai_desktop.pyside_shell import run
 
             with fake_node() as (url, token):
-                return int(run(DesktopController(NodeClient(url, token)), auto_close_seconds=1.0) or 0)
+                return int(
+                    run(
+                        DesktopController(NodeClient(url, token)),
+                        auto_close_seconds=1.0,
+                        single_instance=False,
+                    )
+                    or 0
+                )
         if args.onboarding_ui_self_test:
             from communityai_desktop.pyside_shell import run
 
@@ -91,6 +100,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 run(
                     connect=missing_credential,
                     auto_close_seconds=1.0,
+                    single_instance=False,
                 )
                 or 0
             )
@@ -104,6 +114,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         auto_close_seconds=1.2,
                         screenshot_path=args.capture_ui,
                         screenshot_page=args.capture_page,
+                        single_instance=False,
                     )
                     or 0
                 )
@@ -152,11 +163,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # Credential and connection errors belong in the window for normal desktop
         # startup. Existing headless installations migrate automatically.
         try:
-            return int(run(connect=connect) or 0)
+            return int(
+                run(
+                    connect=connect,
+                    start_minimized=args.started_at_login,
+                    activate_existing_instance=not args.started_at_login,
+                )
+                or 0
+            )
         finally:
             if lifecycle is not None:
                 lifecycle.close()
-    except (CredentialError, NodeClientError, NodeLifecycleError, ValueError) as exc:
+    except (CredentialError, NodeClientError, NodeLifecycleError, SingleInstanceError, ValueError) as exc:
         parser.exit(2, f"communityai-desktop: {exc}\n")
 
 

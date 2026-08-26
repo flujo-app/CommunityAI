@@ -18,6 +18,7 @@ from communityai_desktop.pyside_shell import check_runtime
 APP_NAME = "CommunityAI"
 NODE_NAME = "CommunityAI-Node"
 NODE_DIRECTORY = "node"
+PYINSTALLER_CONTENTS_DIRECTORY = "_internal"
 FORBIDDEN_RUNTIME_PACKAGES = ("drift", "torch", "transformers", "hivemind", "accelerate")
 
 
@@ -52,16 +53,50 @@ def _run_pyinstaller(arguments: list[str]) -> None:
     subprocess.run([sys.executable, "-m", "PyInstaller", *arguments], check=True)
 
 
+def _prepare_release_inputs(publication_bundle: Path | None) -> dict[str, object] | None:
+    """Validate the complete public release bundle before any packaging work starts."""
+
+    if publication_bundle is None:
+        return None
+    if not publication_bundle.is_dir() or publication_bundle.is_symlink():
+        raise RuntimeError(f"catalog publication bundle is missing or unsafe: {publication_bundle}")
+
+    from drift.catalog_release import catalog_publication_bundle_index_digest, load_catalog_publication_bundle
+
+    index = load_catalog_publication_bundle(publication_bundle)
+    return {
+        "schema_version": index["schema_version"],
+        "scope": index["scope"],
+        "catalog_id": index["catalog_id"],
+        "catalog_sequence": index["catalog_sequence"],
+        "catalog_digest": index["catalog_digest"],
+        "bootstrap_digest": index["bootstrap_digest"],
+        "bundle_index_digest": catalog_publication_bundle_index_digest(index),
+        "member_count": len(index["files"]),
+        "member_digests": {entry["path"]: entry["sha256"] for entry in index["files"]},
+        "complete_release_qualification": False,
+    }
+
+
+def _verify_packaged_release_inputs(
+    packaged_bundle: Path,
+    expected_evidence: dict[str, object],
+) -> dict[str, object]:
+    """Revalidate the copied bundle and bind metrics to the packaged bytes."""
+
+    packaged_evidence = _prepare_release_inputs(packaged_bundle)
+    if packaged_evidence != expected_evidence:
+        raise RuntimeError(
+            "packaged catalog publication bundle does not match the source bundle validated before packaging"
+        )
+    return packaged_evidence
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", type=Path)
-    parser.add_argument("--bootstrap-config", type=Path)
+    parser.add_argument("--publication-bundle", type=Path)
     args = parser.parse_args()
-
-    try:
-        import PyInstaller.__main__
-    except ImportError as exc:
-        parser.error(f"PyInstaller is not installed: {exc}")
 
     project = Path(__file__).resolve().parent
     repository = project.parent
@@ -71,14 +106,15 @@ def main() -> int:
     icon_path = project / "src" / "communityai_desktop" / "assets" / "communityai.ico"
     if not icon_path.is_file():
         raise RuntimeError(f"desktop icon is missing: {icon_path}; run generate_assets.py")
-    bootstrap_config = args.bootstrap_config or project / "release" / "catalog-bootstrap.json"
-    bootstrap_config = bootstrap_config.expanduser().resolve()
-    if args.bootstrap_config is not None and not bootstrap_config.is_file():
-        raise RuntimeError(f"release bootstrap config is missing: {bootstrap_config}")
-    if bootstrap_config.is_file():
-        from drift.node.catalog_bootstrap import CatalogBootstrapConfig
+    publication_bundle = args.publication_bundle or project / "release" / "catalog-publication-bundle"
+    publication_bundle = Path(os.path.abspath(os.fspath(publication_bundle.expanduser())))
+    should_validate_release = args.publication_bundle is not None or publication_bundle.exists()
+    publication_evidence = _prepare_release_inputs(publication_bundle if should_validate_release else None)
 
-        CatalogBootstrapConfig.load(bootstrap_config)
+    try:
+        import PyInstaller.__main__
+    except ImportError as exc:
+        parser.error(f"PyInstaller is not installed: {exc}")
 
     pyinstaller_args = [
         str(project / "launch_desktop.py"),
@@ -87,6 +123,8 @@ def main() -> int:
         "--onedir",
         "--noconfirm",
         "--clean",
+        "--contents-directory",
+        PYINSTALLER_CONTENTS_DIRECTORY,
         "--paths",
         str(project / "src"),
         "--distpath",
@@ -100,8 +138,10 @@ def main() -> int:
         "--add-data",
         f"{icon_path}{os.pathsep}communityai_desktop/assets",
     ]
-    if bootstrap_config.is_file():
-        pyinstaller_args.extend(("--add-data", f"{bootstrap_config}{os.pathsep}bootstrap"))
+    if publication_evidence is not None:
+        # Stage the complete verified bundle. The lifecycle consumer still finds
+        # bootstrap/catalog-bootstrap.json at the same packaged location.
+        pyinstaller_args.extend(("--add-data", f"{publication_bundle}{os.pathsep}bootstrap"))
     if platform.system() == "Windows":
         # The product executable is a GUI application. Diagnostic actions still
         # return meaningful exit codes but do not open a console window.
@@ -122,6 +162,11 @@ def main() -> int:
     executable = bundle_root / f"{APP_NAME}{'.exe' if os.name == 'nt' else ''}"
     if not executable.is_file():
         raise RuntimeError(f"packaged executable was not created: {executable}")
+    if publication_evidence is not None:
+        publication_evidence = _verify_packaged_release_inputs(
+            bundle_root / PYINSTALLER_CONTENTS_DIRECTORY / "bootstrap",
+            publication_evidence,
+        )
 
     sidecar_dist = build_root / "sidecar-dist"
     node_args = [
@@ -204,7 +249,8 @@ def main() -> int:
         },
         "console_window": platform.system() != "Windows",
         "signed": False,
-        "catalog_bootstrap_bundled": bootstrap_config.is_file(),
+        "catalog_bootstrap_bundled": publication_evidence is not None,
+        "catalog_publication_bundle": publication_evidence,
     }
     metrics_path = output_root / "desktop-metrics.json"
     metrics_path.parent.mkdir(parents=True, exist_ok=True)

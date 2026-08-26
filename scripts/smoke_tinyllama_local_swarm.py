@@ -254,6 +254,7 @@ def main(argv=None) -> None:
                 block_config._attn_implementation = manifest.runtime.attention_implementation
         else:
             block_config._attn_implementation = "eager"
+        log(f"attention_implementation={block_config._attn_implementation}")
         block_indices = requested_block_indices or list(range(block_config.num_hidden_layers))
         if block_indices[-1] >= block_config.num_hidden_layers:
             raise ValueError(

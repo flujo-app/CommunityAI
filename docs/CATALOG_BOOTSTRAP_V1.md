@@ -1,9 +1,10 @@
 # Catalog bootstrap v1
 
 Status: the strict sidecar consumer, desktop lifecycle integration, last-known-good
-cache, and packaging hook are implemented. A production bootstrap file is deliberately
-not checked in until the first model manifests have completed qualification and the
-corresponding catalog has been signed and published.
+cache, deterministic publication-bundle contract, and fail-closed packaging handoff are
+implemented. A production bundle is deliberately not checked in until the first model
+manifests have completed qualification and the corresponding catalog has been signed and
+published.
 
 `CatalogBootstrap v1` is the small, trusted release input that lets a clean desktop
 installation find a model catalog and the public discovery network. It is application
@@ -39,13 +40,61 @@ drift catalog bootstrap-config \
   --output catalog-bootstrap.json
 ```
 
-The release builder accepts that file explicitly:
+Before publication or bundling, verify the repository-controlled transport inputs:
 
 ```text
-python desktop/build_desktop.py --bootstrap-config catalog-bootstrap.json
+drift catalog publication-preflight catalog.signed.json \
+  --bootstrap catalog-bootstrap.json \
+  --manifest qwen3.5-2b-bfloat16-eager.json \
+  --manifest gemma-4-e2b-it-bfloat16-eager.json \
+  --output publication-preflight.json
 ```
 
-It is staged into the GUI bundle as public read-only configuration. On a missing
+The preflight verifies the signature threshold and expiry against the embedded root,
+requires catalog mirrors on distinct hosts plus distinct seed addresses and peer
+identities, matches every catalog digest and manifested weight-byte total, rejects
+extra manifests and selector collisions, and requires redundant promotion policies.
+Its report binds the exact canonical bootstrap digest and always retains
+`complete_release_qualification=false`: different endpoints do not prove independent
+operators, and real qualification, worker soak, and packaged inference remain separate
+gates.
+
+Assemble the repository-auditable handoff as a deterministic directory:
+
+```text
+drift catalog publication-bundle catalog.signed.json \
+  --bootstrap catalog-bootstrap.json \
+  --manifest qwen3.5-2b-bfloat16-eager.json \
+  --manifest gemma-4-e2b-it-bfloat16-eager.json \
+  --output catalog-publication-bundle
+```
+
+The directory contains canonical `catalog-bootstrap.json`, `catalog.signed.json`,
+`publication-preflight.json`, digest-addressed files below `manifests/`, and a
+canonical `bundle.json` index with every member size and SHA-256 digest. Rebuilding
+from the same parsed inputs produces the same names and bytes. Loading fails closed on
+symlinks, missing or extra members, unsafe names, noncanonical or duplicate-key JSON,
+unordered index entries, size or digest drift, signature/expiry failure, manifest
+filename drift, or any mismatch among the catalog, bootstrap, manifests, preflight, and
+index. `--force` can replace only an already valid bundle, preventing an output typo
+from deleting an unrelated directory.
+
+The release builder accepts and revalidates the complete bundle explicitly:
+
+```text
+python desktop/build_desktop.py \
+  --publication-bundle catalog-publication-bundle
+```
+
+The builder validates the source before PyInstaller runs, then loads the actual staged
+copy from the fixed `_internal/bootstrap/` onedir location and requires its complete
+evidence to equal the pre-copy evidence. Only that packaged copy's bounded
+catalog/bootstrap identity, canonical bundle-index digest, member count, and member
+digests are recorded in `desktop-metrics.json`. Builds without release inputs remain
+available. The complete public bundle is staged under the existing `bootstrap/`
+packaged location, so the lifecycle consumer still reads
+`bootstrap/catalog-bootstrap.json` while the signed catalog, exact manifests, report,
+and audit index remain available beside it. On a missing
 `node-config.json`, the GUI invokes the separately frozen node as:
 
 ```text

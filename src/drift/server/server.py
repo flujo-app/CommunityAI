@@ -1040,6 +1040,28 @@ class RuntimeWithDeduplicatedPools(Runtime):
         super().__init__(*args, **kwargs)
         self.pools = tuple(set(self.pools))
 
+    def iterate_minibatches_from_pools(self, timeout=None):
+        # multiprocessing.connection.wait() delegates to WaitForMultipleObjects on Windows, which
+        # accepts at most 63 handles. A backend contributes forward/backward pools and manifested
+        # full-model workers can exceed that limit (Gemma 4 has 35 blocks / 72 handles). Polling each
+        # pipe separately preserves one runtime and its shared inference pool without a busy spin.
+        max_windows_wait_handles = 63
+        if os.name != "nt" or len(self.pools) + 1 <= max_windows_wait_handles:
+            yield from super().iterate_minibatches_from_pools(timeout)
+            return
+
+        while True:
+            if self.shutdown_recv.poll():
+                return
+            ready_pools = [pool for pool in self.pools if pool.batch_receiver.poll()]
+            if not ready_pools:
+                time.sleep(0.001)
+                continue
+
+            pool = min(ready_pools, key=lambda candidate: candidate.priority)
+            batch_index, batch_tensors = pool.load_batch_to_runtime(timeout, self.device)
+            yield pool, batch_index, batch_tensors
+
     def run(self):
         # The runtime executes every backend's inference/forward (hence MemoryCache.use_cache) on this
         # thread. Claim it as the runtime thread before serving so the cache can distinguish the runtime

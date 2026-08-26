@@ -34,6 +34,13 @@ class FromPretrainedMixin:
             if not isinstance(artifact_verifier, ManifestArtifactVerifier):
                 raise TypeError("artifact_verifier must be a ManifestArtifactVerifier")
             artifact_verifier.ensure_startup_metadata()
+            if not artifact_verifier.manifest.artifacts_for_roles({"weight_index"}):
+                for artifact in artifact_verifier.manifest.artifacts_for_roles({"weight"}):
+                    artifact_verifier.ensure_path(artifact.path, allowed_roles={"weight"})
+            model_name_or_path = artifact_verifier.snapshot_root
+            kwargs["local_files_only"] = True
+            kwargs.pop("revision", None)
+            kwargs.pop("force_download", None)
             verifier_token = _artifact_verifier.set(artifact_verifier)
         try:
             with ignore_keys(cls._keys_to_ignore_on_load_unexpected):
@@ -75,11 +82,14 @@ def patched_get_checkpoint_shard_files(
     """Same as modeling_utils.get_checkpoint_shard_files(), but does not download shards for the ignored keys."""
 
     should_ignore_keys = _ignored_keys.get() is not None
+    verifier = _artifact_verifier.get()
     tempdir_ctx = tempfile.TemporaryDirectory() if should_ignore_keys else contextlib.nullcontext()
     with tempdir_ctx as tempdir:
-        if should_ignore_keys:
+        index = None
+        if should_ignore_keys or verifier is not None:
             with open(index_filename) as f:
                 index = json.load(f)
+        if should_ignore_keys:
             n_original_shards = len(set(index["weight_map"].values()))
 
             index["weight_map"] = {
@@ -94,6 +104,13 @@ def patched_get_checkpoint_shard_files(
             index_filename = os.path.join(tempdir, "pytorch_model.bin.index.json")
             with open(index_filename, "w") as f:
                 json.dump(index, f)
+
+        if verifier is not None:
+            for filename in set(index["weight_map"].values()):
+                verifier.ensure_path(filename, allowed_roles={"weight"})
+            pretrained_model_name_or_path = verifier.snapshot_root
+            kwargs["local_files_only"] = True
+            kwargs.pop("revision", None)
 
         return original_get_checkpoint_shard_files(pretrained_model_name_or_path, index_filename, *args, **kwargs)
 

@@ -250,6 +250,43 @@ def test_wrapper_mixin_injects_key_mapping(wrapper_checkpoint, text_only_checkpo
     assert "key_mapping" not in captured["kwargs"]
 
 
+def test_wrapper_mixin_peeks_verified_snapshot_offline(wrapper_checkpoint, monkeypatch):
+    path, _ = wrapper_checkpoint
+    observed = {}
+
+    class _Verifier:
+        def ensure_startup_metadata(self):
+            return path
+
+    class _Base:
+        @classmethod
+        def from_pretrained(cls, model_name_or_path, *args, **kwargs):
+            return "loaded"
+
+    class _Model(_Gemma4WrapperLoadMixin, _Base):
+        pass
+
+    def detect(source, **kwargs):
+        observed["source"] = source
+        observed["kwargs"] = kwargs
+        return True
+
+    monkeypatch.setattr("drift.models.gemma4.model.is_multimodal_wrapper_checkpoint", detect)
+    assert (
+        _Model.from_pretrained(
+            "google/gemma-4-E2B-it",
+            artifact_verifier=_Verifier(),
+            revision="a" * 40,
+            force_download=True,
+        )
+        == "loaded"
+    )
+    assert str(observed["source"]) == path
+    assert observed["kwargs"]["local_files_only"] is True
+    assert "revision" not in observed["kwargs"]
+    assert "force_download" not in observed["kwargs"]
+
+
 def test_wrapper_key_mapping_loads_text_tower(wrapper_checkpoint):
     """The injected key_mapping lands the text tower's weights correctly.
 

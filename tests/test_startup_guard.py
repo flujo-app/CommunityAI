@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from drift.cli.run_server import build_parser
-from drift.server.server import ModuleContainer
+from drift.server.server import ModuleContainer, RuntimeWithDeduplicatedPools
 from drift.utils.misc import format_all_thread_stacks
 
 
@@ -64,6 +64,37 @@ def test_module_container_ready_timeout_dumps_and_raises():
     dump = "\n".join(records)
     assert "did not become ready within 0.2 seconds" in dump
     assert 'Thread "MainThread"' in dump  # the stack dump itself made it into the log
+
+
+def test_windows_runtime_polls_when_pool_handles_exceed_platform_limit(monkeypatch):
+    class _Receiver:
+        def __init__(self, ready=False):
+            self.ready = ready
+
+        def poll(self):
+            return self.ready
+
+    class _Pool:
+        def __init__(self, *, ready=False, priority=0):
+            self.batch_receiver = _Receiver(ready)
+            self.priority = priority
+
+        def load_batch_to_runtime(self, timeout, device):
+            return 7, ("batch", timeout, device)
+
+    runtime = RuntimeWithDeduplicatedPools.__new__(RuntimeWithDeduplicatedPools)
+    runtime.pools = tuple([_Pool() for _ in range(63)] + [_Pool(ready=True, priority=-1)])
+    runtime.shutdown_recv = _Receiver()
+    runtime.device = "cpu"
+    monkeypatch.setattr("drift.server.server.os.name", "nt")
+
+    batches = runtime.iterate_minibatches_from_pools(timeout=2)
+    pool, batch_index, batch = next(batches)
+    batches.close()
+
+    assert pool is runtime.pools[-1]
+    assert batch_index == 7
+    assert batch == ("batch", 2, "cpu")
 
 
 def test_cli_exposes_startup_guard_flags():

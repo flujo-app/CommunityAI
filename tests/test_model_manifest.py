@@ -273,9 +273,11 @@ def test_artifact_verification(tmp_path):
         artifact["size"] = len(content)
         artifact["sha256"] = hashlib.sha256(content).hexdigest()
     manifest = ModelManifest.from_dict(source)
+    manifest.validate_artifact_layout(tmp_path)
     manifest.verify_artifacts(tmp_path)
 
     (tmp_path / "weights.bin").write_bytes(b"bad")
+    manifest.validate_artifact_layout(tmp_path)
     with pytest.raises(ManifestError, match="does not match"):
         manifest.verify_artifacts(tmp_path)
 
@@ -499,6 +501,44 @@ def test_server_weight_loader_rejects_tampering_before_deserialization(tmp_path,
             artifact_verifier=verifier,
         )
     assert not deserialized
+
+
+def test_manifest_client_loads_from_verified_snapshot_without_hub_access(tmp_path):
+    from drift.client.from_pretrained import FromPretrainedMixin
+
+    write_test_snapshot(tmp_path)
+    manifest = create_test_snapshot_manifest(tmp_path)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        repository=manifest.source.repository,
+        revision=manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+    captured = {}
+
+    class _Base:
+        @classmethod
+        def from_pretrained(cls, model_name_or_path, *args, **kwargs):
+            captured["model_name_or_path"] = model_name_or_path
+            captured["kwargs"] = kwargs
+            return "loaded"
+
+    class _Model(FromPretrainedMixin, _Base):
+        _keys_to_ignore_on_load_unexpected = ()
+
+    assert (
+        _Model.from_pretrained(
+            manifest.source.repository,
+            artifact_verifier=verifier,
+            revision=manifest.source.revision,
+            force_download=True,
+        )
+        == "loaded"
+    )
+    assert Path(captured["model_name_or_path"]) == tmp_path
+    assert captured["kwargs"]["local_files_only"] is True
+    assert "revision" not in captured["kwargs"]
+    assert "force_download" not in captured["kwargs"]
 
 
 def test_client_checkpoint_resolver_rejects_tampering_before_model_load(tmp_path, monkeypatch):
