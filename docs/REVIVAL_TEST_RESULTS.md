@@ -58,6 +58,45 @@ no stored `gcloud` account, so live project, image, accelerator, quota, and abse
 checks were not attempted. That GCP login is required before any ledger reservation
 or provisioning; deterministic preparation evidence is not hardware qualification.
 
+## Public-alpha exact qualification image inputs
+
+On 2026-08-26, the first Gate 4 slice added a credential-free Buildx contract and
+offline qualification Dockerfile for the exact Qwen3.5 2B and Gemma 4 E2B manifests.
+Preparation accepts only an exact lowercase source commit, a bounded
+`source-<commit>` image tag, an allowlisted candidate whose manifest bytes match that
+commit, and an absolute unlinked snapshot whose file, directory, size, and SHA-256
+inventory exactly matches the manifest. It reads the required Docker inputs from exact
+Git blobs and materializes a tracked-only source context, so staged, dirty, untracked,
+and ignored working-tree payloads cannot enter the plan. The generated contract binds
+the candidate repository/revision, manifest and contract digests, source commit,
+source-file inventory and digest, Dockerfile digest, artifact inventory, image tag,
+remote paths, `linux/amd64` platform, and digest-pinned Python 3.12.13 and uv 0.11.21
+base images.
+
+The emitted command is a shell-free Buildx argument array using named snapshot and
+contract contexts, maximum provenance, an SBOM, and registry push. The Dockerfile
+installs from the locked environment, copies no credential, forces Hub and
+Transformers offline mode, and re-verifies the copied source tree, Dockerfile, manifest
+digest, declared artifact bytes, and every model artifact before running the Fly
+qualification entrypoint as UID/GID 65532. Twenty-five deterministic tests cover
+successful preparation/re-verification, exact candidate revisions and committed
+manifest identity, dirty/staged/untracked/ignored source exclusion, source-context
+tampering, manifest/byte/source/Dockerfile build-argument drift, the 255-character
+repository-name boundary, altered artifact hashes, extra files and directories, root
+symlinks and Windows junctions (including the `--repository-root` CLI boundary before
+output materialization), pre-existing output, tampered contracts, pinned bases, offline
+flags, and absence of secret mounts or network download commands. The focused
+suite passes locally; the expanded offline CI selection passes 458 tests with 8
+expected skips, and Black and isort are clean across 262 Python files.
+
+This is input-contract evidence only. The current host has the Docker client but no
+available daemon, and native `gcloud` authentication remains unavailable. No image
+was built or published, no OCI digest or compressed image size is claimed, no
+provider was called, no paid resource was created, and the combined spend remains
+USD 0. Gate 4 stays `IN PROGRESS` until both exact snapshots are built and pushed
+on an authenticated Docker-enabled builder and their immutable digests and bounded
+sizes are retained.
+
 ## Desktop milestone: control authority separation
 
 The first milestone-5 production prerequisite separates the local authorization
