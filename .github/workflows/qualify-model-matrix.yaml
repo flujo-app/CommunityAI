@@ -137,7 +137,9 @@ jobs:
 
   qualify:
     name: ${{ inputs.candidate }} / ${{ matrix.profile }}
-    needs: preflight
+    needs:
+      - inventory
+      - preflight
     strategy:
       fail-fast: false
       matrix:

@@ -19,9 +19,8 @@ Requirements on the build machine:
   - Python 3.10+ (matching target venv)
   - Go >= 1.13 on PATH
   - pip (from any venv is fine)
-  - patch utility OR the Python `patch` package
-    (this script uses Python's `subprocess` to call system `patch` or falls back to
-    the `patch` PyPI package)
+  - patch utility, Git, OR the Python `patch` package
+    (this script tries those patch engines in that order)
 """
 
 from __future__ import annotations
@@ -65,10 +64,10 @@ def ensure_pip() -> None:
 
 
 def apply_patch(patch_file: Path, target_dir: Path) -> None:
-    """Apply a unified diff patch. Tries system `patch` first, then pure-Python fallback."""
+    """Apply a unified diff patch. Tries system `patch`, Git, then a pure-Python fallback."""
     # Feed raw bytes: text=True would re-encode through the locale codepage on Windows
     # (e.g. cp1252), silently corrupting any non-ASCII byte in the patched files.
-    patch_bytes = patch_file.read_bytes()
+    patch_bytes = patch_file.read_bytes().replace(b"\r\n", b"\n")
     # Try system patch utility
     patch_cmd = shutil.which("patch")
     if patch_cmd:
@@ -80,7 +79,20 @@ def apply_patch(patch_file: Path, target_dir: Path) -> None:
             )
             return
         except subprocess.CalledProcessError as e:
-            print(f"Warning: system patch failed ({e}), trying pure-Python fallback")
+            print(f"Warning: system patch failed ({e}), trying Git fallback")
+
+    git_cmd = shutil.which("git")
+    if git_cmd:
+        try:
+            subprocess.run(
+                [git_cmd, "apply", "--whitespace=nowarn", "-"],
+                cwd=target_dir,
+                input=patch_bytes,
+                check=True,
+            )
+            return
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: Git patch failed ({e}), trying pure-Python fallback")
 
     # Pure-Python fallback using the `patch` PyPI package
     try:

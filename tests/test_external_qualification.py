@@ -121,11 +121,14 @@ def test_external_runner_rejects_a_source_commit_not_matching_the_checkout(tmp_p
         )
 
 
-def test_manual_workflow_covers_every_claimed_profile_and_strict_gate():
+def test_manual_workflow_covers_strict_and_incomplete_declared_profile_sets():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     for profile in external_runner.HOST_PROFILES:
-        assert f"profile: {profile}" in workflow
+        assert f'"{profile}"' in workflow
+    assert "default: strict-six-profile" in workflow
+    assert "incomplete-windows-linux" in workflow
+    assert workflow.count("profile: ${{ fromJSON(needs.inventory.outputs.profiles) }}") == 2
     assert "runs-on:\n      - self-hosted\n      - model-qualification" in workflow
     assert 'HF_HUB_OFFLINE: "1"' in workflow
     assert 'TRANSFORMERS_OFFLINE: "1"' in workflow
@@ -135,7 +138,8 @@ def test_manual_workflow_covers_every_claimed_profile_and_strict_gate():
     assert "scripts/validate_qualification_runner_fleet.py" in workflow
     assert "--preflight-only" in workflow
     assert "needs: inventory" in workflow
-    assert "needs: preflight" in workflow
+    assert "needs:\n      - inventory\n      - preflight" in workflow
+    assert "incomplete_args+=(--allow-incomplete)" in workflow
     assert '--require-source-commit "$GITHUB_SHA"' in workflow
     assert "continue-on-error: true" in workflow
 

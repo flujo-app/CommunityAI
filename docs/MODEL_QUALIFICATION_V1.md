@@ -86,17 +86,25 @@ The caller states the supported matrix explicitly; the tool does not infer platf
 claims from a model manifest. An empty report set still writes a failed matrix artifact
 with every requested profile listed as missing. A passing matrix still sets
 `complete_release_qualification=false` and retains multi-machine routing, cold-client
-envelopes, public-worker soak, and catalog publication as separate gates. The recorded
-Windows CPU reports above predate the explicit host/runtime observations, so they remain
-historical evidence and must be rerun before they can satisfy this strict matrix.
+envelopes, public-worker soak, and catalog publication as separate gates.
+`--allow-incomplete` is narrower: all six release profiles must still be declared, the
+only accepted coverage is Windows CPU/CUDA plus Linux CPU/CUDA, the only accepted missing
+profiles are `macos:cpu` and `macos:mps`, and the result is `incomplete` rather than
+`passed`. Any other missing, extra, or invalid evidence still fails. The recorded Windows
+CPU reports above predate the explicit host/runtime observations, so they remain historical
+evidence and must be rerun before they can satisfy this strict matrix.
 
 ### Self-hosted execution workflow
 
 [`.github/workflows/qualify-model-matrix.yaml`](../.github/workflows/qualify-model-matrix.yaml)
-is a manual, one-candidate-at-a-time release workflow. It schedules the full six-profile
-matrix on self-hosted runners labelled `model-qualification` plus one of `windows-cpu`,
-`windows-cuda`, `linux-cpu`, `linux-cuda`, `macos-cpu`, or `macos-mps`. Register exactly
-one repository runner for each profile and never place two profile labels on one runner.
+is a manual, one-candidate-at-a-time workflow. Its default `strict-six-profile` scope
+schedules the full release matrix. The explicit `incomplete-windows-linux` scope schedules
+only Windows CPU/CUDA and Linux CPU/CUDA, but its aggregate still declares all six profiles
+and can emit only the bounded `incomplete` result with both macOS profiles listed as
+missing. Self-hosted runners use the `model-qualification` label plus one of
+`windows-cpu`, `windows-cuda`, `linux-cpu`, `linux-cuda`, `macos-cpu`, or `macos-mps`.
+Register exactly one repository runner for each selected profile and never place two profile
+labels on one runner.
 The repository secret `QUALIFICATION_RUNNER_READ_TOKEN` must be a fine-grained token
 scoped to this repository with read-only `Administration` permission, which GitHub
 requires for listing repository self-hosted runners. Each runner must provide a
@@ -112,8 +120,8 @@ Before any self-hosted job is queued, the workflow reads the repository runner i
 and passes it through
 [`scripts/validate_qualification_runner_fleet.py`](../scripts/validate_qualification_runner_fleet.py).
 The validator rejects a missing, duplicate, offline, cross-labelled, or OS-mismatched
-profile and persists only profile-level counts; runner names and API identifiers never
-enter its bounded artifact. A second six-host preflight invokes
+declared profile and persists only profile-level counts; runner names and API identifiers
+never enter its bounded artifact. A second declared-host preflight invokes
 [`scripts/run_external_model_qualification.py`](../scripts/run_external_model_qualification.py)
 with `--preflight-only`. It rejects an operating-system label mismatch, unavailable
 CUDA/MPS device, invalid machine label, a checkout that does not match the claimed source
@@ -130,12 +138,13 @@ Windows-only runtime remains installed. Qualification runs with Hugging Face and
 Transformers offline, performs the full artifact audit plus parity and local interruption
 stages, and uploads one immutable, path-redacted report per host. The aggregate job runs
 even when hosts fail or produce no artifact, installs the locked project environment,
-combines only this workflow run's reports, binds them to `GITHUB_SHA`, uploads the failed
-or passing matrix, and then enforces its result.
+combines only this workflow run's reports, binds them to `GITHUB_SHA`, uploads the failed,
+explicitly incomplete, or passing matrix, and then enforces its selected scope.
 
 The workflow automates evidence collection; it has not yet produced the real Qwen3.5 or
-Gemma six-profile matrix. Runner provisioning, artifact placement, hardware execution,
-and review of the resulting immutable evidence remain external release operations.
+Gemma four-profile partial evidence or six-profile matrix. Runner provisioning, artifact
+placement, hardware execution, and review of the resulting immutable evidence remain
+external release operations.
 
 ## Controlled multi-machine recovery gate
 
@@ -145,8 +154,10 @@ machines or embed a Fly, SSH, or cloud API. An operator first provisions an isol
 bootstrap plus two disjoint, complete split routes with stable manifested worker
 identities. The controller then:
 
-1. binds the run to a passed cross-platform local matrix, exact source commit, DRIFT
-   build, manifest/runtime, and a fully verified local publisher snapshot;
+1. binds the run to either the passed strict matrix or, only with
+   `--allow-incomplete-matrix`, the exact bounded Windows/Linux `incomplete` matrix,
+   plus the exact source commit, DRIFT build, manifest/runtime, and a fully verified
+   local publisher snapshot;
 2. waits until the DHT exposes exactly the signed PeerIDs declared for every block;
 3. starts one inference session, generates one token, and selects a worker that is
    actually present on the active split route;
@@ -218,6 +229,12 @@ python scripts/qualify_model_multimachine.py \
   --output qwen3.5-2b-multimachine.json
 ```
 
+For the bounded exercise, use the same command with `--allow-incomplete-matrix` and the
+`incomplete` aggregate. A successful exercise emits `result: incomplete`, lists
+`macos:cpu` and `macos:mps`, and exits successfully without becoming release evidence.
+The default command rejects that matrix, and the opt-in command rejects a strict `passed`
+matrix so the two paths cannot be confused.
+
 The offline tests exercise topology independence, exact matrix-evidence binding,
 selected replacement, fresh hard-kill and cleanup acknowledgements, direct token
 equality, clean post-recovery routing, client shutdown, bounded inputs/output,
@@ -249,8 +266,9 @@ provisioning failures before controller preflight. Provider machine IDs, the app
 private IPv6 addresses, and generated paths remain in the private inputs and are never
 copied into the bounded qualification report.
 
-After the six-profile matrix has passed and the candidate image is available, provision
-the private inputs with:
+After either the bounded four-profile aggregate exists for an explicitly incomplete
+exercise or the six-profile matrix has passed, and the candidate image is available,
+provision the private inputs with:
 
 ```text
 python scripts/fly_qualification_adapter.py provision \

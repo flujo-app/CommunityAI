@@ -847,29 +847,26 @@ implementation.
    selection, snapshot placement, runner registration/labels, workflow dispatch, and report
    retention are operational prerequisites, not hardware blockers.
 
-   Windows/Linux profile collection and Fly topology provisioning are runnable now, but the
-   current release workflow and multi-machine controller deliberately fail closed unless their
-   input contains the exact six-profile Windows/Linux/macOS CPU/CUDA/MPS matrix. Consequently,
-   a four-profile Windows/Linux matrix cannot produce the strict aggregate, and the current
-   controller cannot complete Fly recovery qualification from that partial evidence. Fly can
-   provision the recovery infrastructure independently; it cannot yet produce a passing
-   controller report independently. No partial matrix, infrastructure smoke, or recovery run
-   may set `complete_release_qualification=true`.
+   Windows/Linux profile collection and Fly topology provisioning are now decoupled from the
+   final release gate. The manual workflow has an explicit incomplete scope that schedules only
+   the four Windows/Linux profiles while its aggregate still declares all six release profiles.
+   It succeeds only with `result: incomplete`, exactly `macos:cpu` and `macos:mps` missing, no
+   validation errors, and `complete_release_qualification=false`. The multi-machine controller
+   accepts that artifact only with `--allow-incomplete-matrix`; a successful recovery exercise
+   also emits `result: incomplete` and lists both missing macOS profiles. The default aggregate
+   and controller paths still require the exact complete six-profile evidence and reject partial
+   mode artifacts. No real Windows/Linux matrix or separate-host recovery run has yet been made.
 
    Final Qwen3.5 2B and Gemma 4 E2B qualification on macOS CPU and macOS MPS is therefore
    deferred until Apple/macOS runner capacity is available or the supported release matrix is
    explicitly changed. This deferral is separate from the Windows/Linux and Fly work that can
    proceed now, and it does not claim macOS support or complete release qualification.
 
-   **Next implementation sequence.** First decouple incremental evidence collection from the
-   final release gate: add a bounded partial-matrix path that can collect the four available
-   Windows/Linux profiles and authorize an explicitly incomplete Fly recovery exercise while
-   preserving the existing exact-six fail-closed path for a passing release report. Partial
-   aggregate and recovery outputs must list the missing macOS profiles and retain
-   `complete_release_qualification=false`. Then provision and register the uniquely labelled
-   Windows and Linux qualification runners using the local machine and GCP, configure the
-   read-only runner-inventory credential, and collect Qwen3.5 2B and Gemma 4 E2B evidence on
-   those profiles. Use Fly to execute the controlled separate-machine interruption/recovery
+   **Next implementation sequence.** The bounded partial-matrix path and explicitly incomplete
+   recovery authorization are implemented, with the exact-six release path preserved. Next
+   provision and register the uniquely labelled Windows and Linux qualification runners using
+   the local machine and GCP, configure the read-only runner-inventory credential, and collect
+   Qwen3.5 2B and Gemma 4 E2B evidence on those profiles. Use Fly to execute the controlled separate-machine interruption/recovery
    exercise for both exact candidates and preserve its bounded evidence. In parallel, obtain
    macOS CPU/MPS capacity or explicitly revise the supported release matrix. Only after every
    profile in that declared release matrix and both separate-machine recovery gates pass may
