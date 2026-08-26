@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import secrets
 import time
 from typing import List, Optional
@@ -22,6 +23,85 @@ from drift.node.model_manager import (
 from drift.node.worker_supervisor import WorkerNotFoundError, WorkerPolicyError, WorkerSupervisor
 
 CONTROL_API_VERSION = 1
+CONTRIBUTION_STATUS_SCHEMA_VERSION = 1
+
+
+def _bounded_text(value, fallback: str, *, limit: int = 300) -> str:
+    if not isinstance(value, str):
+        return fallback
+    normalized = " ".join(value.split())
+    if not normalized or not normalized.isprintable():
+        return fallback
+    return normalized[:limit]
+
+
+def _optional_positive_int(value):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
+def _optional_nonnegative_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        return None
+    return value
+
+
+def _optional_positive_number(value):
+    value = _optional_nonnegative_number(value)
+    return value if value is not None and value > 0 else None
+
+
+def _gate_status(snapshot, prefix: str):
+    admitted = snapshot.get(f"{prefix}_admitted") is True
+    reason = snapshot.get(f"{prefix}_reason")
+    return {
+        "admitted": admitted,
+        "reason": (None if admitted else _bounded_text(reason, f"{prefix.capitalize()} status is unavailable")),
+        **({"suspended": snapshot.get(f"{prefix}_suspended") is True} if prefix in ("schedule", "resource") else {}),
+    }
+
+
+def _contribution_status(worker_snapshots, *, configured: bool):
+    """Return the bounded, secret-free worker view consumed by the desktop."""
+    workers = []
+    for snapshot in worker_snapshots:
+        workers.append(
+            {
+                "id": _bounded_text(snapshot.get("id"), "unknown worker", limit=128),
+                "model": _bounded_text(snapshot.get("model"), "unknown model", limit=256),
+                "state": (
+                    snapshot.get("state")
+                    if snapshot.get("state") in ("paused", "starting", "running", "stopping", "crashed")
+                    else "unknown"
+                ),
+                "desired_running": snapshot.get("desired_running") is True,
+                "policy": {
+                    **_gate_status(snapshot, "policy"),
+                    "preferred": snapshot.get("preferred") is True,
+                },
+                "schedule": _gate_status(snapshot, "schedule"),
+                "resources": {
+                    **_gate_status(snapshot, "resource"),
+                    "limits": {
+                        "disk_bytes": _optional_positive_int(snapshot.get("max_disk_bytes")),
+                        "vram_bytes": _optional_positive_int(snapshot.get("max_vram_bytes")),
+                        "vram_pool_bytes": _optional_positive_int(snapshot.get("vram_pool_bytes")),
+                        "bandwidth_mbps": _optional_positive_number(snapshot.get("max_bandwidth_mbps")),
+                        "power_watts": _optional_positive_number(snapshot.get("max_power_watts")),
+                    },
+                    "measurements": {
+                        "bandwidth_mbps": _optional_nonnegative_number(snapshot.get("current_bandwidth_mbps")),
+                        "power_watts": _optional_nonnegative_number(snapshot.get("current_power_watts")),
+                    },
+                },
+            }
+        )
+    return {
+        "schema_version": CONTRIBUTION_STATUS_SCHEMA_VERSION,
+        "configured": configured,
+        "workers": workers,
+    }
 
 
 class ModelUnloadRequest(BaseModel):
@@ -85,6 +165,11 @@ def create_node_app(
     @app.get("/control/v1/status")
     async def node_status(request: Request):
         check_control_auth(request)
+        worker_snapshots = list(worker_supervisor.snapshots()) if worker_supervisor is not None else []
+        contribution = _contribution_status(
+            worker_snapshots,
+            configured=worker_supervisor is not None,
+        )
         return {
             "api_version": CONTROL_API_VERSION,
             "status": "stopping" if model_manager.closed else "running",
@@ -92,7 +177,11 @@ def create_node_app(
             "openai_base_url": f"http://{'[' + host + ']' if ':' in host else host}:{port}/v1",
             "runtime_budget": model_manager.residency(),
             "models": [snapshot.to_dict() for snapshot in model_manager.snapshots()],
-            "workers": list(worker_supervisor.snapshots()) if worker_supervisor is not None else [],
+            "workers": [
+                {key: worker[key] for key in ("id", "model", "state", "desired_running")}
+                for worker in contribution["workers"]
+            ],
+            "contribution": contribution,
         }
 
     @app.post("/control/v1/models/unload")

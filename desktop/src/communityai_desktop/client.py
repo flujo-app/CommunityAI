@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import socket
 from typing import Any, Dict, List, Mapping, Optional
 from urllib.error import HTTPError, URLError
@@ -12,6 +13,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SUPPORTED_CONTROL_API_VERSION = 1
+CONTRIBUTION_STATUS_SCHEMA_VERSION = 1
 
 
 class NodeClientError(RuntimeError):
@@ -68,6 +70,118 @@ def normalize_loopback_url(value: str) -> str:
     except ValueError as exc:
         raise ValueError("node URL has an invalid port") from exc
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _bounded_status_text(value: Any, field: str, *, limit: int) -> str:
+    if not isinstance(value, str):
+        raise NodeClientError(f"Local node contribution status has invalid {field}")
+    normalized = " ".join(value.split())
+    if not normalized or not normalized.isprintable() or len(normalized) > limit:
+        raise NodeClientError(f"Local node contribution status has invalid {field}")
+    return normalized
+
+
+def _optional_number(value: Any, field: str, *, integer: bool = False, positive: bool = False):
+    if value is None:
+        return None
+    expected_type = int if integer else (int, float)
+    if isinstance(value, bool) or not isinstance(value, expected_type):
+        raise NodeClientError(f"Local node contribution status has invalid {field}")
+    if not math.isfinite(value) or (value <= 0 if positive else value < 0):
+        raise NodeClientError(f"Local node contribution status has invalid {field}")
+    return value
+
+
+def _normalize_gate(value: Any, field: str, *, suspended: bool = False) -> Dict[str, Any]:
+    if not isinstance(value, dict) or not isinstance(value.get("admitted"), bool):
+        raise NodeClientError(f"Local node contribution status has invalid {field}")
+    admitted = value["admitted"]
+    reason = value.get("reason")
+    if admitted:
+        if reason is not None:
+            raise NodeClientError(f"Local node contribution status has inconsistent {field}")
+    else:
+        reason = _bounded_status_text(reason, f"{field} reason", limit=300)
+    result = {"admitted": admitted, "reason": reason}
+    if suspended:
+        if not isinstance(value.get("suspended"), bool):
+            raise NodeClientError(f"Local node contribution status has invalid {field} suspension")
+        result["suspended"] = value["suspended"]
+    return result
+
+
+def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict) or value.get("schema_version") != CONTRIBUTION_STATUS_SCHEMA_VERSION:
+        raise NodeClientError("Local node status has an unsupported contribution schema")
+    configured = value.get("configured")
+    workers = value.get("workers")
+    if not isinstance(configured, bool) or not isinstance(workers, list):
+        raise NodeClientError("Local node contribution status is malformed")
+    normalized_workers = []
+    for worker in workers:
+        if not isinstance(worker, dict):
+            raise NodeClientError("Local node contribution status has invalid worker data")
+        worker_id = _bounded_status_text(worker.get("id"), "worker id", limit=128)
+        model = _bounded_status_text(worker.get("model"), "model id", limit=256)
+        state = worker.get("state")
+        if state not in ("paused", "starting", "running", "stopping", "crashed", "unknown") or not isinstance(
+            worker.get("desired_running"), bool
+        ):
+            raise NodeClientError("Local node contribution status has invalid worker identity or state")
+        policy = _normalize_gate(worker.get("policy"), "policy")
+        if not isinstance(worker["policy"].get("preferred"), bool):
+            raise NodeClientError("Local node contribution status has invalid model preference")
+        policy["preferred"] = worker["policy"]["preferred"]
+        schedule = _normalize_gate(worker.get("schedule"), "schedule", suspended=True)
+        resources_value = worker.get("resources")
+        if not isinstance(resources_value, dict):
+            raise NodeClientError("Local node contribution status has invalid resources")
+        resources = _normalize_gate(resources_value, "resource", suspended=True)
+        limits, measurements = resources_value.get("limits"), resources_value.get("measurements")
+        if not isinstance(limits, dict) or not isinstance(measurements, dict):
+            raise NodeClientError("Local node contribution status has invalid resource values")
+        clean_limits = {
+            "disk_bytes": _optional_number(limits.get("disk_bytes"), "disk limit", integer=True, positive=True),
+            "vram_bytes": _optional_number(limits.get("vram_bytes"), "VRAM limit", integer=True, positive=True),
+            "vram_pool_bytes": _optional_number(
+                limits.get("vram_pool_bytes"), "VRAM pool", integer=True, positive=True
+            ),
+            "bandwidth_mbps": _optional_number(limits.get("bandwidth_mbps"), "bandwidth limit", positive=True),
+            "power_watts": _optional_number(limits.get("power_watts"), "power limit", positive=True),
+        }
+        if (clean_limits["vram_bytes"] is None) != (clean_limits["vram_pool_bytes"] is None) or (
+            clean_limits["vram_bytes"] is not None and clean_limits["vram_bytes"] > clean_limits["vram_pool_bytes"]
+        ):
+            raise NodeClientError("Local node contribution status has inconsistent VRAM limits")
+        clean_measurements = {
+            "bandwidth_mbps": _optional_number(measurements.get("bandwidth_mbps"), "bandwidth measurement"),
+            "power_watts": _optional_number(measurements.get("power_watts"), "power measurement"),
+        }
+        if resources["admitted"] and any(
+            clean_limits[field] is not None and clean_measurements[field] is None
+            for field in ("bandwidth_mbps", "power_watts")
+        ):
+            raise NodeClientError("Local node contribution status has inconsistent resource telemetry")
+        resources["limits"] = clean_limits
+        resources["measurements"] = clean_measurements
+        normalized_workers.append(
+            {
+                "id": worker_id,
+                "model": model,
+                "state": state,
+                "desired_running": worker["desired_running"],
+                "policy": policy,
+                "schedule": schedule,
+                "resources": resources,
+            }
+        )
+    if not configured and normalized_workers:
+        raise NodeClientError("Local node reports contribution workers while contribution is not configured")
+    return {
+        "schema_version": CONTRIBUTION_STATUS_SCHEMA_VERSION,
+        "configured": configured,
+        "workers": normalized_workers,
+    }
 
 
 class NodeClient:
@@ -145,6 +259,7 @@ class NodeClient:
             or any(not isinstance(item, dict) for item in result["workers"])
         ):
             raise NodeClientError("Local node status has invalid model or worker data")
+        result["contribution"] = _normalize_contribution_status(result.get("contribution"))
         return result
 
     def list_workers(self) -> List[Dict[str, Any]]:

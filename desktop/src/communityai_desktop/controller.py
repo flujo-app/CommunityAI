@@ -14,7 +14,8 @@ class DesktopController:
     def snapshot(self) -> Dict[str, Any]:
         status = self.client.status()
         models = [self._model_view(model) for model in status["models"]]
-        workers = [self._worker_view(worker) for worker in status["workers"]]
+        contribution = status["contribution"]
+        workers = [self._worker_view(worker) for worker in contribution["workers"]]
         return {
             "node_status": status.get("status", "unknown"),
             "openai_base_url": status["openai_base_url"],
@@ -24,7 +25,7 @@ class DesktopController:
             "workers": workers,
             "keys": [self._key_view(key) for key in self.client.list_keys()],
             "network": self._network_view(status.get("network"), models),
-            "contribution": self._contribution_view(status.get("contribution"), workers),
+            "contribution": self._contribution_view(contribution, workers),
         }
 
     @staticmethod
@@ -46,13 +47,46 @@ class DesktopController:
 
     @staticmethod
     def _worker_view(worker: Dict[str, Any]) -> Dict[str, Any]:
+        policy = worker["policy"]
+        schedule = worker["schedule"]
+        resources = worker["resources"]
+        admitted = policy["admitted"] and schedule["admitted"] and resources["admitted"]
+        blocked_reason = next(
+            (gate["reason"] for gate in (policy, schedule, resources) if not gate["admitted"]),
+            None,
+        )
+        state = worker["state"]
+        desired_running = worker["desired_running"]
+        if state in ("running", "starting"):
+            display_status = "Sharing"
+        elif desired_running and blocked_reason:
+            display_status = f"Waiting: {blocked_reason}"
+        elif not admitted:
+            display_status = f"Blocked: {blocked_reason}"
+        elif state == "crashed":
+            display_status = "Stopped unexpectedly"
+        else:
+            display_status = "Not sharing"
         return {
-            "id": str(worker.get("id", "unknown")),
-            "model": str(worker.get("model", "unknown")),
-            "state": str(worker.get("state", "unknown")),
-            "desired_running": bool(worker.get("desired_running", False)),
-            "restart_count": worker.get("restart_count", 0),
-            "last_error": worker.get("last_error"),
+            "id": worker["id"],
+            "model": worker["model"],
+            "state": state,
+            "desired_running": desired_running,
+            "sharing_active": state in ("running", "starting"),
+            "can_start": admitted,
+            "blocked_reason": blocked_reason,
+            "display_status": display_status,
+            "preferred": policy["preferred"],
+            "policy_admitted": policy["admitted"],
+            "policy_reason": policy["reason"],
+            "schedule_admitted": schedule["admitted"],
+            "schedule_reason": schedule["reason"],
+            "schedule_suspended": schedule["suspended"],
+            "resource_admitted": resources["admitted"],
+            "resource_reason": resources["reason"],
+            "resource_suspended": resources["suspended"],
+            "limits": resources["limits"],
+            "measurements": resources["measurements"],
         }
 
     @staticmethod
@@ -83,21 +117,48 @@ class DesktopController:
         return {"peer_count": peer_count, "regions": clean_regions}
 
     @staticmethod
-    def _contribution_view(contribution: Any, workers: list[Dict[str, Any]]) -> Dict[str, Any]:
-        contribution = contribution if isinstance(contribution, dict) else {}
-        percent = contribution.get("gpu_memory_percent", 50)
-        if not isinstance(percent, int) or not 10 <= percent <= 100:
-            percent = 50
-        total_bytes = contribution.get("gpu_memory_total_bytes")
-        if not isinstance(total_bytes, int) or total_bytes <= 0:
-            total_bytes = None
-        active_models = sorted({worker["model"] for worker in workers if worker["desired_running"]})
+    def _contribution_view(contribution: Dict[str, Any], workers: list[Dict[str, Any]]) -> Dict[str, Any]:
+        active_models = sorted({worker["model"] for worker in workers if worker["sharing_active"]})
+        selected_models = sorted({worker["model"] for worker in workers if worker["desired_running"]})
+        blocked_reasons = []
+        selected_blocked_reasons = []
+        for worker in workers:
+            reason = worker["blocked_reason"]
+            if reason and reason not in blocked_reasons:
+                blocked_reasons.append(reason)
+            if worker["desired_running"] and reason and reason not in selected_blocked_reasons:
+                selected_blocked_reasons.append(reason)
+
+        vram_pairs = {
+            (worker["limits"]["vram_bytes"], worker["limits"]["vram_pool_bytes"])
+            for worker in workers
+            if worker["limits"]["vram_bytes"] is not None
+        }
+        if len(vram_pairs) == 1 and all(worker["limits"]["vram_bytes"] is not None for worker in workers):
+            vram_bytes, vram_pool_bytes = next(iter(vram_pairs))
+            vram_percent = round(vram_bytes * 100 / vram_pool_bytes)
+            vram_status = "configured"
+        elif vram_pairs:
+            vram_bytes = vram_pool_bytes = vram_percent = None
+            vram_status = "varies"
+        else:
+            vram_bytes = vram_pool_bytes = vram_percent = None
+            vram_status = "unavailable"
+
         return {
+            "configured": contribution["configured"],
             "enabled": bool(active_models),
-            "gpu_name": str(contribution.get("gpu_name", "Your GPU")),
-            "gpu_memory_percent": percent,
-            "gpu_memory_total_bytes": total_bytes,
+            "intent_enabled": bool(selected_models),
+            "can_start": any(worker["can_start"] for worker in workers),
+            "can_pause": any(worker["desired_running"] for worker in workers),
             "active_models": active_models,
+            "selected_models": selected_models,
+            "blocked_reasons": blocked_reasons,
+            "selected_blocked_reasons": selected_blocked_reasons,
+            "vram_status": vram_status,
+            "vram_bytes": vram_bytes,
+            "vram_pool_bytes": vram_pool_bytes,
+            "vram_percent": vram_percent,
         }
 
     def worker_action(self, worker_id: str, action: str) -> Dict[str, Any]:

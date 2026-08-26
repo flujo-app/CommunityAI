@@ -102,6 +102,7 @@ def test_node_status_requires_auth_and_reports_lazy_model():
         assert body["runtime_budget"] == {"max_loaded_models": 1, "resident_models": 0}
         assert body["models"][0]["state"] == "known"
         assert body["models"][0]["aliases"] == ["tiny"]
+        assert body["contribution"] == {"schema_version": 1, "configured": False, "workers": []}
         assert loads == []
 
         response = client.post(
@@ -147,7 +148,33 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
             self.closed = False
 
         def snapshots(self):
-            return ({"id": "worker", "model": "model", "state": self.state},)
+            return (
+                {
+                    "id": "worker",
+                    "model": "model",
+                    "state": self.state,
+                    "desired_running": self.state == "running",
+                    "policy_admitted": True,
+                    "policy_reason": None,
+                    "preferred": True,
+                    "schedule_admitted": True,
+                    "schedule_reason": None,
+                    "schedule_suspended": False,
+                    "resource_admitted": True,
+                    "resource_reason": None,
+                    "resource_suspended": False,
+                    "max_disk_bytes": 100 * 1024**3,
+                    "max_vram_bytes": 4 * 1024**3,
+                    "vram_pool_bytes": 8 * 1024**3,
+                    "max_bandwidth_mbps": 100.0,
+                    "current_bandwidth_mbps": 12.5,
+                    "max_power_watts": 250.0,
+                    "current_power_watts": 125.0,
+                    "pid": 1234,
+                    "last_error": "private failure detail",
+                    "recent_logs": ["private worker log"],
+                },
+            )
 
         def snapshot(self, worker_id):
             assert worker_id == "worker"
@@ -186,6 +213,15 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
         assert client.get("/control/v1/workers").status_code == 401
         assert client.get("/control/v1/workers", headers={"Authorization": "Bearer client-secret"}).status_code == 401
         assert client.get("/control/v1/workers", headers=headers).json()["workers"][0]["state"] == "paused"
+        status = client.get("/control/v1/status", headers=headers).json()
+        assert status["workers"] == [{"id": "worker", "model": "model", "state": "paused", "desired_running": False}]
+        status_worker = status["contribution"]["workers"][0]
+        assert status_worker["policy"] == {"admitted": True, "reason": None, "preferred": True}
+        assert status_worker["resources"]["limits"]["vram_bytes"] == 4 * 1024**3
+        assert status_worker["resources"]["measurements"]["power_watts"] == 125.0
+        assert "pid" not in status_worker
+        assert "recent_logs" not in status_worker
+        assert "last_error" not in status_worker
         for action in ("start", "pause", "restart"):
             response = client.post(f"/control/v1/workers/worker/{action}", headers=headers)
             assert response.status_code == 200
