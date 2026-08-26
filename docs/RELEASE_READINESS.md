@@ -71,9 +71,9 @@ maximum estimate until actual cost is known.
 
 | Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| No new paid run recorded | — | — | USD 0 | USD 0 | — | READY |
+| gate4-20260826-a | GCP | Gate 4 immutable image builder: exact `cai-g4-20260826-a`, e2-standard-4, 200 GB pd-standard, at most 4 hours including network-egress contingency | USD 10 | — | Required: delete the exact instance and auto-delete boot disk; prove both absent | PLANNED |
 
-Remaining authorized maximum: **USD 100**, less any later unresolved maximum estimates
+Remaining authorized maximum: **USD 90**, less any later unresolved maximum estimates
 or observed new-resource cost recorded above.
 
 ## Evidence update rules
