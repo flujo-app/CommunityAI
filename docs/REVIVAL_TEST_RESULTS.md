@@ -1,6 +1,6 @@
 # Revival baseline results
 
-Test dates: 2026-08-21 through 2026-08-23
+Test dates: 2026-08-21 through 2026-08-26
 
 These tests exercise `Maykeye/TinyLLama-v0` as an eight-block model and compare
 greedy distributed generation with the stock Transformers implementation. The
@@ -16,6 +16,47 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
 | 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; and the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation | The release bootstrap and initial catalog are not published or bundled; qualified public manifests and workers, real packaged clean-install inference, cross-platform native-store package promotion, contribution policies and budgets, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+
+## Default-branch integration and Windows/Linux package CI
+
+On 2026-08-26, [PR #8](https://github.com/flujo-app/CommunityAI/pull/8)
+integrated the active revival work as
+[commit `22b5598`](https://github.com/flujo-app/CommunityAI/commit/22b559836fa5a4c9b228d87a823d1c99dc3939a9).
+The repository's style and Tests workflows passed before merge. The production desktop
+workflow built and smoked both Windows and Linux bundles. Its Windows job also passed
+the packaged node, native-credential, public-seed, authenticated-readiness, and owned
+shutdown smoke before uploading the unsigned evidence bundle.
+
+The Windows package run first exposed a same-event-loop named-pipe deadlock in the
+single-instance activation test. Replacing the blocking Qt waits with a bounded
+event-driven connection/write probe made both exact activation tests pass locally in
+0.49 seconds; the complete PySide desktop step then passed 45 tests plus the desktop
+self-test in 3.32 seconds, and the hosted Windows job passed in 10 minutes 57 seconds.
+The CI-listed offline selection on the integrated source passed 409 tests with 10
+expected skips before merge.
+
+## Public-alpha provider cost guard
+
+On 2026-08-26, the combined GCP/Fly ledger parser and cost guard passed 22
+deterministic tests. Coverage includes unresolved maximums, cleaned observed cost,
+missing cleanup-proof and malformed-placeholder rejection, shared-ceiling exhaustion,
+stale GCP pricing, unsafe identifiers, source-bound exact reservation matching, bounded
+atomic output, and the provider-specific plan contracts.
+
+A no-provider-call GCP plan resolved one isolated VPC/subnet/router/NAT/firewall and
+four exact Windows/Linux CPU/CUDA hosts. It uses no VM external addresses or service
+accounts, names every cleanup target, and rejects any plan containing
+`communityai-bootstrap-1`. Current on-demand N1, T4, Windows, and standard-disk
+rates produce approximately USD 3.36/hour. Fourteen hours plus 25 percent headroom
+and a USD 10 contingency round up to a USD 69 maximum, leaving USD 31 under the
+combined ceiling if reserved.
+
+The generated plan remained `provisioning_authorized=false` because no paid-run
+ledger row was added. No GCP or Fly resource was created and the ledger remains at
+USD 0. Native `flyctl` authentication is active, but the current environment has
+no stored `gcloud` account, so live project, image, accelerator, quota, and absence
+checks were not attempted. That GCP login is required before any ledger reservation
+or provisioning; deterministic preparation evidence is not hardware qualification.
 
 ## Desktop milestone: control authority separation
 

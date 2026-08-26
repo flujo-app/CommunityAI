@@ -20,6 +20,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   VRAM, bandwidth, power, and bounded pause behavior.
 - Provider-neutral separate-machine qualification controller and a Fly Machines adapter
   with selected-worker hard kill and fail-closed resource cleanup.
+- A fail-closed combined GCP/Fly qualification cost guard with a conservative USD 69
+  four-host GCP plan and exact isolated create, cleanup, and cleanup-verification targets.
 
 ### Changed
 
@@ -33,6 +35,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   administration token.
 - Production desktop CI now packages the public alpha on Windows and Linux only; macOS
   packaging remains explicitly deferred.
+- Windows desktop activation uses a bounded event-driven local-instance probe, avoiding
+  a named-pipe deadlock during startup and CI validation.
 - Root product messaging now describes public inference and optional compute sharing
   without claiming that credits, earnings, or spending already exist.
 
