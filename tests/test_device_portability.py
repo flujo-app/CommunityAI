@@ -5,6 +5,8 @@ These build a tiny Llama block on CPU (the reference) and re-run it on each avai
 machine with no accelerator every case is skipped, so the suite stays green in CPU-only CI while
 giving real coverage wherever a GPU exists. They need no swarm, network, or model download.
 """
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -14,6 +16,7 @@ from drift.utils.hardware import (
     get_device_name,
     get_device_total_memory,
     is_accelerator,
+    set_device_memory_limit,
     synchronize_device,
 )
 
@@ -94,6 +97,41 @@ def test_hardware_helpers_on_real_device(device_type):
     # these must not raise on a live device
     empty_device_cache(device)
     synchronize_device(device)
+
+
+def test_device_memory_limit_clamps_and_uses_indexed_backend(monkeypatch):
+    calls = []
+    backend = SimpleNamespace(set_per_process_memory_fraction=lambda fraction, device: calls.append((fraction, device)))
+    monkeypatch.setattr("drift.utils.hardware._backend", lambda device_type: backend)
+    monkeypatch.setattr("drift.utils.hardware.get_device_total_memory", lambda device: 1_000)
+
+    device = torch.device("cuda:2")
+    assert set_device_memory_limit(device, 2_000) == 1_000
+    assert calls == [(1.0, device)]
+
+
+def test_device_memory_limit_supports_mps_signature_and_recommended_memory(monkeypatch):
+    calls = []
+    backend = SimpleNamespace(
+        recommended_max_memory=lambda: 2_000,
+        set_per_process_memory_fraction=lambda fraction: calls.append(fraction),
+    )
+    monkeypatch.setattr("drift.utils.hardware._backend", lambda device_type: backend)
+
+    device = torch.device("mps")
+    assert get_device_total_memory(device) == 2_000
+    assert set_device_memory_limit(device, 500) == 500
+    assert calls == [0.25]
+
+
+def test_device_memory_limit_fails_closed_without_backend_support(monkeypatch):
+    monkeypatch.setattr("drift.utils.hardware._backend", lambda device_type: SimpleNamespace())
+    monkeypatch.setattr("drift.utils.hardware.get_device_total_memory", lambda device: 1_000)
+
+    with pytest.raises(RuntimeError, match="enforceable allocator"):
+        set_device_memory_limit(torch.device("xpu:0"), 500)
+    with pytest.raises(ValueError, match="require an accelerator"):
+        set_device_memory_limit(torch.device("cpu"), 500)
 
 
 @requires_accelerator

@@ -7,6 +7,7 @@ import math
 import sys
 from pathlib import Path
 
+import torch
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 
 import drift
@@ -23,6 +24,7 @@ from drift.node.native_credentials import (
     load_native_control_key,
 )
 from drift.node.worker_supervisor import WorkerLaunch, WorkerSupervisor
+from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
 use_hivemind_log_handler("in_root_logger")
@@ -242,6 +244,10 @@ def _build_worker_supervisor(
         raise NodeConfigError("contribution policy has an inconsistent max_disk_space value")
     if policy.sharing_enabled and policy.max_disk_bytes is None:
         raise NodeConfigError("contribution policy requires max_disk_space while sharing is enabled")
+    if (policy.max_vram is None) != (policy.max_vram_bytes is None and policy.max_vram_fraction is None) or (
+        policy.max_vram_bytes is not None and policy.max_vram_fraction is not None
+    ):
+        raise NodeConfigError("contribution policy has an inconsistent max_vram value")
 
     manifested_models = {}
     for model_config in config.models:
@@ -291,6 +297,39 @@ def _build_worker_supervisor(
             effective_disk_bytes = None
             effective_disk_space = None
 
+        if (worker.max_vram is None) != (worker.max_vram_bytes is None and worker.max_vram_fraction is None) or (
+            worker.max_vram_bytes is not None and worker.max_vram_fraction is not None
+        ):
+            raise NodeConfigError(f"worker {worker.worker_id!r} has an inconsistent max_vram value")
+        configured_device = normalize_device(torch.device(worker.device or auto_detect_device()))
+        policy_vram_limit = (policy.max_vram_bytes, policy.max_vram_fraction)
+        worker_vram_limit = (worker.max_vram_bytes, worker.max_vram_fraction)
+        effective_vram_bytes = None
+        policy_vram_bytes = None
+        vram_device = None
+        if is_accelerator(configured_device):
+            if policy.sharing_enabled and policy_vram_limit == (None, None):
+                raise NodeConfigError(
+                    f"accelerator worker {worker.worker_id!r} requires a finite contribution max_vram"
+                )
+            if policy_vram_limit != (None, None):
+                try:
+                    total_vram = get_device_total_memory(configured_device)
+                except Exception as exc:
+                    raise NodeConfigError(
+                        f"worker {worker.worker_id!r} cannot resolve max_vram for {configured_device}"
+                    ) from exc
+
+                def resolve_vram_limit(limit):
+                    size, fraction = limit
+                    return size if size is not None else math.floor(total_vram * fraction)
+
+                policy_vram_bytes = min(total_vram, resolve_vram_limit(policy_vram_limit))
+                effective_vram_bytes = policy_vram_bytes
+                if worker_vram_limit != (None, None):
+                    effective_vram_bytes = min(effective_vram_bytes, resolve_vram_limit(worker_vram_limit))
+                vram_device = str(configured_device)
+
         if getattr(sys, "frozen", False):
             # desktop/launch_node.py dispatches this mode inside the packaged
             # sidecar; a frozen executable cannot be reinvoked with ``-m``.
@@ -320,6 +359,8 @@ def _build_worker_supervisor(
             command.extend(("--cache_dir", str(cache_dir)))
         if effective_disk_space is not None:
             command.extend(("--max_disk_space", effective_disk_space))
+        if effective_vram_bytes is not None:
+            command.extend(("--max_device_memory", str(effective_vram_bytes)))
         if worker.port is not None:
             command.extend(("--port", str(worker.port)))
         if worker.public_ip is not None:
@@ -339,6 +380,9 @@ def _build_worker_supervisor(
                 policy_reason=policy_reason,
                 preferred=resolved_model in preferred_models,
                 max_disk_bytes=effective_disk_bytes,
+                max_vram_bytes=effective_vram_bytes,
+                vram_device=vram_device,
+                vram_pool_bytes=policy_vram_bytes,
                 environment=(("HF_TOKEN", token),) if token is not None else (),
             )
         )

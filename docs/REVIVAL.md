@@ -742,7 +742,12 @@ implementation.
    available IANA timezone windows; auto-start defers while closed, running workers stop
    within the policy timeout, desired intent survives the suspension, and workers resume
    when the window reopens without treating the transition as a crash. Manual start and
-   restart fail closed outside the window. VRAM, bandwidth, and power budgets remain open.
+   restart fail closed outside the window. The node now also accepts an absolute or percentage
+   VRAM ceiling, resolves the tighter policy/worker limit against the selected accelerator,
+   reserves one aggregate pool per device across supervised workers, applies a hard child
+   allocator ceiling before accelerator probes, and fails fixed or movable block selections
+   whose layer-aware weight and KV-cache envelope exceeds it. Bandwidth and power budgets,
+   plus real packaged cross-platform VRAM validation, remain open.
 
    The strict signed-catalog foundation is now implemented separately from worker
    identity: offline Ed25519 roots enforce configurable signature thresholds, expiry,
@@ -876,8 +881,9 @@ implementation.
    clean-install inference and prove the native credential and owned-process path against real
    packaged Windows, Linux, and macOS credential backends. After that, validate the
    source-complete single-instance and login-startup behavior in each packaged OS,
-   feed privacy-safe peer-region observations into the region view, enforce the remaining
-   VRAM, bandwidth, and power budgets in the node rather than only in the GUI,
+   feed privacy-safe peer-region observations into the region view, validate VRAM enforcement
+   against real packaged accelerators, and enforce the remaining bandwidth and power budgets
+   in the node rather than only in the GUI,
    and complete resource, accessibility, signed installer, upgrade, rollback,
    uninstall, and retained-data gates on all three operating systems.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple

@@ -43,6 +43,9 @@ class WorkerLaunch:
     policy_reason: Optional[str] = None
     preferred: bool = False
     max_disk_bytes: Optional[int] = None
+    max_vram_bytes: Optional[int] = None
+    vram_device: Optional[str] = None
+    vram_pool_bytes: Optional[int] = None
     environment: Tuple[Tuple[str, str], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
@@ -58,6 +61,19 @@ class WorkerLaunch:
             isinstance(self.max_disk_bytes, bool) or not isinstance(self.max_disk_bytes, int) or self.max_disk_bytes < 1
         ):
             raise ValueError("worker max_disk_bytes must be a positive integer")
+        if self.max_vram_bytes is not None and (
+            isinstance(self.max_vram_bytes, bool) or not isinstance(self.max_vram_bytes, int) or self.max_vram_bytes < 1
+        ):
+            raise ValueError("worker max_vram_bytes must be a positive integer")
+        vram_fields = (self.max_vram_bytes, self.vram_device, self.vram_pool_bytes)
+        if any(value is not None for value in vram_fields) and not all(value is not None for value in vram_fields):
+            raise ValueError("worker VRAM reservation fields must be configured together")
+        if self.vram_pool_bytes is not None and (
+            isinstance(self.vram_pool_bytes, bool)
+            or not isinstance(self.vram_pool_bytes, int)
+            or self.vram_pool_bytes < self.max_vram_bytes
+        ):
+            raise ValueError("worker vram_pool_bytes must cover its reservation")
         if any(not name or not isinstance(name, str) or not isinstance(value, str) for name, value in self.environment):
             raise ValueError("worker environment names and values must be strings")
 
@@ -74,6 +90,7 @@ class _WorkerRecord:
     restart_count: int = 0
     next_restart_at: float = 0.0
     schedule_suspended: bool = False
+    resource_suspended: bool = False
     schedule_stop_thread: Optional[threading.Thread] = field(default=None, repr=False)
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
 
@@ -137,7 +154,29 @@ class WorkerSupervisor:
             return False, "outside the configured contribution schedule"
         return True, None
 
-    def _spawn_locked(self, record: _WorkerRecord, *, defer_outside_schedule: bool = False) -> bool:
+    def _vram_status_locked(self, record: _WorkerRecord) -> Tuple[bool, Optional[str]]:
+        launch = record.launch
+        if launch.max_vram_bytes is None:
+            return True, None
+        reserved = sum(
+            other.launch.max_vram_bytes
+            for other in self._records.values()
+            if other is not record
+            and other.launch.vram_device == launch.vram_device
+            and other.process is not None
+            and other.process.poll() is None
+        )
+        if reserved + launch.max_vram_bytes > launch.vram_pool_bytes:
+            return False, f"VRAM budget is already reserved on {launch.vram_device}"
+        return True, None
+
+    def _spawn_locked(
+        self,
+        record: _WorkerRecord,
+        *,
+        defer_outside_schedule: bool = False,
+        defer_unavailable_vram: bool = False,
+    ) -> bool:
         if not record.launch.policy_admitted:
             record.desired_running = False
             raise WorkerPolicyError(record.launch.policy_reason)
@@ -149,6 +188,14 @@ class WorkerSupervisor:
                 return False
             record.desired_running = False
             raise WorkerPolicyError(schedule_reason)
+        vram_admitted, vram_reason = self._vram_status_locked(record)
+        if not vram_admitted:
+            record.state = WorkerState.PAUSED
+            record.resource_suspended = defer_unavailable_vram and record.desired_running
+            if defer_unavailable_vram:
+                return False
+            record.desired_running = False
+            raise WorkerPolicyError(vram_reason)
         if self._closed:
             raise RuntimeError("worker supervisor is closed")
         if record.process is not None and record.process.poll() is None:
@@ -182,6 +229,7 @@ class WorkerSupervisor:
         record.process = process
         record.state = WorkerState.RUNNING
         record.schedule_suspended = False
+        record.resource_suspended = False
         record.last_error = None
         record.last_exit_code = None
         record.started_at = time.time()
@@ -286,7 +334,15 @@ class WorkerSupervisor:
                             continue
                         record.schedule_suspended = False
                         if record.desired_running:
-                            self._spawn_locked(record)
+                            self._spawn_locked(record, defer_unavailable_vram=True)
+                        continue
+                    if record.resource_suspended:
+                        vram_admitted, _ = self._vram_status_locked(record)
+                        if not vram_admitted:
+                            continue
+                        record.resource_suspended = False
+                        if record.desired_running:
+                            self._spawn_locked(record, defer_unavailable_vram=True)
                         continue
                     if (
                         record.desired_running
@@ -294,7 +350,7 @@ class WorkerSupervisor:
                         and record.launch.auto_restart
                         and time.monotonic() >= record.next_restart_at
                     ):
-                        self._spawn_locked(record)
+                        self._spawn_locked(record, defer_unavailable_vram=True)
 
     def start_service(self) -> None:
         with self._lock:
@@ -305,7 +361,11 @@ class WorkerSupervisor:
             self._started = True
             for record in self._records.values():
                 if record.desired_running:
-                    self._spawn_locked(record, defer_outside_schedule=True)
+                    self._spawn_locked(
+                        record,
+                        defer_outside_schedule=True,
+                        defer_unavailable_vram=True,
+                    )
             self._monitor = threading.Thread(
                 target=self._monitor_loop,
                 name="drift-worker-supervisor",
@@ -336,6 +396,7 @@ class WorkerSupervisor:
         with self._lock:
             record.desired_running = False
             record.schedule_suspended = False
+            record.resource_suspended = False
             schedule_stop_thread = record.schedule_stop_thread
             process = None if schedule_stop_thread is not None else record.process
             if process is None and schedule_stop_thread is None:
@@ -379,6 +440,7 @@ class WorkerSupervisor:
             result = []
             for record in sorted(self._records.values(), key=lambda item: item.launch.worker_id.casefold()):
                 self._refresh_locked(record)
+                resource_admitted, resource_reason = self._vram_status_locked(record)
                 result.append(
                     {
                         "id": record.launch.worker_id,
@@ -391,8 +453,13 @@ class WorkerSupervisor:
                         "schedule_admitted": schedule_admitted,
                         "schedule_reason": schedule_reason,
                         "schedule_suspended": record.schedule_suspended,
+                        "resource_admitted": resource_admitted,
+                        "resource_reason": resource_reason,
+                        "resource_suspended": record.resource_suspended,
                         "preferred": record.launch.preferred,
                         "max_disk_bytes": record.launch.max_disk_bytes,
+                        "max_vram_bytes": record.launch.max_vram_bytes,
+                        "vram_pool_bytes": record.launch.vram_pool_bytes,
                         "pid": record.process.pid if record.process is not None else None,
                         "started_at": record.started_at,
                         "restart_count": record.restart_count,
@@ -429,6 +496,7 @@ class WorkerSupervisor:
             for record in records:
                 record.desired_running = False
                 record.schedule_suspended = False
+                record.resource_suspended = False
             schedule_stop_threads = {
                 id(record): record.schedule_stop_thread for record in records if record.schedule_stop_thread is not None
             }

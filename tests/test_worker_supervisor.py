@@ -192,3 +192,39 @@ def test_manual_start_fails_closed_outside_contribution_schedule():
     assert snapshot["pid"] is None
     assert snapshot["schedule_admitted"] is False
     supervisor.shutdown()
+
+
+def test_vram_pool_defers_second_worker_until_first_releases_reservation():
+    command = (sys.executable, "-c", "import time; time.sleep(30)")
+    launches = [
+        WorkerLaunch(
+            f"gpu-worker-{index}",
+            "model",
+            command,
+            auto_start=True,
+            auto_restart=False,
+            max_vram_bytes=60,
+            vram_device="cuda:0",
+            vram_pool_bytes=100,
+        )
+        for index in range(2)
+    ]
+    supervisor = WorkerSupervisor(launches, stop_timeout=2, poll_period=0.01)
+    supervisor.start_service()
+
+    _wait_for(lambda: supervisor.snapshot("gpu-worker-0")["state"] == WorkerState.RUNNING.value)
+    blocked = supervisor.snapshot("gpu-worker-1")
+    assert blocked["state"] == WorkerState.PAUSED.value
+    assert blocked["desired_running"] is True
+    assert blocked["resource_admitted"] is False
+    assert blocked["resource_suspended"] is True
+    assert blocked["resource_reason"] == "VRAM budget is already reserved on cuda:0"
+
+    supervisor.pause_worker("gpu-worker-0")
+    _wait_for(lambda: supervisor.snapshot("gpu-worker-1")["state"] == WorkerState.RUNNING.value)
+    resumed = supervisor.snapshot("gpu-worker-1")
+    assert resumed["resource_admitted"] is True
+    assert resumed["resource_suspended"] is False
+    assert resumed["max_vram_bytes"] == 60
+    assert resumed["vram_pool_bytes"] == 100
+    supervisor.shutdown()

@@ -86,12 +86,36 @@ def supports_dtype(device: torch.device, dtype: torch.dtype) -> Optional[str]:
 
 
 def get_device_total_memory(device: torch.device) -> int:
-    """Total memory (bytes) of a GPU-like device; falls back to system RAM for cpu/mps."""
+    """Total usable memory in bytes; MPS reports its recommended working-set ceiling."""
     if device.type in _PROPERTIES_TYPES:
         return _backend(device.type).get_device_properties(device).total_memory
+    if device.type == "mps":
+        recommended_max_memory = getattr(_backend(device.type), "recommended_max_memory", None)
+        if recommended_max_memory is not None:
+            return int(recommended_max_memory())
     import psutil
 
     return psutil.virtual_memory().total
+
+
+def set_device_memory_limit(device: torch.device, max_bytes: int) -> int:
+    """Apply a hard allocator ceiling and return the effective per-device byte limit."""
+    if not is_accelerator(device):
+        raise ValueError("device-memory limits require an accelerator")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+        raise ValueError("device-memory limit must be a positive integer")
+
+    total_memory = get_device_total_memory(device)
+    effective_limit = min(max_bytes, total_memory)
+    setter = getattr(_backend(device.type), "set_per_process_memory_fraction", None)
+    if setter is None:
+        raise RuntimeError(f"{device.type.upper()} does not expose an enforceable allocator memory limit")
+    fraction = effective_limit / total_memory
+    try:
+        setter(fraction, device)
+    except TypeError:
+        setter(fraction)
+    return effective_limit
 
 
 def get_device_capability(device: torch.device) -> Optional[Tuple]:

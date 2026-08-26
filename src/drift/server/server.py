@@ -51,6 +51,7 @@ from drift.utils.hardware import (
     get_memory_stats,
     is_accelerator,
     normalize_device,
+    set_device_memory_limit,
     supports_dtype,
 )
 from drift.utils.kv_cache import StandardGQACache
@@ -60,6 +61,16 @@ from drift.utils.random import sample_up_to
 from drift.utils.version import get_compatible_model_repo
 
 logger = get_logger(__name__)
+
+
+def parse_block_indices(value: str, num_hidden_layers: int) -> range:
+    try:
+        start_block, end_block = [int(index.strip()) for index in value.split(":")]
+    except Exception as exc:
+        raise ValueError(f"Failed to parse `--block_indices {value}`, must be start:end (e.g. 0:18)") from exc
+    if not 0 <= start_block < end_block <= num_hidden_layers:
+        raise ValueError(f"--block_indices must select a non-empty range within 0:{num_hidden_layers}")
+    return range(start_block, end_block)
 
 
 def _probe_quantization(quant_type: QuantType, device: torch.device) -> Optional[str]:
@@ -113,6 +124,7 @@ class Server:
         revocation_files: Sequence[str] = (),
         cache_dir: Optional[str] = None,
         max_disk_space: Optional[int] = None,
+        max_device_memory: Optional[int] = None,
         device: Optional[Union[str, torch.device]] = None,
         compression=CompressionType.NONE,
         stats_report_interval: Optional[int] = None,
@@ -257,6 +269,26 @@ class Server:
         device = normalize_device(torch.device(device))
         self.device = device
 
+        if tensor_parallel_devices is None:
+            tensor_parallel_devices = (device,)
+        self.tensor_parallel_devices = tuple(map(torch.device, tensor_parallel_devices))
+        if len(self.tensor_parallel_devices) > 1:
+            logger.info(f"Model weights will be split between {', '.join(map(str, self.tensor_parallel_devices))}")
+            check_device_balance(self.tensor_parallel_devices)
+
+        # Install allocator ceilings before dtype/quantization probes can allocate accelerator tensors.
+        self.device_memory_limits: Optional[tuple[int, ...]] = None
+        if max_device_memory is not None:
+            if any(not is_accelerator(item) for item in self.tensor_parallel_devices):
+                raise ValueError("--max_device_memory requires accelerator-backed server blocks")
+            self.device_memory_limits = tuple(
+                set_device_memory_limit(item, max_device_memory) for item in self.tensor_parallel_devices
+            )
+            logger.info(
+                "Enforcing a %.2f GiB memory ceiling on each accelerator",
+                min(self.device_memory_limits) / 1024**3,
+            )
+
         torch_dtype = resolve_block_dtype(self.block_config, DTYPE_MAP[torch_dtype])
         dtype_error = supports_dtype(device, torch_dtype)
         if dtype_error is not None:
@@ -266,13 +298,6 @@ class Server:
             else:
                 raise ValueError(f"{dtype_error}. Please use a different --torch_dtype")
         self.torch_dtype = torch_dtype
-
-        if tensor_parallel_devices is None:
-            tensor_parallel_devices = (device,)
-        self.tensor_parallel_devices = tuple(map(torch.device, tensor_parallel_devices))
-        if len(self.tensor_parallel_devices) > 1:
-            logger.info(f"Model weights will be split between {', '.join(tensor_parallel_devices)}")
-            check_device_balance(self.tensor_parallel_devices)
 
         explicitly_requested_quant = quant_type is not None
         if quant_type is None:
@@ -321,26 +346,60 @@ class Server:
             )
             for block_index in range(self.block_config.num_hidden_layers)
         ]
+        self._cache_bytes_by_block = tuple(cache_bytes_by_block)
         self._cache_bytes_per_block = max(cache_bytes_by_block)
 
         # For disk cache
         self.cache_dir = cache_dir
         self.max_disk_space = max_disk_space
         self.adapters = adapters
+        self._block_memory_bytes_by_block = tuple(
+            get_block_size(
+                self.block_config,
+                "memory",
+                dtype=self.torch_dtype,
+                quant_type=self.quant_type,
+                layer_idx=block_index,
+            )
+            + self._cache_bytes_by_block[block_index]
+            for block_index in range(self.block_config.num_hidden_layers)
+        )
+        self._adapter_memory_per_block = 0
+        if self.adapters:
+            from drift.utils.peft import estimate_adapter_memory_per_block
+
+            self._adapter_memory_per_block = estimate_adapter_memory_per_block(
+                self.block_config,
+                self.torch_dtype,
+                self.adapters,
+                token=self.token,
+                cache_dir=self.cache_dir,
+                max_disk_space=self.max_disk_space,
+            )
 
         assert num_blocks is None or block_indices is None, "Please specify num_blocks or block_indices, not both"
         if num_blocks is None and block_indices is None:
             num_blocks = self._choose_num_blocks()
-        if num_blocks is not None:
-            num_blocks = min(num_blocks, self.block_config.num_hidden_layers)
+        if num_blocks is not None and (
+            isinstance(num_blocks, bool)
+            or not isinstance(num_blocks, int)
+            or not 1 <= num_blocks <= self.block_config.num_hidden_layers
+        ):
+            raise ValueError(f"--num_blocks must be between 1 and {self.block_config.num_hidden_layers}")
         if block_indices is not None:
-            try:
-                start_block, end_block = [int(index.strip()) for index in block_indices.split(":")]
-            except Exception as e:
-                raise ValueError(f"Failed to parse `--block_indices {block_indices}`, must be start:end (e.g. 0:18)")
-            block_indices = range(start_block, end_block)
+            block_indices = parse_block_indices(block_indices, self.block_config.num_hidden_layers)
             num_blocks = len(block_indices)
         self.strict_block_indices, self.num_blocks = block_indices, num_blocks
+
+        if self.device_memory_limits is not None:
+            required_memory = self._estimate_device_memory(num_blocks, block_indices)
+            available_memory = min(self.device_memory_limits) * len(self.device_memory_limits)
+            if required_memory > available_memory:
+                raise ValueError(
+                    "Configured blocks require an estimated "
+                    f"{required_memory / 1024**3:.2f} GiB, exceeding the enforced "
+                    f"--max_device_memory budget of {available_memory / 1024**3:.2f} GiB"
+                )
 
         gib = 1024**3
         self.attn_cache_bytes = (
@@ -433,6 +492,17 @@ class Server:
                 f"--quant_type across all servers."
             )
 
+    def _estimate_device_memory(self, num_blocks: int, block_indices: Optional[Sequence[int]] = None) -> int:
+        num_devices = len(self.tensor_parallel_devices)
+        gib = 1024**3
+        autograd_memory = 2 * gib * num_devices / 14336 * self.block_config.hidden_size
+        block_memory = (
+            sum(self._block_memory_bytes_by_block[index] for index in block_indices)
+            if block_indices is not None
+            else sum(sorted(self._block_memory_bytes_by_block, reverse=True)[:num_blocks])
+        )
+        return math.ceil(autograd_memory + block_memory + num_blocks * self._adapter_memory_per_block)
+
     def _choose_num_blocks(self) -> int:
         assert is_accelerator(self.device), (
             "GPU is not available. If you want to run a CPU-only server, please specify --num_blocks. "
@@ -443,6 +513,10 @@ class Server:
         if num_devices > 1:
             assert self.device.type == "cuda", f"Tensor parallelism is not supported on {self.device.type.upper()}"
             memory_per_device = tuple(get_device_total_memory(device) for device in self.tensor_parallel_devices)
+            if self.device_memory_limits is not None:
+                memory_per_device = tuple(
+                    min(available, limit) for available, limit in zip(memory_per_device, self.device_memory_limits)
+                )
             total_memory = min(memory_per_device) * num_devices
             if max(memory_per_device) / min(memory_per_device) > 1.5:
                 raise ValueError(
@@ -452,30 +526,15 @@ class Server:
                 )
         else:
             total_memory = get_device_total_memory(self.device)
+            if self.device_memory_limits is not None:
+                total_memory = min(total_memory, self.device_memory_limits[0])
 
-        gib = 1024**3
-        # Estimate of GPU memory used in rpc_backward (2 GiB for BLOOM, proportional for other models)
-        autograd_memory = 2 * gib * num_devices / 14336 * self.block_config.hidden_size
-
-        block_size = get_block_size(self.block_config, "memory", dtype=self.torch_dtype, quant_type=self.quant_type)
-        total_memory_per_block = block_size + self._cache_bytes_per_block
-        if self.adapters:
-            # Delay import of drift.utils.peft to avoid unnecessary import of bitsandbytes
-            from drift.utils.peft import estimate_adapter_memory_per_block
-
-            total_memory_per_block += estimate_adapter_memory_per_block(
-                self.block_config,
-                self.torch_dtype,
-                self.adapters,
-                token=self.token,
-                cache_dir=self.cache_dir,
-                max_disk_space=self.max_disk_space,
-            )
-
-        num_blocks = math.floor((total_memory - autograd_memory) / total_memory_per_block)
-        assert num_blocks >= 1, "Your GPU does not have enough memory to serve at least one block"
-
-        num_blocks = min(num_blocks, self.block_config.num_hidden_layers)
+        num_blocks = 0
+        for candidate in range(1, self.block_config.num_hidden_layers + 1):
+            if self._estimate_device_memory(candidate) > total_memory:
+                break
+            num_blocks = candidate
+        assert num_blocks >= 1, "Your accelerator does not have enough memory to serve at least one block"
         logger.info(
             f"Server will fill your GPU memory with {num_blocks} transformer blocks. "
             f"If you want to leave some free GPU memory, please specify a lesser --num_blocks manually"

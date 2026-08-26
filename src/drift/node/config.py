@@ -95,6 +95,20 @@ def _require_size(value: Any, field: str) -> Tuple[str, int]:
     return raw, size
 
 
+def _require_vram_limit(value: Any, field: str) -> Tuple[str, Optional[int], Optional[float]]:
+    raw = _require_string(value, field)
+    if raw.endswith("%"):
+        try:
+            percent = float(raw[:-1].strip())
+        except ValueError as exc:
+            raise NodeConfigError(f"{field} must be a positive byte size or percentage up to 100%") from exc
+        if not math.isfinite(percent) or not 0 < percent <= 100:
+            raise NodeConfigError(f"{field} must be a positive byte size or percentage up to 100%")
+        return raw, None, percent / 100
+    raw, size = _require_size(raw, field)
+    return raw, size, None
+
+
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
@@ -240,6 +254,9 @@ class ContributionPolicyConfig:
     denied_models: Tuple[str, ...] = ()
     max_disk_space: Optional[str] = None
     max_disk_bytes: Optional[int] = None
+    max_vram: Optional[str] = None
+    max_vram_bytes: Optional[int] = None
+    max_vram_fraction: Optional[float] = None
     pause_timeout: float = 10.0
     schedule: Optional[ContributionScheduleConfig] = None
 
@@ -256,6 +273,7 @@ class ContributionPolicyConfig:
                 "preferred_models",
                 "denied_models",
                 "max_disk_space",
+                "max_vram",
                 "pause_timeout",
                 "schedule",
             ),
@@ -275,6 +293,13 @@ class ContributionPolicyConfig:
             max_disk_bytes = None
         else:
             max_disk_space, max_disk_bytes = _require_size(max_disk_value, f"{field}.max_disk_space")
+        max_vram_value = source.get("max_vram")
+        if max_vram_value is None:
+            max_vram = None
+            max_vram_bytes = None
+            max_vram_fraction = None
+        else:
+            max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
         sharing_enabled = _require_bool(source["sharing_enabled"], f"{field}.sharing_enabled")
         if sharing_enabled and max_disk_bytes is None:
             raise NodeConfigError(f"{field}.max_disk_space is required when sharing_enabled is true")
@@ -285,6 +310,9 @@ class ContributionPolicyConfig:
             denied_models=denied,
             max_disk_space=max_disk_space,
             max_disk_bytes=max_disk_bytes,
+            max_vram=max_vram,
+            max_vram_bytes=max_vram_bytes,
+            max_vram_fraction=max_vram_fraction,
             pause_timeout=_require_positive_number(source.get("pause_timeout", 10), f"{field}.pause_timeout"),
             schedule=(
                 None if source.get("schedule") is None else ContributionScheduleConfig.from_dict(source["schedule"])
@@ -308,6 +336,9 @@ class WorkerConfig:
     cache_dir: Optional[Path] = None
     max_disk_space: Optional[str] = None
     max_disk_bytes: Optional[int] = None
+    max_vram: Optional[str] = None
+    max_vram_bytes: Optional[int] = None
+    max_vram_fraction: Optional[float] = None
     throughput: float | str = "auto"
     port: Optional[int] = None
     public_ip: Optional[str] = None
@@ -329,6 +360,7 @@ class WorkerConfig:
                 "device",
                 "cache_dir",
                 "max_disk_space",
+                "max_vram",
                 "throughput",
                 "port",
                 "public_ip",
@@ -376,6 +408,13 @@ class WorkerConfig:
             max_disk_bytes = None
         else:
             max_disk_space, max_disk_bytes = _require_size(max_disk_value, f"{field}.max_disk_space")
+        max_vram_value = source.get("max_vram")
+        if max_vram_value is None:
+            max_vram = None
+            max_vram_bytes = None
+            max_vram_fraction = None
+        else:
+            max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
         return cls(
             worker_id=worker_id,
             model=_require_string(source["model"], f"{field}.model"),
@@ -389,6 +428,9 @@ class WorkerConfig:
             cache_dir=None if cache_value is None else _resolve_path(cache_value, f"{field}.cache_dir", base_dir),
             max_disk_space=max_disk_space,
             max_disk_bytes=max_disk_bytes,
+            max_vram=max_vram,
+            max_vram_bytes=max_vram_bytes,
+            max_vram_fraction=max_vram_fraction,
             throughput=throughput,
             port=port,
             public_ip=optional_string("public_ip"),

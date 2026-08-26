@@ -31,6 +31,7 @@ registration does not download tokenizers or client-side weights.
     "preferred_models": ["tinyllama"],
     "denied_models": [],
     "max_disk_space": "20GiB",
+    "max_vram": "50%",
     "pause_timeout": 10,
     "schedule": {
       "timezone": "local",
@@ -48,9 +49,10 @@ registration does not download tokenizers or client-side weights.
       "enabled": false,
       "auto_restart": true,
       "restart_backoff": 5,
-      "device": "cpu",
+      "device": "cuda:0",
       "cache_dir": "worker-cache/tinyllama",
       "max_disk_space": "8GiB",
+      "max_vram": "6GiB",
       "throughput": 1.0,
       "port": 31337
     }
@@ -68,7 +70,7 @@ Workers reference a configured model by name, alias, or manifest digest and run 
 isolated `drift server` child processes. Each declares exactly one of `num_blocks`
 or an explicit `block_indices` range such as `0:4`. Worker IDs are unique. Optional
 fields configure enabled-at-start, automatic crash restart, the restart delay,
-device, cache/disk limits, throughput, port, and public address. A worker failure
+device, cache/disk/VRAM limits, throughput, port, and public address. A worker failure
 does not stop the node API.
 
 Contribution is fail-closed: omitting `contribution_policy` leaves sharing disabled,
@@ -81,6 +83,19 @@ allow/prefer/deny selector must resolve to a configured exact model. A nonempty
 happens before worker launch, so changing between a name, alias, or manifest digest
 cannot bypass policy.
 
+For accelerator workers, an enabled policy also requires a finite `max_vram`.
+The value is either an absolute byte size such as `8GiB` or a percentage of the
+selected accelerator's usable memory such as `50%`. A worker inherits that ceiling
+or its own smaller `max_vram`. Percentages are resolved before launch, the supervisor
+accounts all running worker reservations against one node-wide pool per normalized
+device, and a second worker waits or a manual start fails with HTTP 409 when its
+reservation would exceed the pool. The child server receives the resolved per-process
+byte ceiling before its first accelerator allocation, applies the backend allocator
+limit, sizes movable blocks against the largest per-layer footprints, and rejects
+fixed ranges whose exact layer weights and KV caches exceed the ceiling. Tensor-parallel
+servers apply the byte ceiling to each participating accelerator. CPU workers do not
+consume this VRAM pool.
+
 An optional weekly `schedule` is authoritative in the node supervisor. `timezone`
 may be `local`, `UTC`, or an IANA timezone available to the runtime. Windows
 installations can always use `local` or `UTC` without an added timezone database.
@@ -90,8 +105,9 @@ the window starts. Configured auto-start is deferred outside the schedule. When 
 window closes, a running worker is terminated within `pause_timeout` while its
 desired-running intent is retained, and it resumes when the window reopens even when
 crash auto-restart is disabled. A manual start or restart outside the schedule fails
-with HTTP 409; pause remains available. VRAM, bandwidth, and power limits are not yet
-authoritative in this schema.
+with HTTP 409; pause remains available. Bandwidth and power limits are not yet
+authoritative in this schema; VRAM still requires validation against real packaged
+accelerator workers on every supported OS.
 
 The parser rejects unknown fields, duplicate JSON keys, non-finite numbers,
 duplicate manifest paths, empty peer sets, and invalid resource limits. Every

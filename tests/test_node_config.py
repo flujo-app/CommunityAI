@@ -444,3 +444,107 @@ def test_max_loaded_models_override_preserves_contribution_policy(monkeypatch, t
 
     assert overridden.max_loaded_models == 2
     assert overridden.contribution_policy is configured.contribution_policy
+
+
+def test_contribution_policy_parses_absolute_and_percentage_vram_limits():
+    absolute = ContributionPolicyConfig.from_dict(
+        {"sharing_enabled": True, "max_disk_space": "1GiB", "max_vram": "8GiB"}
+    )
+    assert absolute.max_vram == "8GiB"
+    assert absolute.max_vram_bytes == 8 * 1024**3
+    assert absolute.max_vram_fraction is None
+
+    percentage = ContributionPolicyConfig.from_dict(
+        {"sharing_enabled": True, "max_disk_space": "1GiB", "max_vram": "62.5%"}
+    )
+    assert percentage.max_vram == "62.5%"
+    assert percentage.max_vram_bytes is None
+    assert percentage.max_vram_fraction == 0.625
+
+
+@pytest.mark.parametrize("value", ["0%", "-1%", "100.1%", "NaN%", "Infinity%", "not-a-limit"])
+def test_contribution_policy_rejects_invalid_vram_limits(value):
+    with pytest.raises(NodeConfigError, match="max_vram"):
+        ContributionPolicyConfig.from_dict(
+            {
+                "sharing_enabled": True,
+                "max_disk_space": "1GiB",
+                "max_vram": value,
+            }
+        )
+
+
+def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    monkeypatch.setattr("drift.cli.run_node.get_device_total_memory", lambda device: 16 * 1024**3)
+    config = NodeConfig.from_dict(
+        _config_dict(
+            models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+            workers=[
+                {
+                    "id": "gpu-worker",
+                    "model": manifest.name,
+                    "identity_path": "worker.key",
+                    "num_blocks": 2,
+                    "device": "cuda:0",
+                    "max_vram": "8GiB",
+                }
+            ],
+            contribution_policy={
+                "sharing_enabled": True,
+                "max_disk_space": "1GiB",
+                "max_vram": "75%",
+            },
+        ),
+        base_dir=tmp_path,
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+    supervisor = _build_worker_supervisor(config, manager)
+    launch = supervisor.launches[0]
+
+    assert launch.max_vram_bytes == 8 * 1024**3
+    assert launch.vram_pool_bytes == 12 * 1024**3
+    assert launch.vram_device == "cuda:0"
+    assert launch.command[launch.command.index("--max_device_memory") + 1] == str(8 * 1024**3)
+    assert supervisor.snapshot("gpu-worker")["max_vram_bytes"] == 8 * 1024**3
+
+    supervisor.shutdown()
+    manager.shutdown()
+
+
+def test_accelerator_worker_requires_node_wide_vram_pool(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    config = NodeConfig.from_dict(
+        _config_dict(
+            models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+            workers=[
+                {
+                    "id": "gpu-worker",
+                    "model": manifest.name,
+                    "identity_path": "worker.key",
+                    "num_blocks": 2,
+                    "device": "cuda:0",
+                }
+            ],
+            contribution_policy={"sharing_enabled": True, "max_disk_space": "1GiB"},
+        ),
+        base_dir=tmp_path,
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+
+    with pytest.raises(NodeConfigError, match="requires a finite contribution max_vram"):
+        _build_worker_supervisor(config, manager)
+
+    manager.shutdown()

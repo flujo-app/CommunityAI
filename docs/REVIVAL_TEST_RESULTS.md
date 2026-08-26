@@ -676,6 +676,24 @@ skips. The combined catalog, builder, and startup slice reports 48 passes and tw
 and Black plus isort accept all eight changed Python files. Packaged Windows, Linux, and
 macOS login/activation validation remains open.
 
+On 2026-08-26, the authoritative contribution policy gained a bounded VRAM
+slice. `max_vram` accepts a positive byte size or percentage, worker overrides can
+only tighten the resolved cap, and accelerator contribution fails closed without a
+node-wide pool. The supervisor accounts live reservations per normalized device, so
+multiple child allocator ceilings cannot collectively exceed the policy; deferred
+auto-start resumes after a reservation is released while a conflicting manual start
+returns the existing policy conflict. The child server applies CUDA/MPS-compatible
+allocator ceilings before its first quantization probe, uses MPS recommended memory
+for percentage resolution, treats the CLI ceiling as per accelerator under tensor
+parallelism, and rejects explicit or movable block sets whose layer-aware weights,
+KV caches, adapter allowance, and autograd reserve exceed the cap. Invalid negative,
+empty, reversed, and out-of-model block ranges now fail before loading. The focused
+node, supervisor, device-portability, server-budget, and manifest run passes 80 tests
+with three expected unavailable-accelerator skips. Black and isort accept all eleven
+changed Python files. This is deterministic source enforcement; real packaged
+accelerator behavior remains an OS release gate, and bandwidth/power controls remain
+open.
+
 ## Follow-up issues
 
 1. Provision and register the six uniquely labelled qualification hosts, configure the
@@ -685,8 +703,8 @@ macOS login/activation validation remains open.
 2. Exercise the changed-boundary replacement route in the controlled separate-machine
    interruption gate; beam-search recovery needs a reorder-aware activation history before
    it can be enabled safely.
-3. Enforce the remaining VRAM, bandwidth, and power budgets authoritatively in the
-   node, connect the schedule policy to packaged controls, and validate every budget
+3. Enforce the remaining bandwidth and power budgets authoritatively in the node,
+   connect the schedule and VRAM policy to packaged controls, and validate every budget
    against real OS resource behavior.
 
 Resolved on 2026-08-22: the native hosted macOS security/parity workflow is green;
