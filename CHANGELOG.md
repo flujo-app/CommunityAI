@@ -30,6 +30,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   source-bound tags, credential-free offline runtime inputs, provenance/SBOM push plans,
   and in-image source, Dockerfile, manifest, byte-inventory, and artifact re-verification
   for Qwen3.5 2B and Gemma 4 E2B.
+- Fail-closed qualification-image publication evidence that binds Buildx metadata to an
+  immutable GHCR index, exact Linux runtime, SLSA provenance, SPDX SBOM, contract labels,
+  every compressed layer, measured uncompressed size, and a bounded Fly rootfs plan.
 - A public-alpha operations runbook with privacy-safe aggregate health reconstruction,
   finite admission defaults, rollout stop conditions, and reversible disable/rollback
   steps.

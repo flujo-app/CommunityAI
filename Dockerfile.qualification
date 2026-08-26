@@ -12,6 +12,7 @@ ARG SOURCE_TREE_DIGEST
 ARG DOCKERFILE_DIGEST
 
 LABEL org.opencontainers.image.title="CommunityAI qualification runtime" \
+      org.opencontainers.image.source="https://github.com/flujo-app/CommunityAI" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
       org.opencontainers.image.base.name="python:3.12.13-slim-bookworm" \
       communityai.qualification.candidate="${CANDIDATE}" \

@@ -91,9 +91,13 @@ uv run --no-sync python scripts/qualification_image_contract.py prepare `
   --candidate qwen3.5-2b `
   --snapshot-root <absolute-unlinked-qwen-snapshot> `
   --source-commit $sourceCommit `
-  --image-tag registry.example/communityai/qwen3.5-2b:source-$sourceCommit `
+  --image-tag ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b:source-$sourceCommit `
   --output-dir qualification-image-inputs/qwen3.5-2b-$sourceCommit
 ```
+
+Repeat with `gemma-4-e2b` and the reviewed
+`ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b` repository. The publication
+evidence collector rejects every other repository.
 
 Preparation calls neither Docker nor a provider. It materializes a tracked-only source
 context directly from the exact Git commit, requires the selected candidate manifest to
@@ -110,13 +114,49 @@ and copied model snapshot inside the build before running as UID/GID 65532.
 
 Do not edit the generated `source` or contract directories. Review the generated
 command array before executing it, and regenerate it if any input changes. Execute it
-only on a Docker-enabled builder after native registry authentication and any applicable cost
-reservation. Preserve the Buildx metadata, then resolve the published tag to its
-immutable OCI digest and inspect every manifest/layer size. Reject the result if the
-digest is absent, the platform is not exactly `linux/amd64`, or the compressed and
-uncompressed totals exceed the separately reviewed registry/Fly limits. Record those
-bounded totals and immutable digest in release evidence before setting Gate 4 to
-`PASSED`. A prepared contract reports `image_built=false`,
+only on a Docker-enabled builder after native registry authentication and any applicable
+cost reservation. Authenticate without copying a token into the working tree or command
+arguments, then execute the generated Buildx argument array:
+
+```powershell
+gh auth token | docker login ghcr.io --username flujo-app --password-stdin
+```
+
+Preserve the Buildx metadata and collect evidence immediately after the push:
+
+```powershell
+uv run --no-sync python scripts/qualification_image_evidence.py `
+  --contract qualification-image-inputs/qwen3.5-2b-$sourceCommit/image-contract.json `
+  --build-metadata qualification-image-inputs/qwen3.5-2b-image-metadata.json `
+  --output qualification-image-inputs/qwen3.5-2b-$sourceCommit-publication-evidence.json
+```
+
+The collector resolves the source-bound tag and independently hashes the raw OCI index,
+requires its digest and byte size to match Buildx metadata, then accepts exactly one
+`linux/amd64` runtime manifest and one bound BuildKit attestation manifest. It queries
+the immutable index for one SLSA provenance and one SPDX SBOM, verifies the runtime
+config labels against the exact input contract, inventories every compressed layer,
+pulls the immutable runtime manifest, and uses Docker's local image inspection to bound
+the uncompressed size and Fly rootfs plan. Registry/provider command output and
+credentials are never copied into the report.
+
+The reviewed fail-closed limits are:
+
+| Candidate | Maximum compressed total | Maximum uncompressed size | Maximum Fly rootfs plan |
+| --- | ---: | ---: | ---: |
+| Qwen3.5 2B | 8,000,000,000 bytes | 16 GiB | 20 GB |
+| Gemma 4 E2B | 16,000,000,000 bytes | 24 GiB | 28 GB |
+
+Every individual GHCR layer is additionally capped at 10,000,000,000 bytes. The required
+Fly rootfs is the greater of its 8 GB default or the measured uncompressed GiB rounded
+up plus 2 GB headroom; reject an image above the candidate ceiling. The evidence report
+records the exact immutable index/runtime references, descriptors, layer inventory,
+totals, limit sources, and required rootfs size. It sets `qualification_evidence=true`
+for the image-publication contract while keeping `complete_release_qualification=false`;
+publication evidence alone does not prove model qualification.
+
+Record both bounded reports and immutable digests in release evidence before setting
+Gate 4 to `PASSED`. A prepared contract reports `image_built=false`,
 `image_published=false`, and `qualification_evidence=false`; it cannot satisfy the
 external image or candidate qualification gates by itself.
 

@@ -89,13 +89,35 @@ flags, and absence of secret mounts or network download commands. The focused
 suite passes locally; the expanded offline CI selection passes 458 tests with 8
 expected skips, and Black and isort are clean across 262 Python files.
 
-This is input-contract evidence only. The current host has the Docker client but no
-available daemon, and native `gcloud` authentication remains unavailable. No image
-was built or published, no OCI digest or compressed image size is claimed, no
-provider was called, no paid resource was created, and the combined spend remains
-USD 0. Gate 4 stays `IN PROGRESS` until both exact snapshots are built and pushed
-on an authenticated Docker-enabled builder and their immutable digests and bounded
-sizes are retained.
+A second Gate 4 slice added the fail-closed publication collector
+`scripts/qualification_image_evidence.py`. It accepts only the reviewed candidate GHCR
+repositories and exact input contract, independently hashes the source-bound tag's raw
+OCI index against the Buildx metadata descriptor, and requires exactly one
+`linux/amd64` runtime manifest plus one bound attestation manifest. It verifies one SLSA
+provenance and one SPDX SBOM on the immutable index, checks all qualification labels,
+rehashes the runtime manifest, inventories every compressed layer, pulls the exact
+runtime digest, and checks Docker's uncompressed size and rootfs layer inventory. The
+report contains immutable references, bounded descriptors and layer sizes, reviewed
+limit sources, and the required Fly rootfs size without copying credentials or raw
+provider output.
+
+The collector rejects individual GHCR layers above 10,000,000,000 bytes. Reviewed
+candidate ceilings are 8,000,000,000 compressed bytes, 16 GiB uncompressed, and a
+20 GB Fly rootfs for Qwen; and 16,000,000,000 compressed bytes, 24 GiB uncompressed,
+and a 28 GB Fly rootfs for Gemma. Twenty-one deterministic collector tests cover
+contract/repository/metadata identity, immutable-index binding, exact platform and
+attestation layout, provenance and SBOM cardinality, label identity, raw-manifest
+hashing, layer media/count/size bounds, local platform/rootfs/size checks, Docker
+failure/output bounds, and atomic non-overwriting reports. The combined focused suite
+passes all 46 collector and preparation tests locally.
+
+This remains implementation evidence only. Native `gh`, `gcloud`, and `flyctl`
+authentication are now active, and registry-direct Buildx inspection works, but this host
+has no available Docker Engine or exact materialized candidate snapshots. No image was
+built or published, no OCI digest or image size is claimed, no provider resource was
+created, no paid run was recorded, and the combined new-resource spend remains USD 0.
+Gate 4 stays `IN PROGRESS` until both exact snapshots are built and pushed on an
+authenticated Docker-enabled builder and both publication reports are retained.
 
 ## Desktop milestone: control authority separation
 
