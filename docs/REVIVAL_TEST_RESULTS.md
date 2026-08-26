@@ -716,12 +716,29 @@ packaged resource qualification: host-wide traffic attribution and real NVIDIA N
 behavior still require OS validation, while CPU, XPU, and MPS power-budget configurations
 exercise the explicit unavailable-provider path.
 
+On 2026-08-26, qualification-host preparation became a reproducible pre-registration
+gate. The cross-platform command validates the claimed OS/device, the unpacked Actions
+runner launcher, a privacy-safe machine label, and both immutable candidate snapshot
+layouts before writing. It atomically merges only five allowlisted qualification variables
+into the runner-root environment, preserves valid unrelated entries, and rejects relative
+or missing directories, malformed or duplicate entries, oversized input, symlinked runner
+state, and either snapshot failure. Its bounded stdout retains profile, generic registration
+labels, and manifest-level snapshot facts but no host path, machine identity, runner
+identity, ambient token, or credential; it remains explicitly non-evidence. The companion
+operations guide fixes registration-token handling, exact labels, separate-host scope,
+read-only inventory credentials, bounded Windows/Linux dispatch, review, and teardown.
+Eleven preparation tests plus the existing fleet and external-host suites pass 28 tests;
+the expanded runner, matrix, multi-machine controller, and Fly adapter slice passes 84.
+Black, isort, and the diff whitespace gate are clean. No runner was registered and no
+external candidate result is claimed.
+
 ## Follow-up issues
 
-1. Provision and register the six uniquely labelled qualification hosts, configure the
-   read-only repository runner-inventory credential, and run the strict six-profile Qwen3.5
-   2B and Gemma 4 E2B matrices, then build each immutable Fly qualification
-   image and execute the adapter/controller gate for both candidates.
+1. Provision and register the four uniquely labelled Windows/Linux qualification hosts,
+   configure the read-only repository runner-inventory credential, and collect both bounded
+   incomplete candidate matrices. Build each immutable Fly qualification image and execute
+   the explicitly incomplete adapter/controller gate for both candidates. Obtain separate
+   macOS CPU/MPS capacity before rerunning the strict six-profile matrices and release gates.
 2. Exercise the changed-boundary replacement route in the controlled separate-machine
    interruption gate; beam-search recovery needs a reorder-aware activation history before
    it can be enabled safely.

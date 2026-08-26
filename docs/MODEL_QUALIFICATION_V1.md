@@ -116,6 +116,15 @@ artifact snapshot variable, and optionally its existing immutable Hub cache:
 | Qwen3.5 2B | `COMMUNITYAI_QWEN35_2B_ARTIFACT_ROOT` | `COMMUNITYAI_QWEN35_2B_CACHE_DIR` |
 | Gemma 4 E2B | `COMMUNITYAI_GEMMA4_E2B_ARTIFACT_ROOT` | `COMMUNITYAI_GEMMA4_E2B_CACHE_DIR` |
 
+Before registration, run
+[`scripts/prepare_qualification_runner.py`](../scripts/prepare_qualification_runner.py)
+on each dedicated host. It checks the claimed OS/device, both exact candidate snapshot
+layouts, the runner installation, and the opaque machine label before atomically merging
+only the whitelisted variables into the private runner-root `.env`. Its bounded stdout
+omits paths and identity and explicitly is not qualification evidence. The complete
+registration, credential, dispatch, review, and teardown procedure is in
+[`QUALIFICATION_RUNNER_OPERATIONS.md`](QUALIFICATION_RUNNER_OPERATIONS.md).
+
 Before any self-hosted job is queued, the workflow reads the repository runner inventory
 and passes it through
 [`scripts/validate_qualification_runner_fleet.py`](../scripts/validate_qualification_runner_fleet.py).

@@ -876,6 +876,15 @@ implementation.
    explicitly changed. This deferral is separate from the Windows/Linux and Fly work that can
    proceed now, and it does not claim macOS support or complete release qualification.
 
+   Host preparation is now reproducible before registration. A cross-platform command validates
+   the selected OS/device, the unpacked Actions runner, and both exact candidate snapshot layouts,
+   then atomically merges only the qualification variables into the private runner environment.
+   Its bounded readiness output contains no host path, machine identity, runner identity, or
+   credential and explicitly is not qualification evidence. The companion operations runbook
+   fixes the separate-host, exact-label, registration-token, read-only inventory credential,
+   dispatch, evidence-review, and teardown boundaries. No external host was provisioned or
+   registered and no hardware result is claimed.
+
    **Next implementation sequence.** The bounded partial-matrix path and explicitly incomplete
    recovery authorization are implemented, with the exact-six release path preserved. Next
    provision and register the uniquely labelled Windows and Linux qualification runners using
