@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import time
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Callable, Dict
@@ -947,16 +948,25 @@ def run(
 
         def notify_existing_instance(timeout_ms: int) -> bool:
             socket = QLocalSocket(application)
+            deadline = time.monotonic() + timeout_ms / 1_000
             socket.connectToServer(instance_server_name)
-            if not socket.waitForConnected(timeout_ms):
+            while socket.state() != QLocalSocket.ConnectedState and time.monotonic() < deadline:
+                # QLocalServer uses a named pipe on Windows. Pumping the event loop keeps
+                # same-user activation responsive even while another instance is starting.
+                application.processEvents()
+                time.sleep(0.001)
+            if socket.state() != QLocalSocket.ConnectedState:
                 socket.abort()
                 return False
             message = b"activate\n" if activate_existing_instance else b"silent\n"
             if socket.write(message) != len(message):
                 socket.abort()
                 return False
-            socket.flush()
-            delivered = socket.bytesToWrite() == 0 or socket.waitForBytesWritten(timeout_ms)
+            while socket.bytesToWrite() and time.monotonic() < deadline:
+                socket.flush()
+                application.processEvents()
+                time.sleep(0.001)
+            delivered = socket.bytesToWrite() == 0
             socket.disconnectFromServer()
             return delivered
 
