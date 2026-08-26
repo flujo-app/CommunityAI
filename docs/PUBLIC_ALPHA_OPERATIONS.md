@@ -54,6 +54,15 @@ message limit before metadata parsing or tensor deserialization. Inbound queues 
 outbound push RPC tasks share the same aggregate budget; outstanding outbound tasks
 are cancelled and awaited before the inference lease is released.
 
+The exact Hivemind streaming-failure logger coalesces only a closed allowlist of
+routine `AdmissionRejected` categories. Each handler process emits at most one
+constant-size, identifier-free warning per category in a 60-second monotonic window;
+the next warning reports a saturating prior-suppressed count. The rejection exception
+is not changed, so the caller still receives the same explicit RPC error. An
+unavailable admission authority, a backwards/invalid filter clock, an unknown/future
+rejection, a manifest/security failure, and every unexpected exception retain their
+complete traceback. Legacy-only handlers do not install the filter.
+
 Forward/backward training RPCs are disabled on manifested workers. The
 `--allow_training_rpcs` switch exists only for an explicitly controlled
 compatibility deployment and must not be used in the public alpha. Servers without a
@@ -144,12 +153,12 @@ Use the smallest reversible action that restores the last verified state:
 
 These handler controls do not cap every unit of work in the underlying Hivemind/libp2p
 transport. The transport can create connection/RPC tasks before Drift's inference
-lease runs, framework code may log rejected handler exceptions with tracebacks, and
-Drift currently emits a warning traceback when a malformed later stream message is
-rejected. Transport scheduling, `rpc_info`, requests rejected before acquiring a
-session lease, and rejection-log volume therefore remain outside the quota. Explicitly enabling training RPCs
-also bypasses inference admission and its application-layer size check; that switch is
-not permitted in the public alpha. Connection floods, task creation, TLS/stream setup,
+lease runs, and framework sites outside the exact filtered logger/message can still
+emit rejection tracebacks. Unexpected faults deliberately retain full tracebacks.
+Transport scheduling, `rpc_info`, requests rejected before acquiring a session lease,
+and log volume outside the routine stream-rejection filter therefore remain outside
+the quota. Explicitly enabling training RPCs also bypasses inference admission and its
+application-layer size check; that switch is not permitted in the public alpha. Connection floods, task creation, TLS/stream setup,
 and log-volume backpressure need a real malicious-load canary and, if necessary,
 transport-level limits before public rollout. PeerID churn is Sybil resistance only at
 the global-cap layer.

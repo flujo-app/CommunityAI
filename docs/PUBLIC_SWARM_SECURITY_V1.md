@@ -125,6 +125,12 @@ pending-push ceiling; outstanding tasks are cancelled and awaited before the str
 lease is released. Forward/backward training RPCs are disabled by default
 in manifest mode. Legacy servers without a manifest keep their historical behavior.
 
+Only exact routine public `AdmissionRejected` messages at Hivemind's exact streaming
+failure site are coalesced into fixed, identifier-free warnings. The original RPC error
+still reaches the caller. Admission-state failure, unknown messages, legacy rejections,
+and unexpected exceptions retain full tracebacks; the filter never converts an
+internal fault into a routine overload record.
+
 PeerID is an authenticated transport identity, not authorization or proof of scarce
 identity. Per-PeerID fairness cannot prevent Sybil churn, so the global ceilings are
 authoritative. Hivemind/libp2p can also allocate transport/RPC tasks and emit exception

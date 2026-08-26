@@ -919,19 +919,36 @@ identity, prompt, tensor, endpoint, or credential. `PUBLIC_ALPHA_OPERATIONS.md`
 records the exact defaults, privacy-safe reconstruction invariants, canary stop
 conditions, pause/disable sequence, and immutable-artifact rollback. It also records
 the unresolved boundary: Hivemind/libp2p may allocate connection/RPC tasks and emit
-traceback logs before or around Drift's handler gates, and Drift itself currently logs
-a warning traceback for a malformed later stream message. Real bounded
-connection-flood, task-volume, rejection-log, and log-backpressure evidence is still
-required.
+logs before or around Drift's handler gates. Real bounded connection-flood,
+task-volume, rejection-log, and log-backpressure evidence is still required.
 
 The focused admission/manifest selection passes 58 tests. The first combined local
 Windows/Linux offline selection found one order-dependent test-fixture error after an
 earlier test installed `winloop`; the admission test module now creates and closes an
 explicit event loop, and the exact rerun passes 504 tests with 7 expected skips. Black
-and isort pass on the changed Python surface. No cloud, Docker, registry, model,
-provider, public worker, or hardware action was executed, and the cloud ledger remains
-USD 0. Gate 16 remains `IN PROGRESS` until the malicious-load canary, monitored
-limited rollout, and disable/rollback drill produce immutable evidence.
+and isort pass on the changed Python surface. PR #13 integrated this slice as commit
+`e5dbd1129c73f130ff4475a603b8190267ee6dbd` after hosted style, tests, and both
+supported production bundles passed.
+
+The repository follow-up then installed a thread-safe, process-local filter only on
+Hivemind's exact streaming-failure logger and message. Only the exact
+`AdmissionRejected` class with fixed routine overload, input, public-session, push, or
+training-disabled messages is coalesced, once per category per 60-second monotonic
+window, into a fixed bounded warning with a saturating prior-suppressed count. The
+exception is not caught or rewritten: a real local two-peer Hivemind stream test proves
+that both the first and suppressed routine calls still produce the same client
+`P2PHandlerError`. The same test proves an unexpected `RuntimeError` still produces a
+client error and full traceback. Admission-state-unavailable, backwards/invalid clock,
+legacy, unknown, logger or message mismatch, and unexpected-fault probes all retain
+diagnostic tracebacks.
+The duplicate Drift traceback for routine later-message rejection was removed.
+
+The expanded focused selection passes 79 tests, and the exact combined Windows/Linux
+offline selection passes 525 tests with 7 expected skips. Black, isort, and the
+whitespace gate pass. No cloud, Docker, registry, model, provider, public worker, or
+hardware action was executed, and the cloud ledger remains USD 0. Gate 16 remains
+`IN PROGRESS` until the malicious-load canary, monitored limited rollout, and
+disable/rollback drill produce immutable evidence.
 
 ## Follow-up issues
 

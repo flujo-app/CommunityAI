@@ -73,6 +73,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   shared global/per-PeerID active and rate limits, bound hashed identity/session state
   and aggregate activation pushes, reject stale route generations, fail closed on
   admission-manager faults, and disable training RPCs unless explicitly enabled.
+- Routine manifested-worker stream rejections retain their explicit client RPC errors
+  while traceback logs are coalesced into bounded, identifier-free aggregate warnings;
+  unavailable admission state and unexpected faults retain complete diagnostic tracebacks.
 
 ### Not included in the first public alpha
 

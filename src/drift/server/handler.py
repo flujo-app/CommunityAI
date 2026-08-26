@@ -30,6 +30,7 @@ from drift.protocol_identity import TRANSPORT_SECURITY
 from drift.server.admission import PUBLIC_OVERLOAD_MESSAGE, AdmissionRejected, AdmissionState
 from drift.server.backend import TransformerBackend
 from drift.server.block_functions import iterate_rpc_inference, run_rpc_backward, run_rpc_forward
+from drift.server.rejection_logging import install_public_rejection_log_filter
 from drift.server.task_prioritizer import DummyTaskPrioritizer, TaskPrioritizerBase
 from drift.utils.convert_block import QuantType
 
@@ -121,6 +122,7 @@ class TransformerConnectionHandler(ConnectionHandler):
 
     async def add_p2p_handlers(self, *args, **kwargs) -> None:
         if self._admission_state is not None:
+            install_public_rejection_log_filter()
             # A public handler must never wait for a multiprocessing Queue feeder to flush into a
             # saturated/stopped sibling while this container is shutting down.
             for event_queue in self._handler_event_queues:
@@ -505,6 +507,10 @@ class TransformerConnectionHandler(ConnectionHandler):
                         anext_task.cancel()
                         get_push_task.cancel()
                         return
+        except AdmissionRejected:
+            # Hivemind preserves this exception as RPCError for the caller. Its exact
+            # stream-failure logger is bounded separately for routine public rejections.
+            raise
         except Exception:
             logger.warning("rpc_inference._iterate_inference_steps() exception:", exc_info=True)
             raise
