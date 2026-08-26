@@ -95,14 +95,16 @@ jobs:
             tests/test_tied_embeddings_from_pretrained.py \
             tests/test_worker_supervisor.py
 
-      - name: Test Windows/Linux contribution policy persistence
+      - name: Test Linux public-worker control contracts
         if: matrix.os != 'macos'
         run: |
           source .venv/bin/activate
-          # Atomic config exchange is a Windows/Linux public-alpha contract.
-          # macOS persistence remains outside the supported release matrix.
+          # Atomic config exchange and shared admission are Windows/Linux public-alpha contracts.
+          # The production desktop workflow separately exercises the packaged Windows node.
+          # macOS remains outside the supported release matrix.
           python -m pytest -v --durations=0 --durations-min=1.0 \
-            tests/test_policy_store.py
+            tests/test_policy_store.py \
+            tests/test_server_admission.py
 
       - name: Generate pinned TinyLlama manifest (macOS gate)
         if: matrix.os == 'macos'

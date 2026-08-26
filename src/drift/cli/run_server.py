@@ -14,6 +14,18 @@ from humanfriendly import parse_size
 import drift
 from drift.constants import DTYPE_MAP
 from drift.model_manifest import ManifestError, ModelManifest, resolve_manifest_loading
+from drift.server.admission import (
+    DEFAULT_GLOBAL_SESSION_BURST,
+    DEFAULT_GLOBAL_SESSION_RATE,
+    DEFAULT_MAX_ACTIVE_SESSIONS,
+    DEFAULT_MAX_ACTIVE_SESSIONS_PER_PEER,
+    DEFAULT_MAX_PENDING_PUSHES,
+    DEFAULT_MAX_TRACKED_PEERS,
+    DEFAULT_PEER_SESSION_BURST,
+    DEFAULT_PEER_SESSION_RATE,
+    DEFAULT_TRACKED_PEER_TTL,
+    AdmissionPolicy,
+)
 from drift.server.server import Server
 from drift.utils.convert_block import QuantType
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
@@ -119,6 +131,27 @@ def build_parser() -> configargparse.ArgParser:
                              'One handler is plenty for a private cluster with light concurrency; raise it '
                              'only if many clients hit this server at once (higher aggregate throughput and '
                              'lower tail latency under concurrent load, at the cost of more connections)')
+    parser.add_argument('--admission_max_active_sessions', type=int, default=DEFAULT_MAX_ACTIVE_SESSIONS,
+                        help='Manifest-mode global active inference-stream ceiling shared across all handlers')
+    parser.add_argument('--admission_max_active_sessions_per_peer', type=int,
+                        default=DEFAULT_MAX_ACTIVE_SESSIONS_PER_PEER,
+                        help='Manifest-mode active inference-stream ceiling per transport PeerID')
+    parser.add_argument('--admission_global_session_rate', type=float, default=DEFAULT_GLOBAL_SESSION_RATE,
+                        help='Manifest-mode global inference-stream start rate per second')
+    parser.add_argument('--admission_global_session_burst', type=int, default=DEFAULT_GLOBAL_SESSION_BURST,
+                        help='Manifest-mode global inference-stream start burst')
+    parser.add_argument('--admission_peer_session_rate', type=float, default=DEFAULT_PEER_SESSION_RATE,
+                        help='Manifest-mode per-PeerID inference-stream start rate per second')
+    parser.add_argument('--admission_peer_session_burst', type=int, default=DEFAULT_PEER_SESSION_BURST,
+                        help='Manifest-mode per-PeerID inference-stream start burst')
+    parser.add_argument('--admission_max_tracked_peers', type=int, default=DEFAULT_MAX_TRACKED_PEERS,
+                        help='Manifest-mode bound for hashed PeerID admission records')
+    parser.add_argument('--admission_tracked_peer_ttl', type=float, default=DEFAULT_TRACKED_PEER_TTL,
+                        help='Seconds before an inactive, fully refilled hashed PeerID record may expire')
+    parser.add_argument('--admission_max_pending_pushes', type=int, default=DEFAULT_MAX_PENDING_PUSHES,
+                        help='Manifest-mode aggregate queued activation-push ceiling across all handlers')
+    parser.add_argument('--allow_training_rpcs', action='store_true',
+                        help='Explicitly enable forward/backward training RPCs in manifest mode (disabled by default)')
     parser.add_argument('--prefetch_batches', type=int, default=1, required=False,
                         help='Pre-form this many subsequent batches while GPU is processing the current one')
     parser.add_argument('--sender_threads', type=int, default=1, required=False,
@@ -248,6 +281,18 @@ def server_from_args(args: dict) -> Server:
     tie_child_processes_to_this_process()
 
     requested_model = args.pop("model") or args["converted_model_name_or_path"]
+    admission_values = {
+        "max_active_sessions": args.pop("admission_max_active_sessions"),
+        "max_active_sessions_per_peer": args.pop("admission_max_active_sessions_per_peer"),
+        "global_session_rate": args.pop("admission_global_session_rate"),
+        "global_session_burst": args.pop("admission_global_session_burst"),
+        "peer_session_rate": args.pop("admission_peer_session_rate"),
+        "peer_session_burst": args.pop("admission_peer_session_burst"),
+        "max_tracked_peers": args.pop("admission_max_tracked_peers"),
+        "tracked_peer_ttl": args.pop("admission_tracked_peer_ttl"),
+        "max_pending_pushes": args.pop("admission_max_pending_pushes"),
+        "allow_training_rpcs": args.pop("allow_training_rpcs"),
+    }
     manifest_path = args.pop("model_manifest")
     if manifest_path is not None:
         manifest = ModelManifest.load(manifest_path)
@@ -287,6 +332,7 @@ def server_from_args(args: dict) -> Server:
         if args["adapters"]:
             raise ManifestError("--adapters conflicts with the manifest's adapter_profile 'none'")
         args["model_manifest"] = manifest
+        args["admission_policy"] = AdmissionPolicy(**admission_values)
         if not args.get("identity_path"):
             raise ManifestError(
                 "--identity_path is required with --model_manifest so announcements use a stable libp2p signer"
@@ -376,7 +422,7 @@ def main():
 
     try:
         server = server_from_args(args)
-    except ManifestError as exc:
+    except (ManifestError, ValueError) as exc:
         parser.error(str(exc))
     serve(server, model=server.converted_model_name_or_path)
 

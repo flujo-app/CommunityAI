@@ -607,6 +607,7 @@ def test_server_rejects_legacy_and_mismatched_clients_before_compute():
 
 def test_server_cli_applies_manifest_profile(tmp_path, monkeypatch):
     from drift.cli import run_server
+    from drift.server.admission import AdmissionPolicy
     from drift.utils.convert_block import QuantType
 
     path = tmp_path / "manifest.json"
@@ -637,6 +638,7 @@ def test_server_cli_applies_manifest_profile(tmp_path, monkeypatch):
     assert resolved["torch_dtype"] == "float32"
     assert resolved["attn_implementation"] == "eager"
     assert resolved["quant_type"] is QuantType.NONE
+    assert resolved["admission_policy"] == AdmissionPolicy()
     assert resolved["model_manifest"].digest == resolved["dht_prefix"].removeprefix("drift-m1-")
 
 
@@ -678,6 +680,48 @@ def test_server_cli_requires_model_without_manifest(monkeypatch):
 
     with pytest.raises(ManifestError, match="model is required unless --model_manifest"):
         run_server.server_from_args(args)
+
+
+def test_server_cli_validates_manifest_admission_overrides(tmp_path, monkeypatch):
+    from drift.cli import run_server
+
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest_dict()), encoding="utf-8")
+    base = [
+        "org/tiny-test",
+        "--new_swarm",
+        "--model_manifest",
+        str(path),
+        "--identity_path",
+        str(tmp_path / "worker.key"),
+        "--increase_file_limit",
+        "0",
+    ]
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+
+    invalid = vars(run_server.build_parser().parse_args(base + ["--admission_max_active_sessions", "0"]))
+    invalid.pop("config", None)
+    with pytest.raises(ValueError, match="max_active_sessions"):
+        run_server.server_from_args(invalid)
+
+    invalid = vars(run_server.build_parser().parse_args(base + ["--admission_global_session_rate", "nan"]))
+    invalid.pop("config", None)
+    with pytest.raises(ValueError, match="global_session_rate"):
+        run_server.server_from_args(invalid)
+
+
+def test_legacy_server_cli_does_not_enable_public_admission(monkeypatch):
+    from drift.cli import run_server
+
+    args = vars(run_server.build_parser().parse_args(["org/tiny-test", "--new_swarm", "--increase_file_limit", "0"]))
+    args.pop("config", None)
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+    monkeypatch.setattr(run_server, "log_version", lambda: None)
+    monkeypatch.setattr(run_server, "Server", lambda **kwargs: kwargs)
+
+    resolved = run_server.server_from_args(args)
+
+    assert "admission_policy" not in resolved
 
 
 def test_manifested_server_requires_persistent_identity(tmp_path, monkeypatch):

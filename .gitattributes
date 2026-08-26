@@ -4,6 +4,10 @@
 *.sh          text eol=lf
 Dockerfile    text eol=lf
 
+# Several inherited Python blobs use CRLF or mixed historical endings. Treat the CR as
+# part of the line ending while still rejecting actual trailing spaces and tabs.
+*.py          whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
 # PowerShell / batch are Windows-native; keep CRLF.
 *.ps1         text eol=crlf
 *.bat         text eol=crlf

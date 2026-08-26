@@ -893,6 +893,46 @@ was executed. Gate 14 remains `IN PROGRESS` until real packaged Windows/Linux ho
 prove enforcement, suspension, bounded pause, restart persistence, and explicit
 unsupported-telemetry behavior.
 
+## Public-worker admission and operations contract
+
+On 2026-08-26, the repository-side Gate 16 slice added a manifested-worker admission
+authority shared by every connection handler. It takes a global/per-transport-PeerID
+active and token-bucket lease before awaiting the first inference message, hashes and
+bounds identity records, expires only inactive fully refilled records, uses a finite
+shared-lock timeout, and makes manager corruption or impossible counter transitions
+unhealthy. All capacity/rate causes return the same stable public overload message.
+A spawned child-process test proves that independent handlers consume the same quota.
+
+Client-supplied session names are validated and represented by hashed shared routes.
+Each route carries a random generation token so a delayed cross-handler push cannot
+enter a new session that reused the same name. Push metadata and complete messages are
+bounded before tensor deserialization; a shared aggregate reservation caps queued
+pushes across all handlers and is released on delivery, full/stale queues, session
+teardown, and bounded shutdown. Training forward/backward unary and streaming RPCs
+reject before consuming or deserializing input unless an operator explicitly enables
+them. Manifested `Server` construction supplies conservative defaults even outside
+the CLI, while servers without a manifest preserve historical private/training behavior.
+
+The container health path now reconstructs only aggregate active, tracked, route,
+pending, accepted, rejected, and healthy counters. It includes no raw PeerID, session
+identity, prompt, tensor, endpoint, or credential. `PUBLIC_ALPHA_OPERATIONS.md`
+records the exact defaults, privacy-safe reconstruction invariants, canary stop
+conditions, pause/disable sequence, and immutable-artifact rollback. It also records
+the unresolved boundary: Hivemind/libp2p may allocate connection/RPC tasks and emit
+traceback logs before or around Drift's handler gates, and Drift itself currently logs
+a warning traceback for a malformed later stream message. Real bounded
+connection-flood, task-volume, rejection-log, and log-backpressure evidence is still
+required.
+
+The focused admission/manifest selection passes 58 tests. The first combined local
+Windows/Linux offline selection found one order-dependent test-fixture error after an
+earlier test installed `winloop`; the admission test module now creates and closes an
+explicit event loop, and the exact rerun passes 504 tests with 7 expected skips. Black
+and isort pass on the changed Python surface. No cloud, Docker, registry, model,
+provider, public worker, or hardware action was executed, and the cloud ledger remains
+USD 0. Gate 16 remains `IN PROGRESS` until the malicious-load canary, monitored
+limited rollout, and disable/rollback drill produce immutable evidence.
+
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts
@@ -907,6 +947,9 @@ unsupported-telemetry behavior.
    and either add trusted
    CPU/XPU/MPS power providers or preserve their explicit fail-closed unsupported state
    in the release matrix.
+4. Exercise public admission against bounded connection and identity churn, measure
+   Hivemind task and traceback-log backpressure, then perform the monitored canary and
+   pause/rollback drill while retaining aggregate-only health evidence.
 
 Resolved on 2026-08-22: the native hosted macOS security/parity workflow is green;
 Hivemind P2P cleanup no longer queries a closed global uvloop; legacy

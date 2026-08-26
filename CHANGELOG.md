@@ -30,6 +30,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   source-bound tags, credential-free offline runtime inputs, provenance/SBOM push plans,
   and in-image source, Dockerfile, manifest, byte-inventory, and artifact re-verification
   for Qwen3.5 2B and Gemma 4 E2B.
+- A public-alpha operations runbook with privacy-safe aggregate health reconstruction,
+  finite admission defaults, rollout stop conditions, and reversible disable/rollback
+  steps.
 
 ### Changed
 
@@ -66,6 +69,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   commit-boundary conflicts without weakening the active supervisor.
 - Temporary provider qualification resources are bound to exact run metadata and cannot
   produce a passing report unless complete cleanup is proven.
+- Manifested public workers now take inference leases before reading a stream, enforce
+  shared global/per-PeerID active and rate limits, bound hashed identity/session state
+  and aggregate activation pushes, reject stale route generations, fail closed on
+  admission-manager faults, and disable training RPCs unless explicitly enabled.
 
 ### Not included in the first public alpha
 
