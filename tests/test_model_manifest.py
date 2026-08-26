@@ -38,6 +38,56 @@ def test_qwen3_first_rung_candidate_is_exactly_pinned():
     }
 
 
+def test_qwen3_5_edge_primary_candidate_is_exactly_pinned():
+    candidate = Path(__file__).resolve().parents[1] / "manifests" / "candidates" / "qwen3.5-2b-bfloat16-eager.json"
+    manifest = ModelManifest.load(candidate)
+
+    assert manifest.name == "Qwen3.5 2B"
+    assert manifest.aliases == ("qwen3.5-2b",)
+    assert manifest.source.repository == "Qwen/Qwen3.5-2B"
+    assert manifest.source.revision == "15852e8c16360a2fea060d615a32b45270f8a8fc"
+    assert manifest.model.architecture == "Qwen3_5ForConditionalGeneration"
+    assert manifest.model.num_blocks == 24
+    assert manifest.model.context_length == 262144
+    assert manifest.model.license == "apache-2.0"
+    assert manifest.model.gated is False
+    assert manifest.runtime.dtype == "bfloat16"
+    assert manifest.runtime.attention_implementation == "eager"
+    assert manifest.runtime.quantization == "none"
+    assert manifest.digest_id == "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33"
+    assert len(manifest.artifacts) == 8
+    assert sum(artifact.size for artifact in manifest.artifacts) == 4_571_197_320
+    assert {artifact.path: artifact.sha256 for artifact in manifest.artifacts if artifact.role == "weight"} == {
+        "model.safetensors-00001-of-00001.safetensors": (
+            "aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1"
+        )
+    }
+
+
+def test_gemma4_edge_standby_candidate_is_exactly_pinned():
+    candidate = Path(__file__).resolve().parents[1] / "manifests" / "candidates" / "gemma-4-e2b-it-bfloat16-eager.json"
+    manifest = ModelManifest.load(candidate)
+
+    assert manifest.name == "Gemma 4 E2B IT"
+    assert manifest.aliases == ("gemma-4-e2b-it",)
+    assert manifest.source.repository == "google/gemma-4-E2B-it"
+    assert manifest.source.revision == "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+    assert manifest.model.architecture == "Gemma4ForConditionalGeneration"
+    assert manifest.model.num_blocks == 35
+    assert manifest.model.context_length == 131072
+    assert manifest.model.license == "apache-2.0"
+    assert manifest.model.gated is False
+    assert manifest.runtime.dtype == "bfloat16"
+    assert manifest.runtime.attention_implementation == "eager"
+    assert manifest.runtime.quantization == "none"
+    assert manifest.digest_id == "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd"
+    assert len(manifest.artifacts) == 5
+    assert sum(artifact.size for artifact in manifest.artifacts) == 10_278_818_149
+    assert {artifact.path: artifact.sha256 for artifact in manifest.artifacts if artifact.role == "weight"} == {
+        "model.safetensors": "2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550"
+    }
+
+
 def manifest_dict():
     return {
         "schema_version": 1,
@@ -190,6 +240,24 @@ def test_runtime_and_downloaded_config_validation():
         )
 
 
+def test_wrapper_manifest_validation_uses_preserved_source_architecture():
+    source = manifest_dict()
+    source["model"].update(
+        architecture="Qwen3_5ForConditionalGeneration",
+        num_blocks=24,
+        context_length=262144,
+    )
+    manifest = ModelManifest.from_dict(source)
+    manifest.validate_model_config(
+        SimpleNamespace(
+            architectures=None,
+            _source_architectures=("Qwen3_5ForConditionalGeneration",),
+            num_hidden_layers=24,
+            max_position_embeddings=262144,
+        )
+    )
+
+
 def test_artifact_verification(tmp_path):
     files = {
         "config.json": b"c",
@@ -205,9 +273,11 @@ def test_artifact_verification(tmp_path):
         artifact["size"] = len(content)
         artifact["sha256"] = hashlib.sha256(content).hexdigest()
     manifest = ModelManifest.from_dict(source)
+    manifest.validate_artifact_layout(tmp_path)
     manifest.verify_artifacts(tmp_path)
 
     (tmp_path / "weights.bin").write_bytes(b"bad")
+    manifest.validate_artifact_layout(tmp_path)
     with pytest.raises(ManifestError, match="does not match"):
         manifest.verify_artifacts(tmp_path)
 
@@ -431,6 +501,44 @@ def test_server_weight_loader_rejects_tampering_before_deserialization(tmp_path,
             artifact_verifier=verifier,
         )
     assert not deserialized
+
+
+def test_manifest_client_loads_from_verified_snapshot_without_hub_access(tmp_path):
+    from drift.client.from_pretrained import FromPretrainedMixin
+
+    write_test_snapshot(tmp_path)
+    manifest = create_test_snapshot_manifest(tmp_path)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        repository=manifest.source.repository,
+        revision=manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+    captured = {}
+
+    class _Base:
+        @classmethod
+        def from_pretrained(cls, model_name_or_path, *args, **kwargs):
+            captured["model_name_or_path"] = model_name_or_path
+            captured["kwargs"] = kwargs
+            return "loaded"
+
+    class _Model(FromPretrainedMixin, _Base):
+        _keys_to_ignore_on_load_unexpected = ()
+
+    assert (
+        _Model.from_pretrained(
+            manifest.source.repository,
+            artifact_verifier=verifier,
+            revision=manifest.source.revision,
+            force_download=True,
+        )
+        == "loaded"
+    )
+    assert Path(captured["model_name_or_path"]) == tmp_path
+    assert captured["kwargs"]["local_files_only"] is True
+    assert "revision" not in captured["kwargs"]
+    assert "force_download" not in captured["kwargs"]
 
 
 def test_client_checkpoint_resolver_rejects_tampering_before_model_load(tmp_path, monkeypatch):

@@ -8,6 +8,7 @@ from transformers.models.gemma4_unified.modeling_gemma4_unified import Gemma4Uni
 from drift.client.config import ClientConfig
 from drift.client.lm_head import LMHeadConfig
 from drift.client.ptune import PTuneConfig
+from drift.models.gemma4.cache import Gemma4Cache
 from drift.models.gemma4.config import _peek_top_level_model_type
 from drift.models.gemma4_unified.block import WrappedGemma4UnifiedBlock
 
@@ -31,6 +32,7 @@ class DistributedGemma4UnifiedConfig(Gemma4UnifiedTextConfig, ClientConfig, PTun
     block_class = WrappedGemma4UnifiedBlock
     attn_class = Gemma4UnifiedTextAttention
     block_prefix = _TEXT_ONLY_BLOCK_PREFIX
+    kv_cache_strategy = Gemma4Cache
 
     @property
     def num_key_value_groups(self):

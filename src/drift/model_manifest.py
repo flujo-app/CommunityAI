@@ -387,6 +387,11 @@ class ModelManifest:
     def dht_prefix(self) -> str:
         return f"{MANIFEST_NAMESPACE_PREFIX}{self.digest}"
 
+    def validate_artifact_layout(self, root: Path | str) -> None:
+        """Verify every declared artifact is a regular file with the exact declared size."""
+        for artifact in self.artifacts:
+            _validate_artifact_file(artifact, _artifact_path_below_root(root, artifact.path))
+
     def verify_artifacts(self, root: Path | str) -> None:
         """Verify every declared artifact below ``root`` by both size and SHA-256."""
         for artifact in self.artifacts:
@@ -412,7 +417,9 @@ class ModelManifest:
 
     def validate_model_config(self, config: Any) -> None:
         """Reject a downloaded config that does not describe the manifested model shape."""
-        architectures = tuple(getattr(config, "architectures", ()) or ())
+        architectures = tuple(
+            getattr(config, "_source_architectures", None) or getattr(config, "architectures", ()) or ()
+        )
         if self.model.architecture not in architectures:
             raise ManifestError(
                 f"Manifest architecture {self.model.architecture!r} does not match config architectures {architectures!r}"
@@ -458,7 +465,7 @@ def _artifact_path_below_root(root: Path | str, relative_path: str) -> Path:
     return candidate
 
 
-def _verify_artifact_file(artifact: ManifestArtifact, candidate: Path) -> os.stat_result:
+def _validate_artifact_file(artifact: ManifestArtifact, candidate: Path) -> os.stat_result:
     try:
         stat_result = candidate.stat()
     except OSError as exc:
@@ -467,7 +474,11 @@ def _verify_artifact_file(artifact: ManifestArtifact, candidate: Path) -> os.sta
         raise ManifestError(f"Artifact {artifact.path} is not a regular file")
     if stat_result.st_size != artifact.size:
         raise ManifestError(f"Artifact {artifact.path} has size {stat_result.st_size}, expected {artifact.size}")
+    return stat_result
 
+
+def _verify_artifact_file(artifact: ManifestArtifact, candidate: Path) -> os.stat_result:
+    stat_result = _validate_artifact_file(artifact, candidate)
     digest = hashlib.sha256()
     try:
         with candidate.open("rb") as stream:

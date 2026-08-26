@@ -154,6 +154,9 @@ def build_parser() -> configargparse.ArgParser:
                              "for a long time and caches all model blocks after a number of rebalancings. "
                              "However, this worst case is unlikely, expect the server to consume "
                              "the disk space equal to 2-4x of your GPU memory on average.")
+    parser.add_argument("--max_device_memory", type=str, default=None,
+                        help="Hard per-accelerator memory ceiling. Example: 8GiB. "
+                             "The node resolves percentage contribution limits to bytes before launch.")
 
     parser.add_argument('--device', type=str, default=None, required=False,
                         help='all blocks will use this device in torch notation; '
@@ -331,6 +334,13 @@ def server_from_args(args: dict) -> Server:
     assert isinstance(
         max_disk_space, (int, type(None))
     ), "Unrecognized value for --max_disk_space. Correct examples: 1.5GB or 1500MB or 1572864000 (bytes)"
+
+    max_device_memory = args.pop("max_device_memory")
+    if max_device_memory is not None:
+        max_device_memory = parse_size(max_device_memory)
+        if isinstance(max_device_memory, bool) or not isinstance(max_device_memory, int) or max_device_memory < 1:
+            raise ValueError("--max_device_memory must be a positive byte size such as 8GiB")
+    args["max_device_memory"] = max_device_memory
 
     if args.pop("new_swarm"):
         args["initial_peers"] = []

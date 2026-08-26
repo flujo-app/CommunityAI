@@ -13,6 +13,7 @@ import pytest
 import torch
 
 from drift.models.gemma4.block import WrappedGemma4Block
+from drift.models.gemma4.config import DistributedGemma4Config
 
 ATOL = 3e-5
 
@@ -52,6 +53,19 @@ def _tiny_config(impl="eager"):
     )
     cfg._attn_implementation = impl
     return cfg
+
+
+def test_gemma4_cache_estimate_honors_per_block_head_dim():
+    cfg = DistributedGemma4Config(**_tiny_config().to_dict())
+    strategy = cfg.kv_cache_strategy
+    max_length = 8
+
+    # Sliding: K + V, one KV head, 16 elements per head, float32.
+    assert strategy.estimate_cache_bytes(cfg, max_length, dtype=torch.float32, block_index=0) == 1024
+    # Full: K + V, one KV head, the wider 32-element global head, float32.
+    assert strategy.estimate_cache_bytes(cfg, max_length, dtype=torch.float32, block_index=2) == 2048
+    # With no block selected, admission accounting must use the largest layer geometry.
+    assert strategy.estimate_cache_bytes(cfg, max_length, dtype=torch.float32) == 2048
 
 
 def _model_and_per_layer_inputs(cfg, input_ids):

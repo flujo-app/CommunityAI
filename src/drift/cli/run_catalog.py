@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
+from drift.catalog_release import verify_catalog_publication_bundle, write_catalog_publication_bundle
 from drift.model_catalog import (
     CATALOG_ROOT_SCHEMA_VERSION,
     CATALOG_SCHEMA_VERSION,
@@ -22,6 +23,7 @@ from drift.model_catalog import (
     SignedModelCatalog,
     _load_strict_json,
 )
+from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.catalog_bootstrap import CatalogBootstrapConfig, CatalogBootstrapError
 
 
@@ -124,6 +126,30 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--output", required=True)
     bootstrap.add_argument("--force", action="store_true")
 
+    preflight = commands.add_parser(
+        "publication-preflight",
+        help="Validate signed catalog and bootstrap transport inputs without claiming release qualification",
+    )
+    preflight.add_argument("catalog", help="Threshold-signed catalog envelope")
+    preflight.add_argument("--bootstrap", required=True, help="Trusted release bootstrap JSON")
+    preflight.add_argument(
+        "--manifest", action="append", required=True, help="Exact local manifest; repeat for every catalog model"
+    )
+    preflight.add_argument("--output", default="-", help="Preflight report JSON path, or - for stdout")
+    preflight.add_argument("--force", action="store_true")
+
+    publication_bundle = commands.add_parser(
+        "publication-bundle",
+        help="Build a deterministic, self-verifying catalog publication directory",
+    )
+    publication_bundle.add_argument("catalog", help="Threshold-signed catalog envelope")
+    publication_bundle.add_argument("--bootstrap", required=True, help="Trusted release bootstrap JSON")
+    publication_bundle.add_argument(
+        "--manifest", action="append", required=True, help="Exact local manifest; repeat for every catalog model"
+    )
+    publication_bundle.add_argument("--output", required=True, help="Output bundle directory")
+    publication_bundle.add_argument("--force", action="store_true")
+
     verify = commands.add_parser("verify", help="Verify signatures, expiry, and optional rollback state")
     verify.add_argument("catalog")
     verify.add_argument("--root", required=True)
@@ -196,6 +222,46 @@ def main() -> None:
             )
             _write_json(args.output, bootstrap.to_dict(), force=args.force)
             _write_status(f"created catalog bootstrap for {bootstrap.trust_root.catalog_id}", json_output=args.output)
+        elif args.catalog_command == "publication-preflight":
+            _require_distinct_paths(
+                ("signed catalog", args.catalog),
+                ("bootstrap", args.bootstrap),
+                *((f"manifest {index}", path) for index, path in enumerate(args.manifest)),
+                ("preflight output", args.output),
+            )
+            bootstrap = CatalogBootstrapConfig.load(args.bootstrap)
+            envelope = SignedModelCatalog.load(args.catalog)
+            manifests = tuple(ModelManifest.load(path) for path in args.manifest)
+            report = verify_catalog_publication_bundle(bootstrap, envelope, manifests)
+            _write_json(args.output, report, force=args.force)
+            _write_status(
+                f"publication transport preflight passed for {report['catalog_id']} sequence "
+                f"{report['catalog_sequence']}; external release gates remain open",
+                json_output=args.output,
+            )
+        elif args.catalog_command == "publication-bundle":
+            _require_distinct_paths(
+                ("signed catalog", args.catalog),
+                ("bootstrap", args.bootstrap),
+                *((f"manifest {index}", path) for index, path in enumerate(args.manifest)),
+                ("publication bundle output", args.output),
+            )
+            _require_output_available(args.output, force=args.force)
+            bootstrap = CatalogBootstrapConfig.load(args.bootstrap)
+            envelope = SignedModelCatalog.load(args.catalog)
+            manifests = tuple(ModelManifest.load(path) for path in args.manifest)
+            bundle = write_catalog_publication_bundle(
+                args.output,
+                bootstrap,
+                envelope,
+                manifests,
+                force=args.force,
+            )
+            _write_status(
+                f"created verified catalog publication bundle for {bundle['catalog_id']} sequence "
+                f"{bundle['catalog_sequence']}; external qualification and publication gates remain open",
+                json_output=args.output,
+            )
         else:
             if args.state:
                 _require_distinct_paths(
@@ -211,7 +277,7 @@ def main() -> None:
                 f"valid catalog {catalog.catalog_id} sequence {catalog.sequence}: "
                 f"{len(catalog.rungs)} rung(s), {len(catalog.models)} model(s), digest {catalog.digest}"
             )
-    except (ModelCatalogError, CatalogBootstrapError) as exc:
+    except (ModelCatalogError, ManifestError, CatalogBootstrapError) as exc:
         parser.error(str(exc))
 
 

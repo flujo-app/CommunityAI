@@ -14,8 +14,11 @@
 
 Community-AI is a shared Large-Language-Model, by the people, for the people.
 
-1. Start the app
-2. Share your GPU → Earn credits
-3. Spend your credits using the network.
+1. Start the app.
+2. Connect an OpenAI-compatible client to the local endpoint.
+3. Use public community inference and optionally share compute within your limits.
 
 Community-AI takes care of everything else.
+
+CommunityAI is still working toward its first public inference alpha. Credits,
+earnings, payments, and payouts are planned later and are not currently available.

@@ -528,8 +528,10 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "nvidia-ml-py" },
     { name = "packaging" },
     { name = "peft" },
+    { name = "psutil" },
     { name = "requests" },
     { name = "safetensors" },
     { name = "sentencepiece" },
@@ -579,9 +581,11 @@ requires-dist = [
     { name = "keyring", marker = "extra == 'api'", specifier = ">=25,<27" },
     { name = "keyring", marker = "extra == 'dev'", specifier = ">=25,<27" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "nvidia-ml-py", specifier = ">=12.535" },
     { name = "openai", marker = "extra == 'dev'", specifier = ">=2,<3" },
     { name = "packaging", specifier = ">=20.9" },
     { name = "peft", specifier = ">=0.17" },
+    { name = "psutil", specifier = ">=5.9" },
     { name = "psutil", marker = "extra == 'benchmark'", specifier = ">=5.9" },
     { name = "psutil", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==6.2.5" },
@@ -1720,6 +1724,15 @@ version = "0.6.2"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/78/a8/bcbb63b53a4b1234feeafb65544ee55495e1bb37ec31b999b963cbccfd1d/nvidia_cusparselt_cu12-0.6.2-py3-none-manylinux2014_x86_64.whl", hash = "sha256:df2c24502fd76ebafe7457dbc4716b2fec071aabaed4fb7691a201cde03704d9", size = 150057751, upload-time = "2024-07-23T02:35:53.074Z" },
+]
+
+[[package]]
+name = "nvidia-ml-py"
+version = "13.610.43"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/b5/a8fbc356f768fa5c9cfd646668fd7d34bf55bdd1c6e20754642a64d930d4/nvidia_ml_py-13.610.43.tar.gz", hash = "sha256:65437eb73d68d0c62c931ca4d45038472faff03bd0b8729abba4b899f70d60f2", size = 52109, upload-time = "2026-06-01T18:54:08.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/45/caa600acfab94560807a20a64b5830d2cd3c3202b7f1328644d70b7d6bd8/nvidia_ml_py-13.610.43-py3-none-any.whl", hash = "sha256:f13c72698edef492f985cc225f14faafe68ae065a2e407f45bdf6f4b9b43fde8", size = 53163, upload-time = "2026-06-01T18:54:07.704Z" },
 ]
 
 [[package]]

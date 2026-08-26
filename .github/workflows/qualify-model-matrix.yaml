@@ -1,0 +1,220 @@
+name: Qualify model matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Exact edge-rung candidate to qualify
+        required: true
+        type: choice
+        options:
+          - qwen3.5-2b
+          - gemma-4-e2b
+      qualification_scope:
+        description: Public-alpha Windows/Linux matrix or deferred macOS evidence
+        required: true
+        type: choice
+        default: public-alpha
+        options:
+          - public-alpha
+          - deferred-macos
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-qualification
+  cancel-in-progress: false
+
+jobs:
+  scope:
+    name: Select qualification profiles
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      profiles: ${{ steps.scope.outputs.profiles }}
+    steps:
+      - name: Select declared qualification profiles
+        id: scope
+        shell: bash
+        run: |
+          if [[ "${{ inputs.qualification_scope }}" == "public-alpha" ]]; then
+            echo 'profiles=["windows-cpu","windows-cuda","linux-cpu","linux-cuda"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'profiles=["macos-cpu","macos-mps"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  preflight:
+    name: Preflight / ${{ inputs.candidate }} / ${{ matrix.profile }}
+    needs: scope
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJSON(needs.scope.outputs.profiles) }}
+    runs-on:
+      - self-hosted
+      - model-qualification
+      - "${{ matrix.profile }}"
+    timeout-minutes: 60
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --extra dev --frozen --python 3.12
+
+      - name: Install Go for patched Windows Hivemind runtime
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Build patched Windows Hivemind runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          uv pip install --no-deps "patch==1.16"
+          uv run --no-sync python scripts/build_hivemind_windows.py --out-dir "${{ runner.temp }}/hivemind-wheel"
+          $wheel = Get-ChildItem "${{ runner.temp }}/hivemind-wheel/hivemind-1.1.12-*-win_amd64.whl" | Select-Object -Last 1
+          if (-not $wheel) { throw "Hivemind wheel build produced no artifact" }
+          uv pip install --no-deps $wheel.FullName
+
+      - name: Validate host configuration and device
+        run: uv run --no-sync python scripts/run_external_model_qualification.py --candidate "${{ inputs.candidate }}" --profile "${{ matrix.profile }}" --source-commit "${{ github.sha }}" --preflight-only
+
+  qualify:
+    name: ${{ inputs.candidate }} / ${{ matrix.profile }}
+    needs:
+      - scope
+      - preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJSON(needs.scope.outputs.profiles) }}
+    runs-on:
+      - self-hosted
+      - model-qualification
+      - "${{ matrix.profile }}"
+    timeout-minutes: 360
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --extra dev --frozen --python 3.12
+
+      - name: Install Go for patched Windows Hivemind runtime
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Build patched Windows Hivemind runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          uv pip install --no-deps "patch==1.16"
+          uv run --no-sync python scripts/build_hivemind_windows.py --out-dir "${{ runner.temp }}/hivemind-wheel"
+          $wheel = Get-ChildItem "${{ runner.temp }}/hivemind-wheel/hivemind-1.1.12-*-win_amd64.whl" | Select-Object -Last 1
+          if (-not $wheel) { throw "Hivemind wheel build produced no artifact" }
+          uv pip install --no-deps $wheel.FullName
+
+      - name: Run full-artifact parity and selected-worker recovery
+        run: uv run --no-sync python scripts/run_external_model_qualification.py --candidate "${{ inputs.candidate }}" --profile "${{ matrix.profile }}" --source-commit "${{ github.sha }}" --timeout 7200 --output "${{ runner.temp }}/communityai-qualification/${{ matrix.profile }}.json"
+
+      - name: Upload immutable host report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-${{ inputs.candidate }}-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/communityai-qualification/${{ matrix.profile }}.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  aggregate:
+    name: Matrix gate / ${{ inputs.qualification_scope }}
+    needs: qualify
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MANIFEST: ${{ inputs.candidate == 'qwen3.5-2b' && 'manifests/candidates/qwen3.5-2b-bfloat16-eager.json' || 'manifests/candidates/gemma-4-e2b-it-bfloat16-eager.json' }}
+      PYTHONPATH: src
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+
+      - name: Install locked dependencies
+        run: uv sync --extra dev --frozen --python 3.12
+
+      - name: Prepare report directory
+        shell: bash
+        run: mkdir -p qualification-reports
+
+      - name: Download this run's immutable host reports
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: qualification-${{ inputs.candidate }}-*
+          path: qualification-reports
+          merge-multiple: true
+
+      - name: Aggregate exact source and runtime matrix
+        id: aggregate
+        continue-on-error: true
+        shell: bash
+        run: |
+          shopt -s nullglob
+          reports=(qualification-reports/*.json)
+          drift_version="$(uv run --no-sync python -c 'import drift; print(drift.__version__)')"
+          if [[ "${{ inputs.qualification_scope }}" == "public-alpha" ]]; then
+            required_profiles=(windows:cpu windows:cuda linux:cpu linux:cuda)
+          else
+            required_profiles=(macos:cpu macos:mps)
+          fi
+          profile_args=()
+          for profile in "${required_profiles[@]}"; do
+            profile_args+=(--require-profile "$profile")
+          done
+          uv run --no-sync python scripts/aggregate_model_qualification.py \
+            "$MANIFEST" "${reports[@]}" \
+            "${profile_args[@]}" \
+            --require-source-commit "$GITHUB_SHA" \
+            --require-drift-version "$drift_version" \
+            --output qualification-matrix.json
+
+      - name: Upload immutable matrix report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-matrix-${{ inputs.candidate }}-${{ inputs.qualification_scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-matrix.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Enforce matrix result
+        if: steps.aggregate.outcome != 'success'
+        shell: bash
+        run: exit 1

@@ -30,7 +30,7 @@ import torch
 from hivemind import DHT
 from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils.timed_storage import MAX_DHT_TIME_DISCREPANCY_SECONDS
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 import drift
 from drift import AutoDistributedModelForCausalLM
@@ -44,7 +44,8 @@ from drift.utils.auto_config import AutoDistributedConfig
 from drift.utils.convert_block import QuantType
 from drift.utils.dht import get_remote_module_infos
 from drift.utils.hardware import normalize_device
-from drift.utils.misc import get_size_in_bytes
+from drift.utils.kv_cache import StandardGQACache
+from drift.utils.reference_model import load_reference_model_for_causal_lm
 
 DEFAULT_MODEL = "Maykeye/TinyLLama-v0"
 DEFAULT_DHT_PREFIX = "_windows_xpu_tinyllama_v0_smoke"
@@ -253,6 +254,7 @@ def main(argv=None) -> None:
                 block_config._attn_implementation = manifest.runtime.attention_implementation
         else:
             block_config._attn_implementation = "eager"
+        log(f"attention_implementation={block_config._attn_implementation}")
         block_indices = requested_block_indices or list(range(block_config.num_hidden_layers))
         if block_indices[-1] >= block_config.num_hidden_layers:
             raise ValueError(
@@ -263,9 +265,16 @@ def main(argv=None) -> None:
         torch_dtype = resolve_block_dtype(block_config, DTYPE_MAP[args.torch_dtype])
         log(f"torch_dtype={torch_dtype}")
         attn_cache_tokens = 128
-        cache_values_per_block = 2 * block_config.hidden_size * attn_cache_tokens
-        cache_values_per_block //= block_config.num_key_value_groups
-        attn_cache_bytes = cache_values_per_block * get_size_in_bytes(torch_dtype) * len(block_indices)
+        cache_strategy = getattr(block_config, "kv_cache_strategy", StandardGQACache)
+        attn_cache_bytes = sum(
+            cache_strategy.estimate_cache_bytes(
+                block_config,
+                attn_cache_tokens,
+                dtype=torch_dtype,
+                block_index=block_index,
+            )
+            for block_index in block_indices
+        )
 
         serving_dhts = [dht]
         serving_identities = [NodeIdentity.load(bootstrap_identity_path)] if bootstrap_identity_path else [None]
@@ -369,7 +378,7 @@ def main(argv=None) -> None:
             manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
             torch_dtype=torch_dtype,
             request_timeout=3 if args.test_failover else 60,
-            max_retries=3 if args.test_failover else None,
+            max_retries=3,
             min_backoff=0.1 if args.test_failover else 1,
             max_backoff=1 if args.test_failover else 60,
             update_period=1 if args.test_failover else 60,
@@ -443,7 +452,7 @@ def main(argv=None) -> None:
             }
             if manifest is not None and manifest.runtime.attention_implementation != "auto":
                 reference_kwargs["attn_implementation"] = manifest.runtime.attention_implementation
-            reference_model = AutoModelForCausalLM.from_pretrained(
+            reference_model = load_reference_model_for_causal_lm(
                 artifact_verifier.snapshot_root if artifact_verifier is not None else model_name,
                 **reference_kwargs,
             ).to(device)

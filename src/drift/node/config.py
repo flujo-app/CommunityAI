@@ -6,8 +6,12 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from humanfriendly import parse_size
 
 NODE_CONFIG_SCHEMA_VERSION = 1
 
@@ -72,6 +76,58 @@ def _require_string_list(value: Any, field: str, *, nonempty: bool = False) -> T
     return result
 
 
+def _require_model_list(value: Any, field: str) -> Tuple[str, ...]:
+    result = _require_string_list(value, field)
+    normalized = [item.casefold() for item in result]
+    if len(set(normalized)) != len(normalized):
+        raise NodeConfigError(f"{field} must not contain case-insensitive duplicates")
+    return result
+
+
+def _require_size(value: Any, field: str) -> Tuple[str, int]:
+    raw = _require_string(value, field)
+    try:
+        size = parse_size(raw)
+    except Exception as exc:
+        raise NodeConfigError(f"{field} must be a positive byte size such as 20GiB") from exc
+    if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+        raise NodeConfigError(f"{field} must be a positive byte size such as 20GiB")
+    return raw, size
+
+
+def _require_vram_limit(value: Any, field: str) -> Tuple[str, Optional[int], Optional[float]]:
+    raw = _require_string(value, field)
+    if raw.endswith("%"):
+        try:
+            percent = float(raw[:-1].strip())
+        except ValueError as exc:
+            raise NodeConfigError(f"{field} must be a positive byte size or percentage up to 100%") from exc
+        if not math.isfinite(percent) or not 0 < percent <= 100:
+            raise NodeConfigError(f"{field} must be a positive byte size or percentage up to 100%")
+        return raw, None, percent / 100
+    raw, size = _require_size(raw, field)
+    return raw, size, None
+
+
+_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _load_timezone(name: str):
+    if name == "local":
+        return None
+    if name == "UTC":
+        return timezone.utc
+    return ZoneInfo(name)
+
+
+def _require_clock_minute(value: Any, field: str) -> int:
+    raw = _require_string(value, field)
+    match = re.fullmatch(r"([01][0-9]|2[0-3]):([0-5][0-9])", raw)
+    if match is None:
+        raise NodeConfigError(f"{field} must use 24-hour HH:MM format")
+    return int(match.group(1)) * 60 + int(match.group(2))
+
+
 def _resolve_path(value: Any, field: str, base_dir: Path) -> Path:
     raw_path = Path(_require_string(value, field)).expanduser()
     if not raw_path.is_absolute():
@@ -116,6 +172,169 @@ class NodeModelConfig:
 
 
 @dataclass(frozen=True)
+class ContributionWindowConfig:
+    """One local-time contribution interval; overnight windows end the next day."""
+
+    weekdays: Tuple[int, ...]
+    start_minute: int
+    end_minute: int
+
+    @classmethod
+    def from_dict(cls, source: Mapping[str, Any], *, index: int) -> "ContributionWindowConfig":
+        field = f"contribution_policy.schedule.windows[{index}]"
+        source = _require_object(source, field)
+        _require_fields(source, field, required=("days", "start", "end"))
+        raw_days = _require_string_list(source["days"], f"{field}.days", nonempty=True)
+        normalized_days = tuple(day.casefold() for day in raw_days)
+        invalid_days = sorted(set(normalized_days) - set(_WEEKDAYS))
+        if invalid_days:
+            raise NodeConfigError(f"{field}.days contains unsupported weekday(s): {', '.join(invalid_days)}")
+        weekday_numbers = tuple(_WEEKDAYS.index(day) for day in normalized_days)
+        if len(set(weekday_numbers)) != len(weekday_numbers):
+            raise NodeConfigError(f"{field}.days must not contain case-insensitive duplicates")
+        start_minute = _require_clock_minute(source["start"], f"{field}.start")
+        end_minute = _require_clock_minute(source["end"], f"{field}.end")
+        if start_minute == end_minute:
+            raise NodeConfigError(f"{field} start and end must differ")
+        return cls(tuple(sorted(weekday_numbers)), start_minute, end_minute)
+
+    def contains(self, local_now: datetime) -> bool:
+        minute = local_now.hour * 60 + local_now.minute
+        weekday = local_now.weekday()
+        if self.start_minute < self.end_minute:
+            return weekday in self.weekdays and self.start_minute <= minute < self.end_minute
+        return (weekday in self.weekdays and minute >= self.start_minute) or (
+            (weekday - 1) % 7 in self.weekdays and minute < self.end_minute
+        )
+
+
+@dataclass(frozen=True)
+class ContributionScheduleConfig:
+    """Weekly contribution windows evaluated in local, UTC, or an available IANA timezone."""
+
+    timezone_name: str
+    windows: Tuple[ContributionWindowConfig, ...]
+
+    @classmethod
+    def from_dict(cls, source: Mapping[str, Any]) -> "ContributionScheduleConfig":
+        field = "contribution_policy.schedule"
+        source = _require_object(source, field)
+        _require_fields(source, field, required=("timezone", "windows"))
+        timezone_name = _require_string(source["timezone"], f"{field}.timezone")
+        try:
+            _load_timezone(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise NodeConfigError(f"{field}.timezone must be 'local', 'UTC', or an available IANA timezone") from exc
+        raw_windows = source["windows"]
+        if not isinstance(raw_windows, list) or not raw_windows:
+            raise NodeConfigError(f"{field}.windows must be a non-empty JSON array")
+        windows = tuple(
+            ContributionWindowConfig.from_dict(window, index=index) for index, window in enumerate(raw_windows)
+        )
+        return cls(timezone_name=timezone_name, windows=windows)
+
+    def allows(self, now: Optional[datetime] = None) -> bool:
+        schedule_timezone = _load_timezone(self.timezone_name)
+        if now is None:
+            local_now = datetime.now().astimezone() if schedule_timezone is None else datetime.now(tz=schedule_timezone)
+        else:
+            if now.tzinfo is None:
+                raise ValueError("schedule evaluation requires a timezone-aware datetime")
+            local_now = now.astimezone() if schedule_timezone is None else now.astimezone(schedule_timezone)
+        return any(window.contains(local_now) for window in self.windows)
+
+
+@dataclass(frozen=True)
+class ContributionPolicyConfig:
+    """Authoritative, secret-free admission policy for contribution workers."""
+
+    sharing_enabled: bool = False
+    allowed_models: Tuple[str, ...] = ()
+    preferred_models: Tuple[str, ...] = ()
+    denied_models: Tuple[str, ...] = ()
+    max_disk_space: Optional[str] = None
+    max_disk_bytes: Optional[int] = None
+    max_vram: Optional[str] = None
+    max_vram_bytes: Optional[int] = None
+    max_vram_fraction: Optional[float] = None
+    max_bandwidth_mbps: Optional[float] = None
+    max_power_watts: Optional[float] = None
+    pause_timeout: float = 10.0
+    schedule: Optional[ContributionScheduleConfig] = None
+
+    @classmethod
+    def from_dict(cls, source: Mapping[str, Any]) -> "ContributionPolicyConfig":
+        field = "contribution_policy"
+        source = _require_object(source, field)
+        _require_fields(
+            source,
+            field,
+            required=("sharing_enabled",),
+            optional=(
+                "allowed_models",
+                "preferred_models",
+                "denied_models",
+                "max_disk_space",
+                "max_vram",
+                "max_bandwidth_mbps",
+                "max_power_watts",
+                "pause_timeout",
+                "schedule",
+            ),
+        )
+        allowed = _require_model_list(source.get("allowed_models", []), f"{field}.allowed_models")
+        preferred = _require_model_list(source.get("preferred_models", []), f"{field}.preferred_models")
+        denied = _require_model_list(source.get("denied_models", []), f"{field}.denied_models")
+        denied_normalized = {item.casefold() for item in denied}
+        if denied_normalized.intersection(item.casefold() for item in allowed):
+            raise NodeConfigError(f"{field}.allowed_models and denied_models must not overlap")
+        if denied_normalized.intersection(item.casefold() for item in preferred):
+            raise NodeConfigError(f"{field}.preferred_models and denied_models must not overlap")
+
+        max_disk_value = source.get("max_disk_space")
+        if max_disk_value is None:
+            max_disk_space = None
+            max_disk_bytes = None
+        else:
+            max_disk_space, max_disk_bytes = _require_size(max_disk_value, f"{field}.max_disk_space")
+        max_vram_value = source.get("max_vram")
+        if max_vram_value is None:
+            max_vram = None
+            max_vram_bytes = None
+            max_vram_fraction = None
+        else:
+            max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
+        sharing_enabled = _require_bool(source["sharing_enabled"], f"{field}.sharing_enabled")
+        if sharing_enabled and max_disk_bytes is None:
+            raise NodeConfigError(f"{field}.max_disk_space is required when sharing_enabled is true")
+        return cls(
+            sharing_enabled=sharing_enabled,
+            allowed_models=allowed,
+            preferred_models=preferred,
+            denied_models=denied,
+            max_disk_space=max_disk_space,
+            max_disk_bytes=max_disk_bytes,
+            max_vram=max_vram,
+            max_vram_bytes=max_vram_bytes,
+            max_vram_fraction=max_vram_fraction,
+            max_bandwidth_mbps=(
+                None
+                if source.get("max_bandwidth_mbps") is None
+                else _require_positive_number(source["max_bandwidth_mbps"], f"{field}.max_bandwidth_mbps")
+            ),
+            max_power_watts=(
+                None
+                if source.get("max_power_watts") is None
+                else _require_positive_number(source["max_power_watts"], f"{field}.max_power_watts")
+            ),
+            pause_timeout=_require_positive_number(source.get("pause_timeout", 10), f"{field}.pause_timeout"),
+            schedule=(
+                None if source.get("schedule") is None else ContributionScheduleConfig.from_dict(source["schedule"])
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class WorkerConfig:
     """One isolated contribution worker controlled by the local node."""
 
@@ -130,6 +349,12 @@ class WorkerConfig:
     device: Optional[str] = None
     cache_dir: Optional[Path] = None
     max_disk_space: Optional[str] = None
+    max_disk_bytes: Optional[int] = None
+    max_vram: Optional[str] = None
+    max_vram_bytes: Optional[int] = None
+    max_vram_fraction: Optional[float] = None
+    max_bandwidth_mbps: Optional[float] = None
+    max_power_watts: Optional[float] = None
     throughput: float | str = "auto"
     port: Optional[int] = None
     public_ip: Optional[str] = None
@@ -151,6 +376,9 @@ class WorkerConfig:
                 "device",
                 "cache_dir",
                 "max_disk_space",
+                "max_vram",
+                "max_bandwidth_mbps",
+                "max_power_watts",
                 "throughput",
                 "port",
                 "public_ip",
@@ -192,6 +420,19 @@ class WorkerConfig:
             return None if value is None else _require_string(value, f"{field}.{name}")
 
         cache_value = source.get("cache_dir")
+        max_disk_value = source.get("max_disk_space")
+        if max_disk_value is None:
+            max_disk_space = None
+            max_disk_bytes = None
+        else:
+            max_disk_space, max_disk_bytes = _require_size(max_disk_value, f"{field}.max_disk_space")
+        max_vram_value = source.get("max_vram")
+        if max_vram_value is None:
+            max_vram = None
+            max_vram_bytes = None
+            max_vram_fraction = None
+        else:
+            max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
         return cls(
             worker_id=worker_id,
             model=_require_string(source["model"], f"{field}.model"),
@@ -203,7 +444,21 @@ class WorkerConfig:
             restart_backoff=_require_positive_number(source.get("restart_backoff", 5), f"{field}.restart_backoff"),
             device=optional_string("device"),
             cache_dir=None if cache_value is None else _resolve_path(cache_value, f"{field}.cache_dir", base_dir),
-            max_disk_space=optional_string("max_disk_space"),
+            max_disk_space=max_disk_space,
+            max_disk_bytes=max_disk_bytes,
+            max_vram=max_vram,
+            max_vram_bytes=max_vram_bytes,
+            max_vram_fraction=max_vram_fraction,
+            max_bandwidth_mbps=(
+                None
+                if source.get("max_bandwidth_mbps") is None
+                else _require_positive_number(source["max_bandwidth_mbps"], f"{field}.max_bandwidth_mbps")
+            ),
+            max_power_watts=(
+                None
+                if source.get("max_power_watts") is None
+                else _require_positive_number(source["max_power_watts"], f"{field}.max_power_watts")
+            ),
             throughput=throughput,
             port=port,
             public_ip=optional_string("public_ip"),
@@ -218,6 +473,7 @@ class NodeConfig:
     max_loaded_models: int
     models: Tuple[NodeModelConfig, ...]
     workers: Tuple[WorkerConfig, ...] = ()
+    contribution_policy: ContributionPolicyConfig = ContributionPolicyConfig()
     discovery_update_period: float = 30.0
     discovery_startup_timeout: float = 15.0
 
@@ -228,7 +484,13 @@ class NodeConfig:
             source,
             "node config",
             required=("schema_version", "models"),
-            optional=("max_loaded_models", "discovery_update_period", "discovery_startup_timeout", "workers"),
+            optional=(
+                "max_loaded_models",
+                "discovery_update_period",
+                "discovery_startup_timeout",
+                "workers",
+                "contribution_policy",
+            ),
         )
         schema_version = _require_positive_int(source["schema_version"], "schema_version")
         if schema_version != NODE_CONFIG_SCHEMA_VERSION:
@@ -251,11 +513,16 @@ class NodeConfig:
         worker_ids = [worker.worker_id.casefold() for worker in workers]
         if len(set(worker_ids)) != len(worker_ids):
             raise NodeConfigError("worker ids must be unique case-insensitively")
+        policy_value = source.get("contribution_policy")
+        contribution_policy = (
+            ContributionPolicyConfig() if policy_value is None else ContributionPolicyConfig.from_dict(policy_value)
+        )
         return cls(
             schema_version=schema_version,
             max_loaded_models=_require_positive_int(source.get("max_loaded_models", 1), "max_loaded_models"),
             models=models,
             workers=workers,
+            contribution_policy=contribution_policy,
             discovery_update_period=_require_positive_number(
                 source.get("discovery_update_period", 30), "discovery_update_period"
             ),

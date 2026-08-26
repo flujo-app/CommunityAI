@@ -14,13 +14,17 @@ The desktop currently provides the promoted milestone-5 vertical slice:
 - create, relabel, and revoke controls for OpenAI client keys;
 - one-time display and clipboard copy for newly created client-key secrets; and
 - native credential ownership with verified generation or automatic import of an existing headless-node key;
-- source-level startup, readiness, crash-backoff, reconnect, and owned-process shutdown for the standalone node; and
-- friendly automatic reconnect when the credential or node is unavailable.
+- source-level startup, readiness, crash-backoff, reconnect, and owned-process shutdown for the standalone node;
+- one per-user desktop owner, with manual second launches activating the existing window and login launches remaining silent; and
+- opt-in native per-user login startup through Windows Run, a macOS LaunchAgent, or Linux XDG autostart.
 
 The desktop starts `drift node` with an explicit native credential source and never puts
 the secret in its command, environment, logs, or ordinary configuration. A migrated
 private file is removed only after a desktop-owned native-key node authenticates. File
-mode remains the default for explicitly headless `drift node` use.
+mode remains the default for explicitly headless `drift node` use. The Sharing page can
+register the exact current executable to start minimized after sign-in. Registration is
+shell-free, rejects control-character injection and unsafe link targets, and an
+ownership lock ensures a second desktop never starts or stops another local node.
 
 The PyInstaller product bundle now contains the GUI plus a separately built
 `node/CommunityAI-Node` runtime. The node bundle retains Torch, Transformers,
@@ -39,9 +43,9 @@ The release bootstrap file and first qualified public manifests are not publishe
 bundled yet, so current unsigned builds still render the missing-catalog state on a
 truly clean install. See [`CATALOG_BOOTSTRAP_V1.md`](../docs/CATALOG_BOOTSTRAP_V1.md).
 
-Cross-platform packaged native-store promotion, contribution budgets, login startup,
-accessibility validation, signed installers, and update/rollback behavior remain later
-milestone-5 slices.
+Cross-platform packaged validation of native-store promotion and the new
+single-instance/login-startup behavior, contribution budgets, accessibility validation,
+signed installers, and update/rollback behavior remain later milestone-5 gates.
 
 ## Development
 
@@ -92,12 +96,21 @@ python generate_assets.py  # only needed after changing the product icon
 python build_desktop.py
 ```
 
-Once release catalog inputs are qualified, stage the validated public bootstrap file
-into the product bundle with:
+Once release catalog inputs are qualified, stage the complete deterministic publication
+bundle into the product with:
 
 ```shell
-python build_desktop.py --bootstrap-config ../path/to/catalog-bootstrap.json
+python build_desktop.py \
+  --publication-bundle ../path/to/catalog-publication-bundle
 ```
+
+The builder revalidates the bundle index plus the exact signed catalog, bootstrap,
+manifests, and publication preflight before PyInstaller starts. It then reloads the
+actual packaged copy and requires its complete evidence to match the pre-copy evidence
+before recording catalog/bootstrap identity, the bundle-index digest, member count, and
+member digests in `desktop-metrics.json`. The retained
+`complete_release_qualification=false` value makes clear that this repository audit
+bundle is not model, worker, public-infrastructure, or packaged-inference qualification.
 
 On Windows the GUI build uses the GUI subsystem, so double-clicking the application does
 not open a terminal. The build runs the packaged GUI runtime check, headless control-API

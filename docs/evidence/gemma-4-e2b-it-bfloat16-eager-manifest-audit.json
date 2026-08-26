@@ -1,0 +1,65 @@
+{
+  "complete_release_qualification": false,
+  "environment": {
+    "drift": "2.3.0.dev2",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.12.9"
+  },
+  "generated_at": "2026-08-24T01:37:12.253246+00:00",
+  "model": {
+    "aliases": [
+      "gemma-4-e2b-it"
+    ],
+    "architecture": "Gemma4ForConditionalGeneration",
+    "gated": false,
+    "license": "apache-2.0",
+    "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+    "name": "Gemma 4 E2B IT",
+    "num_blocks": 35,
+    "repository": "google/gemma-4-E2B-it",
+    "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+    "runtime": {
+      "adapter_profile": "none",
+      "attention_implementation": "eager",
+      "dtype": "bfloat16",
+      "implementation": "drift",
+      "maximum_version_exclusive": "2.4.0",
+      "minimum_version": "2.3.0.dev0",
+      "protocol_version": 1,
+      "quantization": "none",
+      "tensor_schema": "hidden-states-v1"
+    }
+  },
+  "not_covered": [
+    "multi-machine routing and interruption recovery",
+    "cross-platform CPU/CUDA/MPS matrix",
+    "cold-client resource envelope",
+    "public-worker route redundancy and soak"
+  ],
+  "requested": {
+    "artifact_root": "<artifact-root>",
+    "artifact_verification": true,
+    "cache": "contiguous",
+    "device": "cpu",
+    "local_failover": false,
+    "local_parity": false,
+    "runtime_cache_dir": "<runtime-cache-dir>",
+    "runtime_cache_dir_source": "inferred_hub_snapshot"
+  },
+  "result": "passed",
+  "schema_version": 1,
+  "scope": "single-machine-local",
+  "stages": [
+    {
+      "duration_seconds": 22.759866,
+      "evidence": {
+        "artifact_count": 5,
+        "artifacts_verified": true,
+        "declared_artifact_bytes": 10278818149,
+        "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd"
+      },
+      "name": "manifest_and_artifacts",
+      "status": "passed"
+    }
+  ]
+}

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import sys
+import time
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Callable, Dict
+
+from communityai_desktop.startup import LoginStartupError, SingleInstanceError, login_startup_enabled, set_login_startup
 
 APP_STYLESHEET = """
 QMainWindow, QWidget#appShell, QScrollArea, QScrollArea > QWidget > QWidget {
@@ -109,6 +114,12 @@ def check_runtime() -> Dict[str, str]:
     return {"shell": "pyside", "framework": "PySide6", "version": version("PySide6")}
 
 
+def _single_instance_server_name(data_location: Path | str) -> str:
+    normalized = os.path.normcase(os.path.abspath(os.fspath(data_location)))
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:20]
+    return f"communityai-desktop-{digest}"
+
+
 def _gib_text(size_bytes: int | None) -> str:
     if not size_bytes:
         return ""
@@ -122,12 +133,28 @@ def run(
     auto_close_seconds=None,
     screenshot_path: Path | str | None = None,
     screenshot_page: int = 0,
+    single_instance: bool = True,
+    start_minimized: bool = False,
+    activate_existing_instance: bool = True,
+    instance_name: str | None = None,
 ) -> int:
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
 
-    from PySide6.QtCore import QObject, QRunnable, QSettings, Qt, QThreadPool, QTimer, Signal, Slot
+    from PySide6.QtCore import (
+        QLockFile,
+        QObject,
+        QRunnable,
+        QSettings,
+        QStandardPaths,
+        Qt,
+        QThreadPool,
+        QTimer,
+        Signal,
+        Slot,
+    )
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
     from PySide6.QtWidgets import (
         QApplication,
         QButtonGroup,
@@ -481,6 +508,30 @@ def run(
             memory_layout.addLayout(scale)
             layout.addWidget(memory_card)
 
+            startup_card, startup_layout = card()
+            startup_header = QHBoxLayout()
+            startup_copy = self._section_header(
+                "Start after sign-in",
+                "CommunityAI can reconnect your local service automatically when you sign in.",
+            )
+            startup_header.addLayout(startup_copy, 1)
+            self.login_startup_toggle = QCheckBox("Start CommunityAI when I sign in")
+            self.login_startup_toggle.setAccessibleName("Start CommunityAI when I sign in")
+            try:
+                startup_enabled = login_startup_enabled()
+                startup_detail = "Enabled for this user" if startup_enabled else "Off"
+            except LoginStartupError as exc:
+                startup_enabled = False
+                startup_detail = f"Unavailable: {str(exc)[:180]}"
+                self.login_startup_toggle.setDisabled(True)
+            self.login_startup_toggle.setChecked(startup_enabled)
+            startup_header.addWidget(self.login_startup_toggle)
+            startup_layout.addLayout(startup_header)
+            self.login_startup_detail = label(startup_detail, "bodyMuted")
+            startup_layout.addWidget(self.login_startup_detail)
+            self.login_startup_toggle.toggled.connect(self._set_login_startup)
+            layout.addWidget(startup_card)
+
             selection_card, selection_layout = card()
             selection_layout.addLayout(
                 self._section_header("Models you want to help", "Turn models on or off. CommunityAI handles the rest.")
@@ -788,6 +839,18 @@ def run(
                     row_layout.addWidget(revoke)
                 self.keys_layout.addWidget(row)
 
+        def _set_login_startup(self, enabled: bool) -> None:
+            try:
+                set_login_startup(enabled)
+            except LoginStartupError as exc:
+                self.login_startup_toggle.blockSignals(True)
+                self.login_startup_toggle.setChecked(not enabled)
+                self.login_startup_toggle.blockSignals(False)
+                self.login_startup_detail.setText(f"Could not change login startup: {str(exc)[:180]}")
+                QMessageBox.warning(self, "Login startup", str(exc)[:300])
+                return
+            self.login_startup_detail.setText("Enabled for this user" if enabled else "Off")
+
         def _memory_changed(self, value: int) -> None:
             total = self._snapshot.get("contribution", {}).get("gpu_memory_total_bytes")
             total_text = _gib_text(int(total * value / 100)) if total else ""
@@ -865,9 +928,107 @@ def run(
     application.setWindowIcon(QIcon(str(icon_path)))
     application.setStyle("Fusion")
     application.setStyleSheet(APP_STYLESHEET)
+
+    instance_server = None
+    instance_lock = None
+    instance_server_name = None
+    if single_instance:
+        data_location = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
+        if not data_location:
+            raise SingleInstanceError("the per-user application-data location is unavailable")
+        data_root = Path(data_location)
+        try:
+            data_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise SingleInstanceError(f"could not prepare the per-user instance directory: {exc}") from exc
+        instance_server_name = instance_name or _single_instance_server_name(data_location)
+        lock_digest = hashlib.sha256(instance_server_name.encode("utf-8")).hexdigest()[:20]
+        instance_lock = QLockFile(str(data_root / f"instance-{lock_digest}.lock"))
+        instance_lock.setStaleLockTime(0)
+
+        def notify_existing_instance(timeout_ms: int) -> bool:
+            socket = QLocalSocket(application)
+            deadline = time.monotonic() + timeout_ms / 1_000
+            socket.connectToServer(instance_server_name)
+            while socket.state() != QLocalSocket.ConnectedState and time.monotonic() < deadline:
+                # QLocalServer uses a named pipe on Windows. Pumping the event loop keeps
+                # same-user activation responsive even while another instance is starting.
+                application.processEvents()
+                time.sleep(0.001)
+            if socket.state() != QLocalSocket.ConnectedState:
+                socket.abort()
+                return False
+            message = b"activate\n" if activate_existing_instance else b"silent\n"
+            if socket.write(message) != len(message):
+                socket.abort()
+                return False
+            while socket.bytesToWrite() and time.monotonic() < deadline:
+                socket.flush()
+                application.processEvents()
+                time.sleep(0.001)
+            delivered = socket.bytesToWrite() == 0
+            socket.disconnectFromServer()
+            return delivered
+
+        if notify_existing_instance(250):
+            return 0
+        owns_instance_lock = instance_lock.tryLock(0)
+        if not owns_instance_lock:
+            if notify_existing_instance(1_000):
+                return 0
+            if instance_lock.removeStaleLockFile():
+                owns_instance_lock = instance_lock.tryLock(0)
+        if not owns_instance_lock:
+            raise SingleInstanceError(
+                "another CommunityAI instance is starting, but its activation endpoint is not ready"
+            )
+
+        # The lock makes stale endpoint removal ownership-safe: no successor can
+        # claim this instance name until cleanup removes the endpoint and unlocks.
+        QLocalServer.removeServer(instance_server_name)
+        instance_server = QLocalServer(application)
+        instance_server.setSocketOptions(QLocalServer.UserAccessOption)
+        if not instance_server.listen(instance_server_name):
+            error = instance_server.errorString()
+            instance_lock.unlock()
+            raise SingleInstanceError(f"could not establish the per-user CommunityAI instance endpoint: {error}")
+
     window = MainWindow()
     window._show_page(max(0, min(3, screenshot_page)))
-    window.show()
+    if start_minimized:
+        window.showMinimized()
+    else:
+        window.show()
+
+    if instance_server is not None:
+
+        def activate_window() -> None:
+            should_activate = False
+            while instance_server.hasPendingConnections():
+                socket = instance_server.nextPendingConnection()
+                socket.setReadBufferSize(64)
+                socket.waitForReadyRead(250)
+                raw_message = bytes(socket.read(64))
+                message = raw_message.strip() if len(raw_message) <= 32 and socket.bytesAvailable() == 0 else b""
+                should_activate = should_activate or message == b"activate"
+                socket.abort()
+                socket.deleteLater()
+            if should_activate:
+                window.showNormal()
+                window.raise_()
+                window.activateWindow()
+
+        def close_instance_server() -> None:
+            instance_server.close()
+            if instance_server_name is not None:
+                QLocalServer.removeServer(instance_server_name)
+            if instance_lock is not None:
+                instance_lock.unlock()
+
+        instance_server.newConnection.connect(activate_window)
+        application.aboutToQuit.connect(close_instance_server)
+        if instance_server.hasPendingConnections():
+            QTimer.singleShot(0, activate_window)
 
     if screenshot_path is not None:
         destination = Path(screenshot_path)

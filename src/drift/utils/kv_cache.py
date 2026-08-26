@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from itertools import chain
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import torch
 from hivemind.utils.tensor_descr import TensorDescriptor
@@ -37,8 +37,32 @@ class KVCacheStrategy(ABC):
     so a single strategy object serves every inference session on that backend.
     """
 
-    def __init__(self, config: PretrainedConfig):
+    supports_paged_cache = True
+
+    def __init__(self, config: PretrainedConfig, *, module: Optional[Any] = None):
         self.config = config
+        self.module = module
+
+    @classmethod
+    def estimate_cache_bytes(
+        cls,
+        config: PretrainedConfig,
+        max_length: int,
+        *,
+        dtype: torch.dtype,
+        block_index: Optional[int] = None,
+    ) -> int:
+        """Estimate one block's cache budget before its weights are loaded.
+
+        The default preserves the historical dense-GQA accounting formula. Cache strategies
+        with fixed-size or otherwise non-standard state must override this method so server
+        admission never advertises less memory than one real session will allocate.
+        """
+
+        del cls, block_index
+        cache_values = 2 * config.hidden_size * max_length
+        cache_values //= config.num_key_value_groups
+        return cache_values * torch.tensor([], dtype=dtype).element_size()
 
     @abstractmethod
     def get_cache_descriptors(
@@ -73,6 +97,17 @@ class KVCacheStrategy(ABC):
         self, cache_tensors: Sequence[torch.Tensor], new_kvs: Sequence[torch.Tensor], prefix_length: int
     ) -> None:
         """Write the block's freshly computed keys/values back into the cache in place."""
+
+    def reorder_cache_inplace(self, cache_tensors: Sequence[torch.Tensor], hypo_ids: torch.Tensor) -> None:
+        """Reorder the batch dimension after beam/hypothesis selection.
+
+        Standard K/V caches reorder every allocated tensor. Architectures may override this when
+        their allocation contains accounting-only reservation tensors that do not participate in
+        inference.
+        """
+
+        for cache_tensor in cache_tensors:
+            cache_tensor[...] = cache_tensor[hypo_ids.to(cache_tensor.device)]
 
 
 class StandardGQACache(KVCacheStrategy):

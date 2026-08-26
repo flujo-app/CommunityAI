@@ -46,6 +46,9 @@ dependencies = [
     "tokenizers>=0.21",
     "transformers>=5.13,<5.14",  # if changed, update the version assert in drift/__init__.py
     "speedtest-cli>=2.1.3",
+    # Contribution bandwidth and NVIDIA power budgets are enforced by the node runtime.
+    "psutil>=5.9",
+    "nvidia-ml-py>=12.535",
     # PyPI hivemind wheels are Linux/macOS only.  On Windows install the patched wheel produced by
     # scripts/build_hivemind_windows.py before `pip install -e .` (see README Windows section).
     "hivemind>=1.1.12,<1.2; sys_platform != 'win32'",

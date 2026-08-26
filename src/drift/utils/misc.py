@@ -62,7 +62,8 @@ def get_num_attention_heads(attn_module: torch.nn.Module, config) -> int:
             # tensor_parallel replaces sliced Linears with a wrapper exposing the shard via `.module`
             if not hasattr(proj, "out_features") and hasattr(proj, "module"):
                 proj = proj.module
-            return proj.out_features // head_dim
+            projection_multiplier = getattr(config, "query_projection_multiplier", 1) if proj_name == "q_proj" else 1
+            return proj.out_features // (head_dim * projection_multiplier)
     return config.num_attention_heads
 
 

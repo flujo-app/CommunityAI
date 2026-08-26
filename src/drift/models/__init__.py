@@ -10,3 +10,4 @@ from drift.models.mistral import *
 from drift.models.mixtral import *
 from drift.models.qwen2 import *
 from drift.models.qwen3 import *
+from drift.models.qwen3_5 import *

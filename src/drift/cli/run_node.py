@@ -7,6 +7,7 @@ import math
 import sys
 from pathlib import Path
 
+import torch
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 
 import drift
@@ -22,7 +23,8 @@ from drift.node.native_credentials import (
     NativeCredentialLocation,
     load_native_control_key,
 )
-from drift.node.worker_supervisor import WorkerLaunch, WorkerSupervisor
+from drift.node.worker_supervisor import NvidiaPowerMonitor, SystemBandwidthMonitor, WorkerLaunch, WorkerSupervisor
+from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
 use_hivemind_log_handler("in_root_logger")
@@ -140,6 +142,7 @@ def _load_node_config(args: argparse.Namespace) -> NodeConfig:
             max_loaded_models=args.max_loaded_models,
             models=configured.models,
             workers=configured.workers,
+            contribution_policy=configured.contribution_policy,
             discovery_update_period=configured.discovery_update_period,
             discovery_startup_timeout=configured.discovery_startup_timeout,
         )
@@ -214,6 +217,46 @@ def _build_model_manager(
 def _build_worker_supervisor(
     config: NodeConfig, manager: ModelManager, *, token: str | None = None
 ) -> WorkerSupervisor:
+    policy = config.contribution_policy
+
+    def model_key(descriptor: ModelDescriptor) -> str:
+        return (descriptor.manifest_digest or descriptor.model_id).casefold()
+
+    def resolve_policy_models(selectors: tuple[str, ...], field: str) -> set[str]:
+        resolved = set()
+        for selector in selectors:
+            try:
+                resolved.add(model_key(manager.resolve(selector)))
+            except ModelNotFoundError as exc:
+                raise NodeConfigError(f"contribution_policy.{field} selects {exc}") from exc
+        return resolved
+
+    allowed_models = resolve_policy_models(policy.allowed_models, "allowed_models")
+    preferred_models = resolve_policy_models(policy.preferred_models, "preferred_models")
+    denied_models = resolve_policy_models(policy.denied_models, "denied_models")
+    if allowed_models.intersection(denied_models):
+        raise NodeConfigError("contribution policy resolves the same model as both allowed and denied")
+    if preferred_models.intersection(denied_models):
+        raise NodeConfigError("contribution policy resolves the same model as both preferred and denied")
+    if allowed_models and not preferred_models.issubset(allowed_models):
+        raise NodeConfigError("contribution policy preferred models must also be allowed")
+    if (policy.max_disk_space is None) != (policy.max_disk_bytes is None):
+        raise NodeConfigError("contribution policy has an inconsistent max_disk_space value")
+    if policy.sharing_enabled and policy.max_disk_bytes is None:
+        raise NodeConfigError("contribution policy requires max_disk_space while sharing is enabled")
+    if (policy.max_vram is None) != (policy.max_vram_bytes is None and policy.max_vram_fraction is None) or (
+        policy.max_vram_bytes is not None and policy.max_vram_fraction is not None
+    ):
+        raise NodeConfigError("contribution policy has an inconsistent max_vram value")
+    for field, value in (
+        ("max_bandwidth_mbps", policy.max_bandwidth_mbps),
+        ("max_power_watts", policy.max_power_watts),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+        ):
+            raise NodeConfigError(f"contribution policy {field} must be a finite number > 0")
+
     manifested_models = {}
     for model_config in config.models:
         manifest = ModelManifest.load(model_config.manifest_path)
@@ -237,6 +280,79 @@ def _build_worker_supervisor(
             )
         if worker.public_ip is not None and worker.port is None:
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
+
+        resolved_model = model_key(descriptor)
+        if not policy.sharing_enabled:
+            policy_reason = "sharing is disabled by contribution policy"
+        elif resolved_model in denied_models:
+            policy_reason = f"model {descriptor.model_id!r} is denied by contribution policy"
+        elif allowed_models and resolved_model not in allowed_models:
+            policy_reason = f"model {descriptor.model_id!r} is not in the contribution allowlist"
+        else:
+            policy_reason = None
+        policy_admitted = policy_reason is None
+
+        if (worker.max_disk_space is None) != (worker.max_disk_bytes is None):
+            raise NodeConfigError(f"worker {worker.worker_id!r} has an inconsistent max_disk_space value")
+        disk_limits = [
+            (worker.max_disk_bytes, worker.max_disk_space),
+            (policy.max_disk_bytes, policy.max_disk_space),
+        ]
+        disk_limits = [(size, label) for size, label in disk_limits if size is not None]
+        if disk_limits:
+            effective_disk_bytes, effective_disk_space = min(disk_limits, key=lambda item: item[0])
+        else:
+            effective_disk_bytes = None
+            effective_disk_space = None
+
+        if (worker.max_vram is None) != (worker.max_vram_bytes is None and worker.max_vram_fraction is None) or (
+            worker.max_vram_bytes is not None and worker.max_vram_fraction is not None
+        ):
+            raise NodeConfigError(f"worker {worker.worker_id!r} has an inconsistent max_vram value")
+        for field, value in (
+            ("max_bandwidth_mbps", worker.max_bandwidth_mbps),
+            ("max_power_watts", worker.max_power_watts),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+            ):
+                raise NodeConfigError(f"worker {worker.worker_id!r} {field} must be a finite number > 0")
+        effective_bandwidth_mbps = min(
+            (value for value in (worker.max_bandwidth_mbps, policy.max_bandwidth_mbps) if value is not None),
+            default=None,
+        )
+        effective_power_watts = min(
+            (value for value in (worker.max_power_watts, policy.max_power_watts) if value is not None),
+            default=None,
+        )
+        configured_device = normalize_device(torch.device(worker.device or auto_detect_device()))
+        policy_vram_limit = (policy.max_vram_bytes, policy.max_vram_fraction)
+        worker_vram_limit = (worker.max_vram_bytes, worker.max_vram_fraction)
+        effective_vram_bytes = None
+        policy_vram_bytes = None
+        vram_device = None
+        if is_accelerator(configured_device):
+            if policy_admitted and policy_vram_limit == (None, None):
+                raise NodeConfigError(
+                    f"accelerator worker {worker.worker_id!r} requires a finite contribution max_vram"
+                )
+            if policy_vram_limit != (None, None):
+                try:
+                    total_vram = get_device_total_memory(configured_device)
+                except Exception as exc:
+                    raise NodeConfigError(
+                        f"worker {worker.worker_id!r} cannot resolve max_vram for {configured_device}"
+                    ) from exc
+
+                def resolve_vram_limit(limit):
+                    size, fraction = limit
+                    return size if size is not None else math.floor(total_vram * fraction)
+
+                policy_vram_bytes = min(total_vram, resolve_vram_limit(policy_vram_limit))
+                effective_vram_bytes = policy_vram_bytes
+                if worker_vram_limit != (None, None):
+                    effective_vram_bytes = min(effective_vram_bytes, resolve_vram_limit(worker_vram_limit))
+                vram_device = str(configured_device)
 
         if getattr(sys, "frozen", False):
             # desktop/launch_node.py dispatches this mode inside the packaged
@@ -265,8 +381,10 @@ def _build_worker_supervisor(
         cache_dir = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
         if cache_dir is not None:
             command.extend(("--cache_dir", str(cache_dir)))
-        if worker.max_disk_space is not None:
-            command.extend(("--max_disk_space", worker.max_disk_space))
+        if effective_disk_space is not None:
+            command.extend(("--max_disk_space", effective_disk_space))
+        if effective_vram_bytes is not None:
+            command.extend(("--max_device_memory", str(effective_vram_bytes)))
         if worker.port is not None:
             command.extend(("--port", str(worker.port)))
         if worker.public_ip is not None:
@@ -282,10 +400,40 @@ def _build_worker_supervisor(
                 auto_start=worker.enabled,
                 auto_restart=worker.auto_restart,
                 restart_backoff=worker.restart_backoff,
+                policy_admitted=policy_admitted,
+                policy_reason=policy_reason,
+                preferred=resolved_model in preferred_models,
+                max_disk_bytes=effective_disk_bytes,
+                max_vram_bytes=effective_vram_bytes,
+                vram_device=vram_device,
+                vram_pool_bytes=policy_vram_bytes,
+                max_bandwidth_mbps=effective_bandwidth_mbps,
+                max_power_watts=effective_power_watts,
                 environment=(("HF_TOKEN", token),) if token is not None else (),
             )
         )
-    return WorkerSupervisor(launches)
+    bandwidth_monitor = (
+        SystemBandwidthMonitor() if any(launch.max_bandwidth_mbps is not None for launch in launches) else None
+    )
+    power_monitors = {
+        launch.worker_id.casefold(): NvidiaPowerMonitor([int(launch.vram_device.split(":", 1)[1])])
+        for launch in launches
+        if launch.max_power_watts is not None
+        and launch.vram_device is not None
+        and launch.vram_device.startswith("cuda:")
+    }
+
+    def worker_power_watts(worker_id: str) -> float | None:
+        monitor = power_monitors.get(worker_id.casefold())
+        return None if monitor is None else monitor()
+
+    return WorkerSupervisor(
+        launches,
+        stop_timeout=policy.pause_timeout,
+        schedule_allowed=None if policy.schedule is None else policy.schedule.allows,
+        bandwidth_mbps=bandwidth_monitor,
+        power_watts=worker_power_watts if any(launch.max_power_watts is not None for launch in launches) else None,
+    )
 
 
 def _prepare_api_key_store(data_dir: Path, supplied_keys: list[str]) -> tuple[ApiKeyStore, Path | None, bool]:

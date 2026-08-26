@@ -1,0 +1,185 @@
+{
+  "complete_release_qualification": false,
+  "environment": {
+    "drift": "2.3.0.dev2",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.12.9"
+  },
+  "generated_at": "2026-08-24T00:06:58.577293+00:00",
+  "model": {
+    "aliases": [
+      "qwen3.5-2b"
+    ],
+    "architecture": "Qwen3_5ForConditionalGeneration",
+    "gated": false,
+    "license": "apache-2.0",
+    "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+    "name": "Qwen3.5 2B",
+    "num_blocks": 24,
+    "repository": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "runtime": {
+      "adapter_profile": "none",
+      "attention_implementation": "eager",
+      "dtype": "bfloat16",
+      "implementation": "drift",
+      "maximum_version_exclusive": "2.4.0",
+      "minimum_version": "2.3.0.dev0",
+      "protocol_version": 1,
+      "quantization": "none",
+      "tensor_schema": "hidden-states-v1"
+    }
+  },
+  "not_covered": [
+    "multi-machine routing and interruption recovery",
+    "cross-platform CPU/CUDA/MPS matrix",
+    "cold-client resource envelope",
+    "public-worker route redundancy and soak"
+  ],
+  "requested": {
+    "artifact_root": "<artifact-root>",
+    "artifact_verification": true,
+    "cache": "contiguous",
+    "device": "cpu",
+    "local_failover": true,
+    "local_parity": true,
+    "runtime_cache_dir": "<runtime-cache-dir>",
+    "runtime_cache_dir_source": "inferred_hub_snapshot"
+  },
+  "result": "passed",
+  "schema_version": 1,
+  "scope": "single-machine-local",
+  "stages": [
+    {
+      "duration_seconds": 9.267321,
+      "evidence": {
+        "artifact_count": 8,
+        "artifacts_verified": true,
+        "declared_artifact_bytes": 4571197320,
+        "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33"
+      },
+      "name": "manifest_and_artifacts",
+      "status": "passed"
+    },
+    {
+      "command": [
+        "<python>",
+        "<checkout>\\scripts\\smoke_manifest_local_swarm.py",
+        "--model-manifest",
+        "<manifest>",
+        "--device",
+        "cpu",
+        "--prompt",
+        "Hello",
+        "--new-tokens",
+        "3",
+        "--timeout",
+        "1800.0",
+        "--cache",
+        "contiguous",
+        "--page-size",
+        "16",
+        "--artifact-root",
+        "<artifact-root>",
+        "--cache-dir",
+        "<runtime-cache-dir>"
+      ],
+      "duration_seconds": 37.652119,
+      "evidence": {
+        "client_input_embeddings_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "distributed_output_ids": [
+          [
+            9419,
+            11,
+            353,
+            1044
+          ]
+        ],
+        "manifested_route_completed": true,
+        "reference_output_ids": [
+          [
+            9419,
+            11,
+            353,
+            1044
+          ]
+        ],
+        "stock_token_parity": true
+      },
+      "name": "local_distributed_stock_parity",
+      "return_code": 0,
+      "status": "passed",
+      "stderr": "Aug 23 19:07:05.486 [INFO] Generating new identity to be saved in `<home>\\AppData\\Local\\Temp\\drift-qualification-identities-fl1en7wx\\bootstrap.key`\nAug 23 19:07:05.685 [INFO] Announced that blocks [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] are joining\n[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d\nAug 23 19:07:15.012 [INFO] Loaded Qwen/Qwen3.5-2B block 0\nAug 23 19:07:15.304 [WARN] [bitsandbytes.cextension.get_native_library:77] The installed version of bitsandbytes was compiled without GPU support. 8-bit optimizers, 8-bit multiplication, and GPU quantization are unavailable.\nAug 23 19:07:15.355 [INFO] Loaded Qwen/Qwen3.5-2B block 1\nAug 23 19:07:15.466 [INFO] Loaded Qwen/Qwen3.5-2B block 2\nAug 23 19:07:15.512 [INFO] Loaded Qwen/Qwen3.5-2B block 3\nAug 23 19:07:15.543 [INFO] Loaded Qwen/Qwen3.5-2B block 4\nAug 23 19:07:15.575 [INFO] Loaded Qwen/Qwen3.5-2B block 5\nAug 23 19:07:15.607 [INFO] Loaded Qwen/Qwen3.5-2B block 6\nAug 23 19:07:15.636 [INFO] Loaded Qwen/Qwen3.5-2B block 7\nAug 23 19:07:15.668 [INFO] Loaded Qwen/Qwen3.5-2B block 8\nAug 23 19:07:15.708 [INFO] Loaded Qwen/Qwen3.5-2B block 9\nAug 23 19:07:15.772 [INFO] Loaded Qwen/Qwen3.5-2B block 10\nAug 23 19:07:15.802 [INFO] Loaded Qwen/Qwen3.5-2B block 11\nAug 23 19:07:15.834 [INFO] Loaded Qwen/Qwen3.5-2B block 12\nAug 23 19:07:15.864 [INFO] Loaded Qwen/Qwen3.5-2B block 13\nAug 23 19:07:15.898 [INFO] Loaded Qwen/Qwen3.5-2B block 14\nAug 23 19:07:15.927 [INFO] Loaded Qwen/Qwen3.5-2B block 15\nAug 23 19:07:15.959 [INFO] Loaded Qwen/Qwen3.5-2B block 16\nAug 23 19:07:15.992 [INFO] Loaded Qwen/Qwen3.5-2B block 17\nAug 23 19:07:16.023 [INFO] Loaded Qwen/Qwen3.5-2B block 18\nAug 23 19:07:16.051 [INFO] Loaded Qwen/Qwen3.5-2B block 19\nAug 23 19:07:16.084 [INFO] Loaded Qwen/Qwen3.5-2B block 20\nAug 23 19:07:16.121 [INFO] Loaded Qwen/Qwen3.5-2B block 21\nAug 23 19:07:16.158 [INFO] Loaded Qwen/Qwen3.5-2B block 22\nAug 23 19:07:16.190 [INFO] Loaded Qwen/Qwen3.5-2B block 23\nAug 23 19:07:16.191 [INFO] Initialized backends for 24 blocks, merging inference pools\nAug 23 19:07:16.193 [INFO] Registering 1 connection handler(s) with the p2p daemon\nAug 23 19:07:16.240 [INFO] Connection handlers are ready, starting the runtime\nAug 23 19:07:16.251 [INFO] Started\nAug 23 19:07:17.389 [INFO] HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3.5-2B/resolve/15852e8c16360a2fea060d615a32b45270f8a8fc/model.safetensors \"HTTP/1.1 404 Not Found\"\n\nLoading weights:   0%|          | 0/2 [00:00<?, ?it/s]\nLoading weights: 100%|##########| 2/2 [00:00<?, ?it/s]\nAug 23 19:07:27.086 [INFO] HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3.5-2B/resolve/15852e8c16360a2fea060d615a32b45270f8a8fc/generation_config.json \"HTTP/1.1 404 Not Found\"\nAug 23 19:07:27.113 [INFO] Route found: 0:24 via �3g4qQP\nAug 23 19:07:27.128 [INFO] rpc_inference.open(blocks=0:24, remote_peer=...ivDdHB)\nAug 23 19:07:27.129 [INFO] rpc_inference.wait_for_alloc(size=0.02 GiB), already used 0.00/0.02 GiB (0.0%)\nAug 23 19:07:27.132 [INFO] rpc_inference.alloc_done(size=0.02 GiB)\nAug 23 19:07:28.275 [WARN] [drift.client.lm_head.chunked_forward:68] Running the client-side language-model head with bfloat16 weights on CPU via chunked float32 projection. For faster CPU inference, load the client in float32 with .from_pretrained(..., torch_dtype=torch.float32), or move its local components to a supported accelerator.\nAug 23 19:07:31.060 [INFO] rpc_inference.close(blocks=0:24, remote_peer=...ivDdHB)\nAug 23 19:07:31.153 [INFO] Announced that blocks ['drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.0', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.1', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.2', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.3', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.4', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.5', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.6', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.7', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.8', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.9', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.10', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.11', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.12', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.13', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.14', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.15', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.16', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.17', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.18', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.19', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.20', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.21', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.22', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.23'] are offline\nAug 23 19:07:31.158 [INFO] Shutting down\nAug 23 19:07:31.159 [INFO] Module container shut down successfully\n\nLoading weights:   0%|          | 0/320 [00:00<?, ?it/s]\nLoading weights: 100%|##########| 320/320 [00:00<00:00, 9354.39it/s]\n",
+      "stdout": "torch=2.6.0+cpu, device=cpu\ninitial_peers=['/ip4/127.0.0.1/tcp/52134/p2p/QmQN45oeXRovemLyc3s8uC85xej8yeGby2jJwwL43g4qQP']\nloading config\ninitializing local DHT for model=Qwen/Qwen3.5-2B blocks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]\ntorch_dtype=torch.bfloat16\nstarting module container replica=0\nannounced_blocks=24/24 replicas=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]\nloading client\nclient_input_embeddings_placement=devices=['cpu'],dtypes=['bfloat16']\nclient_lm_head_placement=devices=['cpu'],dtypes=['bfloat16']\ngenerating\noutput_ids=[[9419, 11, 353, 1044]]\ndecoded='Hello, I am'\nreleasing distributed client and workers before loading the stock reference\nloading stock local model for token parity check\nreference_output_ids=[[9419, 11, 353, 1044]]\ndistributed output matches the stock model exactly\nmanifested local swarm qualification ok model=Qwen/Qwen3.5-2B\nshutting down\n"
+    },
+    {
+      "command": [
+        "<python>",
+        "<checkout>\\scripts\\smoke_manifest_local_swarm.py",
+        "--model-manifest",
+        "<manifest>",
+        "--device",
+        "cpu",
+        "--prompt",
+        "Hello",
+        "--new-tokens",
+        "3",
+        "--timeout",
+        "1800.0",
+        "--cache",
+        "contiguous",
+        "--page-size",
+        "16",
+        "--artifact-root",
+        "<artifact-root>",
+        "--cache-dir",
+        "<runtime-cache-dir>",
+        "--test-failover",
+        "--failover-tokens",
+        "8"
+      ],
+      "duration_seconds": 66.291855,
+      "evidence": {
+        "client_input_embeddings_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "distributed_output_ids": [
+          [
+            9419,
+            11,
+            353,
+            1044,
+            264,
+            220,
+            17,
+            15,
+            1007
+          ]
+        ],
+        "failover_recovery_seconds": 12.797,
+        "manifested_route_completed": true,
+        "recovery_observed": true,
+        "reference_output_ids": [
+          [
+            9419,
+            11,
+            353,
+            1044,
+            264,
+            220,
+            17,
+            15,
+            1007
+          ]
+        ],
+        "selected_worker_interrupted": true,
+        "stock_token_parity": true
+      },
+      "name": "local_in_generation_failover",
+      "return_code": 0,
+      "status": "passed",
+      "stderr": "Aug 23 19:07:43.049 [INFO] Generating new identity to be saved in `<home>\\AppData\\Local\\Temp\\drift-qualification-identities-rxebo568\\bootstrap.key`\nAug 23 19:07:43.311 [INFO] Generating new identity to be saved in `<home>\\AppData\\Local\\Temp\\drift-qualification-identities-rxebo568\\worker-0.key`\nAug 23 19:07:43.465 [INFO] Generating new identity to be saved in `<home>\\AppData\\Local\\Temp\\drift-qualification-identities-rxebo568\\worker-1.key`\nAug 23 19:07:43.642 [INFO] Announced that blocks [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] are joining\n[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d\nAug 23 19:07:53.437 [INFO] Loaded Qwen/Qwen3.5-2B block 0\nAug 23 19:07:53.648 [WARN] [bitsandbytes.cextension.get_native_library:77] The installed version of bitsandbytes was compiled without GPU support. 8-bit optimizers, 8-bit multiplication, and GPU quantization are unavailable.\nAug 23 19:07:53.770 [INFO] Loaded Qwen/Qwen3.5-2B block 1\nAug 23 19:07:53.805 [INFO] Loaded Qwen/Qwen3.5-2B block 2\nAug 23 19:07:53.838 [INFO] Loaded Qwen/Qwen3.5-2B block 3\nAug 23 19:07:53.871 [INFO] Loaded Qwen/Qwen3.5-2B block 4\nAug 23 19:07:53.902 [INFO] Loaded Qwen/Qwen3.5-2B block 5\nAug 23 19:07:53.936 [INFO] Loaded Qwen/Qwen3.5-2B block 6\nAug 23 19:07:53.965 [INFO] Loaded Qwen/Qwen3.5-2B block 7\nAug 23 19:07:53.998 [INFO] Loaded Qwen/Qwen3.5-2B block 8\nAug 23 19:07:54.031 [INFO] Loaded Qwen/Qwen3.5-2B block 9\nAug 23 19:07:54.062 [INFO] Loaded Qwen/Qwen3.5-2B block 10\nAug 23 19:07:54.090 [INFO] Loaded Qwen/Qwen3.5-2B block 11\nAug 23 19:07:54.122 [INFO] Loaded Qwen/Qwen3.5-2B block 12\nAug 23 19:07:54.155 [INFO] Loaded Qwen/Qwen3.5-2B block 13\nAug 23 19:07:54.192 [INFO] Loaded Qwen/Qwen3.5-2B block 14\nAug 23 19:07:54.221 [INFO] Loaded Qwen/Qwen3.5-2B block 15\nAug 23 19:07:54.253 [INFO] Loaded Qwen/Qwen3.5-2B block 16\nAug 23 19:07:54.285 [INFO] Loaded Qwen/Qwen3.5-2B block 17\nAug 23 19:07:54.318 [INFO] Loaded Qwen/Qwen3.5-2B block 18\nAug 23 19:07:54.348 [INFO] Loaded Qwen/Qwen3.5-2B block 19\nAug 23 19:07:54.381 [INFO] Loaded Qwen/Qwen3.5-2B block 20\nAug 23 19:07:54.414 [INFO] Loaded Qwen/Qwen3.5-2B block 21\nAug 23 19:07:54.449 [INFO] Loaded Qwen/Qwen3.5-2B block 22\nAug 23 19:07:54.476 [INFO] Loaded Qwen/Qwen3.5-2B block 23\nAug 23 19:07:54.478 [INFO] Initialized backends for 24 blocks, merging inference pools\nAug 23 19:07:54.480 [INFO] Registering 1 connection handler(s) with the p2p daemon\nAug 23 19:07:54.505 [INFO] Connection handlers are ready, starting the runtime\nAug 23 19:07:54.562 [INFO] Started\nAug 23 19:07:54.563 [INFO] Announced that blocks [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] are joining\nAug 23 19:08:04.398 [INFO] Loaded Qwen/Qwen3.5-2B block 0\nAug 23 19:08:04.433 [INFO] Loaded Qwen/Qwen3.5-2B block 1\nAug 23 19:08:04.469 [INFO] Loaded Qwen/Qwen3.5-2B block 2\nAug 23 19:08:04.513 [INFO] Loaded Qwen/Qwen3.5-2B block 3\nAug 23 19:08:04.648 [INFO] Loaded Qwen/Qwen3.5-2B block 4\nAug 23 19:08:04.706 [INFO] Loaded Qwen/Qwen3.5-2B block 5\nAug 23 19:08:04.737 [INFO] Loaded Qwen/Qwen3.5-2B block 6\nAug 23 19:08:04.769 [INFO] Loaded Qwen/Qwen3.5-2B block 7\nAug 23 19:08:04.802 [INFO] Loaded Qwen/Qwen3.5-2B block 8\nAug 23 19:08:04.834 [INFO] Loaded Qwen/Qwen3.5-2B block 9\nAug 23 19:08:04.867 [INFO] Loaded Qwen/Qwen3.5-2B block 10\nAug 23 19:08:04.894 [INFO] Loaded Qwen/Qwen3.5-2B block 11\nAug 23 19:08:04.925 [INFO] Loaded Qwen/Qwen3.5-2B block 12\nAug 23 19:08:04.957 [INFO] Loaded Qwen/Qwen3.5-2B block 13\nAug 23 19:08:04.988 [INFO] Loaded Qwen/Qwen3.5-2B block 14\nAug 23 19:08:05.017 [INFO] Loaded Qwen/Qwen3.5-2B block 15\nAug 23 19:08:05.051 [INFO] Loaded Qwen/Qwen3.5-2B block 16\nAug 23 19:08:05.090 [INFO] Loaded Qwen/Qwen3.5-2B block 17\nAug 23 19:08:05.125 [INFO] Loaded Qwen/Qwen3.5-2B block 18\nAug 23 19:08:05.159 [INFO] Loaded Qwen/Qwen3.5-2B block 19\nAug 23 19:08:05.195 [INFO] Loaded Qwen/Qwen3.5-2B block 20\nAug 23 19:08:05.230 [INFO] Loaded Qwen/Qwen3.5-2B block 21\nAug 23 19:08:05.263 [INFO] Loaded Qwen/Qwen3.5-2B block 22\nAug 23 19:08:05.291 [INFO] Loaded Qwen/Qwen3.5-2B block 23\nAug 23 19:08:05.293 [INFO] Initialized backends for 24 blocks, merging inference pools\nAug 23 19:08:05.295 [INFO] Registering 1 connection handler(s) with the p2p daemon\nAug 23 19:08:05.315 [INFO] Connection handlers are ready, starting the runtime\nAug 23 19:08:05.362 [INFO] Started\nAug 23 19:08:06.456 [INFO] HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3.5-2B/resolve/15852e8c16360a2fea060d615a32b45270f8a8fc/model.safetensors \"HTTP/1.1 404 Not Found\"\n\nLoading weights:   0%|          | 0/2 [00:00<?, ?it/s]\nLoading weights: 100%|##########| 2/2 [00:00<00:00, 3907.13it/s]\nAug 23 19:08:16.849 [INFO] HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3.5-2B/resolve/15852e8c16360a2fea060d615a32b45270f8a8fc/generation_config.json \"HTTP/1.1 404 Not Found\"\nAug 23 19:08:16.900 [INFO] Route found: 0:24 via �9fpLZE\nAug 23 19:08:16.947 [INFO] rpc_inference.open(blocks=0:24, remote_peer=...GqjHVp)\nAug 23 19:08:16.948 [INFO] rpc_inference.wait_for_alloc(size=0.02 GiB), already used 0.00/0.02 GiB (0.0%)\nAug 23 19:08:16.949 [INFO] rpc_inference.alloc_done(size=0.02 GiB)\nAug 23 19:08:18.188 [WARN] [drift.client.lm_head.chunked_forward:68] Running the client-side language-model head with bfloat16 weights on CPU via chunked float32 projection. For faster CPU inference, load the client in float32 with .from_pretrained(..., torch_dtype=torch.float32), or move its local components to a supported accelerator.\nAug 23 19:08:18.604 [INFO] Announced that blocks ['drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.0', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.1', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.2', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.3', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.4', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.5', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.6', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.7', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.8', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.9', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.10', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.11', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.12', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.13', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.14', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.15', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.16', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.17', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.18', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.19', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.20', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.21', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.22', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.23'] are offline\nAug 23 19:08:18.628 [INFO] Shutting down\nAug 23 19:08:18.630 [INFO] Module container shut down successfully\nAug 23 19:08:21.651 [WARN] [drift.client.inference_session.step:563] Caught exception when running inference via RemoteSpanInfo(peer_id=<libp2p.peer.id.ID (QmXvL5tA7JMVr4PX58U6Uxx8pgSzky8ju1iY377V9fpLZE)>, start=0, end=24, server_info=ServerInfo(state=<ServerState.ONLINE: 2>, throughput=1.0, start_block=0, end_block=24, public_name=None, version=None, manifest_digest='3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33', signed_announcement={'schema_version': 1, 'kind': 'worker_announcement', 'algorithm': 'rsa-pss-sha256', 'key_id': 'sha256:753db8e9dde61d92201c4c0b54d37b5c34648188cfb9683d32b271aa8eb16204', 'public_key': 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt+SiXxhE9ZW2nzBZH239hwP7JeimDVSAbDRdhpeqnsg8yg2ofYtYQWl1ocSTIHmLAsZ72clj7b/Knuuf45Ck1GX3l8ULcfooH2OpE0Cnum1RHILo4enPMgRWZfphXI00QHvqEhBmyXx7W68ssBK3R9S+DoaQvaiXcrg2Q1D9L0E8N5lgR1KwxtgkLXIV5FiAWOCdvoMEaDIdaZvaXLwlLJvcU9im8TImf5F1tsYlRi9XG8g8p0gAqQlXRlMFbFdsxr5bMP2x2xeae4nZw4dqxit/QZ6UamiUu6NSNDgJD72xvHQg5stuMtF+ow4zeXte9G+A4jHpUJgv/Gu0l8pjIwIDAQAB', 'payload': {'peer_id': 'QmXvL5tA7JMVr4PX58U6Uxx8pgSzky8ju1iY377V9fpLZE', 'dht_prefix': 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33', 'manifest_digest': '3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33', 'execution_profile': {'implementation': 'drift', 'minimum_version': '2.3.0.dev0', 'maximum_version_exclusive': '2.4.0', 'protocol_version': 1, 'tensor_schema': 'hidden-states-v1', 'attention_implementation': 'eager', 'dtype': 'bfloat16', 'quantization': 'none', 'adapter_profile': 'none'}, 'server_info': {'state': 2, 'throughput': 1.0, 'start_block': 0, 'end_block': 24, 'public_name': None, 'version': None, 'manifest_digest': '3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33', 'network_rps': None, 'forward_rps': None, 'inference_rps': None, 'adapters': [], 'torch_dtype': 'bfloat16', 'quant_type': 'none', 'using_relay': False, 'cache_tokens_left': 20832, 'next_pings': {'QmePPBVjpCzRZ8AKnk3S4uziggpWnk76yZfWugtk3StfDj': 0.0009047078419871069}}, 'transport_security': 'libp2p-tls1.3', 'issued_at_ms': 1787530095331, 'expires_at_ms': 1787530105331, 'sequence': 1787530095331056400}, 'signature': 'UGHVH9doKvbixFDaJwQRT3cMIAXSjPVZ41Y+9dfs5i4jt8zkdY0i8q/WmKyl+McFr++QaXUadacaxHh/Uft0XoGO7E8aa8RXKsiMqeMMwuCi5rqFYhYZyqBUNCZkeSL4/8KzhzoxkpYeAC77xZOujzzezFBa/RCln2Trj5QpCfETwZRmiwdxSiknNqQkQKN3wECC+BKNRgfYE8OlB1vDJhWxElC0PumM3lkEw0iVW3QxB+OSgcIyJe/6cjhIAGYmSJaxRY+nzgUa0HyQuvZ4bXRMzgHHnVIg+yhsiqNab76HtXl+EsPzSTlC4KSamGPQ2jRf9QLlEIbFpF9/tCtxKg=='}, network_rps=None, forward_rps=None, inference_rps=None, adapters=(), torch_dtype='bfloat16', quant_type='none', using_relay=False, cache_tokens_left=20832, next_pings={'QmePPBVjpCzRZ8AKnk3S4uziggpWnk76yZfWugtk3StfDj': 0.0009047078419871069})) (retry in 0 sec): TimeoutError()\nAug 23 19:08:21.652 [INFO] Route found: 0:24 via �3StfDj\nAug 23 19:08:21.654 [INFO] Replaying 2 cached activation tokens through replacement blocks 0:24\nAug 23 19:08:21.656 [INFO] rpc_inference.open(blocks=0:24, remote_peer=...GqjHVp)\nAug 23 19:08:21.657 [INFO] rpc_inference.wait_for_alloc(size=0.02 GiB), already used 0.00/0.02 GiB (0.0%)\nAug 23 19:08:21.657 [INFO] rpc_inference.alloc_done(size=0.02 GiB)\nAug 23 19:08:31.293 [INFO] rpc_inference.close(blocks=0:24, remote_peer=...GqjHVp)\nAug 23 19:08:31.341 [INFO] Announced that blocks ['drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.0', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.1', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.2', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.3', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.4', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.5', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.6', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.7', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.8', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.9', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.10', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.11', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.12', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.13', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.14', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.15', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.16', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.17', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.18', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.19', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.20', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.21', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.22', 'drift-m1-3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.23'] are offline\nAug 23 19:08:31.346 [INFO] Shutting down\nAug 23 19:08:31.347 [INFO] Module container shut down successfully\n\nLoading weights:   0%|          | 0/320 [00:00<?, ?it/s]\nLoading weights: 100%|##########| 320/320 [00:00<00:00, 8950.71it/s]\n",
+      "stdout": "torch=2.6.0+cpu, device=cpu\ninitial_peers=['/ip4/127.0.0.1/tcp/52174/p2p/QmcL9hB4a6kH4sBiFYB9keCu63VnqV7mTQiyL8bnGwm1qP']\nloading config\ninitializing local DHT for model=Qwen/Qwen3.5-2B blocks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]\ntorch_dtype=torch.bfloat16\nstarting worker DHT replica=0\nstarting worker DHT replica=1\nstarting module container replica=0\nstarting module container replica=1\nannounced_blocks=24/24 replicas=[2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]\nloading client\nclient_input_embeddings_placement=devices=['cpu'],dtypes=['bfloat16']\nclient_lm_head_placement=devices=['cpu'],dtypes=['bfloat16']\ngenerating\ninterrupting selected worker replica=1 peer=QmXvL5tA7JMVr4PX58U6Uxx8pgSzky8ju1iY377V9fpLZE\nfailover_recovery_seconds=12.797\noutput_ids=[[9419, 11, 353, 1044, 264, 220, 17, 15, 1007]]\ndecoded='Hello, I am a 20 year'\nreleasing distributed client and workers before loading the stock reference\nloading stock local model for token parity check\nreference_output_ids=[[9419, 11, 353, 1044, 264, 220, 17, 15, 1007]]\ndistributed output matches the stock model exactly\nmanifested local swarm qualification ok model=Qwen/Qwen3.5-2B\nshutting down\n"
+    }
+  ]
+}

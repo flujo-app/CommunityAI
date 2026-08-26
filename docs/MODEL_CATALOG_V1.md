@@ -3,12 +3,15 @@
 Status: strict schema, independent Ed25519 signing keys, threshold verification,
 expiry, persistent rollback protection, local rung selection, bounded HTTPS fetching,
 exact manifest installation, first-install node configuration, and desktop-sidecar
-consumption are implemented. The model-agnostic qualification runner and exact first
-primary source/profile pin are also implemented; the pinned Qwen3 1.7B candidate passed
-full-artifact audit, local Windows CPU parity, and selected-worker recovery. Trust-root
-rotation, periodic catalog refresh, automatic worker migration, publication of the
-release bootstrap, the standby manifest, and the remaining primary/standby
-qualification gates remain open.
+consumption are implemented. The model-agnostic qualification runner and an exact
+bootstrap evidence pin are also implemented; Qwen3 1.7B passed full-artifact audit,
+local Windows CPU parity, and selected-worker recovery. That 2025-generation checkpoint
+proves the harness but is not a production-ladder candidate. The production backlog was
+refreshed against official publisher releases on 2026-08-23. The dense Qwen3.5 text adapter now
+has exact synthetic block, cached-decode, nested-wrapper loading, and real local Hivemind RPC
+parity. Exact current-model manifests, trust-root rotation, periodic catalog refresh, automatic worker
+migration, publication of the release bootstrap, and the primary/standby qualification
+gates remain open.
 
 `ModelManifest v1` identifies one exact checkpoint and execution profile. A model
 catalog answers a separate question: which immutable manifests does one community
@@ -22,38 +25,52 @@ from subscribing to another root or selecting an exact manifest.
 ## Elastic ladder
 
 The small-model rungs exist to bootstrap and test the network. They are not the
-product destination. The default `auto` policy should advance toward 70B and then
-400B-plus models as independently measured network capacity becomes sufficient.
+product destination. The default `auto` policy should advance toward progressively
+larger current-generation models as independently measured network capacity becomes
+sufficient.
 
-For INT8 weights and two complete replicas, the weight-only approximation is:
+For a profile using `bytes_per_parameter` and two complete replicas, the weight-only
+approximation is:
 
 ```text
-maximum parameters = usable contributed VRAM bytes / 2
+maximum parameters = usable contributed VRAM bytes / (2 * bytes_per_parameter)
 ```
 
-Raw VRAM is not usable VRAM. Promotion also reserves capacity for KV caches,
-activations, framework overhead, churn, and graceful migration. A 5B INT8 model has
-about 10 GB of two-replica weights, but an operational threshold should be closer to
-14 GB with 30% headroom. Likewise, a 30B rung needs about 60 GB of two-replica
-weights and roughly 86 GB with that headroom.
+Raw VRAM is not usable VRAM. Promotion also reserves capacity for local embeddings and
+heads, KV caches, activations, framework overhead, churn, and graceful migration. MoE
+rungs are placed by total stored parameters; active parameters describe token-time
+compute and do not reduce the bytes required to keep two complete routes available.
 
-The initial qualification backlog is:
+The current qualification backlog is below. Names link to the exact official repository
+that a future manifest must pin. Estimates use total parameters and two unquantized BF16
+replicas; an FP8, INT8, or lower-bit artifact is a separate profile with its own manifest
+and qualification evidence.
 
-| Rung | Preferred candidate | Approved alternative | Two-replica INT8 weights |
+| Rung by total parameters | Preferred candidate | Standby candidate | Approx. two-replica BF16 weights |
 | --- | --- | --- | ---: |
-| 1-2B | Qwen3 1.7B | Gemma 3 1B | about 2-3.4 GB |
-| 3-4B | Qwen3 4B | Llama 3.2 3B | about 6-8 GB |
-| 8B | Qwen3 8B | Llama 3.1 8B | about 16 GB |
-| 27-32B | Qwen3 32B | Gemma 4 31B | about 62-64 GB |
-| 70B | Qwen2.5 72B | Llama 3.3 70B | about 140-144 GB |
-| 400B+ | Llama 3.1 405B | DeepSeek-V3 671B/37B active | about 810 GB-1.34 TB |
+| Edge, 2-5B | [`Qwen/Qwen3.5-2B`](https://huggingface.co/Qwen/Qwen3.5-2B) | [`google/gemma-4-E2B-it`](https://huggingface.co/google/gemma-4-E2B-it), 5.1B total / 2.3B effective | 9.1-20.5 GB |
+| Compact, 4-8B | [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B) | [`google/gemma-4-E4B-it`](https://huggingface.co/google/gemma-4-E4B-it), 8.0B total / 4.5B effective | 18.6-32.0 GB |
+| Standard, 9-12B | [`Qwen/Qwen3.5-9B`](https://huggingface.co/Qwen/Qwen3.5-9B) | [`google/gemma-4-12B-it`](https://huggingface.co/google/gemma-4-12B-it) | 38.6-47.8 GB |
+| Collective, 27-31B | [`Qwen/Qwen3.8-27B`](https://huggingface.co/Qwen/Qwen3.8-27B) | [`google/gemma-4-31B-it`](https://huggingface.co/google/gemma-4-31B-it) | 111-125 GB |
+| Cluster MoE, 109-125B | [`Qwen/Qwen3.5-122B-A10B`](https://huggingface.co/Qwen/Qwen3.5-122B-A10B), about 125B total / 10B active | [`meta-llama/Llama-4-Scout-17B-16E-Instruct`](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct), about 109B total / 17B active | 435-500 GB |
+| Frontier MoE, 397-402B | [`Qwen/Qwen3.5-397B-A17B`](https://huggingface.co/Qwen/Qwen3.5-397B-A17B), about 403B total / 17B active | [`meta-llama/Llama-4-Maverick-17B-128E-Instruct`](https://huggingface.co/meta-llama/Llama-4-Maverick-17B-128E-Instruct), about 402B total / 17B active | about 1.61 TB |
 
 These are candidates, not published approvals. Each exact revision, tokenizer,
 runtime profile, quantization, license, artifact inventory, distributed parity,
 failure recovery, and edge envelope must pass qualification before its digest enters
-a catalog. Qwen3.8 (`qwen3_5`) and Kimi (`kimi_k2`) need new architecture adapters;
-they are not accepted through the existing Qwen3 or DeepSeek names merely because a
-different runtime can load them.
+a catalog. The Qwen3.5 through Qwen3.8 releases use `qwen3_5` or `qwen3_5_moe`, not the
+implemented `qwen3` architecture. Llama 4 uses `llama4`, not the implemented dense
+`llama` adapter. Both families need explicit DRIFT adapters. Gemma 4 and Gemma 4 Unified
+have DRIFT adapters and focused stock-parity tests, but still need exact real-checkpoint
+qualification. Llama 4 artifacts are manually gated on Hugging Face and require a
+distribution and operator-access review before catalog use.
+
+[`Qwen/Qwen3.8-2.4T-A95B`](https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B) is the current
+top Qwen release, with about 2.45T total and 95B active parameters. Two BF16 replicas
+alone require roughly 9.8 TB. It remains a frontier preview rather than an activatable
+rung because it has no comparable standby, uses the separate `qwen3.8-max` license, and
+needs the `qwen3_5_moe_text` adapter plus qualification. Qwen3.5 0.8B may be used for
+adapter bring-up but is not a selectable production rung.
 
 Each rung contains exactly one primary and at least one standby. The standby is an
 approved replacement, not a requirement to keep both choices resident in volunteer
@@ -154,10 +171,11 @@ the required number of distinct signatures is present.
 
 ## Remaining integration work
 
-1. Complete multi-machine, cross-platform, edge-envelope, and public-route
-   qualification for the pinned Qwen3 1.7B primary candidate. Generate and qualify the
-   exact Gemma 3 1B standby manifest. The evidence contract and completed local primary
-   evidence are defined in [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
+1. Generate exact manifests for the Qwen3.5 2B edge primary and Gemma 4 E2B standby, then
+   run the existing adapter through their real checkpoints. Complete their multi-machine,
+   cross-platform, edge-envelope, and public-route qualification. The evidence contract
+   and earlier harness proof are defined in
+   [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
 2. Publish the signed catalog through interchangeable HTTPS mirrors and build the
    release bootstrap containing its independent trust root and public seeds.
 3. Bundle that bootstrap and pass the clean-install packaged inference gate. The

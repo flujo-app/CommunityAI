@@ -12,8 +12,10 @@ import argparse
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +28,15 @@ LOCAL_QUALIFICATION_SCHEMA_VERSION = 1
 _PARITY_MARKER = "distributed output matches the stock model exactly"
 _SUCCESS_MARKER = "manifested local swarm qualification ok"
 _MAX_CAPTURE_CHARACTERS = 24_000
+_MACHINE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\)[^\s\"'<>|]+")
+_POSIX_ABSOLUTE_PATH_RE = re.compile(r"(?<![:/A-Za-z0-9])/(?:[^\s\"'<>]+)")
+_PATH_ARGUMENT_LABELS = {
+    "--model-manifest": "<manifest>",
+    "--artifact-root": "<artifact-root>",
+    "--cache-dir": "<runtime-cache-dir>",
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,6 +64,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--failover-tokens", type=int, default=8)
     parser.add_argument(
+        "--machine-id",
+        help="Privacy-safe opaque machine label used to prove distinct external qualification hosts",
+    )
+    parser.add_argument(
+        "--source-commit",
+        help="Exact 40-character source commit; inferred from this checkout when possible",
+    )
+    parser.add_argument(
         "--manifest-only",
         action="store_true",
         help="validate the manifest/artifacts without starting a local swarm; report remains explicitly partial",
@@ -69,6 +88,80 @@ def _bounded_capture(value: str) -> str:
     if len(value) <= _MAX_CAPTURE_CHARACTERS:
         return value
     return "[earlier output truncated]\n" + value[-_MAX_CAPTURE_CHARACTERS:]
+
+
+def redact_host_paths(value: str, sensitive_paths: Sequence[tuple[str, str]] = ()) -> str:
+    """Remove host-local absolute paths before diagnostics enter shareable evidence."""
+    replacements = [
+        (str(Path.home()), "<home>"),
+        (str(Path(__file__).resolve().parents[1]), "<checkout>"),
+        *sensitive_paths,
+    ]
+    redacted = value
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    for source, label in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
+        if not source:
+            continue
+        for variant in {source, source.replace("\\", "/"), source.replace("/", "\\")}:
+            redacted = re.sub(re.escape(variant), lambda _: label, redacted, flags=flags)
+    redacted = _WINDOWS_ABSOLUTE_PATH_RE.sub("<absolute-path>", redacted)
+    return _POSIX_ABSOLUTE_PATH_RE.sub("<absolute-path>", redacted)
+
+
+def redact_command(command: Sequence[str]) -> list[str]:
+    redacted: list[str] = []
+    for index, item in enumerate(command):
+        if index == 0:
+            redacted.append("<python>")
+        elif command[index - 1] in _PATH_ARGUMENT_LABELS:
+            redacted.append(_PATH_ARGUMENT_LABELS[command[index - 1]])
+        else:
+            redacted.append(redact_host_paths(item))
+    return redacted
+
+
+def _command_sensitive_paths(command: Sequence[str]) -> list[tuple[str, str]]:
+    paths: list[tuple[str, str]] = []
+    for index, item in enumerate(command):
+        if index == 0:
+            paths.append((item, "<python>"))
+        elif command[index - 1] in _PATH_ARGUMENT_LABELS:
+            paths.append((item, _PATH_ARGUMENT_LABELS[command[index - 1]]))
+    return paths
+
+
+def normalize_system() -> str:
+    return {"darwin": "macos"}.get(platform.system().lower(), platform.system().lower())
+
+
+def normalize_device_profile(device: str) -> str:
+    value = device.strip().lower()
+    if value.startswith("cuda"):
+        return "cuda"
+    if value.startswith("mps"):
+        return "mps"
+    if value.startswith("cpu"):
+        return "cpu"
+    return value.split(":", 1)[0]
+
+
+def infer_source_commit() -> str | None:
+    repository_root = Path(__file__).resolve().parents[1]
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repository_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    candidate = completed.stdout.strip()
+    return candidate if completed.returncode == 0 and _SOURCE_COMMIT_RE.fullmatch(candidate) else None
 
 
 def infer_hub_cache_dir(artifact_root: Path) -> Path | None:
@@ -105,6 +198,17 @@ def extract_smoke_evidence(stdout: str, *, failover: bool) -> dict[str, Any]:
                 evidence["failover_recovery_seconds"] = float(line.split("=", 1)[1])
             except ValueError:
                 evidence["failover_recovery_seconds_unparsed"] = line.split("=", 1)[1]
+        elif line.startswith("torch="):
+            for item in line.split(","):
+                key, separator, value = item.strip().partition("=")
+                if separator and key == "torch":
+                    evidence["torch_version"] = value
+                elif separator and key == "device":
+                    evidence["worker_device"] = value
+        elif line.startswith("torch_dtype="):
+            evidence["worker_torch_dtype"] = line.split("=", 1)[1].removeprefix("torch.")
+        elif line.startswith("attention_implementation="):
+            evidence["attention_implementation"] = line.split("=", 1)[1]
         elif line.startswith("client_input_embeddings_placement="):
             evidence["client_input_embeddings_placement"] = line.split("=", 1)[1]
         elif line.startswith("client_lm_head_placement="):
@@ -168,46 +272,74 @@ def build_smoke_command(
     return command
 
 
+def _stream_pipe(pipe: Any, sink: Any, chunks: list[str]) -> None:
+    try:
+        for chunk in iter(pipe.readline, ""):
+            chunks.append(chunk)
+            sink.write(chunk)
+            sink.flush()
+    finally:
+        pipe.close()
+
+
 def run_smoke_stage(name: str, command: Sequence[str], *, timeout: float, failover: bool) -> dict[str, Any]:
     started = time.perf_counter()
     environment = os.environ.copy()
     environment["PYTHONUNBUFFERED"] = "1"
+    process = subprocess.Popen(
+        list(command),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        env=environment,
+    )
+    assert process.stdout is not None
+    assert process.stderr is not None
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    readers = (
+        threading.Thread(target=_stream_pipe, args=(process.stdout, sys.stdout, stdout_chunks), daemon=True),
+        threading.Thread(target=_stream_pipe, args=(process.stderr, sys.stderr, stderr_chunks), daemon=True),
+    )
+    for reader in readers:
+        reader.start()
     try:
-        completed = subprocess.run(
-            list(command),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout + 60,
-            env=environment,
-            check=False,
-        )
-        stdout, stderr = completed.stdout, completed.stderr
+        return_code = process.wait(timeout=timeout + 60)
+        for reader in readers:
+            reader.join()
+        stdout, stderr = "".join(stdout_chunks), "".join(stderr_chunks)
         evidence = extract_smoke_evidence(stdout, failover=failover)
-        passed = completed.returncode == 0 and smoke_evidence_passed(evidence, failover=failover)
+        passed = return_code == 0 and smoke_evidence_passed(evidence, failover=failover)
+        sensitive_paths = _command_sensitive_paths(command)
         return {
             "name": name,
             "status": "passed" if passed else "failed",
             "duration_seconds": round(time.perf_counter() - started, 6),
-            "return_code": completed.returncode,
-            "command": list(command),
+            "return_code": return_code,
+            "command": redact_command(command),
             "evidence": evidence,
-            "stdout": _bounded_capture(stdout),
-            "stderr": _bounded_capture(stderr),
+            "stdout": _bounded_capture(redact_host_paths(stdout, sensitive_paths)),
+            "stderr": _bounded_capture(redact_host_paths(stderr, sensitive_paths)),
         }
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
-        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        for reader in readers:
+            reader.join()
+        stdout, stderr = "".join(stdout_chunks), "".join(stderr_chunks)
+        sensitive_paths = _command_sensitive_paths(command)
         return {
             "name": name,
             "status": "failed",
             "duration_seconds": round(time.perf_counter() - started, 6),
             "return_code": None,
-            "command": list(command),
+            "command": redact_command(command),
             "evidence": {"timeout_seconds": timeout + 60},
-            "stdout": _bounded_capture(stdout),
-            "stderr": _bounded_capture(stderr),
+            "stdout": _bounded_capture(redact_host_paths(stdout, sensitive_paths)),
+            "stderr": _bounded_capture(redact_host_paths(stderr, sensitive_paths)),
         }
 
 
@@ -244,7 +376,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--page-size must be positive")
     if args.manifest_only and args.with_failover:
         parser.error("--manifest-only conflicts with --with-failover")
+    if args.machine_id is not None and not _MACHINE_ID_RE.fullmatch(args.machine_id):
+        parser.error("--machine-id must be 1-64 privacy-safe letters, digits, dots, underscores, or hyphens")
+    if args.source_commit is not None and not _SOURCE_COMMIT_RE.fullmatch(args.source_commit):
+        parser.error("--source-commit must be exactly 40 lowercase hexadecimal characters")
 
+    source_commit = args.source_commit or infer_source_commit()
     manifest_path = _absolute(args.manifest)
     artifact_root = _absolute(args.artifact_root) if args.artifact_root is not None else None
     cache_dir = _absolute(args.cache_dir) if args.cache_dir is not None else None
@@ -293,6 +430,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
+            "system": normalize_system(),
+            "device_profile": normalize_device_profile(args.device),
+            "machine_id": args.machine_id,
+            "source_commit": source_commit,
             "drift": drift.__version__,
         },
         "requested": {
@@ -301,8 +442,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "local_failover": args.with_failover,
             "device": args.device,
             "cache": args.cache,
-            "artifact_root": str(artifact_root) if artifact_root is not None else None,
-            "runtime_cache_dir": str(cache_dir) if cache_dir is not None else None,
+            "artifact_root": "<artifact-root>" if artifact_root is not None else None,
+            "runtime_cache_dir": "<runtime-cache-dir>" if cache_dir is not None else None,
             "runtime_cache_dir_source": cache_dir_source,
         },
         "stages": [validation_stage],

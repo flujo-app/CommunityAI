@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections
 import logging
+import math
 import os
 import subprocess
 import threading
@@ -27,6 +28,96 @@ class WorkerNotFoundError(LookupError):
     pass
 
 
+class WorkerPolicyError(PermissionError):
+    """A contribution worker is blocked by the node's authoritative policy."""
+
+
+class SystemBandwidthMonitor:
+    """Estimate aggregate host network traffic without inspecting request contents."""
+
+    def __init__(
+        self,
+        *,
+        counters: Optional[Callable[[], Any]] = None,
+        clock: Callable[[], float] = time.monotonic,
+        min_interval: float = 0.05,
+    ) -> None:
+        if min_interval <= 0:
+            raise ValueError("bandwidth sampling interval must be positive")
+        self._counters = counters
+        self._clock = clock
+        self._min_interval = min_interval
+        self._last_total: Optional[int] = None
+        self._last_time: Optional[float] = None
+        self._last_rate = 0.0
+        self._lock = threading.Lock()
+        self()
+
+    def __call__(self) -> Optional[float]:
+        counters = self._counters
+        if counters is None:
+            try:
+                import psutil
+            except ImportError:
+                return None
+            counters = psutil.net_io_counters
+        try:
+            sample = counters()
+            total = int(sample.bytes_sent) + int(sample.bytes_recv)
+            now = float(self._clock())
+        except Exception:
+            return None
+        if total < 0 or not math.isfinite(now):
+            return None
+        with self._lock:
+            if self._last_total is None or total < self._last_total:
+                self._last_total = total
+                self._last_time = now
+                self._last_rate = 0.0
+                return self._last_rate
+            elapsed = now - self._last_time
+            if elapsed <= 0 or elapsed < self._min_interval:
+                return self._last_rate
+            self._last_rate = (total - self._last_total) * 8 / elapsed / 1_000_000
+            self._last_total = total
+            self._last_time = now
+            return self._last_rate
+
+
+class NvidiaPowerMonitor:
+    """Read aggregate NVIDIA device power; unsupported hardware stays unavailable."""
+
+    def __init__(self, device_indices: Sequence[int]) -> None:
+        self._device_indices = tuple(sorted(set(device_indices)))
+        self._pynvml = None
+        self._initialized = False
+        self._lock = threading.Lock()
+
+    def __call__(self) -> Optional[float]:
+        if not self._device_indices:
+            return None
+        with self._lock:
+            if self._pynvml is None:
+                try:
+                    import pynvml
+                except ImportError:
+                    return None
+                self._pynvml = pynvml
+            try:
+                if not self._initialized:
+                    self._pynvml.nvmlInit()
+                    self._initialized = True
+                return (
+                    sum(
+                        self._pynvml.nvmlDeviceGetPowerUsage(self._pynvml.nvmlDeviceGetHandleByIndex(index))
+                        for index in self._device_indices
+                    )
+                    / 1000
+                )
+            except Exception:
+                return None
+
+
 @dataclass(frozen=True)
 class WorkerLaunch:
     worker_id: str
@@ -35,6 +126,15 @@ class WorkerLaunch:
     auto_start: bool = False
     auto_restart: bool = True
     restart_backoff: float = 5.0
+    policy_admitted: bool = True
+    policy_reason: Optional[str] = None
+    preferred: bool = False
+    max_disk_bytes: Optional[int] = None
+    max_vram_bytes: Optional[int] = None
+    vram_device: Optional[str] = None
+    vram_pool_bytes: Optional[int] = None
+    max_bandwidth_mbps: Optional[float] = None
+    max_power_watts: Optional[float] = None
     environment: Tuple[Tuple[str, str], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
@@ -42,6 +142,35 @@ class WorkerLaunch:
             raise ValueError("worker id and command must not be empty")
         if self.restart_backoff <= 0:
             raise ValueError("worker restart_backoff must be positive")
+        if self.policy_admitted and self.policy_reason is not None:
+            raise ValueError("an admitted worker must not have a policy reason")
+        if not self.policy_admitted and (not isinstance(self.policy_reason, str) or not self.policy_reason):
+            raise ValueError("a policy-blocked worker must have a reason")
+        if self.max_disk_bytes is not None and (
+            isinstance(self.max_disk_bytes, bool) or not isinstance(self.max_disk_bytes, int) or self.max_disk_bytes < 1
+        ):
+            raise ValueError("worker max_disk_bytes must be a positive integer")
+        if self.max_vram_bytes is not None and (
+            isinstance(self.max_vram_bytes, bool) or not isinstance(self.max_vram_bytes, int) or self.max_vram_bytes < 1
+        ):
+            raise ValueError("worker max_vram_bytes must be a positive integer")
+        vram_fields = (self.max_vram_bytes, self.vram_device, self.vram_pool_bytes)
+        if any(value is not None for value in vram_fields) and not all(value is not None for value in vram_fields):
+            raise ValueError("worker VRAM reservation fields must be configured together")
+        if self.vram_pool_bytes is not None and (
+            isinstance(self.vram_pool_bytes, bool)
+            or not isinstance(self.vram_pool_bytes, int)
+            or self.vram_pool_bytes < self.max_vram_bytes
+        ):
+            raise ValueError("worker vram_pool_bytes must cover its reservation")
+        for name, value in (
+            ("max_bandwidth_mbps", self.max_bandwidth_mbps),
+            ("max_power_watts", self.max_power_watts),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+            ):
+                raise ValueError(f"worker {name} must be a finite positive number")
         if any(not name or not isinstance(name, str) or not isinstance(value, str) for name, value in self.environment):
             raise ValueError("worker environment names and values must be strings")
 
@@ -57,6 +186,10 @@ class _WorkerRecord:
     started_at: Optional[float] = None
     restart_count: int = 0
     next_restart_at: float = 0.0
+    schedule_suspended: bool = False
+    resource_suspended: bool = False
+    last_power_watts: Optional[float] = None
+    suspension_stop_thread: Optional[threading.Thread] = field(default=None, repr=False)
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
 
 
@@ -70,6 +203,9 @@ class WorkerSupervisor:
         stop_timeout: float = 10.0,
         poll_period: float = 0.25,
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
+        schedule_allowed: Optional[Callable[[], bool]] = None,
+        bandwidth_mbps: Optional[Callable[[], Optional[float]]] = None,
+        power_watts: Optional[Callable[[str], Optional[float]]] = None,
     ) -> None:
         if stop_timeout <= 0 or poll_period <= 0:
             raise ValueError("worker supervisor timeouts must be positive")
@@ -78,10 +214,17 @@ class WorkerSupervisor:
             normalized = launch.worker_id.casefold()
             if normalized in self._records:
                 raise ValueError(f"duplicate worker id {launch.worker_id!r}")
-            self._records[normalized] = _WorkerRecord(launch=launch, desired_running=launch.auto_start)
+            self._records[normalized] = _WorkerRecord(
+                launch=launch,
+                desired_running=launch.auto_start and launch.policy_admitted,
+            )
         self._stop_timeout = stop_timeout
         self._poll_period = poll_period
         self._popen = popen
+        self._schedule_allowed = schedule_allowed
+        self._bandwidth_mbps = bandwidth_mbps
+        self._power_watts = power_watts
+        self._last_bandwidth_mbps: Optional[float] = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._monitor: Optional[threading.Thread] = None
@@ -99,7 +242,111 @@ class WorkerSupervisor:
     def _creation_flags() -> int:
         return getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
-    def _spawn_locked(self, record: _WorkerRecord) -> bool:
+    def _schedule_status(self) -> Tuple[bool, Optional[str]]:
+        if self._schedule_allowed is None:
+            return True, None
+        try:
+            allowed = self._schedule_allowed()
+        except Exception:
+            logger.exception("Failed to evaluate the contribution schedule")
+            return False, "the configured contribution schedule could not be evaluated"
+        if not isinstance(allowed, bool):
+            logger.error("Contribution schedule evaluator returned a non-boolean value")
+            return False, "the configured contribution schedule could not be evaluated"
+        if not allowed:
+            return False, "outside the configured contribution schedule"
+        return True, None
+
+    def _measured_budget_status_locked(
+        self,
+        *,
+        label: str,
+        unit: str,
+        limit: Optional[float],
+        provider: Optional[Callable[[], Optional[float]]],
+        last_value_owner: Any,
+        last_value_attribute: str,
+    ) -> Tuple[bool, Optional[str]]:
+        if limit is None:
+            return True, None
+        try:
+            value = None if provider is None else provider()
+        except Exception:
+            logger.exception("Failed to measure contribution %s usage", label)
+            value = None
+        if (
+            value is None
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            setattr(last_value_owner, last_value_attribute, None)
+            return False, f"{label} telemetry is unavailable for the configured contribution budget"
+        value = float(value)
+        setattr(last_value_owner, last_value_attribute, value)
+        if value > limit:
+            return False, f"{label} usage {value:.2f} {unit} exceeds the {limit:.2f} {unit} contribution budget"
+        return True, None
+
+    def _resource_status_locked(self, record: _WorkerRecord) -> Tuple[bool, Optional[str]]:
+        launch = record.launch
+        if launch.max_vram_bytes is not None:
+            reserved = sum(
+                other.launch.max_vram_bytes
+                for other in self._records.values()
+                if other is not record
+                and other.launch.vram_device == launch.vram_device
+                and other.process is not None
+                and other.process.poll() is None
+            )
+            if reserved + launch.max_vram_bytes > launch.vram_pool_bytes:
+                return False, f"VRAM budget is already reserved on {launch.vram_device}"
+        bandwidth_admitted, bandwidth_reason = self._measured_budget_status_locked(
+            label="bandwidth",
+            unit="Mbps",
+            limit=launch.max_bandwidth_mbps,
+            provider=self._bandwidth_mbps,
+            last_value_owner=self,
+            last_value_attribute="_last_bandwidth_mbps",
+        )
+        if not bandwidth_admitted:
+            return False, bandwidth_reason
+        return self._measured_budget_status_locked(
+            label="power",
+            unit="W",
+            limit=launch.max_power_watts,
+            provider=(None if self._power_watts is None else lambda: self._power_watts(record.launch.worker_id)),
+            last_value_owner=record,
+            last_value_attribute="last_power_watts",
+        )
+
+    def _spawn_locked(
+        self,
+        record: _WorkerRecord,
+        *,
+        defer_outside_schedule: bool = False,
+        defer_unavailable_resources: bool = False,
+    ) -> bool:
+        if not record.launch.policy_admitted:
+            record.desired_running = False
+            raise WorkerPolicyError(record.launch.policy_reason)
+        schedule_admitted, schedule_reason = self._schedule_status()
+        if not schedule_admitted:
+            record.state = WorkerState.PAUSED
+            record.schedule_suspended = defer_outside_schedule and record.desired_running
+            if defer_outside_schedule:
+                return False
+            record.desired_running = False
+            raise WorkerPolicyError(schedule_reason)
+        resource_admitted, resource_reason = self._resource_status_locked(record)
+        if not resource_admitted:
+            record.state = WorkerState.PAUSED
+            record.resource_suspended = defer_unavailable_resources and record.desired_running
+            if defer_unavailable_resources:
+                return False
+            record.desired_running = False
+            raise WorkerPolicyError(resource_reason)
         if self._closed:
             raise RuntimeError("worker supervisor is closed")
         if record.process is not None and record.process.poll() is None:
@@ -132,6 +379,8 @@ class WorkerSupervisor:
             record.restart_count += 1
         record.process = process
         record.state = WorkerState.RUNNING
+        record.schedule_suspended = False
+        record.resource_suspended = False
         record.last_error = None
         record.last_exit_code = None
         record.started_at = time.time()
@@ -175,18 +424,102 @@ class WorkerSupervisor:
         else:
             record.state = WorkerState.PAUSED
 
+    def _finish_suspension(self, record: _WorkerRecord, process: subprocess.Popen) -> None:
+        error: Optional[Exception] = None
+        exit_code: Optional[int] = None
+        try:
+            exit_code = self._terminate(process)
+        except Exception as exc:
+            error = exc
+
+        with self._lock:
+            if error is not None:
+                record.schedule_suspended = False
+                record.resource_suspended = False
+                record.state = WorkerState.CRASHED
+                record.last_error = f"{type(error).__name__}: {error}"
+            else:
+                if record.process is process:
+                    record.process = None
+                record.last_exit_code = exit_code
+                record.last_error = None
+                record.state = WorkerState.PAUSED
+            if record.suspension_stop_thread is threading.current_thread():
+                record.suspension_stop_thread = None
+
+        if error is not None:
+            logger.error(
+                "Failed to suspend worker %r for its contribution policy",
+                record.launch.worker_id,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+
+    def _suspend_locked(self, record: _WorkerRecord, *, schedule: bool = False, resource: bool = False) -> None:
+        if schedule:
+            record.schedule_suspended = True
+        if resource:
+            record.resource_suspended = True
+        if record.suspension_stop_thread is not None:
+            return
+        process = record.process
+        if process is None:
+            record.state = WorkerState.PAUSED
+            return
+        record.state = WorkerState.STOPPING
+        thread = threading.Thread(
+            target=self._finish_suspension,
+            args=(record, process),
+            name=f"drift-worker-policy-stop-{record.launch.worker_id}",
+            daemon=True,
+        )
+        record.suspension_stop_thread = thread
+        thread.start()
+
     def _monitor_loop(self) -> None:
         while not self._stop.wait(self._poll_period):
+            schedule_admitted, _ = self._schedule_status()
             with self._lock:
                 for record in self._records.values():
                     self._refresh_locked(record)
+                    if not schedule_admitted:
+                        if record.desired_running and (
+                            record.process is not None or record.state is WorkerState.PAUSED
+                        ):
+                            self._suspend_locked(record, schedule=True)
+                        continue
+                    if record.schedule_suspended:
+                        if record.suspension_stop_thread is not None or record.process is not None:
+                            continue
+                        record.schedule_suspended = False
+                        if record.desired_running:
+                            self._spawn_locked(record, defer_unavailable_resources=True)
+                        continue
+
+                    resource_admitted, _ = self._resource_status_locked(record)
+                    if (
+                        not resource_admitted
+                        and record.desired_running
+                        and record.process is not None
+                        and record.process.poll() is None
+                    ):
+                        self._suspend_locked(record, resource=True)
+                        continue
+                    if record.resource_suspended:
+                        if record.suspension_stop_thread is not None or record.process is not None:
+                            continue
+                        if not resource_admitted:
+                            continue
+                        record.resource_suspended = False
+                        if record.desired_running:
+                            self._spawn_locked(record, defer_unavailable_resources=True)
+                        continue
                     if (
                         record.desired_running
                         and record.process is None
                         and record.launch.auto_restart
                         and time.monotonic() >= record.next_restart_at
                     ):
-                        self._spawn_locked(record)
+                        self._spawn_locked(record, defer_unavailable_resources=True)
 
     def start_service(self) -> None:
         with self._lock:
@@ -197,7 +530,11 @@ class WorkerSupervisor:
             self._started = True
             for record in self._records.values():
                 if record.desired_running:
-                    self._spawn_locked(record)
+                    self._spawn_locked(
+                        record,
+                        defer_outside_schedule=True,
+                        defer_unavailable_resources=True,
+                    )
             self._monitor = threading.Thread(
                 target=self._monitor_loop,
                 name="drift-worker-supervisor",
@@ -208,6 +545,9 @@ class WorkerSupervisor:
     def start_worker(self, worker_id: str) -> bool:
         record = self._record(worker_id)
         with self._lock:
+            if not record.launch.policy_admitted:
+                record.desired_running = False
+                raise WorkerPolicyError(record.launch.policy_reason)
             record.desired_running = True
             return self._spawn_locked(record)
 
@@ -224,11 +564,27 @@ class WorkerSupervisor:
         record = self._record(worker_id)
         with self._lock:
             record.desired_running = False
-            process = record.process
-            if process is None:
+            record.schedule_suspended = False
+            record.resource_suspended = False
+            suspension_stop_thread = record.suspension_stop_thread
+            process = None if suspension_stop_thread is not None else record.process
+            if process is None and suspension_stop_thread is None:
                 record.state = WorkerState.PAUSED
                 return False
-            record.state = WorkerState.STOPPING
+            if process is not None:
+                record.state = WorkerState.STOPPING
+        if suspension_stop_thread is not None:
+            suspension_stop_thread.join(timeout=(self._stop_timeout * 2) + self._poll_period)
+            if suspension_stop_thread.is_alive():
+                raise RuntimeError(f"failed to pause worker {record.launch.worker_id!r} within the stop timeout")
+            with self._lock:
+                if record.process is not None:
+                    raise RuntimeError(
+                        f"failed to pause worker {record.launch.worker_id!r}: "
+                        f"{record.last_error or 'policy suspension failed'}"
+                    )
+                record.state = WorkerState.PAUSED
+            return True
         try:
             exit_code = self._terminate(process)
         except Exception as exc:
@@ -248,10 +604,12 @@ class WorkerSupervisor:
         return self.start_worker(worker_id)
 
     def snapshots(self) -> Tuple[Dict[str, Any], ...]:
+        schedule_admitted, schedule_reason = self._schedule_status()
         with self._lock:
             result = []
             for record in sorted(self._records.values(), key=lambda item: item.launch.worker_id.casefold()):
                 self._refresh_locked(record)
+                resource_admitted, resource_reason = self._resource_status_locked(record)
                 result.append(
                     {
                         "id": record.launch.worker_id,
@@ -259,6 +617,22 @@ class WorkerSupervisor:
                         "state": record.state.value,
                         "desired_running": record.desired_running,
                         "auto_restart": record.launch.auto_restart,
+                        "policy_admitted": record.launch.policy_admitted,
+                        "policy_reason": record.launch.policy_reason,
+                        "schedule_admitted": schedule_admitted,
+                        "schedule_reason": schedule_reason,
+                        "schedule_suspended": record.schedule_suspended,
+                        "resource_admitted": resource_admitted,
+                        "resource_reason": resource_reason,
+                        "resource_suspended": record.resource_suspended,
+                        "preferred": record.launch.preferred,
+                        "max_disk_bytes": record.launch.max_disk_bytes,
+                        "max_vram_bytes": record.launch.max_vram_bytes,
+                        "vram_pool_bytes": record.launch.vram_pool_bytes,
+                        "max_bandwidth_mbps": record.launch.max_bandwidth_mbps,
+                        "current_bandwidth_mbps": self._last_bandwidth_mbps,
+                        "max_power_watts": record.launch.max_power_watts,
+                        "current_power_watts": record.last_power_watts,
                         "pid": record.process.pid if record.process is not None else None,
                         "started_at": record.started_at,
                         "restart_count": record.restart_count,
@@ -294,7 +668,23 @@ class WorkerSupervisor:
             monitor = self._monitor
             for record in records:
                 record.desired_running = False
+                record.schedule_suspended = False
+                record.resource_suspended = False
+            suspension_stop_threads = {
+                id(record): record.suspension_stop_thread
+                for record in records
+                if record.suspension_stop_thread is not None
+            }
+        for thread in suspension_stop_threads.values():
+            thread.join(timeout=(self._stop_timeout * 2) + self._poll_period)
         for record in records:
+            suspension_stop_thread = suspension_stop_threads.get(id(record))
+            if suspension_stop_thread is not None and suspension_stop_thread.is_alive():
+                logger.error(
+                    "Policy-stop thread for worker %r exceeded the shutdown timeout",
+                    record.launch.worker_id,
+                )
+                continue
             process = record.process
             if process is not None:
                 with self._lock:
