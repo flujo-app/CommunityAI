@@ -128,17 +128,17 @@ def test_manual_workflow_covers_strict_and_incomplete_declared_profile_sets():
         assert f'"{profile}"' in workflow
     assert "default: strict-six-profile" in workflow
     assert "incomplete-windows-linux" in workflow
-    assert workflow.count("profile: ${{ fromJSON(needs.inventory.outputs.profiles) }}") == 2
+    assert workflow.count("profile: ${{ fromJSON(needs.scope.outputs.profiles) }}") == 2
     assert "runs-on:\n      - self-hosted\n      - model-qualification" in workflow
     assert 'HF_HUB_OFFLINE: "1"' in workflow
     assert 'TRANSFORMERS_OFFLINE: "1"' in workflow
     assert "actions/upload-artifact@v7" in workflow
     assert "actions/download-artifact@v8" in workflow
-    assert "secrets.QUALIFICATION_RUNNER_READ_TOKEN" in workflow
-    assert "scripts/validate_qualification_runner_fleet.py" in workflow
+    assert "QUALIFICATION_RUNNER_READ_TOKEN" not in workflow
+    assert "scripts/validate_qualification_runner_fleet.py" not in workflow
     assert "--preflight-only" in workflow
-    assert "needs: inventory" in workflow
-    assert "needs:\n      - inventory\n      - preflight" in workflow
+    assert "needs: scope" in workflow
+    assert "needs:\n      - scope\n      - preflight" in workflow
     assert "incomplete_args+=(--allow-incomplete)" in workflow
     assert '--require-source-commit "$GITHUB_SHA"' in workflow
     assert "continue-on-error: true" in workflow

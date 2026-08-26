@@ -26,6 +26,78 @@ def _peer(letter: str) -> str:
     return "Qm" + letter * 44
 
 
+def test_fly_api_uses_existing_flyctl_login_when_environment_token_is_absent(monkeypatch):
+    monkeypatch.delenv("FLY_API_TOKEN", raising=False)
+    calls = []
+
+    def runner(command, *, timeout):
+        calls.append((command, timeout))
+        return adapter._CompletedExec(returncode=0, stdout="native-fly-session-token\n")
+
+    api = adapter.FlyAPI.from_authentication(
+        "qualification-app",
+        timeout=45,
+        flyctl="custom-flyctl",
+        runner=runner,
+    )
+
+    assert calls == [(["custom-flyctl", "auth", "token"], 30)]
+    assert api._token == "native-fly-session-token"
+
+
+def test_fly_api_keeps_explicit_headless_token_without_calling_flyctl(monkeypatch):
+    monkeypatch.setenv("FLY_API_TOKEN", "headless-session-token")
+
+    def unexpected_runner(command, *, timeout):
+        raise AssertionError(f"flyctl should not run: {command}, {timeout}")
+
+    api = adapter.FlyAPI.from_authentication(
+        "qualification-app",
+        runner=unexpected_runner,
+    )
+
+    assert api._token == "headless-session-token"
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        pytest.param("headless token", id="space"),
+        pytest.param("headless\ntoken", id="newline"),
+        pytest.param("x" * 8193, id="oversized"),
+    ],
+)
+def test_fly_api_rejects_malformed_explicit_token_without_flyctl_or_leak(monkeypatch, token):
+    monkeypatch.setenv("FLY_API_TOKEN", token)
+
+    def unexpected_runner(command, *, timeout):
+        raise AssertionError(f"flyctl should not run: {command}, {timeout}")
+
+    with pytest.raises(adapter.AdapterError, match="missing or invalid") as captured:
+        adapter.FlyAPI.from_authentication(
+            "qualification-app",
+            runner=unexpected_runner,
+        )
+
+    assert token not in str(captured.value)
+
+
+def test_fly_api_rejects_unavailable_or_malformed_native_authentication(monkeypatch):
+    monkeypatch.delenv("FLY_API_TOKEN", raising=False)
+
+    with pytest.raises(adapter.AdapterError, match="existing flyctl login is unavailable"):
+        adapter.FlyAPI.from_authentication(
+            "qualification-app",
+            runner=lambda command, *, timeout: adapter._CompletedExec(returncode=1, stdout="private provider error"),
+        )
+
+    with pytest.raises(adapter.AdapterError, match="missing or invalid"):
+        adapter.FlyAPI.from_authentication(
+            "qualification-app",
+            runner=lambda command, *, timeout: adapter._CompletedExec(returncode=0, stdout="token\nextra-output\n"),
+        )
+
+
 class FakeFlyAPI:
     def __init__(self, *, fail_after_create=None):
         self.app = "qualification-app"
@@ -456,6 +528,19 @@ def test_default_machine_exec_runner_detects_sleeping_one_byte_overflow_immediat
         adapter._run_bounded_argv(command, timeout=10)
 
     assert time.monotonic() - started < 5
+
+
+def test_bounded_runner_keeps_stderr_separate_from_stdout():
+    command = [
+        sys.executable,
+        "-c",
+        "import sys;sys.stdout.write('token');sys.stderr.write('diagnostic')",
+    ]
+
+    completed = adapter._run_bounded_argv(command, timeout=5)
+
+    assert completed.stdout == "token"
+    assert completed.stderr == "diagnostic"
 
 
 def test_state_read_enforces_bound_before_json_decode(tmp_path):

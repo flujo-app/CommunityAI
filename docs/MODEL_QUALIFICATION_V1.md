@@ -105,11 +105,12 @@ missing. Self-hosted runners use the `model-qualification` label plus one of
 `windows-cpu`, `windows-cuda`, `linux-cpu`, `linux-cuda`, `macos-cpu`, or `macos-mps`.
 Register exactly one repository runner for each selected profile and never place two profile
 labels on one runner.
-The repository secret `QUALIFICATION_RUNNER_READ_TOKEN` must be a fine-grained token
-scoped to this repository with read-only `Administration` permission, which GitHub
-requires for listing repository self-hosted runners. Each runner must provide a
-privacy-safe `COMMUNITYAI_QUALIFICATION_MACHINE_ID`, the candidate-specific absolute
-artifact snapshot variable, and optionally its existing immutable Hub cache:
+The workflow does not require a repository administration token or query the private
+runner inventory. GitHub dispatches each job by its exact labels; the host preflight and
+final aggregate fail closed on an OS/device mismatch, repeated machine identity, missing
+profile report, or mixed source/runtime evidence. Each runner must provide a privacy-safe
+`COMMUNITYAI_QUALIFICATION_MACHINE_ID`, the candidate-specific absolute artifact snapshot
+variable, and optionally its existing immutable Hub cache:
 
 | Candidate | Required snapshot environment | Optional cache environment |
 | --- | --- | --- |
@@ -125,18 +126,17 @@ omits paths and identity and explicitly is not qualification evidence. The compl
 registration, credential, dispatch, review, and teardown procedure is in
 [`QUALIFICATION_RUNNER_OPERATIONS.md`](QUALIFICATION_RUNNER_OPERATIONS.md).
 
-Before any self-hosted job is queued, the workflow reads the repository runner inventory
-and passes it through
-[`scripts/validate_qualification_runner_fleet.py`](../scripts/validate_qualification_runner_fleet.py).
-The validator rejects a missing, duplicate, offline, cross-labelled, or OS-mismatched
-declared profile and persists only profile-level counts; runner names and API identifiers
-never enter its bounded artifact. A second declared-host preflight invokes
+The optional
+[`scripts/validate_qualification_runner_fleet.py`](../scripts/validate_qualification_runner_fleet.py)
+can still inspect a locally fetched inventory before dispatch when an operator wants an
+early readiness check, using that operator's existing `gh` login. It is not part of the
+workflow and produces no qualification evidence. The authoritative declared-host preflight invokes
 [`scripts/run_external_model_qualification.py`](../scripts/run_external_model_qualification.py)
 with `--preflight-only`. It rejects an operating-system label mismatch, unavailable
 CUDA/MPS device, invalid machine label, a checkout that does not match the claimed source
 commit, or an incomplete exact snapshot. Snapshot preflight requires every manifested
 relative path to be a regular file of the declared size without hashing model bytes or
-starting the qualification harness. Inventory and host readiness reports explicitly set
+starting the qualification harness. Host readiness reports explicitly set
 `qualification_evidence=false` and cannot satisfy the matrix.
 
 Only after every host preflight passes do the expensive jobs begin. Windows self-hosted
@@ -268,9 +268,10 @@ run-tagged Machine and reports success only after no tagged resource remains.
 image-side bootstrap/worker entrypoint. The operator-supplied image must contain this
 script, the exact candidate manifest at the configured container path, the matching
 immutable Hub/runtime cache, and the repository build bound by the matrix. Hub access
-is forced offline on every Machine. The adapter reads `FLY_API_TOKEN` only from the
-environment, requires an existing app rather than creating or deleting one, never puts
-credentials in argv or JSON, and retains an outer exception/SIGTERM cleanup trap for
+is forced offline on every Machine. The adapter uses the existing `flyctl` login by
+default and accepts `FLY_API_TOKEN` only as an optional headless-CI override. It requires
+an existing app rather than creating or deleting one, never puts credentials in argv or
+JSON, and retains an outer exception/SIGTERM cleanup trap for
 provisioning failures before controller preflight. Provider machine IDs, the app name,
 private IPv6 addresses, and generated paths remain in the private inputs and are never
 copied into the bounded qualification report.

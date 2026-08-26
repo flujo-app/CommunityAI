@@ -66,11 +66,10 @@ the harness but is not a production-ladder candidate. The 2026-08-23 ladder refr
 targets current size-specific Qwen3.5/Qwen3.8 primaries, Gemma 4 standbys through 31B,
 and Llama 4 standbys for larger MoE rungs. Exact Qwen3.5 2B and Gemma 4 E2B candidate
 manifests now pass full-artifact Windows CPU stock parity and two-replica interruption
-recovery. A manual self-hosted workflow now checks the repository runner inventory for
-exactly one online, OS-matched host per claimed Windows/Linux/macOS CPU/CUDA/MPS profile,
-then preflights every declared snapshot file and size, verifies the actual checkout matches
+recovery. A manual self-hosted workflow dispatches each declared
+Windows/Linux/macOS CPU/CUDA/MPS profile by exact labels, then preflights every declared snapshot file and size, verifies the actual checkout matches
 the claimed source commit, and checks the real device before any expensive model job begins.
-The identity-free inventory artifact and host readiness outputs cannot claim qualification.
+Host readiness outputs cannot claim qualification.
 Passing hosts preserve immutable qualification reports and feed one strict source/runtime
 matrix. Both Windows preflight and qualification build and retain the repository-patched
 Hivemind runtime after the locked dependency sync, and aggregation now uses the same locked
@@ -811,8 +810,8 @@ implementation.
    combiner fails closed unless every explicitly claimed Windows/Linux/macOS CPU/CUDA/MPS
    profile has a complete exact-manifest parity and failover report from a unique normalized
    machine identity. A manual self-hosted
-   workflow now first validates a bounded repository runner inventory, requiring exactly one
-   online OS-matched runner with exactly one qualification profile label. It then preflights
+   workflow dispatches exact qualification profile labels without a persistent repository
+   administration credential. It then preflights
    all six hosts for every declared snapshot file and size, an actual checkout matching the
    claimed source commit, and real CUDA/MPS availability before any qualification job starts.
    Only after those readiness gates pass does it run one exact candidate across all profiles
@@ -846,7 +845,7 @@ implementation.
    a first replacement to disconnect after partial chunked replay, proves that complete
    activation and per-layer history plus prompts remain available to a second replacement,
    and reaches reference-equivalent output through bounded route retry. Sixteen
-   controller tests plus twenty-nine adapter tests cover the fail-closed contracts; the local
+   controller tests plus thirty-three adapter tests cover the fail-closed contracts; the local
    regression is not external evidence, and no real Qwen3.5 or Gemma separate-host run has
    been claimed.
 
@@ -881,14 +880,14 @@ implementation.
    then atomically merges only the qualification variables into the private runner environment.
    Its bounded readiness output contains no host path, machine identity, runner identity, or
    credential and explicitly is not qualification evidence. The companion operations runbook
-   fixes the separate-host, exact-label, registration-token, read-only inventory credential,
+   fixes the separate-host, exact-label, one-time registration-token,
    dispatch, evidence-review, and teardown boundaries. No external host was provisioned or
    registered and no hardware result is claimed.
 
    **Next implementation sequence.** The bounded partial-matrix path and explicitly incomplete
    recovery authorization are implemented, with the exact-six release path preserved. Next
    provision and register the uniquely labelled Windows and Linux qualification runners using
-   the local machine and GCP, configure the read-only runner-inventory credential, and collect
+   the local machine and GCP, and collect
    Qwen3.5 2B and Gemma 4 E2B evidence on those profiles. Use Fly to execute the controlled separate-machine interruption/recovery
    exercise for both exact candidates and preserve its bounded evidence. In parallel, obtain
    macOS CPU/MPS capacity or explicitly revise the supported release matrix. Only after every

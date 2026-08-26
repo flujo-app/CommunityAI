@@ -568,14 +568,16 @@ private topology and control plan. Selected interruption verifies the provider m
 requests `SIGKILL`, waits for the stopped state, and returns the controller nonce.
 Cleanup discovers all run-tagged resources, force-destroys them, and refuses to
 acknowledge while any remain. A private journal plus an exception/SIGTERM cleanup trap
-covers partial provisioning before controller preflight. The app is never deleted and
-`FLY_API_TOKEN` is read only from the environment.
+covers partial provisioning before controller preflight. The app is never deleted. The
+adapter now reuses the existing `flyctl` login by default and keeps an explicit token only
+as an optional headless-CI override.
 
 The offline controller state-machine suite has 16 passing tests covering independence,
 coverage, complete matrix-host binding, selected replacement, acknowledgement freshness
 and exact schemas, token equality, clean post-recovery routing, client shutdown evidence,
 bounded input/output, cleanup after accepted preflight, redaction, and failure reporting.
-The provider suite adds 29 passing cases for both candidate block layouts, controller
+The provider suite adds 36 passing cases for both candidate block layouts, native-login
+authentication and bounded stdout/stderr separation, controller
 schema compatibility, unique provider resources, ambiguous partial-create and delayed
 visibility cleanup, selected hard-kill binding, complete cleanup, shell-free local argv
 with immediate bounded-output overflow termination, bounded state input, strict `fdaa`
@@ -586,14 +588,13 @@ the private control-plan directory; tests cover both interruption and cleanup wo
 directories. Cleanup fails closed rather than claiming that an already-missing journaled
 Machine was destroyed.
 
-The manual matrix now has a two-stage readiness boundary before any expensive model job.
-A repository runner-inventory validator requires exactly one online, OS-matched runner
-with exactly one of the six qualification profile labels. Its bounded report contains no
-runner names, API identifiers, or private paths. After inventory passes, all six hosts run
-a configuration-only preflight that checks the claimed OS, every manifested snapshot file
+The manual matrix now has a readiness boundary before any expensive model job.
+It dispatches each declared profile by exact GitHub runner labels without requiring a
+persistent repository administration token. Every dispatched host runs a
+configuration-only preflight that checks the claimed OS, every manifested snapshot file
 and declared size, a privacy-safe machine label, the actual checkout against the claimed
 source commit, and CUDA/MPS availability without hashing model bytes or invoking the
-qualification harness. Both readiness outputs explicitly set `qualification_evidence=false`
+qualification harness. Host readiness outputs explicitly set `qualification_evidence=false`
 and `complete_release_qualification=false`. Qualification starts only after every preflight
 passes. The strict matrix aggregate also rejects a normalized machine label reused across
 profiles, so one same-OS host cannot impersonate multiple qualification hosts through case
@@ -602,7 +603,7 @@ runtime before importing DRIFT, and aggregation installs and uses the locked pro
 environment rather than an isolated `packaging`-only environment.
 
 Together with the external-runner, fleet-readiness, strict-matrix, controller, and Fly
-adapter suites, the focused qualification slice passes all 70 tests. The expanded
+adapter suites, the focused qualification slice passes all 80 tests. The expanded
 qualification, catalog-publication, desktop-builder, and recovery slice passes 109 tests;
 the model-manifest and recovery subset passes 37. Black leaves all 26 changed Python files
 unchanged, and a local YAML compose parse plus the repository workflow contract tests pass.
@@ -726,16 +727,16 @@ state, and either snapshot failure. Its bounded stdout retains profile, generic 
 labels, and manifest-level snapshot facts but no host path, machine identity, runner
 identity, ambient token, or credential; it remains explicitly non-evidence. The companion
 operations guide fixes registration-token handling, exact labels, separate-host scope,
-read-only inventory credentials, bounded Windows/Linux dispatch, review, and teardown.
+credential-free workflow dispatch, bounded Windows/Linux execution, review, and teardown.
 Eleven preparation tests plus the existing fleet and external-host suites pass 28 tests;
-the expanded runner, matrix, multi-machine controller, and Fly adapter slice passes 84.
+the expanded runner, matrix, multi-machine controller, and Fly adapter slice passes 91.
 Black, isort, and the diff whitespace gate are clean. No runner was registered and no
 external candidate result is claimed.
 
 ## Follow-up issues
 
-1. Provision and register the four uniquely labelled Windows/Linux qualification hosts,
-   configure the read-only repository runner-inventory credential, and collect both bounded
+1. Provision and register the four uniquely labelled Windows/Linux qualification hosts
+   and collect both bounded
    incomplete candidate matrices. Build each immutable Fly qualification image and execute
    the explicitly incomplete adapter/controller gate for both candidates. Obtain separate
    macOS CPU/MPS capacity before rerunning the strict six-profile matrices and release gates.

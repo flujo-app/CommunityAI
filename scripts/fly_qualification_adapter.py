@@ -4,9 +4,10 @@ This adapter is intentionally separate from qualify_model_multimachine.py. It ow
 provider-specific provisioning and an outer cleanup trap, while the controller keeps
 the authoritative topology, evidence, nonce, hard-kill, and cleanup validations.
 
-Fly credentials are read only from FLY_API_TOKEN. Provider machine IDs, private IPs,
-the Fly app name, and provider responses stay in the private state file and are never
-copied into the controller report.
+Fly credentials come from the existing ``flyctl`` login by default. Headless CI may
+still supply ``FLY_API_TOKEN`` explicitly. Provider machine IDs, private IPs, the Fly
+app name, and provider responses stay in the private state file and are never copied
+into the controller report.
 """
 
 from __future__ import annotations
@@ -303,8 +304,8 @@ class FlyAPI:
         opener: Callable[..., Any] = urllib.request.urlopen,
     ) -> None:
         self.app = _require_app(app)
-        if not token or len(token) > 8192 or "\x00" in token:
-            raise AdapterError("FLY_API_TOKEN is required and must be bounded")
+        if not token or len(token) > 8192 or any(character.isspace() or ord(character) < 32 for character in token):
+            raise AdapterError("Fly API authentication token is missing or invalid")
         if base_url != DEFAULT_API_BASE and not base_url.startswith("https://"):
             raise AdapterError("Fly Machines API base URL must use HTTPS")
         self._token = token
@@ -314,9 +315,26 @@ class FlyAPI:
         self.cleanup_poll_interval = 1.0
 
     @classmethod
-    def from_environment(cls, app: str, *, timeout: int = 30) -> "FlyAPI":
+    def from_authentication(
+        cls,
+        app: str,
+        *,
+        timeout: int = 30,
+        flyctl: str | None = None,
+        runner: Callable[..., "_CompletedExec"] | None = None,
+    ) -> "FlyAPI":
         token = os.environ.get("FLY_API_TOKEN", "")
         base_url = os.environ.get("COMMUNITYAI_FLY_API_BASE", DEFAULT_API_BASE)
+        if not token:
+            executable = flyctl or os.environ.get("COMMUNITYAI_FLYCTL", "flyctl")
+            run = runner or _run_bounded_argv
+            try:
+                completed = run([executable, "auth", "token"], timeout=min(timeout, 30))
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise AdapterError("Could not read the existing flyctl authentication") from exc
+            if completed.returncode != 0:
+                raise AdapterError("The existing flyctl login is unavailable; run `flyctl auth login`")
+            token = completed.stdout.strip()
         return cls(app=app, token=token, base_url=base_url, timeout=timeout)
 
     def _request(
@@ -467,27 +485,32 @@ def _run_bounded_argv(command: Sequence[str], *, timeout: int) -> _CompletedExec
         shell=False,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE,
     )
     assert process.stdout is not None
-    output = bytearray()
+    assert process.stderr is not None
+    stdout = bytearray()
+    stderr = bytearray()
+    output_lock = threading.Lock()
     exceeded = threading.Event()
     reader_errors: list[BaseException] = []
 
-    def drain() -> None:
+    def drain(stream: Any, output: bytearray) -> None:
         try:
             while True:
                 # BufferedReader.read(size) may wait for all ``size`` bytes. A raw
                 # pipe read returns as soon as any bytes are available, so a child
                 # that writes the one-byte overflow and then sleeps is killed now,
                 # rather than only when the outer timeout expires.
-                chunk = os.read(process.stdout.fileno(), 8192)
+                chunk = os.read(stream.fileno(), 8192)
                 if not chunk:
                     return
-                remaining = MAX_EXEC_OUTPUT_BYTES + 1 - len(output)
-                if remaining > 0:
-                    output.extend(chunk[:remaining])
-                if len(output) > MAX_EXEC_OUTPUT_BYTES:
+                with output_lock:
+                    remaining = MAX_EXEC_OUTPUT_BYTES + 1 - len(stdout) - len(stderr)
+                    if remaining > 0:
+                        output.extend(chunk[:remaining])
+                    output_exceeded = len(stdout) + len(stderr) > MAX_EXEC_OUTPUT_BYTES
+                if output_exceeded:
                     exceeded.set()
                     try:
                         process.kill()
@@ -501,31 +524,41 @@ def _run_bounded_argv(command: Sequence[str], *, timeout: int) -> _CompletedExec
             except OSError:
                 pass
 
-    reader = threading.Thread(target=drain, name="flyctl-output", daemon=True)
-    reader.start()
+    readers = [
+        threading.Thread(target=drain, args=(process.stdout, stdout), name="flyctl-stdout", daemon=True),
+        threading.Thread(target=drain, args=(process.stderr, stderr), name="flyctl-stderr", daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+
+    def finish_readers(*, after_timeout: bool) -> None:
+        for reader in readers:
+            reader.join(timeout=5)
+        for stream, reader in zip((process.stdout, process.stderr), readers):
+            if reader.is_alive():
+                stream.close()
+                reader.join(timeout=5)
+        if any(reader.is_alive() for reader in readers):
+            suffix = " after timeout" if after_timeout else ""
+            raise AdapterError(f"flyctl output reader did not stop{suffix}")
+
     try:
         returncode = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
-        reader.join(timeout=5)
-        if reader.is_alive():
-            process.stdout.close()
-            reader.join(timeout=5)
-        if reader.is_alive():
-            raise AdapterError("flyctl Machine Exec output reader did not stop after timeout")
+        finish_readers(after_timeout=True)
         raise
-    reader.join(timeout=5)
-    if reader.is_alive():
-        process.stdout.close()
-        reader.join(timeout=5)
-    if reader.is_alive():
-        raise AdapterError("flyctl Machine Exec output reader did not stop")
+    finish_readers(after_timeout=False)
     if reader_errors:
-        raise AdapterError("flyctl Machine Exec output could not be read") from reader_errors[0]
+        raise AdapterError("flyctl output could not be read") from reader_errors[0]
     if exceeded.is_set():
-        raise AdapterError("flyctl Machine Exec output exceeded the bounded limit")
-    return _CompletedExec(returncode, output.decode("utf-8", errors="replace"))
+        raise AdapterError("flyctl output exceeded the bounded limit")
+    return _CompletedExec(
+        returncode,
+        stdout.decode("utf-8", errors="replace"),
+        stderr.decode("utf-8", errors="replace"),
+    )
 
 
 class FlyMachineExec:
@@ -996,7 +1029,7 @@ def control(
     *,
     expect_resource: str | None,
     environment: Mapping[str, str],
-    api_factory: Callable[[str], FlyAPI] = FlyAPI.from_environment,
+    api_factory: Callable[[str], FlyAPI] = FlyAPI.from_authentication,
     timeout: int = 60,
 ) -> dict[str, Any]:
     action, run_id, nonce = _required_control_environment(environment)
@@ -1156,7 +1189,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "provision":
             options = _options_from_args(args)
             manifest = ModelManifest.load(args.manifest.expanduser().resolve())
-            api = FlyAPI.from_environment(options.app, timeout=options.machine_timeout)
+            api = FlyAPI.from_authentication(
+                options.app,
+                timeout=options.machine_timeout,
+                flyctl=args.flyctl,
+            )
             identity_reader = FlyMachineExec(
                 executable=args.flyctl,
                 remote_node_script=options.remote_node_script,

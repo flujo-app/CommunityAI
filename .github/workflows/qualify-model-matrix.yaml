@@ -27,12 +27,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  inventory:
-    name: Qualification runner fleet readiness
+  scope:
+    name: Select qualification profiles
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      GH_TOKEN: ${{ secrets.QUALIFICATION_RUNNER_READ_TOKEN }}
     outputs:
       profiles: ${{ steps.scope.outputs.profiles }}
     steps:
@@ -46,55 +44,13 @@ jobs:
             echo 'profiles=["windows-cpu","windows-cuda","linux-cpu","linux-cuda"]' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Checkout exact source
-        uses: actions/checkout@v7
-
-      - name: Fetch repository runner inventory
-        shell: bash
-        run: |
-          if [[ -z "$GH_TOKEN" ]]; then
-            echo "QUALIFICATION_RUNNER_READ_TOKEN is required" >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/communityai-qualification"
-          gh api --paginate --slurp \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            "/repos/$GITHUB_REPOSITORY/actions/runners?per_page=100" \
-            > "$RUNNER_TEMP/communityai-qualification/runner-inventory.json"
-
-      - name: Validate declared runner fleet
-        shell: bash
-        run: |
-          profiles=(windows-cpu windows-cuda linux-cpu linux-cuda)
-          if [[ "${{ inputs.qualification_scope }}" == "strict-six-profile" ]]; then
-            profiles+=(macos-cpu macos-mps)
-          fi
-          profile_args=()
-          for profile in "${profiles[@]}"; do
-            profile_args+=(--require-profile "$profile")
-          done
-          python scripts/validate_qualification_runner_fleet.py \
-            "$RUNNER_TEMP/communityai-qualification/runner-inventory.json" \
-            "${profile_args[@]}" \
-            --output "$RUNNER_TEMP/communityai-qualification/runner-fleet-readiness.json"
-
-      - name: Upload bounded fleet-readiness report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: qualification-runner-fleet-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/communityai-qualification/runner-fleet-readiness.json
-          if-no-files-found: warn
-          retention-days: 30
-
   preflight:
     name: Preflight / ${{ inputs.candidate }} / ${{ matrix.profile }}
-    needs: inventory
+    needs: scope
     strategy:
       fail-fast: false
       matrix:
-        profile: ${{ fromJSON(needs.inventory.outputs.profiles) }}
+        profile: ${{ fromJSON(needs.scope.outputs.profiles) }}
     runs-on:
       - self-hosted
       - model-qualification
@@ -138,12 +94,12 @@ jobs:
   qualify:
     name: ${{ inputs.candidate }} / ${{ matrix.profile }}
     needs:
-      - inventory
+      - scope
       - preflight
     strategy:
       fail-fast: false
       matrix:
-        profile: ${{ fromJSON(needs.inventory.outputs.profiles) }}
+        profile: ${{ fromJSON(needs.scope.outputs.profiles) }}
     runs-on:
       - self-hosted
       - model-qualification

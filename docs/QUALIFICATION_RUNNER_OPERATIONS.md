@@ -116,30 +116,28 @@ token from GitHub, and exactly these two custom labels:
 model-qualification,<profile>
 ```
 
-Do not use `--no-default-labels`; the inventory validator also requires
-GitHub's default `self-hosted` label and checks the reported OS. Choose a unique,
+Do not use `--no-default-labels`; workflow dispatch requires GitHub's default
+`self-hosted` label. The host preflight checks the reported OS. Choose a unique,
 privacy-safe runner name that is not the machine label used in evidence. On
 Windows, runner service installation is part of configuration; restart the
 service after preparing `.env`. On Linux, prepare `.env` before installing and
 starting `svc.sh`, or restart an existing service afterward.
 
-Confirm that exactly one runner per selected profile is online. Duplicate,
-offline, cross-labelled, or OS-mismatched runners fail the inventory gate before
-model work is queued.
+Confirm that exactly one runner per selected profile is online. Missing runners remain
+queued, while cross-labelled or OS-mismatched hosts fail preflight and duplicate machine
+identities fail the final aggregate.
 
-## Inventory credential and dispatch
+## Dispatch
 
-Create `QUALIFICATION_RUNNER_READ_TOKEN` as a fine-grained token restricted to
-this repository with read-only **Administration** permission, then store it as a
-repository Actions secret. This inventory credential is separate from every
-one-hour registration token. It is exposed only to the GitHub-hosted inventory
-job; qualification self-hosted jobs do not receive it.
+No persistent repository administration token or custom Actions secret is required.
+An operator may inspect runner readiness before dispatch with an existing local `gh`
+login and the optional inventory validator, but that check is not qualification evidence.
 
 First dispatch `qualify-model-matrix.yaml` for one candidate with
 `incomplete-windows-linux`. The workflow:
 
-1. validates the four-runner inventory without persisting runner identities;
-2. preflights every host against its OS, device, source commit, machine label, and
+1. selects the four declared profiles without reading the private runner inventory;
+2. preflights every dispatched host against its OS, device, source commit, machine label, and
    exact private snapshot;
 3. runs full artifact audit, stock-token parity, and selected-worker recovery;
 4. uploads one immutable host report per profile; and
