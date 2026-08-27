@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import faulthandler
 import gc
+import math
 import shutil
 import tempfile
 import time
@@ -49,6 +50,7 @@ from drift.utils.reference_model import load_reference_model_for_causal_lm
 
 DEFAULT_MODEL = "Maykeye/TinyLLama-v0"
 DEFAULT_DHT_PREFIX = "_windows_xpu_tinyllama_v0_smoke"
+DEFAULT_FAILOVER_REQUEST_TIMEOUT_SECONDS = 10.0
 
 
 def log(message: str) -> None:
@@ -223,6 +225,12 @@ def main(argv=None) -> None:
     )
     parser.add_argument("--failover-tokens", type=int, default=8)
     parser.add_argument(
+        "--failover-request-timeout",
+        type=float,
+        default=DEFAULT_FAILOVER_REQUEST_TIMEOUT_SECONDS,
+        help="per-RPC timeout during failover smoke; must cover a slow CPU first token",
+    )
+    parser.add_argument(
         "--skip-reference",
         action="store_true",
         help="skip the stock-model token parity check (faster, but does not verify numerical correctness)",
@@ -268,6 +276,8 @@ def main(argv=None) -> None:
         raise ValueError("--prompt must be non-empty")
     if args.new_tokens < 1:
         raise ValueError("--new-tokens must be at least 1")
+    if not math.isfinite(args.failover_request_timeout) or args.failover_request_timeout <= 0:
+        raise ValueError("--failover-request-timeout must be finite and positive")
 
     requested_block_indices = parse_block_indices(args.block_indices) if args.block_indices is not None else None
     expected_block_count = manifest.model.num_blocks if manifest is not None else 8
@@ -404,7 +414,7 @@ def main(argv=None) -> None:
                 stats_report_interval=None,
                 update_period=2 if args.test_failover else 5,
                 expiration=max(10, MAX_DHT_TIME_DISCREPANCY_SECONDS),
-                request_timeout=3 if args.test_failover else 60,
+                request_timeout=args.failover_request_timeout if args.test_failover else 60,
                 session_timeout=60,
                 step_timeout=30,
                 prefetch_batches=1,
@@ -446,7 +456,7 @@ def main(argv=None) -> None:
             manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
             torch_dtype=torch_dtype,
             cache_dir=args.cache_dir,
-            request_timeout=3 if args.test_failover else 60,
+            request_timeout=args.failover_request_timeout if args.test_failover else 60,
             max_retries=3,
             min_backoff=0.1 if args.test_failover else 1,
             max_backoff=1 if args.test_failover else 60,
@@ -461,6 +471,8 @@ def main(argv=None) -> None:
         log_local_component_placement("client_lm_head", model.get_output_embeddings(), torch_dtype)
 
         log("generating")
+        if args.test_failover:
+            log(f"failover_request_timeout_seconds={args.failover_request_timeout}")
         inputs = tokenizer(args.prompt, return_tensors="pt")["input_ids"]
         generated_tokens = args.failover_tokens if args.test_failover else args.new_tokens
         if args.test_failover:

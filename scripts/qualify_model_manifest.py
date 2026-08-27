@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import re
@@ -64,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="also start two full replicas, interrupt the selected worker, and require exact parity",
     )
     parser.add_argument("--failover-tokens", type=int, default=8)
+    parser.add_argument(
+        "--failover-request-timeout",
+        type=float,
+        default=10.0,
+        help="per-RPC timeout for the failover smoke, including slow CPU first-token latency",
+    )
     parser.add_argument(
         "--machine-id",
         help="Privacy-safe opaque machine label used to prove distinct external qualification hosts",
@@ -199,6 +206,11 @@ def extract_smoke_evidence(stdout: str, *, failover: bool) -> dict[str, Any]:
                 evidence["failover_recovery_seconds"] = float(line.split("=", 1)[1])
             except ValueError:
                 evidence["failover_recovery_seconds_unparsed"] = line.split("=", 1)[1]
+        elif line.startswith("failover_request_timeout_seconds="):
+            try:
+                evidence["failover_request_timeout_seconds"] = float(line.split("=", 1)[1])
+            except ValueError:
+                evidence["failover_request_timeout_seconds_unparsed"] = line.split("=", 1)[1]
         elif line.startswith("torch="):
             for item in line.split(","):
                 key, separator, value = item.strip().partition("=")
@@ -257,6 +269,7 @@ def build_smoke_command(
     page_size: int,
     failover: bool,
     failover_tokens: int,
+    failover_request_timeout: float,
 ) -> list[str]:
     smoke = Path(__file__).resolve().with_name("smoke_manifest_local_swarm.py")
     command = [
@@ -282,7 +295,15 @@ def build_smoke_command(
     if cache_dir is not None:
         command.extend(("--cache-dir", str(cache_dir)))
     if failover:
-        command.extend(("--test-failover", "--failover-tokens", str(failover_tokens)))
+        command.extend(
+            (
+                "--test-failover",
+                "--failover-tokens",
+                str(failover_tokens),
+                "--failover-request-timeout",
+                str(failover_request_timeout),
+            )
+        )
     return command
 
 
@@ -384,6 +405,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--new-tokens must be at least 1")
     if args.failover_tokens < 2:
         parser.error("--failover-tokens must be at least 2")
+    if not math.isfinite(args.failover_request_timeout) or args.failover_request_timeout <= 0:
+        parser.error("--failover-request-timeout must be finite and positive")
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     if args.page_size <= 0:
@@ -454,6 +477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "artifact_verification": artifact_root is not None,
             "local_parity": not args.manifest_only,
             "local_failover": args.with_failover,
+            "failover_request_timeout_seconds": args.failover_request_timeout if args.with_failover else None,
             "device": args.device,
             "cache": args.cache,
             "artifact_root": "<artifact-root>" if artifact_root is not None else None,
@@ -485,6 +509,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             cache=args.cache,
             page_size=args.page_size,
             failover_tokens=args.failover_tokens,
+            failover_request_timeout=args.failover_request_timeout,
         )
         parity = run_smoke_stage(
             "local_distributed_stock_parity",

@@ -30,6 +30,7 @@ def test_extract_smoke_evidence_requires_exact_parity_and_completion():
             "client_lm_head_placement=devices=['cpu'],dtypes=['float32']",
             "client_lm_head_use_chunked_forward=True",
             "torch_num_threads=1",
+            "failover_request_timeout_seconds=10.0",
             "output_ids=[[1, 2, 3]]",
             "reference_output_ids=[[1, 2, 3]]",
             "distributed output matches the stock model exactly",
@@ -45,6 +46,7 @@ def test_extract_smoke_evidence_requires_exact_parity_and_completion():
     assert evidence["client_input_embeddings_placement"] == "devices=['cpu'],dtypes=['float32']"
     assert evidence["client_lm_head_use_chunked_forward"] is True
     assert evidence["torch_num_threads"] == 1
+    assert evidence["failover_request_timeout_seconds"] == 10.0
 
 
 def test_cpu_qualification_pins_and_restores_torch_threads():
@@ -82,6 +84,13 @@ def test_default_qualification_prompt_is_the_wide_margin_recovery_vector():
 
     assert DEFAULT_QUALIFICATION_PROMPT == "The capital of France is"
     assert args.prompt == DEFAULT_QUALIFICATION_PROMPT
+    assert args.failover_request_timeout == 10.0
+
+
+@pytest.mark.parametrize("value", ("0", "nan"))
+def test_failover_request_timeout_must_be_finite_and_positive(value):
+    with pytest.raises(SystemExit):
+        main([str(VECTOR_MANIFEST), "--manifest-only", "--failover-request-timeout", value])
 
 
 def test_primary_parity_uses_the_failover_token_horizon():
@@ -227,6 +236,7 @@ def test_smoke_command_is_manifest_driven_and_contains_no_provider_secret(tmp_pa
         page_size=8,
         failover=True,
         failover_tokens=6,
+        failover_request_timeout=10.0,
     )
 
     assert "--model-manifest" in command
@@ -234,6 +244,8 @@ def test_smoke_command_is_manifest_driven_and_contains_no_provider_secret(tmp_pa
     assert str(artifact_root) in command
     assert str(cache_dir) in command
     assert "--test-failover" in command
+    timeout_index = command.index("--failover-request-timeout")
+    assert command[timeout_index + 1] == "10.0"
     assert "--token" not in command
     assert "Maykeye/TinyLLama-v0" not in command
 
