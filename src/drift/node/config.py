@@ -500,6 +500,7 @@ class NodeConfig:
     schema_version: int
     max_loaded_models: int
     models: Tuple[NodeModelConfig, ...]
+    auto_model_priority: Tuple[str, ...] = ()
     workers: Tuple[WorkerConfig, ...] = ()
     contribution_policy: ContributionPolicyConfig = ContributionPolicyConfig()
     discovery_update_period: float = 30.0
@@ -518,6 +519,7 @@ class NodeConfig:
                 "discovery_startup_timeout",
                 "workers",
                 "contribution_policy",
+                "auto_model_priority",
             ),
         )
         schema_version = _require_positive_int(source["schema_version"], "schema_version")
@@ -549,6 +551,7 @@ class NodeConfig:
             schema_version=schema_version,
             max_loaded_models=_require_positive_int(source.get("max_loaded_models", 1), "max_loaded_models"),
             models=models,
+            auto_model_priority=_require_model_list(source.get("auto_model_priority", []), "auto_model_priority"),
             workers=workers,
             contribution_policy=contribution_policy,
             discovery_update_period=_require_positive_number(

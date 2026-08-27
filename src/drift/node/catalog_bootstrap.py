@@ -373,7 +373,7 @@ class CatalogBootstrapInstaller:
             installed.append(path)
         return tuple(installed)
 
-    def _render_node_config(self, manifest_paths: Tuple[Path, ...]) -> str:
+    def _render_node_config(self, catalog: ModelCatalog, manifest_paths: Tuple[Path, ...]) -> str:
         models = []
         for path in manifest_paths:
             digest = path.stem
@@ -384,10 +384,20 @@ class CatalogBootstrapInstaller:
                     "cache_dir": str(self.cache_dir / digest),
                 }
             )
+        rung_order = {rung.rung_id: rung.order for rung in catalog.rungs}
+        ranked_models = sorted(
+            enumerate(catalog.models),
+            key=lambda item: (
+                -rung_order[item[1].rung_id],
+                item[1].role != "primary",
+                item[0],
+            ),
+        )
         source = {
             "schema_version": NODE_CONFIG_SCHEMA_VERSION,
             "max_loaded_models": self.bootstrap.max_loaded_models,
             "models": models,
+            "auto_model_priority": [model.manifest_digest for _, model in ranked_models],
             "workers": [],
         }
         try:
@@ -402,7 +412,7 @@ class CatalogBootstrapInstaller:
         guard = CatalogRollbackGuard.from_dict(persisted_guard.to_dict())
         catalog = self._load_catalog(source, rendered, guard)
         manifest_paths = self._install_manifests(catalog)
-        config_text = self._render_node_config(manifest_paths)
+        config_text = self._render_node_config(catalog, manifest_paths)
 
         _atomic_write(
             self.cached_catalog_path,

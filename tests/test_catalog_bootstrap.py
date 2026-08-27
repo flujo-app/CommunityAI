@@ -1,7 +1,6 @@
 import json
 
 import pytest
-
 from drift.model_catalog import CATALOG_SCHEMA_VERSION, CatalogSigningKey, ModelCatalog, SignedModelCatalog
 from drift.model_manifest import ModelManifest
 from drift.node.catalog_bootstrap import (
@@ -120,6 +119,7 @@ def test_bootstrap_installs_verified_manifests_and_atomic_node_config(tmp_path):
     assert result.source == bootstrap["catalog_mirrors"][1]
     config = NodeConfig.load(config_path)
     assert len(config.models) == 2
+    assert config.auto_model_priority == tuple(model.manifest_digest for model in envelope.signed.models)
     assert all(model.initial_peers == (PEER,) for model in config.models)
     assert all(model.manifest_path.parent == (data_dir / "manifests").resolve() for model in config.models)
     assert (data_dir / "catalogs" / "communityai-test" / "catalog.signed.json").is_file()

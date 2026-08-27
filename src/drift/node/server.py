@@ -8,9 +8,6 @@ import secrets
 import time
 from typing import List, Optional
 
-from fastapi import HTTPException, Request
-from pydantic import BaseModel
-
 from drift.api.server import create_app
 from drift.node.config import ContributionPolicyConfig, NodeConfigError
 from drift.node.keys import ApiKeyNotFoundError, ApiKeyStore, ApiKeyStoreError, LastActiveKeyError
@@ -33,6 +30,8 @@ from drift.node.worker_supervisor import (
     WorkerReconfigurationBusyError,
     WorkerSupervisor,
 )
+from fastapi import HTTPException, Request
+from pydantic import BaseModel
 
 CONTROL_API_VERSION = 1
 CONTRIBUTION_STATUS_SCHEMA_VERSION = 2
@@ -206,6 +205,7 @@ def create_node_app(
             "started_at": started_at,
             "openai_base_url": f"http://{'[' + host + ']' if ':' in host else host}:{port}/v1",
             "runtime_budget": model_manager.residency(),
+            "auto_selection": model_manager.auto_selection_snapshot(),
             "models": [snapshot.to_dict() for snapshot in model_manager.snapshots()],
             "workers": [
                 {key: worker[key] for key in ("id", "model", "state", "desired_running")}

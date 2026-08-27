@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-
 from drift.cli.run_node import _build_model_manager, _build_worker_supervisor, _load_persisted_and_runtime_config
 from drift.model_manifest import ModelManifest
 from drift.node.config import (
@@ -56,12 +55,24 @@ def test_node_config_resolves_paths_relative_to_its_own_directory(tmp_path):
     assert config.max_loaded_models == 1
     assert config.discovery_update_period == 12
     assert config.discovery_startup_timeout == 4
+    assert config.auto_model_priority == ()
     model = config.models[0]
     assert model.manifest_path == (tmp_path / "manifests/one.json").resolve()
     assert model.cache_dir == (tmp_path / "cache/one").resolve()
     assert model.revocation_files == ((tmp_path / "trust/revoked.json").resolve(),)
     assert model.request_timeout == 7.5
     assert model.max_retries == 2
+
+
+def test_node_config_accepts_a_unique_catalog_auto_priority(tmp_path):
+    source = _config_dict(auto_model_priority=["sha256:" + "a" * 64, "Standby Model"])
+    config = NodeConfig.from_dict(source, base_dir=tmp_path)
+
+    assert config.auto_model_priority == ("sha256:" + "a" * 64, "Standby Model")
+
+    source["auto_model_priority"] = ["Standby Model", "standby model"]
+    with pytest.raises(NodeConfigError, match="case-insensitive duplicates"):
+        NodeConfig.from_dict(source, base_dir=tmp_path)
 
 
 def test_node_config_is_strict_and_does_not_accept_secrets(tmp_path):
@@ -153,6 +164,7 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
             NodeModelConfig(first_path, ("peer-one",)),
             NodeModelConfig(second_path, ("peer-two",), cache_dir=Path("cache"), request_timeout=9, max_retries=4),
         ),
+        auto_model_priority=(first.digest_id, second.digest_id),
     )
 
     manager, descriptors, discovery = _build_model_manager(config, token="provider-token")
@@ -160,6 +172,7 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
     assert [descriptor.model_id for descriptor in descriptors] == [first.name, second.name]
     assert [snapshot.state for snapshot in manager.snapshots()] == [ModelState.KNOWN, ModelState.KNOWN]
     assert manager.residency() == {"max_loaded_models": 1, "resident_models": 0}
+    assert manager.auto_selection_snapshot()["status"] == "unavailable"
     assert loader_calls[0][1]["initial_peers"] == ("peer-one",)
     assert loader_calls[1][1]["initial_peers"] == ("peer-two",)
     assert loader_calls[1][1]["cache_dir"] == "cache"
@@ -478,6 +491,7 @@ def test_max_loaded_models_override_preserves_the_single_persisted_startup_snaps
         schema_version=1,
         max_loaded_models=1,
         models=(NodeModelConfig(tmp_path / "manifest.json", ("peer-one",)),),
+        auto_model_priority=("sha256:" + "a" * 64,),
         contribution_policy=ContributionPolicyConfig.from_dict(
             {"sharing_enabled": False, "denied_models": ["blocked-model"]}
         ),
@@ -496,6 +510,7 @@ def test_max_loaded_models_override_preserves_the_single_persisted_startup_snaps
     assert loaded_paths == [args.config]
     assert persisted is configured
     assert runtime.max_loaded_models == 2
+    assert runtime.auto_model_priority is configured.auto_model_priority
     assert runtime.contribution_policy is configured.contribution_policy
 
 

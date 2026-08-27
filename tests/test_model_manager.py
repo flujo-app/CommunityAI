@@ -3,10 +3,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-
 from drift.model_manifest import ModelManifest
 from drift.node.model_manager import (
     AmbiguousModelError,
+    AutoModelUnavailableError,
     ModelDescriptor,
     ModelInUseError,
     ModelManager,
@@ -177,6 +177,74 @@ def test_unloaded_model_can_publish_lightweight_discovery_health():
 
     assert snapshot.state is ModelState.KNOWN
     assert snapshot.route == route
+
+
+def test_auto_selects_the_first_catalog_model_with_a_complete_live_route():
+    manager = ModelManager()
+    routes = {
+        "primary": {
+            "status": "complete",
+            "source": "discovery",
+            "covered_blocks": 24,
+            "total_blocks": 24,
+            "peer_count": 1,
+        },
+        "standby": {
+            "status": "complete",
+            "source": "discovery",
+            "covered_blocks": 24,
+            "total_blocks": 24,
+            "peer_count": 2,
+        },
+    }
+    manager.register(
+        ModelDescriptor("Qwen candidate", manifest_digest="sha256:" + "a" * 64),
+        lambda: ModelRuntime(object(), object()),
+        route_health=lambda: routes["primary"],
+    )
+    manager.register(
+        ModelDescriptor("Gemma standby", manifest_digest="sha256:" + "b" * 64),
+        lambda: ModelRuntime(object(), object()),
+        route_health=lambda: routes["standby"],
+    )
+    manager.configure_auto_selection(("Qwen candidate", "Gemma standby"))
+
+    selection = manager.auto_selection_snapshot()
+    assert selection["status"] == "selected"
+    assert selection["model"] == "Qwen candidate"
+    assert selection["covered_blocks"] == selection["total_blocks"] == 24
+    assert "catalog priority 1" in selection["reason"]
+    assert manager.load("auto").descriptor.model_id == "Qwen candidate"
+
+    routes["primary"] = {
+        "status": "incomplete",
+        "source": "discovery",
+        "covered_blocks": 23,
+        "total_blocks": 24,
+        "peer_count": 1,
+    }
+    assert manager.resolve("auto").model_id == "Gemma standby"
+    assert manager.resolve("Qwen candidate").model_id == "Qwen candidate"
+
+
+def test_auto_fails_closed_when_no_catalog_model_has_a_complete_route():
+    manager = ModelManager()
+    manager.register(
+        ModelDescriptor("candidate", manifest_digest="sha256:" + "c" * 64),
+        lambda: ModelRuntime(object(), object()),
+        route_health=lambda: {
+            "status": "incomplete",
+            "source": "discovery",
+            "covered_blocks": 23,
+            "total_blocks": 24,
+            "peer_count": 1,
+        },
+    )
+    manager.configure_auto_selection(("candidate",))
+
+    assert manager.auto_selection_snapshot()["status"] == "unavailable"
+    with pytest.raises(AutoModelUnavailableError, match="complete live route"):
+        manager.load("auto")
 
 
 def test_shutdown_callbacks_run_once_even_when_one_fails(caplog):

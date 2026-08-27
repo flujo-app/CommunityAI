@@ -38,6 +38,10 @@ class AmbiguousModelError(ModelNotFoundError):
     """No model was requested and the manager has more than one choice."""
 
 
+class AutoModelUnavailableError(ModelNotFoundError):
+    """The dynamic auto selector has no complete live route."""
+
+
 class ModelManagerClosedError(RuntimeError):
     """The node has started shutting down and will not load more models."""
 
@@ -181,6 +185,7 @@ class ModelManager:
         self._capacity_changed = threading.Condition(self._lock)
         self._max_loaded_models = max_loaded_models
         self._shutdown_callbacks: list[Callable[[], None]] = []
+        self._auto_priority: Tuple[str, ...] = ()
         self._closed = False
 
     def register(
@@ -200,6 +205,8 @@ class ModelManager:
             conflicts = [value for value in identifiers if value.casefold() in self._identifiers]
             if conflicts:
                 raise ValueError(f"model identifier already registered: {conflicts[0]!r}")
+            if self._auto_priority and any(value.casefold() == "auto" for value in identifiers):
+                raise ValueError("model identifier 'auto' is reserved by dynamic catalog selection")
             self._records[descriptor.model_id] = _ModelRecord(
                 descriptor=descriptor,
                 loader=loader,
@@ -227,6 +234,29 @@ class ModelManager:
                 raise ModelManagerClosedError("model manager is shutting down")
             self._shutdown_callbacks.append(callback)
 
+    def configure_auto_selection(self, identifiers: Iterable[str]) -> None:
+        """Bind auto to catalog priority while keeping exact selectors unchanged."""
+        requested = tuple(identifiers)
+        with self._lock:
+            if self._closed:
+                raise ModelManagerClosedError("model manager is shutting down")
+            if not requested:
+                self._auto_priority = ()
+                return
+            if "auto" in self._identifiers:
+                raise ValueError("model identifier 'auto' conflicts with dynamic catalog selection")
+            resolved = []
+            for identifier in requested:
+                if not isinstance(identifier, str) or not identifier.strip():
+                    raise ValueError("auto model priority must contain non-empty selectors")
+                model_id = self._identifiers.get(identifier.casefold())
+                if model_id is None:
+                    raise ModelNotFoundError(f"auto model priority selects unknown model {identifier!r}")
+                resolved.append(model_id)
+            if len(set(resolved)) != len(resolved):
+                raise ValueError("auto model priority must not select the same model more than once")
+            self._auto_priority = tuple(resolved)
+
     def register_loaded(
         self, model_id: str, model: Any, tokenizer: Any, *, aliases: Iterable[str] = ()
     ) -> ModelDescriptor:
@@ -253,6 +283,11 @@ class ModelManager:
                 if not self._records:
                     raise ModelNotFoundError("no models are configured")
                 raise AmbiguousModelError("model is required when more than one model is configured")
+            if identifier.casefold() == "auto" and self._auto_priority:
+                selection = self._auto_selection_locked()
+                if selection["status"] != "selected":
+                    raise AutoModelUnavailableError(selection["reason"])
+                return self._records[selection["model"]]
             model_id = self._identifiers.get(identifier.casefold())
             if model_id is None:
                 raise ModelNotFoundError(f"unknown model {identifier!r}")
@@ -450,21 +485,97 @@ class ModelManager:
                 self._capacity_changed.notify_all()
             return True
 
+    @staticmethod
+    def _route_reader(record: _ModelRecord) -> Optional[Callable[[], Dict[str, Any]]]:
+        if record.runtime is not None and record.runtime.route_health is not None:
+            return record.runtime.route_health
+        return record.route_health
+
+    def _read_route(self, record: _ModelRecord) -> Optional[Dict[str, Any]]:
+        reader = self._route_reader(record)
+        if reader is None:
+            return None
+        try:
+            route = reader()
+            if not isinstance(route, dict):
+                raise TypeError("route health reader must return a dictionary")
+            return dict(route)
+        except Exception:
+            logger.exception("Failed to read route health for model %r", record.descriptor.model_id)
+            return {"status": "unknown"}
+
+    def _auto_selection_locked(self) -> Dict[str, Any]:
+        if not self._auto_priority:
+            return {
+                "selector": "auto",
+                "status": "not_configured",
+                "model": None,
+                "manifest_digest": None,
+                "reason": "No signed catalog model priority is configured.",
+                "covered_blocks": None,
+                "total_blocks": None,
+                "peer_count": None,
+                "source": None,
+            }
+        for priority, model_id in enumerate(self._auto_priority, start=1):
+            record = self._records[model_id]
+            route = self._read_route(record)
+            if route is None:
+                continue
+            covered = route.get("covered_blocks")
+            total = route.get("total_blocks")
+            peers = route.get("peer_count")
+            complete = (
+                route.get("status") == "complete"
+                and isinstance(covered, int)
+                and not isinstance(covered, bool)
+                and isinstance(total, int)
+                and not isinstance(total, bool)
+                and total > 0
+                and covered == total
+                and isinstance(peers, int)
+                and not isinstance(peers, bool)
+                and peers > 0
+            )
+            if complete:
+                peer_label = "peer" if peers == 1 else "peers"
+                return {
+                    "selector": "auto",
+                    "status": "selected",
+                    "model": model_id,
+                    "manifest_digest": record.descriptor.manifest_digest,
+                    "reason": (
+                        f"Selected catalog priority {priority}: live discovery reports a complete "
+                        f"{covered}/{total}-block route from {peers} verified {peer_label}."
+                    ),
+                    "covered_blocks": covered,
+                    "total_blocks": total,
+                    "peer_count": peers,
+                    "source": route.get("source"),
+                }
+        return {
+            "selector": "auto",
+            "status": "unavailable",
+            "model": None,
+            "manifest_digest": None,
+            "reason": "No catalog model currently has a complete live route.",
+            "covered_blocks": None,
+            "total_blocks": None,
+            "peer_count": None,
+            "source": None,
+        }
+
+    def auto_selection_snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._auto_selection_locked()
+
     def snapshots(self) -> Tuple[ModelSnapshot, ...]:
         with self._lock:
             snapshots = []
             for record in sorted(self._records.values(), key=lambda item: item.descriptor.model_id.casefold()):
-                route = None
                 state = record.state
-                route_reader = record.runtime.route_health if record.runtime is not None else None
-                if route_reader is None:
-                    route_reader = record.route_health
-                if route_reader is not None:
-                    try:
-                        route = route_reader()
-                    except Exception:
-                        logger.exception("Failed to read route health for model %r", record.descriptor.model_id)
-                        route = {"status": "unknown"}
+                route = self._read_route(record)
+                if route is not None:
                     if state is ModelState.READY and route.get("status") != "complete":
                         state = ModelState.DEGRADED
                 snapshots.append(

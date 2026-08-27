@@ -94,6 +94,59 @@ def _optional_number(value: Any, field: str, *, integer: bool = False, positive:
     return value
 
 
+def _normalize_auto_selection(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {
+            "selector": "auto",
+            "status": "not_configured",
+            "model": None,
+            "manifest_digest": None,
+            "reason": "This node does not publish automatic model selection.",
+            "covered_blocks": None,
+            "total_blocks": None,
+            "peer_count": None,
+            "source": None,
+        }
+    if not isinstance(value, dict) or value.get("selector") != "auto":
+        raise NodeClientError("Local node status has invalid auto selection")
+    status = value.get("status")
+    if status not in {"selected", "unavailable", "not_configured"}:
+        raise NodeClientError("Local node status has invalid auto selection state")
+    reason = _bounded_status_text(value.get("reason"), "auto selection reason", limit=600)
+    if status == "selected":
+        model = _bounded_status_text(value.get("model"), "auto selection model", limit=256)
+        digest = value.get("manifest_digest")
+        if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+            raise NodeClientError("Local node status has invalid auto selection manifest")
+        covered = _optional_number(value.get("covered_blocks"), "auto covered blocks", integer=True, positive=True)
+        total = _optional_number(value.get("total_blocks"), "auto total blocks", integer=True, positive=True)
+        peers = _optional_number(value.get("peer_count"), "auto peer count", integer=True, positive=True)
+        if covered is None or total is None or peers is None:
+            raise NodeClientError("Local node status omitted automatic route evidence")
+        if covered != total:
+            raise NodeClientError("Local node status has inconsistent auto route coverage")
+        source_value = value.get("source")
+        source = None if source_value is None else _bounded_status_text(source_value, "auto selection source", limit=64)
+    else:
+        model = digest = covered = total = peers = source = None
+        if any(
+            value.get(field) is not None
+            for field in ("model", "manifest_digest", "covered_blocks", "total_blocks", "peer_count", "source")
+        ):
+            raise NodeClientError("Local node status has inconsistent auto selection")
+    return {
+        "selector": "auto",
+        "status": status,
+        "model": model,
+        "manifest_digest": digest,
+        "reason": reason,
+        "covered_blocks": covered,
+        "total_blocks": total,
+        "peer_count": peers,
+        "source": source,
+    }
+
+
 def _normalize_gate(value: Any, field: str, *, suspended: bool = False) -> Dict[str, Any]:
     if not isinstance(value, dict) or not isinstance(value.get("admitted"), bool):
         raise NodeClientError(f"Local node contribution status has invalid {field}")
@@ -383,6 +436,7 @@ class NodeClient:
             or any(not isinstance(item, dict) for item in result["workers"])
         ):
             raise NodeClientError("Local node status has invalid model or worker data")
+        result["auto_selection"] = _normalize_auto_selection(result.get("auto_selection"))
         result["contribution"] = _normalize_contribution_status(result.get("contribution"))
         return result
 

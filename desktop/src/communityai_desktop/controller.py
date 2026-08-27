@@ -13,7 +13,10 @@ class DesktopController:
 
     def snapshot(self) -> Dict[str, Any]:
         status = self.client.status()
+        auto_selection = self._auto_selection_view(status.get("auto_selection"))
         models = [self._model_view(model) for model in status["models"]]
+        for model in models:
+            model["auto_selected"] = model["id"] == auto_selection["model"]
         contribution = status["contribution"]
         workers = [self._worker_view(worker) for worker in contribution["workers"]]
         return {
@@ -22,6 +25,7 @@ class DesktopController:
             "started_at": status.get("started_at"),
             "runtime_budget": status.get("runtime_budget", {}),
             "models": models,
+            "auto_selection": auto_selection,
             "workers": workers,
             "keys": [self._key_view(key) for key in self.client.list_keys()],
             "network": self._network_view(status.get("network"), models),
@@ -34,15 +38,47 @@ class DesktopController:
         covered = route.get("covered_blocks")
         total = route.get("total_blocks")
         coverage = f"{covered}/{total}" if isinstance(covered, int) and isinstance(total, int) else "unknown"
+        route_complete = (
+            route.get("status") == "complete"
+            and isinstance(covered, int)
+            and isinstance(total, int)
+            and total > 0
+            and covered == total
+        )
         return {
             "id": str(model.get("id", "unknown")),
             "state": str(model.get("state", "unknown")),
             "coverage": coverage,
             "covered_blocks": covered,
             "total_blocks": total,
+            "route_complete": route_complete,
             "peer_count": route.get("peer_count"),
             "active_requests": model.get("active_requests", 0),
             "last_error": model.get("last_error"),
+        }
+
+    @staticmethod
+    def _auto_selection_view(selection: Any) -> Dict[str, Any]:
+        selection = selection if isinstance(selection, dict) else {}
+        status = str(selection.get("status", "not_configured"))
+        model = selection.get("model") if isinstance(selection.get("model"), str) else None
+        reason = str(selection.get("reason", "Automatic model selection is not configured."))
+        if status == "selected" and model is not None:
+            title = f"auto selects {model}"
+        elif status == "unavailable":
+            title = "auto is waiting for a complete route"
+        else:
+            title = "auto is not configured"
+        return {
+            "status": status,
+            "model": model,
+            "manifest_digest": selection.get("manifest_digest"),
+            "reason": reason,
+            "covered_blocks": selection.get("covered_blocks"),
+            "total_blocks": selection.get("total_blocks"),
+            "peer_count": selection.get("peer_count"),
+            "source": selection.get("source"),
+            "title": title,
         }
 
     @staticmethod

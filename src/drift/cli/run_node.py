@@ -7,10 +7,8 @@ import math
 import sys
 from pathlib import Path
 
-import torch
-from hivemind.utils.logging import get_logger, use_hivemind_log_handler
-
 import drift
+import torch
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery
@@ -33,6 +31,7 @@ from drift.node.worker_supervisor import (
 )
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
+from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 
 use_hivemind_log_handler("in_root_logger")
 logger = get_logger(__name__)
@@ -148,6 +147,7 @@ def _load_node_config(args: argparse.Namespace, *, persisted_config: NodeConfig 
             schema_version=configured.schema_version,
             max_loaded_models=args.max_loaded_models,
             models=configured.models,
+            auto_model_priority=configured.auto_model_priority,
             workers=configured.workers,
             contribution_policy=configured.contribution_policy,
             discovery_update_period=configured.discovery_update_period,
@@ -222,6 +222,7 @@ def _build_model_manager(
                     route_health=discovery.observer(manifest.digest_id),
                 )
             )
+        manager.configure_auto_selection(config.auto_model_priority)
     except BaseException:
         manager.shutdown()
         raise
@@ -528,7 +529,6 @@ def main() -> None:
 
     try:
         import uvicorn
-
         from drift.node.server import create_node_app
     except ImportError as exc:
         raise SystemExit(f"drift node requires the 'api' extra: pip install drift[api] ({exc})") from exc
