@@ -243,6 +243,21 @@ is provider-authorized, has SHA-256
 USD 69 maximum, and orders Windows CUDA, Linux CUDA, Windows CPU, then Linux CPU after
 its isolated network setup.
 
+Attempt 2 created that exact isolated network stack, then the first CUDA command failed
+in `us-east1-c` with `ZONE_RESOURCE_POOL_EXHAUSTED`; no VM was created and no Linux or
+CPU host was attempted. All planned cleanup commands ran immediately. At
+2026-08-27T00:25:28Z, all eleven exact absence verifiers returned empty and the protected
+bootstrap remained present. The bounded [attempt-2 report](evidence/qual-20260826-b-capacity-attempt-2.json)
+retains the failure and cleanup under the same USD 69 delayed-billing umbrella.
+
+A project-wide read-only quota/type audit found additional unused T4 quota and exact
+`n1-highmem-8`/T4 support in US regions. `us-west4-a` and `us-east4-a` were both up,
+retained one T4 slot, exposed the exact machine/accelerator types, and had no run
+instances; the immutable OS images remained ready. The [attempt-3 plan](evidence/qual-20260826-b-cost-plan-attempt-3.json)
+has SHA-256 `b1501e07da67ffdf21403bbcb826124f7ad2e66cdac87e96f1958e556cf04416`,
+remains provider-authorized at USD 69, and preserves CUDA-first creation plus complete
+cleanup without a new reservation.
+
 ## Desktop milestone: control authority separation
 
 The first milestone-5 production prerequisite separates the local authorization

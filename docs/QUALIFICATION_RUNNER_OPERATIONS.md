@@ -48,8 +48,8 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
   --purpose "Four-host Windows/Linux qualification fleet" `
   --source-commit $sourceCommit `
   --project community-ai-506321 `
-  --zone us-east1-c `
-  --cuda-fallback-zone us-west1-b `
+  --zone us-west4-a `
+  --cuda-fallback-zone us-east4-a `
   --windows-image $windowsImage `
   --linux-image $linuxImage `
   --maximum-hours 14 `
