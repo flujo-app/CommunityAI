@@ -24,7 +24,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Provider-neutral separate-machine qualification controller and a Fly Machines adapter
   with selected-worker hard kill and fail-closed resource cleanup.
 - A fail-closed combined GCP/Fly qualification cost guard with a conservative USD 69
-  four-host GCP plan and exact isolated create, cleanup, and cleanup-verification targets.
+  G2/L4 four-profile plan, one-host-at-a-time CUDA-safe phases, checksum-pinned GPU and
+  Windows SSH bootstrap, named NAT addresses, and exact isolated cleanup verification.
 - Exact-snapshot qualification image preparation with commit-derived tracked-only source
   contexts, exact candidate-manifest binding, digest-pinned base images, bounded
   source-bound tags, credential-free offline runtime inputs, provenance/SBOM push plans,

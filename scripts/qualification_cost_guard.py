@@ -33,7 +33,7 @@ GCP_DISK_GIB_HOURLY_USD = Decimal("0.000054795")
 GCP_BALANCED_DISK_GIB_HOURLY_USD = Decimal("0.000136986")
 GCP_HEADROOM_MULTIPLIER = Decimal("1.25")
 GCP_FIXED_CONTINGENCY_USD = Decimal("10.00")
-GCP_FALLBACK_NAT_IP_HOURLY_USD = Decimal("0.005")
+GCP_NAT_IP_HOURLY_USD = Decimal("0.005")
 GCP_MACHINE_VCPUS = 8
 GCP_DISK_GIB = 150
 GCP_PRIMARY_SUBNET_RANGE = "10.210.0.0/24"
@@ -50,10 +50,10 @@ _IMAGE_RE = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
 _USD_RE = re.compile(r"^USD ([0-9]+(?:\.[0-9]{1,2})?)$")
 
 _GCP_PROFILES = (
-    ("windows-cuda", "windows-2022", "windows-cloud", True),
-    ("linux-cuda", "ubuntu-2404-lts-amd64", "ubuntu-os-cloud", True),
     ("windows-cpu", "windows-2022", "windows-cloud", False),
     ("linux-cpu", "ubuntu-2404-lts-amd64", "ubuntu-os-cloud", False),
+    ("windows-cuda", "windows-2022", "windows-cloud", True),
+    ("linux-cuda", "ubuntu-2404-lts-amd64", "ubuntu-os-cloud", True),
 )
 
 
@@ -240,9 +240,13 @@ def _gcp_cost(
     disk_hourly = GCP_DISK_GIB * (
         GCP_DISK_GIB_HOURLY_USD * standard_disk_count + GCP_BALANCED_DISK_GIB_HOURLY_USD * balanced_disk_count
     )
-    fallback_nat_ip_hourly = GCP_FALLBACK_NAT_IP_HOURLY_USD if split_region else Decimal("0")
-    hourly = machine_hourly + gpu_hourly + windows_hourly + disk_hourly + fallback_nat_ip_hourly
-    raw_maximum = hourly * maximum_hours * GCP_HEADROOM_MULTIPLIER + GCP_FIXED_CONTINGENCY_USD
+    nat_ip_count = 2 if split_region else 1
+    nat_ip_hourly = GCP_NAT_IP_HOURLY_USD * nat_ip_count
+    compute_hourly = machine_hourly + gpu_hourly + windows_hourly + disk_hourly
+    network_maximum_hours = maximum_hours * len(_GCP_PROFILES)
+    variable_maximum = compute_hourly * maximum_hours + nat_ip_hourly * network_maximum_hours
+    equivalent_hourly = variable_maximum / maximum_hours
+    raw_maximum = variable_maximum * GCP_HEADROOM_MULTIPLIER + GCP_FIXED_CONTINGENCY_USD
     maximum = raw_maximum.quantize(Decimal("1"), rounding=ROUND_CEILING)
     assumptions = {
         "cpu_machine_type": "n1-highmem-8",
@@ -269,11 +273,16 @@ def _gcp_cost(
             GCP_BALANCED_DISK_GIB_HOURLY_USD if cuda_shape == "g2-l4" else GCP_DISK_GIB_HOURLY_USD
         ),
         "region_count": "2" if split_region else "1",
-        "fallback_nat_ip_hourly_usd": str(fallback_nat_ip_hourly),
+        "nat_ip_count": str(nat_ip_count),
+        "nat_ip_hourly_usd_each": str(GCP_NAT_IP_HOURLY_USD),
+        "nat_ip_hourly_usd": str(nat_ip_hourly),
         "maximum_hours": str(maximum_hours),
+        "network_maximum_hours": str(network_maximum_hours),
         "headroom_multiplier": str(GCP_HEADROOM_MULTIPLIER),
         "fixed_network_and_setup_contingency_usd": _usd(GCP_FIXED_CONTINGENCY_USD),
-        "calculated_hourly_usd": _usd(hourly),
+        "calculated_compute_hourly_usd": _usd(compute_hourly),
+        "calculated_equivalent_hourly_usd": _usd(equivalent_hourly),
+        "calculated_hourly_usd": _usd(equivalent_hourly),
     }
     return maximum, assumptions
 
@@ -325,6 +334,7 @@ def _gcp_plan(
             "subnet_range": GCP_PRIMARY_SUBNET_RANGE,
             "router": f"{prefix}-router",
             "nat": f"{prefix}-nat",
+            "address": f"{prefix}-nat-ip",
         }
     ]
     if cuda_fallback_zone is not None:
@@ -337,6 +347,7 @@ def _gcp_plan(
                 "subnet_range": GCP_FALLBACK_SUBNET_RANGE,
                 "router": f"{prefix}-cuda-router",
                 "nat": f"{prefix}-cuda-nat",
+                "address": f"{prefix}-cuda-nat-ip",
             }
         )
 
@@ -375,6 +386,18 @@ def _gcp_plan(
                 _command(
                     "gcloud",
                     "compute",
+                    "addresses",
+                    "create",
+                    regional["address"],
+                    "--region",
+                    regional["region"],
+                    "--network-tier",
+                    "PREMIUM",
+                    *common,
+                ),
+                _command(
+                    "gcloud",
+                    "compute",
                     "routers",
                     "nats",
                     "create",
@@ -384,7 +407,8 @@ def _gcp_plan(
                     "--region",
                     regional["region"],
                     "--nat-all-subnet-ip-ranges",
-                    "--auto-allocate-nat-external-ips",
+                    "--nat-external-ip-pool",
+                    regional["address"],
                     *common,
                 ),
             ]
@@ -412,9 +436,25 @@ def _gcp_plan(
         )
     )
 
+    verify_create_commands = [
+        _command(
+            "gcloud",
+            "compute",
+            "addresses",
+            "describe",
+            regional["address"],
+            "--region",
+            regional["region"],
+            "--project",
+            project,
+            "--format",
+            "value(name)",
+        )
+        for regional in regional_networks
+    ]
+
     resources = []
-    instance_names_by_zone: dict[str, list[str]] = {}
-    verify_create_commands = []
+    profile_phases = []
     expected_source_images = {}
     for profile, _image_family, image_project, cuda in _GCP_PROFILES:
         name = f"{prefix}-{profile.replace('windows', 'win').replace('linux', 'lin')}"
@@ -428,7 +468,7 @@ def _gcp_plan(
         boot_disk_type = "pd-balanced" if cuda and cuda_shape == "g2-l4" else "pd-standard"
         gpu = "nvidia-l4" if cuda and cuda_shape == "g2-l4" else ("nvidia-tesla-t4" if cuda else None)
         profile_labels = f"{labels},communityai_profile={profile}"
-        instance_names_by_zone.setdefault(profile_zone, []).append(name)
+        machine_id = f"{run_id}-{profile}"
         command = [
             "gcloud",
             "compute",
@@ -465,112 +505,248 @@ def _gcp_plan(
             "--labels",
             profile_labels,
         ]
+        if profile.startswith("windows-"):
+            command.extend(
+                [
+                    "--metadata",
+                    (
+                        "sysprep-specialize-script-cmd=googet -noconfirm=true install "
+                        "google-compute-engine-ssh,enable-windows-ssh=TRUE"
+                    ),
+                ]
+            )
         if cuda:
             if cuda_shape == "n1-t4":
+                command.extend(["--accelerator", "type=nvidia-tesla-t4,count=1"])
+            command.extend(["--maintenance-policy", "TERMINATE"])
+            if profile == "windows-cuda":
                 command.extend(
                     [
-                        "--accelerator",
-                        "type=nvidia-tesla-t4,count=1",
+                        "--metadata-from-file",
+                        "windows-startup-script-ps1=scripts/gcp_windows_cuda_startup.ps1",
                     ]
                 )
-            command.extend(["--maintenance-policy", "TERMINATE"])
-            if cuda_shape == "n1-t4":
+            elif cuda_shape == "g2-l4":
+                command.extend(
+                    [
+                        "--metadata-from-file",
+                        "startup-script=scripts/gcp_linux_cuda_startup.sh",
+                    ]
+                )
+            else:
                 command.extend(["--metadata", "install-nvidia-driver=True"])
         command.append("--quiet")
-        create_commands.append(_command(*command))
-        verify_create_commands.append(
-            _command(
-                "gcloud",
-                "compute",
-                "disks",
-                "describe",
-                name,
-                "--zone",
-                profile_zone,
-                "--project",
-                project,
-                "--format",
-                "value(sourceImage)",
-            )
-        )
-        expected_source_images[name] = (
-            f"https://www.googleapis.com/compute/v1/projects/{image_project}/" f"global/images/{image}"
-        )
-        resources.append(
-            {
-                "profile": profile,
-                "instance": name,
-                "zone": profile_zone,
-                "region": regional["region"],
-                "subnet": regional["subnet"],
-                "machine_type": machine_type,
-                "gpu": gpu,
-                "image": image,
-                "image_project": image_project,
-                "boot_disk_gib": GCP_DISK_GIB,
-                "boot_disk_type": boot_disk_type,
-                "external_address": False,
-                "service_account": False,
-            }
-        )
 
-    cleanup_commands = []
-    for profile_zone, instance_names in instance_names_by_zone.items():
-        cleanup_commands.append(
+        create_command = _command(*command)
+        verify_create_command = _command(
+            "gcloud",
+            "compute",
+            "disks",
+            "describe",
+            name,
+            "--zone",
+            profile_zone,
+            "--project",
+            project,
+            "--format",
+            "value(sourceImage)",
+        )
+        cleanup_command = _command(
+            "gcloud",
+            "compute",
+            "instances",
+            "delete",
+            name,
+            "--zone",
+            profile_zone,
+            "--delete-disks",
+            "all",
+            *common,
+        )
+        phase_verify_cleanup_commands = [
             _command(
                 "gcloud",
                 "compute",
                 "instances",
-                "delete",
-                *instance_names,
-                "--zone",
-                profile_zone,
-                "--delete-disks",
-                "all",
-                *common,
-            )
+                "list",
+                "--project",
+                project,
+                "--filter",
+                f"name={name}",
+                "--format",
+                "value(name)",
+            ),
+            _command(
+                "gcloud",
+                "compute",
+                "disks",
+                "list",
+                "--project",
+                project,
+                "--filter",
+                f"name={name}",
+                "--format",
+                "value(name)",
+            ),
+        ]
+
+        expected_source_images[name] = (
+            f"https://www.googleapis.com/compute/v1/projects/{image_project}/" f"global/images/{image}"
         )
-    cleanup_commands.append(_command("gcloud", "compute", "firewall-rules", "delete", firewall, *common))
+        bootstrap = {
+            "windows_ssh": profile.startswith("windows-"),
+            "cuda_driver": (
+                "scripts/gcp_windows_cuda_startup.ps1"
+                if profile == "windows-cuda"
+                else ("scripts/gcp_linux_cuda_startup.sh" if cuda and cuda_shape == "g2-l4" else None)
+            ),
+            "required_post_boot_checks": (
+                ["gcloud compute ssh", "nvidia-smi", "torch.cuda.is_available()"] if cuda else ["gcloud compute ssh"]
+            ),
+            "windows_cuda_torch": "torch==2.6.0+cu124" if profile == "windows-cuda" else None,
+        }
+        resource = {
+            "profile": profile,
+            "machine_id": machine_id,
+            "instance": name,
+            "zone": profile_zone,
+            "region": regional["region"],
+            "subnet": regional["subnet"],
+            "machine_type": machine_type,
+            "gpu": gpu,
+            "image": image,
+            "image_project": image_project,
+            "boot_disk_gib": GCP_DISK_GIB,
+            "boot_disk_type": boot_disk_type,
+            "external_address": False,
+            "service_account": False,
+            "bootstrap": bootstrap,
+        }
+        resources.append(resource)
+        profile_phases.append(
+            {
+                "order": len(profile_phases) + 1,
+                "profile": profile,
+                "machine_id": machine_id,
+                "resource": resource,
+                "create_commands": [create_command],
+                "verify_create_commands": [verify_create_command],
+                "cleanup_commands": [cleanup_command],
+                "verify_cleanup_commands": phase_verify_cleanup_commands,
+                "qualification_must_pass_before_cleanup": True,
+                "cleanup_success_condition": "every profile cleanup verification command returns empty stdout",
+            }
+        )
+
+    cleanup_commands = [_command("gcloud", "compute", "firewall-rules", "delete", firewall, *common)]
+    cleanup_phases = [
+        {
+            "role": "firewall",
+            "cleanup_commands": [cleanup_commands[0]],
+            "verify_cleanup_commands": [
+                _command(
+                    "gcloud",
+                    "compute",
+                    "firewall-rules",
+                    "list",
+                    "--project",
+                    project,
+                    "--filter",
+                    f"name={firewall}",
+                    "--format",
+                    "value(name)",
+                )
+            ],
+        }
+    ]
     for regional in reversed(regional_networks):
-        cleanup_commands.extend(
-            [
-                _command(
-                    "gcloud",
-                    "compute",
-                    "routers",
-                    "nats",
-                    "delete",
-                    regional["nat"],
-                    "--router",
-                    regional["router"],
-                    "--region",
-                    regional["region"],
-                    *common,
-                ),
-                _command(
-                    "gcloud",
-                    "compute",
-                    "routers",
-                    "delete",
-                    regional["router"],
-                    "--region",
-                    regional["region"],
-                    *common,
-                ),
-                _command(
-                    "gcloud",
-                    "compute",
-                    "networks",
-                    "subnets",
-                    "delete",
-                    regional["subnet"],
-                    "--region",
-                    regional["region"],
-                    *common,
-                ),
-            ]
+        nat_delete = _command(
+            "gcloud",
+            "compute",
+            "routers",
+            "nats",
+            "delete",
+            regional["nat"],
+            "--router",
+            regional["router"],
+            "--region",
+            regional["region"],
+            *common,
         )
-    cleanup_commands.append(_command("gcloud", "compute", "networks", "delete", network, *common))
+        nat_verify = _command(
+            "gcloud",
+            "compute",
+            "routers",
+            "nats",
+            "list",
+            "--router",
+            regional["router"],
+            "--region",
+            regional["region"],
+            "--project",
+            project,
+            "--filter",
+            f"name={regional['nat']}",
+            "--format",
+            "value(name)",
+        )
+        cleanup_phases.append(
+            {
+                "role": regional["role"],
+                "cleanup_commands": [nat_delete],
+                "verify_cleanup_commands": [nat_verify],
+            }
+        )
+        regional_deletes = [
+            _command(
+                "gcloud",
+                "compute",
+                "routers",
+                "delete",
+                regional["router"],
+                "--region",
+                regional["region"],
+                *common,
+            ),
+            _command(
+                "gcloud",
+                "compute",
+                "networks",
+                "subnets",
+                "delete",
+                regional["subnet"],
+                "--region",
+                regional["region"],
+                *common,
+            ),
+            _command(
+                "gcloud",
+                "compute",
+                "addresses",
+                "delete",
+                regional["address"],
+                "--region",
+                regional["region"],
+                *common,
+            ),
+        ]
+        cleanup_phases.append(
+            {
+                "role": f"{regional['role']}-regional-resources",
+                "cleanup_commands": regional_deletes,
+                "verify_cleanup_commands": [],
+            }
+        )
+        cleanup_commands.extend([nat_delete, *regional_deletes])
+    network_delete = _command("gcloud", "compute", "networks", "delete", network, *common)
+    cleanup_commands.append(network_delete)
+    cleanup_phases.append(
+        {
+            "role": "network",
+            "cleanup_commands": [network_delete],
+            "verify_cleanup_commands": [],
+        }
+    )
 
     verify_cleanup_commands = [
         _command(
@@ -641,6 +817,18 @@ def _gcp_plan(
                     "--format",
                     "value(name)",
                 ),
+                _command(
+                    "gcloud",
+                    "compute",
+                    "addresses",
+                    "list",
+                    "--project",
+                    project,
+                    "--filter",
+                    f"name={regional['address']} AND region:{regional['region']}",
+                    "--format",
+                    "value(name)",
+                ),
             ]
         )
     verify_cleanup_commands.append(
@@ -662,6 +850,8 @@ def _gcp_plan(
         {
             "create": create_commands,
             "verify_create": verify_create_commands,
+            "profile_phases": profile_phases,
+            "cleanup_phases": cleanup_phases,
             "cleanup": cleanup_commands,
             "verify_cleanup": verify_cleanup_commands,
         },
@@ -679,12 +869,20 @@ def _gcp_plan(
         "subnet": regional_networks[0]["subnet"],
         "router": regional_networks[0]["router"],
         "nat": regional_networks[0]["nat"],
+        "nat_address": regional_networks[0]["address"],
         "regional_networks": regional_networks,
         "iap_firewall_rule": firewall,
         "resources": resources,
+        "one_host_at_a_time": True,
+        "execution_contract": (
+            "execute infrastructure create/verify once, then each profile phase in order including "
+            "cleanup and empty-output verification before the next host, then each cleanup phase in order"
+        ),
         "create_commands": create_commands,
         "verify_create_commands": verify_create_commands,
+        "profile_phases": profile_phases,
         "expected_source_images": expected_source_images,
+        "cleanup_phases": cleanup_phases,
         "cleanup_commands": cleanup_commands,
         "verify_cleanup_commands": verify_cleanup_commands,
         "cleanup_success_condition": "every cleanup verification command returns empty stdout",

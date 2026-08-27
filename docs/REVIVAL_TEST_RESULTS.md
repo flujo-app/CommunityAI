@@ -89,6 +89,27 @@ no stored `gcloud` account, so live project, image, accelerator, quota, and abse
 checks were not attempted. That GCP login is required before any ledger reservation
 or provisioning; deterministic preparation evidence is not hardware qualification.
 
+On 2026-08-27, the first paid Gate 5 preflight exposed that the flat plan attempted two
+CUDA hosts under a one-L4 global quota, used auto-assigned NAT addresses that could not
+be named in cleanup evidence, and did not bootstrap Windows SSH or either bare-image
+G2 driver. The run stopped before any VM was created. Its temporary firewall, two NATs,
+two routers/subnets, and VPC were deleted; all run-scoped instance, disk, firewall,
+router, subnet, network, address, and resource-policy queries were empty, while
+`communityai-bootstrap-1` remained running.
+
+The replacement no-provider-call plan has ordered one-host phases for `windows-cpu`,
+`linux-cpu`, `windows-cuda`, and `linux-cuda`. Every phase carries a distinct opaque
+machine ID, exact image verification, provider hard-delete deadline, mandatory
+qualification boundary, exact VM/disk deletion, and empty-output absence proof before
+the next host. Each region now has a run-named reserved NAT address and an interleaved
+NAT absence check before router deletion. Windows hosts receive the documented GCE SSH
+bootstrap; CUDA hosts use checksum-verified, generation- or commit-pinned Google driver
+installers and require `nvidia-smi`/Torch CUDA proof. The cost model charges both named
+NAT addresses for the full 54-hour serialized network window; the reviewed G2/L4 maximum
+still rounds to USD 69. Twenty-nine focused cost/plan and bootstrap-contract tests pass with Black, isort, Bash syntax, PowerShell parsing, and
+whitespace checks. This is execution safety evidence only; Gate 5 still requires the
+four real host reports and aggregate.
+
 ## Public-alpha exact qualification image inputs
 
 On 2026-08-26, the first Gate 4 slice added a credential-free Buildx contract and
