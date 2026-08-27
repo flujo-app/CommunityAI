@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "scope": "qualification-fleet-capacity-attempt",
+  "run_id": "qual-20260826-b",
+  "attempt_id": "us-west4-a-capacity-3",
+  "result": "incomplete",
+  "complete_release_qualification": false,
+  "source_commit": "7660e33e03326e5b868f81cb95282460ba649d5f",
+  "authorized_plan": "qual-20260826-b-cost-plan-attempt-3.json",
+  "authorized_plan_sha256": "b1501e07da67ffdf21403bbcb826124f7ad2e66cdac87e96f1958e556cf04416",
+  "replacement_plan": "qual-20260826-b-cost-plan-attempt-4.json",
+  "replacement_plan_sha256": "74015a88259b071951e7db9f3120465ef12a3eaafc928b59efbf921e4be7ecef",
+  "network_started_at": "2026-08-27T00:29:24Z",
+  "capacity_probe_started_at": "2026-08-27T00:30:44Z",
+  "cleanup_verified_at": "2026-08-27T00:39:07Z",
+  "cost": {
+    "provider": "gcp",
+    "umbrella_maximum_estimate_usd": 69,
+    "additional_reservation_usd": 0,
+    "observed_cost_usd": null,
+    "billing_state": "delayed"
+  },
+  "create_result": {
+    "windows_cuda": {
+      "zone": "us-west4-a",
+      "machine_type": "n1-highmem-8",
+      "accelerator": "nvidia-tesla-t4",
+      "result": "failed",
+      "reason": "ZONE_RESOURCE_POOL_EXHAUSTED",
+      "instance_created": false
+    },
+    "linux_cuda": {
+      "result": "not_attempted"
+    },
+    "windows_cpu": {
+      "result": "not_attempted"
+    },
+    "linux_cpu": {
+      "result": "not_attempted"
+    }
+  },
+  "cleanup": {
+    "run_instances_absent": true,
+    "exact_boot_disks_absent": true,
+    "firewall_absent": true,
+    "regional_nats_absent": true,
+    "regional_routers_absent": true,
+    "regional_subnets_absent": true,
+    "network_absent": true,
+    "excluded_bootstrap_present": true
+  },
+  "next_action": "Execute the provider-authorized attempt-4 G2/L4 plan in preflighted us-central1-b and us-east1-b under the same USD 69 umbrella."
+}

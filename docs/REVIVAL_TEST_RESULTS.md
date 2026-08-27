@@ -258,6 +258,28 @@ has SHA-256 `b1501e07da67ffdf21403bbcb826124f7ad2e66cdac87e96f1958e556cf04416`,
 remains provider-authorized at USD 69, and preserves CUDA-first creation plus complete
 cleanup without a new reservation.
 
+Attempt 3 then failed its first Windows N1/T4 create in `us-west4-a` with the same
+provider-stock error; again no VM or later host was created. The complete cleanup set ran,
+and all eleven absence verifiers passed again at 2026-08-27T00:39:07Z with the bootstrap
+retained. The bounded [attempt-3 report](evidence/qual-20260826-b-capacity-attempt-3.json)
+closes that third T4 placement honestly.
+
+The repeated shape-specific failure exposed a bounded alternative rather than a reason
+to bypass Gate 5. The guard now supports two CUDA shapes: the original N1 plus attached
+T4, and G2 with its included L4. The G2 variant uses `g2-standard-8` plus
+`pd-balanced` only for the two CUDA hosts, retains `n1-highmem-8`/`pd-standard` for CPU
+hosts, and emits no separate accelerator attachment because L4 is intrinsic to G2.
+Official 2026-08-26 US rates price the mixed fleet at approximately USD 3.45/hour. A
+13.5-hour provider deletion deadline, 25 percent headroom, and USD 10 contingency round
+to the existing USD 69 maximum; fourteen hours would be USD 71 and is rejected by the
+existing reservation. Twenty-eight focused tests cover both exact variants.
+
+Read-only preflight found `us-central1-b` and `us-east1-b` up with one unused L4 slot,
+exact `g2-standard-8`, supported `pd-balanced`, ready immutable OS images, and no run
+instances. The [attempt-4 plan](evidence/qual-20260826-b-cost-plan-attempt-4.json) is
+provider-authorized under the same reservation and has SHA-256
+`74015a88259b071951e7db9f3120465ef12a3eaafc928b59efbf921e4be7ecef`.
+
 ## Desktop milestone: control authority separation
 
 The first milestone-5 production prerequisite separates the local authorization

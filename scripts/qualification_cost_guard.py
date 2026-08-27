@@ -26,9 +26,11 @@ PRICING_AS_OF = date(2026, 8, 26)
 PRICING_REVALIDATE_BY = date(2026, 9, 25)
 MAX_GCP_FLEET_HOURS = Decimal("14")
 GCP_MACHINE_HOURLY_USD = Decimal("0.473212")
+GCP_G2_MACHINE_HOURLY_USD = Decimal("0.853624312")
 GCP_T4_HOURLY_USD = Decimal("0.35")
 GCP_WINDOWS_VCPU_HOURLY_USD = Decimal("0.046")
 GCP_DISK_GIB_HOURLY_USD = Decimal("0.000054795")
+GCP_BALANCED_DISK_GIB_HOURLY_USD = Decimal("0.000136986")
 GCP_HEADROOM_MULTIPLIER = Decimal("1.25")
 GCP_FIXED_CONTINGENCY_USD = Decimal("10.00")
 GCP_FALLBACK_NAT_IP_HOURLY_USD = Decimal("0.005")
@@ -200,33 +202,72 @@ def _require_gcp_target(project: str, zone: str) -> str:
     return zone.rsplit("-", 1)[0]
 
 
-def _gcp_cost(maximum_hours: Decimal, *, split_region: bool) -> tuple[Decimal, Mapping[str, str]]:
+def _gcp_cost(
+    maximum_hours: Decimal,
+    *,
+    split_region: bool,
+    cuda_shape: str,
+) -> tuple[Decimal, Mapping[str, str]]:
     if not maximum_hours.is_finite() or maximum_hours <= 0 or maximum_hours > MAX_GCP_FLEET_HOURS:
         raise CostGuardError("GCP maximum hours must be greater than zero and no more than 14")
-    machine_hourly = GCP_MACHINE_HOURLY_USD * len(_GCP_PROFILES)
-    gpu_hourly = GCP_T4_HOURLY_USD * sum(profile[3] for profile in _GCP_PROFILES)
+    if cuda_shape not in {"n1-t4", "g2-l4"}:
+        raise CostGuardError("GCP CUDA shape must be n1-t4 or g2-l4")
+
+    cuda_count = sum(profile[3] for profile in _GCP_PROFILES)
+    cpu_count = len(_GCP_PROFILES) - cuda_count
+    if cuda_shape == "n1-t4":
+        cuda_machine_type = "n1-highmem-8"
+        cuda_accelerator = "nvidia-tesla-t4"
+        cuda_machine_hourly = GCP_MACHINE_HOURLY_USD
+        machine_hourly = GCP_MACHINE_HOURLY_USD * len(_GCP_PROFILES)
+        gpu_hourly = GCP_T4_HOURLY_USD * cuda_count
+        standard_disk_count = len(_GCP_PROFILES)
+        balanced_disk_count = 0
+    else:
+        cuda_machine_type = "g2-standard-8"
+        cuda_accelerator = "nvidia-l4"
+        cuda_machine_hourly = GCP_G2_MACHINE_HOURLY_USD
+        machine_hourly = GCP_MACHINE_HOURLY_USD * cpu_count + GCP_G2_MACHINE_HOURLY_USD * cuda_count
+        gpu_hourly = Decimal("0")
+        standard_disk_count = cpu_count
+        balanced_disk_count = cuda_count
+
     windows_hourly = (
         GCP_WINDOWS_VCPU_HOURLY_USD
         * GCP_MACHINE_VCPUS
         * sum(profile[0].startswith("windows-") for profile in _GCP_PROFILES)
     )
-    disk_hourly = GCP_DISK_GIB_HOURLY_USD * GCP_DISK_GIB * len(_GCP_PROFILES)
+    disk_hourly = GCP_DISK_GIB * (
+        GCP_DISK_GIB_HOURLY_USD * standard_disk_count + GCP_BALANCED_DISK_GIB_HOURLY_USD * balanced_disk_count
+    )
     fallback_nat_ip_hourly = GCP_FALLBACK_NAT_IP_HOURLY_USD if split_region else Decimal("0")
     hourly = machine_hourly + gpu_hourly + windows_hourly + disk_hourly + fallback_nat_ip_hourly
     raw_maximum = hourly * maximum_hours * GCP_HEADROOM_MULTIPLIER + GCP_FIXED_CONTINGENCY_USD
     maximum = raw_maximum.quantize(Decimal("1"), rounding=ROUND_CEILING)
     assumptions = {
-        "machine_type": "n1-highmem-8",
+        "cpu_machine_type": "n1-highmem-8",
+        "cuda_shape": cuda_shape,
+        "cuda_machine_type": cuda_machine_type,
+        "cuda_accelerator": cuda_accelerator,
         "machine_count": str(len(_GCP_PROFILES)),
-        "machine_hourly_usd_each": _usd(GCP_MACHINE_HOURLY_USD),
-        "t4_count": str(sum(profile[3] for profile in _GCP_PROFILES)),
+        "cpu_machine_count": str(cpu_count),
+        "cuda_machine_count": str(cuda_count),
+        "cpu_machine_hourly_usd_each": str(GCP_MACHINE_HOURLY_USD),
+        "cuda_machine_hourly_usd_each": str(cuda_machine_hourly),
+        "t4_count": str(cuda_count if cuda_shape == "n1-t4" else 0),
         "t4_hourly_usd_each": _usd(GCP_T4_HOURLY_USD),
+        "l4_count": str(cuda_count if cuda_shape == "g2-l4" else 0),
+        "l4_price_included_in_cuda_machine": str(cuda_shape == "g2-l4").lower(),
         "windows_vcpu_count": str(
             GCP_MACHINE_VCPUS * sum(profile[0].startswith("windows-") for profile in _GCP_PROFILES)
         ),
         "windows_vcpu_hourly_usd_each": _usd(GCP_WINDOWS_VCPU_HOURLY_USD),
         "disk_gib_each": str(GCP_DISK_GIB),
         "disk_gib_hourly_usd": str(GCP_DISK_GIB_HOURLY_USD),
+        "cuda_disk_type": "pd-balanced" if cuda_shape == "g2-l4" else "pd-standard",
+        "cuda_disk_gib_hourly_usd": str(
+            GCP_BALANCED_DISK_GIB_HOURLY_USD if cuda_shape == "g2-l4" else GCP_DISK_GIB_HOURLY_USD
+        ),
         "region_count": "2" if split_region else "1",
         "fallback_nat_ip_hourly_usd": str(fallback_nat_ip_hourly),
         "maximum_hours": str(maximum_hours),
@@ -253,11 +294,14 @@ def _gcp_plan(
     windows_image: str,
     linux_image: str,
     cuda_fallback_zone: str | None,
+    cuda_shape: str,
 ) -> Mapping[str, Any]:
     primary_region = _require_gcp_target(project, zone)
     max_run_seconds = int((maximum_hours * Decimal("3600")).to_integral_value(rounding=ROUND_CEILING))
     if not _IMAGE_RE.fullmatch(windows_image) or not _IMAGE_RE.fullmatch(linux_image):
         raise CostGuardError("GCP image names must be exact bounded image resources")
+    if cuda_shape not in {"n1-t4", "g2-l4"}:
+        raise CostGuardError("GCP CUDA shape must be n1-t4 or g2-l4")
 
     fallback_region = None
     if cuda_fallback_zone is not None:
@@ -380,6 +424,9 @@ def _gcp_plan(
         regional = regional_networks[1] if use_fallback else regional_networks[0]
         profile_zone = regional["zone"]
         image = windows_image if profile.startswith("windows-") else linux_image
+        machine_type = "g2-standard-8" if cuda and cuda_shape == "g2-l4" else "n1-highmem-8"
+        boot_disk_type = "pd-balanced" if cuda and cuda_shape == "g2-l4" else "pd-standard"
+        gpu = "nvidia-l4" if cuda and cuda_shape == "g2-l4" else ("nvidia-tesla-t4" if cuda else None)
         profile_labels = f"{labels},communityai_profile={profile}"
         instance_names_by_zone.setdefault(profile_zone, []).append(name)
         command = [
@@ -393,7 +440,7 @@ def _gcp_plan(
             "--zone",
             profile_zone,
             "--machine-type",
-            "n1-highmem-8",
+            machine_type,
             "--network-interface",
             f"network={network},subnet={regional['subnet']},no-address",
             "--image",
@@ -403,7 +450,7 @@ def _gcp_plan(
             "--boot-disk-size",
             f"{GCP_DISK_GIB}GB",
             "--boot-disk-type",
-            "pd-standard",
+            boot_disk_type,
             "--boot-disk-auto-delete",
             "--no-service-account",
             "--no-scopes",
@@ -419,16 +466,16 @@ def _gcp_plan(
             profile_labels,
         ]
         if cuda:
-            command.extend(
-                [
-                    "--accelerator",
-                    "type=nvidia-tesla-t4,count=1",
-                    "--maintenance-policy",
-                    "TERMINATE",
-                    "--metadata",
-                    "install-nvidia-driver=True",
-                ]
-            )
+            if cuda_shape == "n1-t4":
+                command.extend(
+                    [
+                        "--accelerator",
+                        "type=nvidia-tesla-t4,count=1",
+                    ]
+                )
+            command.extend(["--maintenance-policy", "TERMINATE"])
+            if cuda_shape == "n1-t4":
+                command.extend(["--metadata", "install-nvidia-driver=True"])
         command.append("--quiet")
         create_commands.append(_command(*command))
         verify_create_commands.append(
@@ -456,11 +503,12 @@ def _gcp_plan(
                 "zone": profile_zone,
                 "region": regional["region"],
                 "subnet": regional["subnet"],
-                "machine_type": "n1-highmem-8",
-                "gpu": "nvidia-tesla-t4" if cuda else None,
+                "machine_type": machine_type,
+                "gpu": gpu,
                 "image": image,
                 "image_project": image_project,
                 "boot_disk_gib": GCP_DISK_GIB,
+                "boot_disk_type": boot_disk_type,
                 "external_address": False,
                 "service_account": False,
             }
@@ -626,6 +674,7 @@ def _gcp_plan(
         "zone": zone,
         "region": primary_region,
         "cuda_fallback_zone": cuda_fallback_zone,
+        "cuda_shape": cuda_shape,
         "network": network,
         "subnet": regional_networks[0]["subnet"],
         "router": regional_networks[0]["router"],
@@ -655,6 +704,7 @@ def build_authorization(
     windows_image: str | None,
     linux_image: str | None,
     cuda_fallback_zone: str | None,
+    cuda_shape: str,
     manual_maximum_usd: Decimal | None,
     today: date | None = None,
 ) -> Mapping[str, Any]:
@@ -677,6 +727,7 @@ def build_authorization(
         maximum_usd, assumptions = _gcp_cost(
             maximum_hours,
             split_region=cuda_fallback_zone is not None,
+            cuda_shape=cuda_shape,
         )
         provider_plan = _gcp_plan(
             run_id,
@@ -687,9 +738,12 @@ def build_authorization(
             windows_image=windows_image,
             linux_image=linux_image,
             cuda_fallback_zone=cuda_fallback_zone,
+            cuda_shape=cuda_shape,
         )
     else:
-        if any(value is not None for value in (project, zone, windows_image, linux_image, cuda_fallback_zone)):
+        if any(value is not None for value in (project, zone, windows_image, linux_image, cuda_fallback_zone)) or (
+            cuda_shape != "n1-t4"
+        ):
             raise CostGuardError("Fly planning must not contain GCP target fields")
         if manual_maximum_usd is None or not manual_maximum_usd.is_finite() or manual_maximum_usd <= 0:
             raise CostGuardError("Fly planning requires a finite positive manual maximum estimate")
@@ -810,6 +864,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--windows-image")
     parser.add_argument("--linux-image")
     parser.add_argument("--cuda-fallback-zone")
+    parser.add_argument("--cuda-shape", choices=("n1-t4", "g2-l4"), default="n1-t4")
     parser.add_argument("--manual-maximum-usd", type=_decimal_argument)
     return parser
 
@@ -829,6 +884,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             windows_image=args.windows_image,
             linux_image=args.linux_image,
             cuda_fallback_zone=args.cuda_fallback_zone,
+            cuda_shape=args.cuda_shape,
             manual_maximum_usd=args.manual_maximum_usd,
         )
         _atomic_json(args.output, report)

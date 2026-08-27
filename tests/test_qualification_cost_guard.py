@@ -35,6 +35,7 @@ def _authorization(entries=(), **overrides):
         "windows_image": WINDOWS_IMAGE,
         "linux_image": LINUX_IMAGE,
         "cuda_fallback_zone": None,
+        "cuda_shape": "n1-t4",
         "manual_maximum_usd": None,
         "today": date(2026, 8, 26),
     }
@@ -202,9 +203,63 @@ def test_split_region_plan_uses_exact_images_and_zone_scoped_cleanup():
     assert LINUX_IMAGE in encoded
 
 
+def test_g2_l4_plan_uses_included_gpus_balanced_disks_and_shorter_deadline():
+    report = _authorization(
+        cuda_fallback_zone="us-east1-b",
+        cuda_shape="g2-l4",
+        maximum_hours=Decimal("13.5"),
+    )
+
+    assert report["maximum_estimate_usd"] == "69.00"
+    assert report["cost_assumptions"]["calculated_hourly_usd"] == "3.45"
+    assert report["cost_assumptions"]["cuda_machine_type"] == "g2-standard-8"
+    assert report["cost_assumptions"]["cuda_accelerator"] == "nvidia-l4"
+    assert report["cost_assumptions"]["l4_count"] == "2"
+    assert report["cost_assumptions"]["t4_count"] == "0"
+    assert report["cost_assumptions"]["l4_price_included_in_cuda_machine"] == "true"
+    assert report["cost_assumptions"]["cuda_disk_type"] == "pd-balanced"
+
+    plan = report["provider_plan"]
+    assert plan["cuda_shape"] == "g2-l4"
+    resources = {resource["profile"]: resource for resource in plan["resources"]}
+    assert resources["windows-cuda"]["machine_type"] == "g2-standard-8"
+    assert resources["linux-cuda"]["machine_type"] == "g2-standard-8"
+    assert resources["windows-cuda"]["gpu"] == "nvidia-l4"
+    assert resources["linux-cuda"]["gpu"] == "nvidia-l4"
+    assert resources["windows-cuda"]["boot_disk_type"] == "pd-balanced"
+    assert resources["linux-cuda"]["boot_disk_type"] == "pd-balanced"
+    assert resources["windows-cpu"]["machine_type"] == "n1-highmem-8"
+    assert resources["linux-cpu"]["boot_disk_type"] == "pd-standard"
+
+    instance_creates = [
+        command for command in plan["create_commands"] if command[:4] == ["gcloud", "compute", "instances", "create"]
+    ]
+    assert all(command[command.index("--machine-type") + 1] == "g2-standard-8" for command in instance_creates[:2])
+    assert all(command[command.index("--boot-disk-type") + 1] == "pd-balanced" for command in instance_creates[:2])
+    assert all("--accelerator" not in command for command in instance_creates)
+    assert all("--maintenance-policy" in command for command in instance_creates[:2])
+    assert all("--maintenance-policy" not in command for command in instance_creates[2:])
+    assert all(command[command.index("--max-run-duration") + 1] == "48600s" for command in instance_creates)
+
+
+def test_g2_l4_full_fourteen_hours_exceeds_the_existing_sixty_nine_dollar_envelope():
+    report = _authorization(
+        cuda_fallback_zone="us-east1-b",
+        cuda_shape="g2-l4",
+        maximum_hours=Decimal("14"),
+    )
+
+    assert report["maximum_estimate_usd"] == "71.00"
+
+
 def test_split_region_plan_rejects_a_fallback_in_the_primary_region():
     with pytest.raises(guard.CostGuardError, match="different region"):
         _authorization(cuda_fallback_zone="us-central1-b")
+
+
+def test_plan_rejects_unknown_cuda_shape():
+    with pytest.raises(guard.CostGuardError, match="CUDA shape"):
+        _authorization(cuda_shape="unknown")
 
 
 def test_matching_planned_ledger_reservation_authorizes_exact_plan_without_double_counting():
