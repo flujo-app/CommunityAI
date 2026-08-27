@@ -134,6 +134,14 @@ def test_gcp_plan_is_exact_bounded_and_does_not_authorize_unreserved_provisionin
         command for command in plan["create_commands"] if command[:4] == ["gcloud", "compute", "instances", "create"]
     ]
     assert len(instance_creates) == 4
+    assert [command[4] for command in instance_creates] == [
+        "caiq-qual-20260826-a-win-cuda",
+        "caiq-qual-20260826-a-lin-cuda",
+        "caiq-qual-20260826-a-win-cpu",
+        "caiq-qual-20260826-a-lin-cpu",
+    ]
+    assert all("--accelerator" in command for command in instance_creates[:2])
+    assert all("--accelerator" not in command for command in instance_creates[2:])
     assert all(
         command[command.index("--max-run-duration") + 1] == "50400s"
         and command[command.index("--instance-termination-action") + 1] == "DELETE"
@@ -171,6 +179,14 @@ def test_split_region_plan_uses_exact_images_and_zone_scoped_cleanup():
     assert resources["linux-cuda"]["zone"] == "us-east1-c"
     assert resources["windows-cpu"]["image"] == WINDOWS_IMAGE
     assert resources["linux-cpu"]["image"] == LINUX_IMAGE
+    instance_creates = [
+        command for command in plan["create_commands"] if command[:4] == ["gcloud", "compute", "instances", "create"]
+    ]
+    assert [command[4] for command in instance_creates[:2]] == [
+        "caiq-qual-20260826-a-win-cuda",
+        "caiq-qual-20260826-a-lin-cuda",
+    ]
+    assert instance_creates[1][instance_creates[1].index("--zone") + 1] == "us-east1-c"
     assert len(plan["verify_cleanup_commands"]) == 11
 
     instance_deletes = [

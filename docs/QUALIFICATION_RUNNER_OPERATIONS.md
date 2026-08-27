@@ -48,8 +48,8 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
   --purpose "Four-host Windows/Linux qualification fleet" `
   --source-commit $sourceCommit `
   --project community-ai-506321 `
-  --zone us-central1-a `
-  --cuda-fallback-zone us-east1-c `
+  --zone us-east1-c `
+  --cuda-fallback-zone us-west1-b `
   --windows-image $windowsImage `
   --linux-image $linuxImage `
   --maximum-hours 14 `
@@ -200,11 +200,14 @@ disk `sourceImage` returned by `verify_create_commands` with the corresponding e
 update, stop, or delete command. Provider responses and account details stay out of
 committed reports.
 
-Execute the plan's `create_commands` in order and stop at the first failure. If any
-create command was attempted, immediately run every `cleanup_commands` entry in
-order even when setup, snapshot transfer, runner registration, preflight, or a
-workflow fails. The 14-hour maximum is a destruction deadline, not permission to
-leave idle hosts running.
+Execute the plan's `create_commands` in order and stop at the first failure. The
+plan creates the two scarce CUDA hosts before either CPU-only host, so provider stock
+failures are discovered before avoidable CPU runtime accrues. Quota and accelerator-type
+preflight do not guarantee zonal stock. If any create command was attempted, immediately
+run every `cleanup_commands` entry in order even when capacity, setup, snapshot transfer,
+runner registration, preflight, or a workflow fails. Preserve a bounded attempt report,
+then choose a newly preflighted placement and regenerate the exact plan before retrying.
+The 14-hour maximum is a destruction deadline, not permission to leave idle hosts running.
 
 Prepare and register each host using the profile-specific procedure below, dispatch
 both exact public-alpha candidate matrices from the same source commit, and retain

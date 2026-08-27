@@ -213,6 +213,36 @@ shell-free [authorized plan](evidence/qual-20260826-b-cost-plan.json); USD 1 rem
 unreserved. This authorization is cost and cleanup-plan evidence only, not hardware or
 model qualification.
 
+The first real placement attempt created the isolated two-region network stack and the
+Windows CPU VM, then stopped when `us-central1-a` returned
+`ZONE_RESOURCE_POOL_EXHAUSTED` for the Windows T4 host. Linux hosts were not attempted.
+Cleanup deleted the created VM and auto-delete disk plus the exact firewall, both NATs,
+both routers, both subnets, and VPC. Independent verification at
+2026-08-27T00:09:37Z found every run-labelled instance, all four exact boot-disk names,
+and all exact network resources absent while `communityai-bootstrap-1` remained present.
+The bounded [capacity-attempt report](evidence/qual-20260826-b-capacity-attempt-1.json)
+retains this incomplete result without provider/account details. Billing is delayed, the
+attempt remains inside the existing USD 69 umbrella, and no additional reservation was
+created.
+
+The exposed provider-stock failure prompted one critical-path correction: generated
+plans now create Windows CUDA and fallback Linux CUDA before either CPU-only host. This
+preserves the same four resources, exact images, hard deadlines, cleanup surface, and USD
+69 maximum while discovering scarce-capacity failure before avoidable CPU runtime
+accrues. Quota and accelerator-type preflight remain necessary but are not treated as a
+zonal-stock guarantee.
+
+A fresh read-only preflight selected `us-east1-c` as primary and `us-west1-b` as the
+Linux-CUDA fallback. Both zones were up, exposed the T4 type, and had one regional T4
+slot; the primary retained 200 CPU, 24 instance, 4,096 GB disk, and eight in-use-address
+quota units, while the fallback retained 100 CPU with the same instance/disk/address
+headroom. Both exact OS images were ready, all exact run names were absent, and the
+bootstrap was present. The generated [attempt-2 plan](evidence/qual-20260826-b-cost-plan-attempt-2.json)
+is provider-authorized, has SHA-256
+`4d5f9ec67b39a9c6a0009c3b56d9bcf2e30a1d83e9311cffd83f2983dc3ae86b`, retains the
+USD 69 maximum, and orders Windows CUDA, Linux CUDA, Windows CPU, then Linux CPU after
+its isolated network setup.
+
 ## Desktop milestone: control authority separation
 
 The first milestone-5 production prerequisite separates the local authorization

@@ -48,10 +48,10 @@ _IMAGE_RE = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
 _USD_RE = re.compile(r"^USD ([0-9]+(?:\.[0-9]{1,2})?)$")
 
 _GCP_PROFILES = (
-    ("windows-cpu", "windows-2022", "windows-cloud", False),
     ("windows-cuda", "windows-2022", "windows-cloud", True),
-    ("linux-cpu", "ubuntu-2404-lts-amd64", "ubuntu-os-cloud", False),
     ("linux-cuda", "ubuntu-2404-lts-amd64", "ubuntu-os-cloud", True),
+    ("windows-cpu", "windows-2022", "windows-cloud", False),
+    ("linux-cpu", "ubuntu-2404-lts-amd64", "ubuntu-os-cloud", False),
 )
 
 

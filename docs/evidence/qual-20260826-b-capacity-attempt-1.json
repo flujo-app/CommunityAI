@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "scope": "qualification-fleet-capacity-attempt",
+  "run_id": "qual-20260826-b",
+  "attempt_id": "us-central1-a-capacity-1",
+  "result": "incomplete",
+  "complete_release_qualification": false,
+  "source_commit": "7660e33e03326e5b868f81cb95282460ba649d5f",
+  "authorized_plan": "qual-20260826-b-cost-plan.json",
+  "authorized_plan_sha256": "ff6fda63b6d8c4ee29d0b60b8f8efc8ef356c8f10ebc5e7f78aab39177e47084",
+  "replacement_plan": "qual-20260826-b-cost-plan-attempt-2.json",
+  "replacement_plan_sha256": "4d5f9ec67b39a9c6a0009c3b56d9bcf2e30a1d83e9311cffd83f2983dc3ae86b",
+  "network_created_at": "2026-08-27T00:04:41Z",
+  "cleanup_verified_at": "2026-08-27T00:09:37Z",
+  "cost": {
+    "provider": "gcp",
+    "umbrella_maximum_estimate_usd": 69,
+    "additional_reservation_usd": 0,
+    "observed_cost_usd": null,
+    "billing_state": "delayed"
+  },
+  "create_result": {
+    "windows_cpu": {
+      "zone": "us-central1-a",
+      "result": "created_then_cleaned"
+    },
+    "windows_cuda": {
+      "zone": "us-central1-a",
+      "result": "failed",
+      "reason": "ZONE_RESOURCE_POOL_EXHAUSTED",
+      "instance_created": false
+    },
+    "linux_cpu": {
+      "result": "not_attempted"
+    },
+    "linux_cuda": {
+      "result": "not_attempted"
+    }
+  },
+  "cleanup": {
+    "run_instances_absent": true,
+    "exact_boot_disks_absent": true,
+    "firewall_absent": true,
+    "regional_nats_absent": true,
+    "regional_routers_absent": true,
+    "regional_subnets_absent": true,
+    "network_absent": true,
+    "excluded_bootstrap_present": true
+  },
+  "next_action": "Execute the provider-authorized attempt-2 plan in preflighted us-east1-c and us-west1-b, creating both scarce CUDA hosts before any CPU host."
+}
