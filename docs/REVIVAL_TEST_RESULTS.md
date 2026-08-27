@@ -280,6 +280,19 @@ instances. The [attempt-4 plan](evidence/qual-20260826-b-cost-plan-attempt-4.jso
 provider-authorized under the same reservation and has SHA-256
 `74015a88259b071951e7db9f3120465ef12a3eaafc928b59efbf921e4be7ecef`.
 
+Attempt 4 created only its isolated network stack. The first Windows G2/L4 create was
+rejected with `QUOTA_EXCEEDED`: regional L4 quota was present, but the provider's global
+`GPUS_ALL_REGIONS` limit for the project is zero. No VM or later host was created. All
+planned cleanup commands ran immediately, and every exact absence verifier passed at
+2026-08-27T00:51:28Z while the bootstrap remained. The bounded
+[attempt-4 report](evidence/qual-20260826-b-capacity-attempt-4.json) records that result.
+
+After three independent N1/T4 stock failures and the global L4 quota rejection, Gate 5
+is `BLOCKED` on external Windows CUDA capacity. No quota request or credit action was
+made. No Windows/Linux qualification profile passed, Gate 6–8 remain waiting, and no
+Fly recovery or public inference route ran. Billing is delayed, so the full USD 69 Gate
+5 maximum remains in the ledger even though observed cost is unknown and likely lower.
+
 ## Desktop milestone: control authority separation
 
 The first milestone-5 production prerequisite separates the local authorization
