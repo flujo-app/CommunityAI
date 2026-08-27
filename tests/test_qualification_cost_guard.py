@@ -368,32 +368,6 @@ def test_cleaned_observed_cost_leaves_room_for_later_plan():
     assert report["remaining_after_run_maximum_usd"] == "27.00"
 
 
-def test_owner_released_cleaned_maximum_does_not_consume_new_budget_epoch():
-    released = guard.LedgerEntry(
-        run_id="prior-gcp",
-        provider="GCP",
-        purpose="completed qualification",
-        maximum_usd=Decimal("99"),
-        observed_usd=None,
-        cleanup_proof="all exact resources absent",
-        state="CLEANED-RELEASED",
-    )
-
-    report = _authorization(entries=(released,))
-
-    assert released.committed_usd == Decimal("0")
-    assert report["ledger_committed_before_run_usd"] == "0.00"
-    assert report["remaining_before_run_usd"] == "100.00"
-    assert report["remaining_after_run_maximum_usd"] == "30.00"
-
-
-def test_owner_released_state_requires_cleanup_proof():
-    with pytest.raises(guard.CostGuardError, match="CLEANED-RELEASED state requires cleanup proof"):
-        guard.parse_spend_ledger(
-            _ledger("| prior-gcp | GCP | completed qualification | USD 99 | — | — | CLEANED-RELEASED |")
-        )
-
-
 def test_gcp_plan_rejects_stale_prices_and_overlong_lifetime():
     with pytest.raises(guard.CostGuardError, match="stale"):
         _authorization(today=date(2026, 9, 26))

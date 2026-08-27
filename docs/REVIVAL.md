@@ -170,10 +170,6 @@ On every implementation run:
 
 - Before provisioning, record a conservative maximum estimate in the spend ledger and
   confirm it fits under the combined USD 100 ceiling.
-- An explicit owner budget reset starts a new USD 100 accounting epoch only after every
-  prior run is cleanup-proved. Preserve those historical rows as `CLEANED-RELEASED` rather
-  than pretending their actual cost was zero; their maxima no longer consume the new epoch,
-  and delayed observed charges remain informational.
 - Tag every temporary resource with a unique run ID. Provision only exact resolved
   targets; never delete by a broad name, glob, project, application, or account scope.
 - Always execute cleanup. A run is failed—not passed—unless it proves that every

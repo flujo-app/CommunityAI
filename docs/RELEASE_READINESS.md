@@ -42,8 +42,9 @@ gate changes state. `docs/REVIVAL.md` defines the execution contract and long-te
 Work from top to bottom while prerequisites are satisfied. Gate V and Gate 5 have passed.
 The current mandatory sequence is **Gates 6–8 → Gates 9–16 → Gate 17**. The visible
 vertical slice proved real Qwen3.5 2B inference through a public GCP L4 worker, and the
-strict four-profile Qwen matrix now passes. Gate 6 is the earliest unfinished outcome
-and is ready for a new conservative reservation under the owner-reset budget epoch.
+strict four-profile Qwen matrix now passes. Gate 6 is the earliest unfinished outcome;
+it must wait until observed provider costs release enough of the USD 100 ceiling for a
+new conservative reservation.
 
 Do not work on the post-alpha items in the deferred table while an alpha gate can progress.
 Missing Docker, snapshots, local GPU hardware, or local host capacity is not an external
@@ -54,9 +55,8 @@ The former Gate 5 quota blocker is resolved. The [2026-08-27 quota/probe evidenc
 records `GPUS_ALL_REGIONS` limit `1`, and the completed [Gate 5 qualification](evidence/gate5-20260827-qwen3.5-2b-qualification.json)
 again proves one-host-at-a-time L4 operation, zero post-run L4 usage, complete run-resource
 absence, and the protected `communityai-bootstrap-1` still running. The cleaned Gate V and
-Gate 5 runs remain in the historical ledger, but the owner explicitly reset the test-budget
-epoch to USD 100 on 2026-08-27 after their cleanup was proved. Their unobserved maxima no
-longer consume the new authorization; later billing should still be recorded for information.
+Gate 5 runs conservatively retain USD 100 in delayed-billing maxima, so no new paid run is
+authorized until observed costs release enough balance for its full reservation.
 
 | Order | Gate | Status | Current evidence | Next action |
 | ---: | --- | --- | --- | --- |
@@ -65,9 +65,9 @@ longer consume the new authorization; later billing should still be recorded for
 | 3 | Prepare bounded provider automation and cost controls | PASSED | [PR #9](https://github.com/flujo-app/CommunityAI/pull/9) integrated [commit `1d4f7d4`](https://github.com/flujo-app/CommunityAI/commit/1d4f7d4453eb688994ce21c08e182c1ad8e63ae7) after [style](https://github.com/flujo-app/CommunityAI/actions/runs/32947541300), [tests](https://github.com/flujo-app/CommunityAI/actions/runs/32947541452), and [Windows/Linux production packaging](https://github.com/flujo-app/CommunityAI/actions/runs/32947541637) passed; the 29-test guard prices the serialized 13.5-hour G2/L4 fleet at USD 69 maximum (14-hour N1/T4 at USD 70), binds immutable OS images and hard deletion deadlines, supports split-region CUDA capacity, and excludes `communityai-bootstrap-1` from exact cleanup; native `gcloud`, `flyctl`, and `gh` authentication is currently available | No further Gate 3 framework work. Revalidate provider quota immediately before Gate 4/5 provisioning and reserve a ledger row only immediately before a paid create |
 | 4 | Build immutable Qwen3.5 2B and Gemma 4 E2B qualification images/snapshots | PASSED | [Gate 4 attempt `gate4-20260826-b`](evidence/gate4-20260826-b-qualification-image-build-attempt.json) passed both exact snapshot/in-image checks and published source `7660e33` with SLSA provenance and SPDX SBOM. [Qwen evidence](evidence/gate4-20260826-b-qwen3.5-2b-publication-evidence.json) binds `ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed` ([metadata](evidence/gate4-20260826-b-qwen3.5-2b-build-metadata.json)): 6,913,811,781 compressed bytes, 6,913,829,173 uncompressed, 9 GB rootfs. [Gemma evidence](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json) binds `ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f` ([metadata](evidence/gate4-20260826-b-gemma-4-e2b-build-metadata.json)): 11,011,406,681 compressed bytes, 11,011,424,083 uncompressed, 13 GB rootfs. Both isolated builders and the complete retry network were deleted; the protected bootstrap remains. | Use these immutable digests and evidence-bound rootfs sizes for Gates 5 and 6 |
 | V | Pass a visible public vertical slice: app observes a remote worker, `auto` selects a model, and inference succeeds | PASSED | [Run `gatev-20260827-a`](evidence/gate-v-20260827-a-public-vertical-slice.json) executed clean source `8200afc` against the immutable Qwen image and exact manifest on a public Linux G2/L4 worker. The [desktop evidence](evidence/gate-v-20260827-a-desktop-models.png) shows signed-catalog `auto` selection, 24/24 blocks, and one verified peer; the localhost OpenAI-compatible request returned one token through Qwen in 15.231 seconds. The real run exposed four bounded fixes, all focused tests and two independent reviews passed, every exact run resource is absent, global GPU usage returned to zero, and the protected bootstrap remains running. | Proceed to Gate 5 using the exact pushed source, revalidated one-L4 quota, immutable Qwen input, a new conservative reservation, sequential CUDA hosts, and complete cleanup evidence. |
-| 5 | Qwen3.5 2B Windows/Linux CPU/CUDA qualification | PASSED | [Qualification and cleanup evidence](evidence/gate5-20260827-qwen3.5-2b-qualification.json) and the [strict aggregate](evidence/gate5-20260827-qwen3.5-2b-matrix.json) bind Windows CPU/CUDA and Linux CPU/CUDA passes to exact source `23a4078e17ed9d5ae6f31e7497bae69b83aecef6`, DRIFT `2.3.0.dev2`, Qwen revision `15852e8c16360a2fea060d615a32b45270f8a8fc`, and manifest `sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`. Every profile proved exact artifacts, 24/24 manifested stock-token parity, selected-worker interruption, and recovery. All Gate 5 instances, disks, and perimeters are absent; L4 usage is zero; the protected bootstrap remains running. | Proceed to Gate 6 under the owner-reset USD 100 budget epoch. |
-| 6 | Gemma 4 E2B Windows/Linux CPU/CUDA qualification | READY | Gate 5 proves the sequential one-GPU fleet path, the passed [immutable Gate 4 Gemma image](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json) is ready, global GPU quota is 1 with usage 0, and the owner reset the available GCP/Fly test budget to USD 100 after all earlier resources were absence-proved. No external Gemma profile has run. | Price and record one conservative serialized Gemma reservation against the new epoch, re-preflight quota/stock, run Windows/Linux CPU/CUDA one host at a time, and retain same-source reports plus complete cleanup. |
-| 7 | Qwen3.5 2B real separate-machine recovery | WAITING | Gate 5 and the controller/Fly adapter pass; Gate 6 is the earlier mandatory outcome and its reservation must be known before remaining budget can be allocated. | After Gate 6 passes and a full conservative Fly reservation fits the remaining new-epoch balance, create one bootstrap plus four workers, kill the selected worker during generation, and prove exact recovery plus complete cleanup. |
+| 5 | Qwen3.5 2B Windows/Linux CPU/CUDA qualification | PASSED | [Qualification and cleanup evidence](evidence/gate5-20260827-qwen3.5-2b-qualification.json) and the [strict aggregate](evidence/gate5-20260827-qwen3.5-2b-matrix.json) bind Windows CPU/CUDA and Linux CPU/CUDA passes to exact source `23a4078e17ed9d5ae6f31e7497bae69b83aecef6`, DRIFT `2.3.0.dev2`, Qwen revision `15852e8c16360a2fea060d615a32b45270f8a8fc`, and manifest `sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`. Every profile proved exact artifacts, 24/24 manifested stock-token parity, selected-worker interruption, and recovery. All Gate 5 instances, disks, and perimeters are absent; L4 usage is zero; the protected bootstrap remains running. | Proceed to Gate 6 only after observed billing releases enough of the combined ceiling for a conservative Gemma reservation. |
+| 6 | Gemma 4 E2B Windows/Linux CPU/CUDA qualification | BLOCKED | Gate 5 proves the sequential one-GPU fleet path and the passed [immutable Gate 4 Gemma image](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json) is ready, but delayed-billing maxima now consume the full USD 100 ceiling. No external Gemma profile has run. | Reconcile cleaned-run observed costs when provider billing becomes available; reserve and run the strict four-profile Gemma matrix only when its full conservative maximum fits the released balance. |
+| 7 | Qwen3.5 2B real separate-machine recovery | BLOCKED | Gate 5 and the controller/Fly adapter pass, but the cleaned-run delayed-billing maxima leave no balance for the required priced Fly run. | After Gate 6's budget blocker is resolved and a full conservative Fly reservation fits, create one bootstrap plus four workers, kill the selected worker during generation, and prove exact recovery plus complete cleanup. |
 | 8 | Gemma 4 E2B real separate-machine recovery | WAITING | Gate 4 and the same Gemma adapter path pass, but the Gate 6 four-profile matrix has not passed | After Gate 6 passes, repeat the real priced Fly interruption gate and retain recovery plus cleanup evidence |
 | 9 | Publish edge resource envelopes for selectable profiles | TODO | Older Qwen3 1.7B Windows CPU envelope exists; refreshed candidates lack complete supported-profile envelopes. | Measure cold cache, disk, RAM/VRAM, first token, decode rate, and cleanup behavior needed for safe automatic selection on supported device classes. |
 | 10 | Implement automatic contributor model and block placement | TODO | The catalog selector can choose a model for a new client request and within-model balancing exists, but first-install config creates no workers and the node runner still requires each worker's model/block selection explicitly. | Observe signed catalog eligibility and live coverage/demand, filter through hard local policy, choose a model and block range, authorize/download exact artifacts, launch under supervision, and use hysteresis so the VRAM slider produces useful contribution without manual swarm knowledge. |
@@ -96,31 +96,27 @@ longer consume the new authorization; later billing should still be recorded for
 ## Cloud authorization and spend ledger
 
 Authorization applies only to CommunityAI qualification and public-alpha infrastructure.
-The ceiling is USD 100 combined across new temporary GCP and Fly resources in the current
-owner-authorized accounting epoch. The existing
+The ceiling is USD 100 combined across new temporary GCP and Fly resources. The existing
 GCP bootstrap's ordinary baseline cost is tracked separately; never delete it as test cleanup.
 
 Before every paid run, add an entry with a conservative maximum. After cleanup, replace
 the estimate with observed cost when available. If provider billing is delayed, retain the
-maximum estimate until actual cost is known unless the owner explicitly resets the budget
-after complete cleanup. On reset, keep historical rows, mark them `CLEANED-RELEASED`, and
-continue recording later observed charges for information; released rows do not consume the
-new epoch.
+maximum estimate until actual cost is known.
 
 | Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| gatev-20260827-a | GCP | Gate V one-host Linux G2/L4 Qwen public vertical slice, 150 GB balanced disk, six-hour hard deadline, headroom, and contingency | USD 17 | — | [Passed run and cleanup proof](evidence/gate-v-20260827-a-public-vertical-slice.json): instance, disk, firewalls, subnet, network, addresses, routers, and resource policies absent at 2026-08-27T09:28:20Z; GPU usage zero; protected bootstrap running. Historical maximum released by explicit owner reset on 2026-08-27; billing remains informational. | CLEANED-RELEASED |
-| gate5-20260827-a | GCP | Gate 5 Qwen3.5 2B Windows/Linux qualification and real-run source fixes | USD 69.00 | — | All four exact profile VMs/disks and both network perimeters are absent; GPU usage is zero and `communityai-bootstrap-1` remains running. Historical maximum released by explicit owner reset on 2026-08-27; billing remains informational. | CLEANED-RELEASED |
-| gate5-20260827-b | GCP | Same-source `23a4078` Windows/Linux CPU retries; sequential high-memory hosts, private 150 GB disks, one-hour DELETE deadlines, 25% headroom, and fixed contingency | USD 14.00 | — | [Passed qualification and cleanup proof](evidence/gate5-20260827-qwen3.5-2b-qualification.json): Windows used N1; Linux used a lower-cost E2 fallback after N1 capacity failed in every regional zone. Both hosts/disks and the exact firewall, NAT, router, subnet, address, and network are absent; L4 usage is zero; protected bootstrap running. Historical maximum released by explicit owner reset on 2026-08-27. | CLEANED-RELEASED |
+| gatev-20260827-a | GCP | Gate V one-host Linux G2/L4 Qwen public vertical slice, 150 GB balanced disk, six-hour hard deadline, headroom, and contingency | USD 17 | — | [Passed run and cleanup proof](evidence/gate-v-20260827-a-public-vertical-slice.json): instance, disk, firewalls, subnet, network, addresses, routers, and resource policies absent at 2026-08-27T09:28:20Z; GPU usage zero; protected bootstrap running. Billing delayed, so retain the maximum. | CLEANED |
+| gate5-20260827-a | GCP | Gate 5 Qwen3.5 2B Windows/Linux qualification and real-run source fixes | USD 69.00 | — | All four exact profile VMs/disks and both network perimeters are absent; GPU usage is zero and `communityai-bootstrap-1` remains running. Billing is delayed, so retain the maximum. | CLEANED |
+| gate5-20260827-b | GCP | Same-source `23a4078` Windows/Linux CPU retries; sequential high-memory hosts, private 150 GB disks, one-hour DELETE deadlines, 25% headroom, and fixed contingency | USD 14.00 | — | [Passed qualification and cleanup proof](evidence/gate5-20260827-qwen3.5-2b-qualification.json): Windows used N1; Linux used a lower-cost E2 fallback after N1 capacity failed in every regional zone. Both hosts/disks and the exact firewall, NAT, router, subnet, address, and network are absent; L4 usage is zero; protected bootstrap running. Billing delayed, so retain the maximum. | CLEANED |
 
 Owner-set accounting baseline on 2026-08-27: **USD 0 spent before `gatev-20260827-a`**.
 The removed USD 99 total was a sum of worst-case reservations, not observed provider spend.
 This baseline is an owner authorization decision, not a Cloud Billing reconciliation.
-Read-only reconciliation at 2026-08-27T15:42:15Z confirmed billing is enabled but the
-project has zero queryable BigQuery export datasets, so no observed-cost figure is available
-yet. Owner reset on 2026-08-27 after complete cleanup: prior maxima remain historical
-evidence but do not consume the new authorization epoch. Remaining before the next
-reservation: **USD 100**.
+Remaining while the cleaned Gate V and Gate 5 A/B runs retain their delayed maxima:
+**USD 0**. Gate 6 is externally blocked until observed costs release enough balance for its
+full conservative reservation. Read-only reconciliation at 2026-08-27T15:42:15Z confirmed
+billing is enabled but the project has zero queryable BigQuery export datasets, so no
+observed-cost figure is available yet.
 
 
 ## Evidence update rules
