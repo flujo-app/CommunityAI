@@ -61,6 +61,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Qualification workers now keep baked exact snapshots writable by their non-root runtime,
   preserve p2pd parent-death protection when the healthy container supervisor is PID 1,
   and permit non-quantized startup when an optional bitsandbytes installation is unusable.
+- Fully verified artifact downloads now tolerate a bounded transient Windows sharing lock
+  during atomic promotion while all other file errors and integrity failures remain closed.
 - Published the exact Qwen3.5 2B and Gemma 4 E2B qualification images as immutable GHCR
   indexes with verified Linux runtime manifests, SLSA provenance, SPDX SBOMs, bounded
   layers, measured image sizes, and evidence-derived 9 GB and 13 GB Fly rootfs plans.

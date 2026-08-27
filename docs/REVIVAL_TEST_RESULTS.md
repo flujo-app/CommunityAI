@@ -1,6 +1,6 @@
 # Revival baseline results
 
-Test dates: 2026-08-21 through 2026-08-26
+Test dates: 2026-08-21 through 2026-08-27
 
 These tests exercise `Maykeye/TinyLLama-v0` as an eight-block model and compare
 greedy distributed generation with the stock Transformers implementation. The
@@ -15,7 +15,38 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; and the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics | The release bootstrap and initial catalog are not published or bundled; qualified public manifests and workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; and Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference | The release bootstrap and initial catalog are not published or bundled; candidate qualification and persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+
+## Gate V public Qwen vertical slice
+
+On 2026-08-27, [run `gatev-20260827-a`](evidence/gate-v-20260827-a-public-vertical-slice.json)
+passed the screen-visible public inference path at clean source
+`8200afcd0cc8b69816b73e2453601c9a6dd4afb6`. A Linux G2/L4 worker used the
+immutable Gate 4 Qwen image and exact Qwen3.5 2B manifest. The signed test catalog
+selected Qwen at priority one only after discovery reported a complete authenticated
+24/24-block route from one verified peer. The
+[desktop capture](evidence/gate-v-20260827-a-desktop-models.png) displayed the same
+selection, reason, coverage, peer count, availability state, and prompt-visibility
+disclosure.
+
+A clean local node then accepted `model: "auto"` through its authenticated localhost
+OpenAI-compatible endpoint, resolved Qwen3.5 2B, loaded the fully content-verified
+snapshot, generated through the remote route, and returned one completion token in
+15.231 seconds. The real run exposed four narrow runtime failures: non-root ownership
+of the baked snapshot, a PID-1 container false orphan check, eager failure of an
+unused optional bitsandbytes runtime, and a transient Windows sharing violation while
+atomically promoting a fully verified resumable artifact. The fixes passed 28 focused
+worker tests and 33 manifest tests plus Black, isort, whitespace checks, and two
+independent tester reviews.
+
+The single VM had a six-hour provider deletion deadline and remained inside the
+reserved USD 17 maximum. After the passing request, the exact instance, auto-delete
+disk, two firewalls, subnet, network, addresses, routers, and resource policies were
+proved absent; global GPU usage returned to zero and the protected discovery bootstrap
+remained running. Billing was still delayed, so the ledger retains the full USD 17
+maximum. The report retains no prompt, credential, raw provider output, private path,
+or network endpoint. This passes Gate V only; it is not candidate qualification and
+does not replace the four-profile Gate 5 matrix.
 
 ## Default-branch integration and Windows/Linux package CI
 

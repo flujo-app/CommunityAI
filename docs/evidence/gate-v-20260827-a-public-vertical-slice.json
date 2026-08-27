@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "scope": "public-vertical-slice",
+  "run_id": "gatev-20260827-a",
+  "gate": "V",
+  "result": "passed",
+  "complete_release_qualification": false,
+  "source_commit": "8200afcd0cc8b69816b73e2453601c9a6dd4afb6",
+  "candidate": {
+    "name": "Qwen3.5 2B",
+    "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "blocks": 24,
+    "dtype": "bfloat16",
+    "quantization": "none"
+  },
+  "worker_image": {
+    "reference": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed",
+    "index_digest": "sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed",
+    "publication_source_commit": "7660e33e03326e5b868f81cb95282460ba649d5f",
+    "runtime_overlay_source_commit": "8200afcd0cc8b69816b73e2453601c9a6dd4afb6",
+    "runtime_overlay_files": [
+      "src/drift/utils/peft.py",
+      "src/drift/utils/process_lifetime.py"
+    ],
+    "writable_snapshot_volume": true,
+    "runtime_uid": 65532,
+    "immutable_image_modified": false
+  },
+  "device_profile": {
+    "provider": "gcp",
+    "operating_system": "linux",
+    "zone": "us-central1-a",
+    "machine_type": "g2-standard-8",
+    "accelerator": "NVIDIA L4",
+    "gpu_memory_mib": 23034,
+    "driver_version": "580.173.02",
+    "boot_disk_gb": 150,
+    "boot_disk_type": "pd-balanced",
+    "service_account": false,
+    "max_run_seconds": 21600
+  },
+  "catalog_and_route": {
+    "catalog_id": "communityai-gatev-20260827-a",
+    "signature_threshold": 1,
+    "selector": "auto",
+    "selected_model": "Qwen3.5 2B",
+    "selection_status": "selected",
+    "selection_reason": "Selected catalog priority 1: live discovery reports a complete 24/24-block route from 1 verified peer.",
+    "covered_blocks": 24,
+    "total_blocks": 24,
+    "verified_peer_count": 1,
+    "model_state_after_request": "ready",
+    "last_error_present": false,
+    "observed_at": "2026-08-27T09:25:18.0832702Z"
+  },
+  "desktop": {
+    "result": "passed",
+    "screen_visible_auto_selection": true,
+    "screen_visible_coverage": "24/24",
+    "screen_visible_verified_peers": 1,
+    "screenshot": "gate-v-20260827-a-desktop-models.png",
+    "screenshot_sha256": "e005c1d4b68e9406c3adde261b4306f1b433944175498286be821a64f76aa253"
+  },
+  "localhost_inference": {
+    "result": "passed",
+    "protocol": "openai-compatible",
+    "requested_model": "auto",
+    "resolved_model": "Qwen3.5 2B",
+    "completion_tokens": 1,
+    "started_at": "2026-08-27T09:24:18.446Z",
+    "completed_at": "2026-08-27T09:24:33.943Z",
+    "elapsed_seconds": 15.231
+  },
+  "concrete_failures_fixed": [
+    "The non-root worker could not create its cache lock in the baked snapshot.",
+    "The Linux parent-death guard mistook a healthy container supervisor at PID 1 for an orphan.",
+    "An unusable optional bitsandbytes runtime prevented non-quantized startup.",
+    "Windows briefly retained a sharing lock while promoting the fully verified resumable artifact."
+  ],
+  "verification": {
+    "worker_started_at": "2026-08-27T09:21:35.909796332Z",
+    "focused_runtime_tests": {
+      "passed": 28,
+      "platform_skipped": 3
+    },
+    "manifest_tests": {
+      "passed": 33
+    },
+    "independent_tester_reviews": [
+      "qualification worker startup fixes passed",
+      "Windows verified-artifact promotion retry passed"
+    ]
+  },
+  "cost": {
+    "combined_ceiling_usd": 100,
+    "owner_set_pre_run_baseline_usd": 0,
+    "maximum_estimate_usd": 17,
+    "observed_cost_usd": null,
+    "billing_state": "delayed",
+    "remaining_authorized_maximum_usd": 83
+  },
+  "cleanup": {
+    "verified_at": "2026-08-27T09:28:20.9296093Z",
+    "run_instance_absent": true,
+    "run_boot_disk_absent": true,
+    "run_firewalls_absent": true,
+    "run_subnet_absent": true,
+    "run_network_absent": true,
+    "run_addresses_absent": true,
+    "run_routers_absent": true,
+    "run_resource_policies_absent": true,
+    "global_gpu_limit": 1,
+    "global_gpu_usage": 0,
+    "protected_bootstrap_present": true,
+    "protected_bootstrap_state": "RUNNING"
+  },
+  "privacy": {
+    "prompt_retained": false,
+    "credentials_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false,
+    "network_endpoints_retained": false
+  }
+}
