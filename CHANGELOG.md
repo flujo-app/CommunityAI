@@ -72,6 +72,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Qwen3.5 2B now passes that strict Windows/Linux CPU/CUDA matrix at one exact source,
   with exact-artifact verification, 24/24 manifested stock-token parity, BF16 eager
   execution, and selected-worker interruption recovery on every required profile.
+- Gemma 4 E2B now passes the same strict matrix at one exact source, with all five
+  artifacts verified, 35/35 manifested stock-token parity, BF16 eager execution, and
+  selected-worker interruption recovery on every profile. CUDA qualification uses a
+  conservative 48 GB host-memory class after a 32 GB Windows failover-load crash.
 - Qualification cost authorization now supports explicit owner-reset budget epochs after
   complete cleanup, preserving historical maxima without letting delayed billing block the
   next authorized run or falsely recording prior cost as zero.

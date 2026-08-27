@@ -1,0 +1,97 @@
+{
+  "complete_release_qualification": false,
+  "coverage": {
+    "linux:cpu": [
+      {
+        "device": "cpu",
+        "drift": "2.3.0.dev2",
+        "generated_at": "2026-08-27T16:58:26.479494+00:00",
+        "machine_id": "gate6-20260827-a-linux-cpu",
+        "profile": "linux:cpu",
+        "report": "input-3",
+        "source_commit": "a45025a3262a88df65217b630392488e8548aaaf",
+        "system": "linux"
+      }
+    ],
+    "linux:cuda": [
+      {
+        "device": "cuda",
+        "drift": "2.3.0.dev2",
+        "generated_at": "2026-08-27T18:32:34.726283+00:00",
+        "machine_id": "gate6-20260827-a-linux-cuda",
+        "profile": "linux:cuda",
+        "report": "input-4",
+        "source_commit": "a45025a3262a88df65217b630392488e8548aaaf",
+        "system": "linux"
+      }
+    ],
+    "windows:cpu": [
+      {
+        "device": "cpu",
+        "drift": "2.3.0.dev2",
+        "generated_at": "2026-08-27T16:24:38.966350+00:00",
+        "machine_id": "gate6-20260827-a-windows-cpu",
+        "profile": "windows:cpu",
+        "report": "input-1",
+        "source_commit": "a45025a3262a88df65217b630392488e8548aaaf",
+        "system": "windows"
+      }
+    ],
+    "windows:cuda": [
+      {
+        "device": "cuda",
+        "drift": "2.3.0.dev2",
+        "generated_at": "2026-08-27T18:08:49.365672+00:00",
+        "machine_id": "gate6-20260827-a-windows-cuda",
+        "profile": "windows:cuda",
+        "report": "input-2",
+        "source_commit": "a45025a3262a88df65217b630392488e8548aaaf",
+        "system": "windows"
+      }
+    ]
+  },
+  "generated_at": "2026-08-27T18:43:31.650073+00:00",
+  "matrix_errors": [],
+  "missing_profiles": [],
+  "model": {
+    "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+    "name": "Gemma 4 E2B IT",
+    "repository": "google/gemma-4-E2B-it",
+    "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+    "runtime": {
+      "adapter_profile": "none",
+      "attention_implementation": "eager",
+      "dtype": "bfloat16",
+      "implementation": "drift",
+      "maximum_version_exclusive": "2.4.0",
+      "minimum_version": "2.3.0.dev0",
+      "protocol_version": 1,
+      "quantization": "none",
+      "tensor_schema": "hidden-states-v1"
+    }
+  },
+  "not_covered": [
+    "multi-machine routing and interruption recovery",
+    "cold-client resource envelope",
+    "public-worker route redundancy and soak",
+    "signed catalog publication and release bootstrap"
+  ],
+  "report_errors": [],
+  "requirements": {
+    "drift_version": "2.3.0.dev2",
+    "profiles": [
+      "windows:cpu",
+      "windows:cuda",
+      "linux:cpu",
+      "linux:cuda"
+    ],
+    "source_commit": "a45025a3262a88df65217b630392488e8548aaaf"
+  },
+  "result": "passed",
+  "schema_version": 1,
+  "scope": "cross-platform-local-matrix",
+  "source_identity": {
+    "drift": "2.3.0.dev2",
+    "source_commit": "a45025a3262a88df65217b630392488e8548aaaf"
+  }
+}

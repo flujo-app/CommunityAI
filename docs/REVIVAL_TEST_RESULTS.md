@@ -15,26 +15,43 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference; and Gate 5 passed the strict Qwen Windows/Linux CPU/CUDA matrix | The release bootstrap and initial catalog are not published or bundled; Gemma qualification and persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference; and Gates 5 and 6 passed the strict Qwen and Gemma Windows/Linux CPU/CUDA matrices | The release bootstrap and initial catalog are not published or bundled; persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
 
-## Gate 6 Gemma 4 E2B strict four-profile qualification (in progress)
+## Gate 6 Gemma 4 E2B strict four-profile qualification
 
-On 2026-08-27, the sanitized [Windows CPU report](evidence/gate6-20260827-a-windows-cpu-qualification.json)
-passed at exact source `a45025a3262a88df65217b630392488e8548aaaf`, DRIFT
-`2.3.0.dev2`, Gemma revision `3e22461f65e89153144f8adb70e3b8c2cc9845a7`,
-and manifest
+On 2026-08-27, [Gate 6 qualification and cleanup evidence](evidence/gate6-20260827-gemma-4-e2b-qualification.json)
+and the [strict aggregate](evidence/gate6-20260827-gemma-4-e2b-matrix.json)
+passed Gemma 4 E2B on Windows CPU, Windows CUDA, Linux CPU, and Linux CUDA.
+Every sanitized report binds exact source
+`a45025a3262a88df65217b630392488e8548aaaf`, DRIFT `2.3.0.dev2`,
+Gemma revision `3e22461f65e89153144f8adb70e3b8c2cc9845a7`, and manifest
 `sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd`.
-It verified all five declared artifacts (10,278,818,149 bytes), BF16 eager CPU
-execution, stock-token parity, selected-worker interruption, and recovery in 22.781
-seconds. Its exact VM and disk were absence-proved before the Linux CPU host started.
+The aggregate required all four profiles and reported no missing profiles, matrix
+errors, or report errors.
 
-This does **not** pass Gate 6. Linux CPU is the sole current run host; native
-`gcloud` reauthentication expired while its buffered qualification was running.
-That host retains its 48,600-second provider `DELETE` backstop. No CUDA host may
-start until login is restored, only sanitized Linux CPU evidence is recovered, and
-the Linux CPU VM and disk are absence-proved. The gate still requires Linux CPU,
-Windows CUDA, Linux CUDA, a passing strict four-profile aggregate, and complete
-run-scoped perimeter cleanup.
+The [Windows CPU](evidence/gate6-20260827-a-windows-cpu-qualification.json),
+[Windows CUDA](evidence/gate6-20260827-a-windows-cuda-qualification.json),
+[Linux CPU](evidence/gate6-20260827-a-linux-cpu-qualification.json), and
+[Linux CUDA](evidence/gate6-20260827-a-linux-cuda-qualification.json) reports each
+prove all five declared artifacts (10,278,818,149 bytes), a complete 35/35-block
+manifested route, exact stock-token parity, BF16 eager execution on the requested
+device, selected-worker interruption, and observed recovery. Recovery took 22.781,
+13.906, 25.577, and 11.187 seconds respectively.
+
+The first Windows CUDA attempt reached exact parity on a 32 GB G2 host but exited
+with native status `0xC0000005` while loading the second failover replica. A bounded
+same-host resize to 48 GB passed; Linux CUDA then used the same conservative memory
+class and passed without a code change. Both CUDA profiles remained serial and kept
+their 48,600-second provider deletion backstops.
+
+All four exact VMs and disks and the run-scoped firewall, NATs, routers, subnets,
+reserved addresses, and VPC are absent. Global GPU and regional L4 usage returned to
+zero, and `communityai-bootstrap-1` remains running. Provider billing is delayed, so
+the cleaned Gate 6 USD 79 maximum remains retained and USD 21 is available in the
+current owner-reset accounting epoch. The strict combiner rerun passed with all four
+profiles and empty missing, matrix-error, and report-error lists; the focused matrix,
+external-qualification, and cost-guard suite passed 51 tests. Separate-machine CPU-only
+Gemma recovery remains Gate 8.
 
 ## Gate 5 Qwen3.5 2B strict four-profile qualification
 
@@ -67,8 +84,9 @@ CPU used a lower-cost E2 high-memory fallback after N1 capacity failed in every 
 zone. Both retry hosts retained one-hour provider deletion deadlines. The exact
 CI-listed offline suite passed 548 tests with 8 expected skips, and the focused
 qualification suite passed 80 tests. Provider billing remains delayed. The explicit owner reset moved the cleanup-proved
-Gate 5 maxima into historical `CLEANED-RELEASED` rows; Gate 6 now holds a USD 69
-maximum reservation in the current USD 100 accounting epoch.
+Gate 5 maxima into historical `CLEANED-RELEASED` rows. The later cleaned Gate 6
+run retains a USD 79 maximum while billing is delayed, leaving USD 21 in the current
+USD 100 accounting epoch.
 
 ## Gate V public Qwen vertical slice
 

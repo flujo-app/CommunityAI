@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "gate": "6",
+  "run_group": "gate6-20260827-a",
+  "result": "passed",
+  "generated_at": "2026-08-27T18:44:08.792Z",
+  "source_commit": "a45025a3262a88df65217b630392488e8548aaaf",
+  "drift_version": "2.3.0.dev2",
+  "model": {
+    "name": "Gemma 4 E2B IT",
+    "repository": "google/gemma-4-E2B-it",
+    "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+    "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+    "declared_artifact_bytes": 10278818149
+  },
+  "aggregate": {
+    "report": "docs/evidence/gate6-20260827-gemma-4-e2b-matrix.json",
+    "result": "passed",
+    "required_profiles": [
+      "windows:cpu",
+      "windows:cuda",
+      "linux:cpu",
+      "linux:cuda"
+    ],
+    "missing_profiles": [],
+    "matrix_errors": [],
+    "report_errors": []
+  },
+  "profiles": [
+    {
+      "profile": "windows:cpu",
+      "run": "gate6-20260827-a",
+      "report": "docs/evidence/gate6-20260827-a-windows-cpu-qualification.json",
+      "machine_id": "gate6-20260827-a-windows-cpu",
+      "host_shape": "n1-highmem-8",
+      "generated_at": "2026-08-27T16:24:38.966350+00:00",
+      "result": "passed",
+      "stages": {
+        "manifest_and_artifacts": {
+          "status": "passed",
+          "duration_seconds": 39.0154
+        },
+        "local_distributed_stock_parity": {
+          "status": "passed",
+          "duration_seconds": 293.781845
+        },
+        "local_in_generation_failover": {
+          "status": "passed",
+          "duration_seconds": 279.073593
+        }
+      },
+      "runtime": {
+        "worker_device": "cpu",
+        "worker_torch_dtype": "bfloat16",
+        "attention_implementation": "eager"
+      },
+      "stock_token_parity": true,
+      "manifested_route_completed": true,
+      "selected_worker_interrupted": true,
+      "recovery_observed": true,
+      "failover_recovery_seconds": 22.781
+    },
+    {
+      "profile": "windows:cuda",
+      "run": "gate6-20260827-a",
+      "report": "docs/evidence/gate6-20260827-a-windows-cuda-qualification.json",
+      "machine_id": "gate6-20260827-a-windows-cuda",
+      "host_shape": "g2-standard-12 / NVIDIA L4",
+      "generated_at": "2026-08-27T18:08:49.365672+00:00",
+      "result": "passed",
+      "stages": {
+        "manifest_and_artifacts": {
+          "status": "passed",
+          "duration_seconds": 53.86427
+        },
+        "local_distributed_stock_parity": {
+          "status": "passed",
+          "duration_seconds": 142.141303
+        },
+        "local_in_generation_failover": {
+          "status": "passed",
+          "duration_seconds": 161.32273
+        }
+      },
+      "runtime": {
+        "worker_device": "cuda:0",
+        "worker_torch_dtype": "bfloat16",
+        "attention_implementation": "eager"
+      },
+      "stock_token_parity": true,
+      "manifested_route_completed": true,
+      "selected_worker_interrupted": true,
+      "recovery_observed": true,
+      "failover_recovery_seconds": 13.906
+    },
+    {
+      "profile": "linux:cpu",
+      "run": "gate6-20260827-a",
+      "report": "docs/evidence/gate6-20260827-a-linux-cpu-qualification.json",
+      "machine_id": "gate6-20260827-a-linux-cpu",
+      "host_shape": "n1-highmem-8",
+      "generated_at": "2026-08-27T16:58:26.479494+00:00",
+      "result": "passed",
+      "stages": {
+        "manifest_and_artifacts": {
+          "status": "passed",
+          "duration_seconds": 31.910834
+        },
+        "local_distributed_stock_parity": {
+          "status": "passed",
+          "duration_seconds": 107.321407
+        },
+        "local_in_generation_failover": {
+          "status": "passed",
+          "duration_seconds": 160.551434
+        }
+      },
+      "runtime": {
+        "worker_device": "cpu",
+        "worker_torch_dtype": "bfloat16",
+        "attention_implementation": "eager"
+      },
+      "stock_token_parity": true,
+      "manifested_route_completed": true,
+      "selected_worker_interrupted": true,
+      "recovery_observed": true,
+      "failover_recovery_seconds": 25.577
+    },
+    {
+      "profile": "linux:cuda",
+      "run": "gate6-20260827-a",
+      "report": "docs/evidence/gate6-20260827-a-linux-cuda-qualification.json",
+      "machine_id": "gate6-20260827-a-linux-cuda",
+      "host_shape": "g2-standard-12 / NVIDIA L4",
+      "generated_at": "2026-08-27T18:32:34.726283+00:00",
+      "result": "passed",
+      "stages": {
+        "manifest_and_artifacts": {
+          "status": "passed",
+          "duration_seconds": 29.022228
+        },
+        "local_distributed_stock_parity": {
+          "status": "passed",
+          "duration_seconds": 79.526437
+        },
+        "local_in_generation_failover": {
+          "status": "passed",
+          "duration_seconds": 124.761125
+        }
+      },
+      "runtime": {
+        "worker_device": "cuda:0",
+        "worker_torch_dtype": "bfloat16",
+        "attention_implementation": "eager"
+      },
+      "stock_token_parity": true,
+      "manifested_route_completed": true,
+      "selected_worker_interrupted": true,
+      "recovery_observed": true,
+      "failover_recovery_seconds": 11.187
+    }
+  ],
+  "cleanup": {
+    "verified_at": "2026-08-27T18:44:08.811Z",
+    "run_prefix": "caiq-gate6-20260827-a",
+    "absent_counts": {
+      "instances": 0,
+      "disks": 0,
+      "firewall_rules": 0,
+      "routers": 0,
+      "subnets": 0,
+      "addresses": 0,
+      "networks": 0
+    },
+    "global_gpu_quota": {
+      "metric": "GPUS_ALL_REGIONS",
+      "usage": 0,
+      "limit": 1
+    },
+    "l4_quota": {
+      "region": "us-east1",
+      "metric": "NVIDIA_L4_GPUS",
+      "usage": 0,
+      "limit": 1
+    },
+    "protected_bootstrap": {
+      "name": "communityai-bootstrap-1",
+      "status": "RUNNING"
+    }
+  },
+  "budget": {
+    "combined_ceiling_usd": 100,
+    "reservation": {
+      "run": "gate6-20260827-a",
+      "maximum": 79,
+      "status": "CLEANED"
+    },
+    "remaining_authorized_usd": 21,
+    "observed_cost_usd": null,
+    "observed_cost_status": "provider billing delayed; conservative maximum retained"
+  },
+  "privacy": {
+    "contains_prompts": false,
+    "contains_credentials": false,
+    "contains_network_endpoints": false,
+    "contains_private_paths": false,
+    "contains_raw_provider_output": false
+  },
+  "scope_limits": [
+    "single-machine local qualification only",
+    "separate-machine Gemma recovery remains Gate 8",
+    "resource envelopes and persistent public-worker redundancy remain later gates"
+  ]
+}
