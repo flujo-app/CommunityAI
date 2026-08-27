@@ -30,6 +30,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   source-bound tags, credential-free offline runtime inputs, provenance/SBOM push plans,
   and in-image source, Dockerfile, manifest, byte-inventory, and artifact re-verification
   for Qwen3.5 2B and Gemma 4 E2B.
+- Fail-closed qualification-image publication evidence that binds Buildx metadata to an
+  immutable GHCR index, exact Linux runtime, SLSA provenance, SPDX SBOM, contract labels,
+  every compressed layer, measured uncompressed size, and a bounded Fly rootfs plan.
 - A public-alpha operations runbook with privacy-safe aggregate health reconstruction,
   finite admission defaults, rollout stop conditions, and reversible disable/rollback
   steps.
@@ -38,8 +41,18 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 - Defined the first release as a Windows/Linux public inference alpha. macOS and all
   credit/payment features are explicitly deferred and will not be advertised as available.
+- Qualification images now install their native build toolchain only during the locked
+  environment build, isolate exact-source verification from the installed environment,
+  and bind the runtime version to installed package metadata before publication.
+- Published the exact Qwen3.5 2B and Gemma 4 E2B qualification images as immutable GHCR
+  indexes with verified Linux runtime manifests, SLSA provenance, SPDX SBOMs, bounded
+  layers, measured image sizes, and evidence-derived 9 GB and 13 GB Fly rootfs plans.
 - Model qualification now treats exact Windows/Linux CPU/CUDA coverage as the strict
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
+- The bounded GCP qualification plan now binds exact Windows/Ubuntu images, verifies
+  created boot-disk sources, enforces a provider-side deletion deadline, creates scarce
+  CUDA hosts before CPU hosts, and supports split-region N1/T4 or G2/L4 CUDA shapes
+  under the same USD 69 ceiling.
 - Fly qualification now reuses the existing native `flyctl` login by default instead of
   requiring a manually supplied token environment variable.
 - Model qualification dispatch no longer requires a persistent GitHub runner-inventory

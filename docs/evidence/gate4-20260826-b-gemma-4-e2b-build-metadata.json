@@ -1,0 +1,80 @@
+{
+  "buildx.build.provenance": {
+    "builder": {
+      "id": ""
+    },
+    "buildType": "https://mobyproject.org/buildkit@v1",
+    "materials": [
+      {
+        "uri": "pkg:docker/docker/buildkit-syft-scanner@stable-1",
+        "digest": {
+          "sha256": "ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
+        }
+      },
+      {
+        "uri": "pkg:docker/docker/dockerfile@1.7",
+        "digest": {
+          "sha256": "a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
+        }
+      },
+      {
+        "uri": "pkg:docker/python@3.12.13-slim-bookworm?digest=sha256:6e13e65c55e33adf203d77ee371cf8bf5d81bd4902ef07565721f46bf44917af\u0026platform=linux%2Famd64",
+        "digest": {
+          "sha256": "6e13e65c55e33adf203d77ee371cf8bf5d81bd4902ef07565721f46bf44917af"
+        }
+      },
+      {
+        "uri": "pkg:docker/ghcr.io/astral-sh/uv@0.11.21?digest=sha256:6f1fa8fc4040ad7197d7e652057219871e5f6640abfe2b790f1419fdb2319e6b\u0026platform=linux%2Famd64",
+        "digest": {
+          "sha256": "6f1fa8fc4040ad7197d7e652057219871e5f6640abfe2b790f1419fdb2319e6b"
+        }
+      }
+    ],
+    "invocation": {
+      "configSource": {
+        "entryPoint": "Dockerfile.qualification"
+      },
+      "parameters": {
+        "frontend": "gateway.v0",
+        "args": {
+          "build-arg:CANDIDATE": "gemma-4-e2b",
+          "build-arg:DECLARED_ARTIFACT_BYTES": "10278818149",
+          "build-arg:DOCKERFILE_DIGEST": "sha256:5abbefb41a9faaf85556f0122036d068833c1d5ed198e85257e7853ef5041ca2",
+          "build-arg:MANIFEST_DIGEST": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+          "build-arg:SOURCE_COMMIT": "7660e33e03326e5b868f81cb95282460ba649d5f",
+          "build-arg:SOURCE_TREE_DIGEST": "sha256:607931bee4f226051cf817ae6bff2d423ab0ec7e0508a2e01358f3784f24ec84",
+          "cmdline": "docker/dockerfile:1.7",
+          "context:contract": "local:contract",
+          "context:snapshot": "local:snapshot",
+          "frontend.caps": "moby.buildkit.frontend.contexts+forward",
+          "source": "docker/dockerfile:1.7"
+        },
+        "locals": [
+          {
+            "name": "context"
+          },
+          {
+            "name": "contract"
+          },
+          {
+            "name": "dockerfile"
+          },
+          {
+            "name": "snapshot"
+          }
+        ]
+      },
+      "environment": {
+        "platform": "linux/amd64"
+      }
+    }
+  },
+  "buildx.build.ref": "cai-g4b-gemma-20260826-builder/cai-g4b-gemma-20260826-builder0/9s3m3b305uuc1fyy9nssqltma",
+  "containerimage.descriptor": {
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "digest": "sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f",
+    "size": 857
+  },
+  "containerimage.digest": "sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f",
+  "image.name": "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b:source-7660e33e03326e5b868f81cb95282460ba649d5f"
+}

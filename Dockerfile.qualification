@@ -12,6 +12,7 @@ ARG SOURCE_TREE_DIGEST
 ARG DOCKERFILE_DIGEST
 
 LABEL org.opencontainers.image.title="CommunityAI qualification runtime" \
+      org.opencontainers.image.source="https://github.com/flujo-app/CommunityAI" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
       org.opencontainers.image.base.name="python:3.12.13-slim-bookworm" \
       communityai.qualification.candidate="${CANDIDATE}" \
@@ -40,6 +41,7 @@ WORKDIR /workspace
 COPY Dockerfile.qualification pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY scripts/fly_qualification_node.py scripts/qualification_image_contract.py ./scripts/
+COPY . /qualification-source
 
 RUN test -n "${SOURCE_COMMIT}" \
     && test -n "${CANDIDATE}" \
@@ -47,7 +49,11 @@ RUN test -n "${SOURCE_COMMIT}" \
     && test -n "${DECLARED_ARTIFACT_BYTES}" \
     && test -n "${SOURCE_TREE_DIGEST}" \
     && test -n "${DOCKERFILE_DIGEST}" \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y build-essential \
     && uv sync --frozen --no-dev --no-editable --python /usr/local/bin/python \
+    && apt-get purge --auto-remove -y build-essential \
+    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /workspace/qualification /cache/model /tmp/communityai \
     && chown -R 65532:65532 /tmp/communityai
 
@@ -59,14 +65,15 @@ RUN python scripts/qualification_image_contract.py verify \
       --contract /workspace/qualification/image-contract.json \
       --manifest /workspace/qualification/model-manifest.json \
       --snapshot-root /cache/model \
-      --source-tree-root /workspace \
+      --source-tree-root /qualification-source \
       --source-commit "${SOURCE_COMMIT}" \
       --candidate "${CANDIDATE}" \
       --manifest-digest "${MANIFEST_DIGEST}" \
       --declared-artifact-bytes "${DECLARED_ARTIFACT_BYTES}" \
       --source-tree-digest "${SOURCE_TREE_DIGEST}" \
       --dockerfile-digest "${DOCKERFILE_DIGEST}" \
-    && test "$(python -c 'from drift import __version__; print(__version__)')" = "2.3.0.dev0"
+    && python -c 'from importlib.metadata import version; from drift import __version__; raise SystemExit(0 if __version__ == version("drift") else 1)' \
+    && rm -rf /qualification-source
 
 USER 65532:65532
 
