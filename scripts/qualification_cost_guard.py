@@ -1,9 +1,11 @@
 """Build a fail-closed qualification cost authorization and exact provider plan.
 
 The command never calls a provider. It parses the release-readiness spend ledger,
-accounts for unresolved GCP and Fly reservations against one USD 100 ceiling, and
-writes a bounded JSON plan. A provider run remains unauthorized until its exact
-run ID and maximum estimate are recorded in the ledger.
+accounts for unresolved GCP and Fly reservations against one USD 100 authorization
+epoch, and writes a bounded JSON plan. A provider run remains unauthorized until its
+exact run ID and maximum estimate are recorded in the ledger. Fully cleaned historical
+runs may be marked ``CLEANED-RELEASED`` only after an explicit owner budget reset; their
+maximum remains auditable but no longer consumes the new epoch.
 """
 
 from __future__ import annotations
@@ -73,6 +75,8 @@ class LedgerEntry:
 
     @property
     def committed_usd(self) -> Decimal:
+        if self.state == "CLEANED-RELEASED":
+            return Decimal("0")
         if self.state == "CLEANED" and self.observed_usd is not None:
             return self.observed_usd
         if self.observed_usd is not None:
@@ -153,8 +157,8 @@ def parse_spend_ledger(content: str) -> tuple[LedgerEntry, ...]:
             raise CostGuardError(f"{run_id} maximum estimate must be positive")
         if not state or len(state) > 32:
             raise CostGuardError(f"{run_id} state must be a bounded non-empty value")
-        if state == "CLEANED" and cleanup_proof in {"", "—", "-", "Not provisioned"}:
-            raise CostGuardError(f"{run_id} CLEANED state requires cleanup proof")
+        if state in {"CLEANED", "CLEANED-RELEASED"} and cleanup_proof in {"", "—", "-", "Not provisioned"}:
+            raise CostGuardError(f"{run_id} {state} state requires cleanup proof")
         entries.append(
             LedgerEntry(
                 run_id=run_id,
