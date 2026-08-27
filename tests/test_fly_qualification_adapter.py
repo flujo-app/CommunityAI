@@ -239,6 +239,13 @@ def test_provision_builds_controller_accepted_disjoint_split_topology(tmp_path, 
     split = manifest.model.num_blocks // 2
     assert topology.expected_peers(0) == frozenset({_peer("B"), _peer("D")})
     assert topology.expected_peers(split) == frozenset({_peer("C"), _peer("E")})
+    for machine in api.machines.values():
+        assert machine["config"]["guest"] == {
+            "cpu_kind": "performance",
+            "cpus": 4,
+            "memory_mb": 16384,
+        }
+        assert machine["config"]["env"]["COMMUNITYAI_QUALIFICATION_DEVICE"] == "cpu"
 
     plan = multi.load_control_plan(options.control_output, topology)
     assert set(plan.interrupt_commands) == set(topology.worker_by_peer)
@@ -261,6 +268,17 @@ def test_provision_rejects_separate_state_and_control_directories_before_create(
     api = FakeFlyAPI()
 
     with pytest.raises(adapter.AdapterError, match="must share one directory"):
+        adapter.provision(manifest, options, api=api, identity_reader=FakeIdentityReader())
+
+    assert api.created == 0
+
+
+def test_provision_rejects_non_cpu_device_before_create(tmp_path):
+    manifest = ModelManifest.load(CANDIDATES[0])
+    options = replace(_options(tmp_path), device="cuda")
+    api = FakeFlyAPI()
+
+    with pytest.raises(adapter.AdapterError, match="CPU-only; --device must be cpu"):
         adapter.provision(manifest, options, api=api, identity_reader=FakeIdentityReader())
 
     assert api.created == 0

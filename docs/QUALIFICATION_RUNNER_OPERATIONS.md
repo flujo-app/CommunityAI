@@ -79,6 +79,12 @@ For Fly, calculate a conservative maximum from current Fly pricing for the exact
 image, five-Machine topology, regions, CPU, memory, and maximum lifetime, then pass
 it explicitly:
 
+The Fly topology is **CPU-only**. As of 2026-08-27, Fly supplies no GPU Machines for
+this project, so Gate 7 must use one CPU bootstrap and four CPU workers with
+`--device cpu`. The adapter rejects every other device value and sends only CPU and
+memory guest fields. This gate proves cross-machine routing, interruption recovery,
+and cleanup; it is not CUDA qualification or a GPU performance result.
+
 ```powershell
 uv run --no-sync python scripts/qualification_cost_guard.py `
   --run-id fly-recovery-a `
@@ -424,10 +430,12 @@ multi-machine controller. Neither a passed preparation report nor a deferred mac
 matrix authorizes catalog publication or a release claim.
 
 After both public-alpha matrices exist, build credential-free immutable Fly images
-bound to the same source and candidate manifests, then follow the controlled
+bound to the same source and candidate manifests, then follow the CPU-only controlled
 multi-machine procedure in
 [MODEL_QUALIFICATION_V1.md](MODEL_QUALIFICATION_V1.md#opt-in-fly-machines-adapter).
-Preserve the bounded controller reports and destroy every temporary Fly Machine.
+Pass `--device cpu`, preserve the bounded controller reports, and destroy every
+temporary Fly Machine. Never treat this run as a substitute for the GCP/local CUDA
+profiles in the candidate matrix.
 
 ## Teardown
 

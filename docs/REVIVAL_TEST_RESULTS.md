@@ -38,8 +38,8 @@ stock-token parity, BF16 eager execution on the requested device, selected-worke
 interruption, and observed recovery. Recovery took 35.032, 12.719, 26.288, and
 11.072 seconds respectively. The reports intentionally exclude commands, prompts,
 raw logs, output token IDs, credentials, private paths, endpoints, and provider output.
-This passes local single-machine qualification; separate-machine recovery remains
-Gate 7.
+This passes local single-machine qualification; CPU-only Fly separate-machine recovery
+remains Gate 7.
 
 Gate 5-A and Gate 5-B cleanup proved every run-scoped instance, disk, firewall,
 router, subnet, address, and network absent. L4 usage returned to zero and the protected
@@ -1253,8 +1253,8 @@ produce immutable evidence.
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts
-   and collect both exact public-alpha candidate matrices. Build each immutable Fly
-   qualification image and execute the strict adapter/controller gate for both candidates.
+   and collect both exact public-alpha candidate matrices. Build each immutable CPU-only
+   Fly qualification image and execute the strict adapter/controller gate for both candidates.
    macOS CPU/MPS capacity and qualification remain a separate deferred gate.
 2. Exercise the changed-boundary replacement route in the controlled separate-machine
    interruption gate; beam-search recovery needs a reorder-aware activation history before

@@ -50,8 +50,16 @@ agent:
   Apple devices pass.
 - Qwen3.5 2B is the first-rung primary candidate and Gemma 4 E2B is its standby.
 - GCP and Fly Machines are authorized for bounded qualification and public-alpha
-  infrastructure. Use whichever provider fits the test: GCP/local hosts for platform
-  qualification and Fly for the existing separate-machine recovery adapter.
+  infrastructure. GCP/local hosts cover the Windows/Linux CPU/CUDA platform matrix.
+  As of 2026-08-27, Fly is authorized only for the existing **CPU-only** Linux
+  separate-machine recovery adapter; Fly supplies no GPU qualification capacity, and a
+  Fly recovery result must never be presented as CUDA or GPU-performance evidence.
+- After the first-rung alpha is stable, do not climb every intermediate model size merely
+  to prove that block sharding scales. Use the accumulated Petals and
+  TinyLlama/Qwen/Gemma implementation evidence to attempt a real 27-32B split route
+  directly, then attempt roughly 70B if that passes. This is permission to test those
+  sizes, not permission to claim that an exact larger checkpoint works before its own
+  model-specific evidence passes.
 - New temporary GCP and Fly test resources share one combined **USD 100 maximum**.
   Track conservative estimates and observed cost in
   [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that could exceed
@@ -74,7 +82,7 @@ The public alpha still requires:
   contributor automatically selects a model and block range within the user's VRAM,
   storage, bandwidth, power, schedule, and model-policy limits;
 - Qwen3.5 2B and Gemma 4 E2B pass the declared Windows/Linux CPU/CUDA qualification and
-  real separate-machine recovery gates before they are advertised as qualified;
+  real CPU-only separate-machine recovery gates before they are advertised as qualified;
 - an alpha catalog is authenticated by at least one pinned CommunityAI release key,
   manifests and artifacts are content-verified, peer announcements are authenticated,
   public requests have finite admission/time limits, and operators can disable a bad
@@ -111,7 +119,7 @@ Gate 4 has passed. The immediate critical path is now outcome-first:
    real Qwen3.5 2B worker online on the available GCP L4, let the app observe and select
    it, and generate through it;
 2. qualify Qwen3.5 2B and Gemma 4 E2B on the required Windows/Linux CPU/CUDA profiles and
-   run their real separate-machine recovery drills;
+   run their real CPU-only Fly separate-machine recovery drills;
 3. complete automatic contributor model/block placement and prove the user's contribution
    limits on real hardware;
 4. publish the minimal signed alpha catalog/bootstrap and initial public routes, then pass
@@ -126,8 +134,10 @@ completed foundations for those programs, but do not polish them ahead of the us
 Missing local tooling is work to solve, not permission to skip the critical path. In
 particular, an unavailable local Docker daemon, absent model snapshots, absent local
 CUDA hardware, or missing local multi-machine capacity is **not** an external blocker.
-Use the authorized GCP/Fly infrastructure, start an available local service, download
-the exact verified artifacts, or build a bounded temporary host. Native `gcloud`,
+Use the authorized infrastructure for its declared role: GCP/local hosts for platform
+and CUDA work, and Fly only for the CPU separate-machine recovery topology. Start an
+available local service, download the exact verified artifacts, or build a bounded
+temporary host. Native `gcloud`,
 `flyctl`, and `gh` authentication is currently available; re-check it immediately before
 use rather than relying on an older evidence note.
 
@@ -540,6 +550,21 @@ ceiling. Community `auto` selection should move monotonically toward larger qual
 models as measured capacity grows: approximately 1-2B, 3-4B, 8B, 27-32B, 70B, and
 400B-plus. Each rung approves exactly one primary and at least one standby so the
 catalog can replace a model without requiring both alternatives to fragment live VRAM.
+
+These are catalog capacity classes, not a mandatory sequential qualification staircase.
+The original Petals demonstrations and successful TinyLlama, Qwen, and Gemma bring-up
+make larger block-sharded inference plausible enough to test directly. They do **not**
+prove that an exact 30B or 70B checkpoint is compatible, fits the intended worker/client
+memory envelopes, recovers correctly, or performs well enough to use.
+
+The first post-alpha scaling experiment should therefore use an exact 27-32B candidate
+split across independent workers, with no worker required to hold the full model. If one
+complete block fits the target worker envelope and that run passes manifest/artifact
+checks, stock parity, two complete routes, selected-worker interruption, client and
+worker memory limits, TTFT, and decode throughput, proceed directly to an exact roughly
+70B candidate. Test a smaller intermediate rung only when it is a useful product fallback
+or helps diagnose a concrete failure; do not spend milestones on 4B -> 8B -> 12B merely
+as confidence-building prerequisites.
 
 At INT8, two complete weight replicas require roughly two bytes of aggregate usable
 VRAM per parameter: 10 GB for a 5B model, 60 GB for a 30B model, 140 GB for 70B, and
@@ -1024,8 +1049,8 @@ implementation.
    stock token-ID equality, a separate clean request that excludes the victim, a stopped and
    joined client DHT, and cleanup of every declared bootstrap/worker resource after cleanup
    preflight. JSON, prompts, argv entries, and adapter output are bounded; diagnostic evidence
-   redacts paths, endpoints, and secret-like values. The opt-in Fly Machines adapter now
-   provisions the five run-tagged resources, derives the two routes for either candidate's
+   redacts paths, endpoints, and secret-like values. The opt-in CPU-only Fly Machines
+   adapter now provisions the five run-tagged resources, derives the two routes for either candidate's
    manifested block count, discovers stable public PeerIDs without reading private identity
    bytes, and supplies exact SIGKILL/cleanup acknowledgements while retaining an outer cleanup
    trap. Generated control argv names the private state journal only relative to the private
@@ -1039,7 +1064,7 @@ implementation.
    a first replacement to disconnect after partial chunked replay, proves that complete
    activation and per-layer history plus prompts remain available to a second replacement,
    and reaches reference-equivalent output through bounded route retry. Sixteen
-   controller tests plus thirty-three adapter tests cover the fail-closed contracts; the local
+   controller tests plus thirty-four adapter tests cover the fail-closed contracts; the local
    regression is not external evidence, and no real Qwen3.5 or Gemma separate-host run has
    been claimed.
 
@@ -1047,8 +1072,9 @@ implementation.
    not generally blocked on unavailable hardware. The available local machine, Fly Machines,
    and GCP can cover the Windows and Linux work: the local machine can supply an appropriate
    Windows profile, GCP can provision Windows/Linux CPU and CUDA profiles subject to GPU
-   quota and compatible images, and the existing Fly adapter can provision the isolated
-   Linux bootstrap/workers needed for controlled separate-machine recovery. The only genuine
+   quota and compatible images, and the existing Fly adapter can provision only the
+   CPU-only Linux bootstrap/workers needed for controlled separate-machine recovery. Fly
+   is not part of the CUDA matrix. The only genuine
    hardware-profile gap is macOS, especially Apple Silicon/MPS, because neither Fly nor GCP
    supplies that platform. Credentials visible to the qualification run, GPU quota, image
    selection, snapshot placement, runner registration/labels, workflow dispatch, and report
@@ -1081,7 +1107,8 @@ implementation.
    slice: make TinyLlama a cheap fallback, bring Qwen3.5 2B online on the available GCP
    L4, wire live DHT observations into `auto`, show the choice in the desktop, and generate
    through the remote worker. Then collect the exact Windows/Linux CPU/CUDA evidence for
-   Qwen3.5 2B and Gemma 4 E2B and run both controlled separate-machine recovery exercises.
+   Qwen3.5 2B and Gemma 4 E2B and run both CPU-only Fly controlled separate-machine
+   recovery exercises.
    Next complete automatic contributor model/block placement within the user's limits and
    validate VRAM, storage, bandwidth, power, pause, and restart behavior on real hardware.
    Publish the minimal pinned signed alpha catalog/bootstrap and initial public candidate

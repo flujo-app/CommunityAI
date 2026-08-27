@@ -908,6 +908,8 @@ def provision(
     api: FlyAPI,
     identity_reader: FlyMachineExec,
 ) -> ProviderState:
+    if options.device != "cpu":
+        raise AdapterError("Fly qualification topology is CPU-only; --device must be cpu")
     if options.state_output.resolve().parent != options.control_output.resolve().parent:
         raise AdapterError("Fly private state and control outputs must share one directory")
     existing = [machine for machine in api.list_run_machines(options.run_id) if machine.get("state") != "destroyed"]
@@ -1116,8 +1118,8 @@ def _options_from_args(args: argparse.Namespace) -> ProvisionOptions:
         raise AdapterError("Fly guest CPU or memory request is outside the adapter bounds")
     if not 1 <= args.machine_timeout <= 600 or not 1 <= args.identity_timeout <= 600:
         raise AdapterError("Fly machine and identity timeouts must be between 1 and 600 seconds")
-    if not args.device or len(args.device) > 32 or "\x00" in args.device:
-        raise AdapterError("--device is invalid")
+    if args.device != "cpu":
+        raise AdapterError("Fly qualification topology is CPU-only; --device must be cpu")
     return ProvisionOptions(
         run_id=run_id,
         app=app,
@@ -1164,7 +1166,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--identity-path",
         default="/tmp/communityai-qualification.id",
     )
-    provision_parser.add_argument("--device", default="cpu")
+    provision_parser.add_argument(
+        "--device",
+        default="cpu",
+        help="CPU-only provider topology; every other value is rejected",
+    )
     provision_parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     provision_parser.add_argument("--cpu-kind", default="performance")
     provision_parser.add_argument("--cpus", type=int, default=4)

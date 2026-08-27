@@ -75,6 +75,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Qualification cost authorization now supports explicit owner-reset budget epochs after
   complete cleanup, preserving historical maxima without letting delayed billing block the
   next authorized run or falsely recording prior cost as zero.
+- The Fly separate-machine qualification adapter is now explicitly CPU-only and rejects a
+  non-CPU device before provisioning; Fly recovery evidence cannot satisfy CUDA qualification.
 - Manifested qualification now passes the verified runtime cache to the distributed
   client as well as the tokenizer/reference model, and Windows jobs install the patched
   Hivemind wheel's declared dependency closure before offline execution.
