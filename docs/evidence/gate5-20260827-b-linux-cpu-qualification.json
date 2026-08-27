@@ -1,0 +1,110 @@
+{
+  "complete_release_qualification": false,
+  "environment": {
+    "device_profile": "cpu",
+    "drift": "2.3.0.dev2",
+    "machine_id": "gate5-20260827-b-linux-cpu-final",
+    "platform": "Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6",
+    "system": "linux"
+  },
+  "generated_at": "2026-08-27T15:28:55.721527+00:00",
+  "model": {
+    "aliases": [
+      "qwen3.5-2b"
+    ],
+    "architecture": "Qwen3_5ForConditionalGeneration",
+    "gated": false,
+    "license": "apache-2.0",
+    "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+    "name": "Qwen3.5 2B",
+    "num_blocks": 24,
+    "repository": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "runtime": {
+      "adapter_profile": "none",
+      "attention_implementation": "eager",
+      "dtype": "bfloat16",
+      "implementation": "drift",
+      "maximum_version_exclusive": "2.4.0",
+      "minimum_version": "2.3.0.dev0",
+      "protocol_version": 1,
+      "quantization": "none",
+      "tensor_schema": "hidden-states-v1"
+    }
+  },
+  "not_covered": [
+    "multi-machine routing and interruption recovery",
+    "cross-platform CPU/CUDA/MPS matrix",
+    "cold-client resource envelope",
+    "public-worker route redundancy and soak"
+  ],
+  "requested": {
+    "artifact_root": "<artifact-root>",
+    "artifact_verification": true,
+    "cache": "contiguous",
+    "device": "cpu",
+    "failover_request_timeout_seconds": 10,
+    "local_failover": true,
+    "local_parity": true,
+    "runtime_cache_dir": "<runtime-cache-dir>",
+    "runtime_cache_dir_source": "argument"
+  },
+  "result": "passed",
+  "schema_version": 1,
+  "scope": "single-machine-local",
+  "stages": [
+    {
+      "duration_seconds": 3.241726,
+      "evidence": {
+        "artifact_count": 8,
+        "artifacts_verified": true,
+        "declared_artifact_bytes": 4571197320,
+        "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33"
+      },
+      "name": "manifest_and_artifacts",
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 44.575604,
+      "evidence": {
+        "attention_implementation": "eager",
+        "client_input_embeddings_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_use_chunked_forward": true,
+        "manifested_route_completed": true,
+        "stock_token_parity": true,
+        "torch_num_threads": 1,
+        "torch_version": "2.6.0+cu124",
+        "worker_device": "cpu",
+        "worker_torch_dtype": "bfloat16"
+      },
+      "name": "local_distributed_stock_parity",
+      "return_code": 0,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 64.262968,
+      "evidence": {
+        "attention_implementation": "eager",
+        "client_input_embeddings_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_use_chunked_forward": true,
+        "failover_recovery_seconds": 26.288,
+        "failover_request_timeout_seconds": 10,
+        "manifested_route_completed": true,
+        "recovery_observed": true,
+        "selected_worker_interrupted": true,
+        "stock_token_parity": true,
+        "torch_num_threads": 1,
+        "torch_version": "2.6.0+cu124",
+        "worker_device": "cpu",
+        "worker_torch_dtype": "bfloat16"
+      },
+      "name": "local_in_generation_failover",
+      "return_code": 0,
+      "status": "passed"
+    }
+  ]
+}

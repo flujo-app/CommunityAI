@@ -1,0 +1,97 @@
+{
+  "complete_release_qualification": false,
+  "coverage": {
+    "linux:cpu": [
+      {
+        "device": "cpu",
+        "drift": "2.3.0.dev2",
+        "generated_at": "2026-08-27T15:28:55.721527+00:00",
+        "machine_id": "gate5-20260827-b-linux-cpu-final",
+        "profile": "linux:cpu",
+        "report": "input-3",
+        "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6",
+        "system": "linux"
+      }
+    ],
+    "linux:cuda": [
+      {
+        "device": "cuda",
+        "drift": "2.3.0.dev2",
+        "generated_at": "2026-08-27T14:25:52.259731+00:00",
+        "machine_id": "gate5-20260827-a-linux-cuda-final",
+        "profile": "linux:cuda",
+        "report": "input-4",
+        "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6",
+        "system": "linux"
+      }
+    ],
+    "windows:cpu": [
+      {
+        "device": "cpu",
+        "drift": "2.3.0.dev2",
+        "generated_at": "2026-08-27T15:11:33.855936+00:00",
+        "machine_id": "gate5-20260827-b-windows-cpu-final",
+        "profile": "windows:cpu",
+        "report": "input-1",
+        "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6",
+        "system": "windows"
+      }
+    ],
+    "windows:cuda": [
+      {
+        "device": "cuda",
+        "drift": "2.3.0.dev2",
+        "generated_at": "2026-08-27T14:08:18.076265+00:00",
+        "machine_id": "gate5-20260827-a-windows-cuda-final",
+        "profile": "windows:cuda",
+        "report": "input-2",
+        "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6",
+        "system": "windows"
+      }
+    ]
+  },
+  "generated_at": "2026-08-27T15:39:53.505624+00:00",
+  "matrix_errors": [],
+  "missing_profiles": [],
+  "model": {
+    "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+    "name": "Qwen3.5 2B",
+    "repository": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "runtime": {
+      "adapter_profile": "none",
+      "attention_implementation": "eager",
+      "dtype": "bfloat16",
+      "implementation": "drift",
+      "maximum_version_exclusive": "2.4.0",
+      "minimum_version": "2.3.0.dev0",
+      "protocol_version": 1,
+      "quantization": "none",
+      "tensor_schema": "hidden-states-v1"
+    }
+  },
+  "not_covered": [
+    "multi-machine routing and interruption recovery",
+    "cold-client resource envelope",
+    "public-worker route redundancy and soak",
+    "signed catalog publication and release bootstrap"
+  ],
+  "report_errors": [],
+  "requirements": {
+    "drift_version": "2.3.0.dev2",
+    "profiles": [
+      "windows:cpu",
+      "windows:cuda",
+      "linux:cpu",
+      "linux:cuda"
+    ],
+    "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6"
+  },
+  "result": "passed",
+  "schema_version": 1,
+  "scope": "cross-platform-local-matrix",
+  "source_identity": {
+    "drift": "2.3.0.dev2",
+    "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6"
+  }
+}

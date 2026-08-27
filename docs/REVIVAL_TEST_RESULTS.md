@@ -15,7 +15,41 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; and Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference | The release bootstrap and initial catalog are not published or bundled; candidate qualification and persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference; and Gate 5 passed the strict Qwen Windows/Linux CPU/CUDA matrix | The release bootstrap and initial catalog are not published or bundled; Gemma qualification and persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+
+## Gate 5 Qwen3.5 2B strict four-profile qualification
+
+On 2026-08-27, [Gate 5 qualification and cleanup evidence](evidence/gate5-20260827-qwen3.5-2b-qualification.json)
+and the [strict aggregate](evidence/gate5-20260827-qwen3.5-2b-matrix.json)
+passed Qwen3.5 2B on Windows CPU, Windows CUDA, Linux CPU, and Linux CUDA.
+Every sanitized report binds exact source
+`23a4078e17ed9d5ae6f31e7497bae69b83aecef6`, DRIFT `2.3.0.dev2`,
+Qwen revision `15852e8c16360a2fea060d615a32b45270f8a8fc`, and manifest
+`sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`.
+The aggregate required all four profiles and reported no missing profiles, matrix
+errors, or report errors.
+
+The [Windows CPU](evidence/gate5-20260827-b-windows-cpu-qualification.json),
+[Windows CUDA](evidence/gate5-20260827-a-windows-cuda-qualification.json),
+[Linux CPU](evidence/gate5-20260827-b-linux-cpu-qualification.json), and
+[Linux CUDA](evidence/gate5-20260827-a-linux-cuda-qualification.json) reports each
+prove all eight declared artifacts, a complete 24/24-block manifested route, exact
+stock-token parity, BF16 eager execution on the requested device, selected-worker
+interruption, and observed recovery. Recovery took 35.032, 12.719, 26.288, and
+11.072 seconds respectively. The reports intentionally exclude commands, prompts,
+raw logs, output token IDs, credentials, private paths, endpoints, and provider output.
+This passes local single-machine qualification; separate-machine recovery remains
+Gate 7.
+
+Gate 5-A and Gate 5-B cleanup proved every run-scoped instance, disk, firewall,
+router, subnet, address, and network absent. L4 usage returned to zero and the protected
+`communityai-bootstrap-1` remained running. Windows CPU used a bounded N1 host; Linux
+CPU used a lower-cost E2 high-memory fallback after N1 capacity failed in every regional
+zone. Both retry hosts retained one-hour provider deletion deadlines. The exact
+CI-listed offline suite passed 548 tests with 8 expected skips, and the focused
+qualification suite passed 80 tests. Provider billing remains delayed, so the ledger
+retains the cleaned runs' full conservative maxima and Gate 6 cannot yet fit under the
+combined USD 100 ceiling.
 
 ## Gate V public Qwen vertical slice
 

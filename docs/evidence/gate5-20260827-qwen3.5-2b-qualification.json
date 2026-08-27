@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "gate": "5",
+  "run_group": "gate5-20260827-a+b",
+  "result": "passed",
+  "generated_at": "2026-08-27T15:35:30.514Z",
+  "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6",
+  "drift_version": "2.3.0.dev2",
+  "model": {
+    "name": "Qwen3.5 2B",
+    "repository": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+    "declared_artifact_bytes": 4571197320
+  },
+  "aggregate": {
+    "report": "docs/evidence/gate5-20260827-qwen3.5-2b-matrix.json",
+    "result": "passed",
+    "required_profiles": [
+      "windows:cpu",
+      "windows:cuda",
+      "linux:cpu",
+      "linux:cuda"
+    ],
+    "missing_profiles": [],
+    "matrix_errors": [],
+    "report_errors": []
+  },
+  "profiles": [
+    {
+      "profile": "windows:cpu",
+      "run": "gate5-20260827-b",
+      "report": "docs/evidence/gate5-20260827-b-windows-cpu-qualification.json",
+      "machine_id": "gate5-20260827-b-windows-cpu-final",
+      "host_shape": "n1-highmem-8",
+      "generated_at": "2026-08-27T15:11:33.855936+00:00",
+      "result": "passed",
+      "stages": {
+        "manifest_and_artifacts": {
+          "status": "passed",
+          "duration_seconds": 17.549816
+        },
+        "local_distributed_stock_parity": {
+          "status": "passed",
+          "duration_seconds": 351.809872
+        },
+        "local_in_generation_failover": {
+          "status": "passed",
+          "duration_seconds": 147.91263
+        }
+      },
+      "runtime": {
+        "worker_device": "cpu",
+        "worker_torch_dtype": "bfloat16",
+        "attention_implementation": "eager"
+      },
+      "stock_token_parity": true,
+      "manifested_route_completed": true,
+      "selected_worker_interrupted": true,
+      "recovery_observed": true,
+      "failover_recovery_seconds": 35.032
+    },
+    {
+      "profile": "windows:cuda",
+      "run": "gate5-20260827-a",
+      "report": "docs/evidence/gate5-20260827-a-windows-cuda-qualification.json",
+      "machine_id": "gate5-20260827-a-windows-cuda-final",
+      "host_shape": "g2-standard-8 / NVIDIA L4",
+      "generated_at": "2026-08-27T14:08:18.076265+00:00",
+      "result": "passed",
+      "stages": {
+        "manifest_and_artifacts": {
+          "status": "passed",
+          "duration_seconds": 15.141063
+        },
+        "local_distributed_stock_parity": {
+          "status": "passed",
+          "duration_seconds": 53.86826
+        },
+        "local_in_generation_failover": {
+          "status": "passed",
+          "duration_seconds": 87.55803
+        }
+      },
+      "runtime": {
+        "worker_device": "cuda:0",
+        "worker_torch_dtype": "bfloat16",
+        "attention_implementation": "eager"
+      },
+      "stock_token_parity": true,
+      "manifested_route_completed": true,
+      "selected_worker_interrupted": true,
+      "recovery_observed": true,
+      "failover_recovery_seconds": 12.719
+    },
+    {
+      "profile": "linux:cpu",
+      "run": "gate5-20260827-b",
+      "report": "docs/evidence/gate5-20260827-b-linux-cpu-qualification.json",
+      "machine_id": "gate5-20260827-b-linux-cpu-final",
+      "host_shape": "e2-highmem-8",
+      "generated_at": "2026-08-27T15:28:55.721527+00:00",
+      "result": "passed",
+      "stages": {
+        "manifest_and_artifacts": {
+          "status": "passed",
+          "duration_seconds": 3.241726
+        },
+        "local_distributed_stock_parity": {
+          "status": "passed",
+          "duration_seconds": 44.575604
+        },
+        "local_in_generation_failover": {
+          "status": "passed",
+          "duration_seconds": 64.262968
+        }
+      },
+      "runtime": {
+        "worker_device": "cpu",
+        "worker_torch_dtype": "bfloat16",
+        "attention_implementation": "eager"
+      },
+      "stock_token_parity": true,
+      "manifested_route_completed": true,
+      "selected_worker_interrupted": true,
+      "recovery_observed": true,
+      "failover_recovery_seconds": 26.288
+    },
+    {
+      "profile": "linux:cuda",
+      "run": "gate5-20260827-a",
+      "report": "docs/evidence/gate5-20260827-a-linux-cuda-qualification.json",
+      "machine_id": "gate5-20260827-a-linux-cuda-final",
+      "host_shape": "g2-standard-8 / NVIDIA L4",
+      "generated_at": "2026-08-27T14:25:52.259731+00:00",
+      "result": "passed",
+      "stages": {
+        "manifest_and_artifacts": {
+          "status": "passed",
+          "duration_seconds": 12.957291
+        },
+        "local_distributed_stock_parity": {
+          "status": "passed",
+          "duration_seconds": 43.113912
+        },
+        "local_in_generation_failover": {
+          "status": "passed",
+          "duration_seconds": 69.969889
+        }
+      },
+      "runtime": {
+        "worker_device": "cuda:0",
+        "worker_torch_dtype": "bfloat16",
+        "attention_implementation": "eager"
+      },
+      "stock_token_parity": true,
+      "manifested_route_completed": true,
+      "selected_worker_interrupted": true,
+      "recovery_observed": true,
+      "failover_recovery_seconds": 11.072
+    }
+  ],
+  "cleanup": {
+    "verified_at": "2026-08-27T15:35:30.536Z",
+    "run_prefix": "caiq-gate5-20260827",
+    "absent_counts": {
+      "instances": 0,
+      "disks": 0,
+      "firewall_rules": 0,
+      "routers": 0,
+      "subnets": 0,
+      "addresses": 0,
+      "networks": 0
+    },
+    "l4_quota": {
+      "region": "us-east1",
+      "metric": "NVIDIA_L4_GPUS",
+      "usage": 0,
+      "limit": 1
+    },
+    "protected_bootstrap": {
+      "name": "communityai-bootstrap-1",
+      "status": "RUNNING"
+    }
+  },
+  "budget": {
+    "combined_ceiling_usd": 100,
+    "retained_maxima_usd": [
+      {
+        "run": "gatev-20260827-a",
+        "maximum": 17,
+        "status": "CLEANED"
+      },
+      {
+        "run": "gate5-20260827-a",
+        "maximum": 69,
+        "status": "CLEANED"
+      },
+      {
+        "run": "gate5-20260827-b",
+        "maximum": 14,
+        "status": "CLEANED"
+      }
+    ],
+    "retained_total_usd": 100,
+    "remaining_usd": 0,
+    "observed_cost_usd": null,
+    "observed_cost_status": "provider billing delayed; conservative maxima retained"
+  },
+  "privacy": {
+    "contains_prompts": false,
+    "contains_credentials": false,
+    "contains_network_endpoints": false,
+    "contains_private_paths": false,
+    "contains_raw_provider_output": false
+  },
+  "scope_limits": [
+    "single-machine local qualification only",
+    "separate-machine recovery remains Gate 7",
+    "persistent public-worker redundancy and soak remain later gates"
+  ]
+}
