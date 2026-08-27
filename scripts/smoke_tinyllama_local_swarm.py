@@ -68,6 +68,21 @@ def restore_qualification_threads(previous_num_threads: int | None) -> None:
         torch.set_num_threads(previous_num_threads)
 
 
+def align_cpu_qualification_lm_head(model, reference_device: torch.device) -> bool | str | None:
+    """Use the stock model's native BF16 projection semantics for CPU parity."""
+    lm_head = model.get_output_embeddings()
+    use_chunked_forward = getattr(lm_head, "use_chunked_forward", None)
+    weight = getattr(lm_head, "weight", None)
+    if (
+        reference_device.type == "cpu"
+        and weight is not None
+        and weight.device.type == "cpu"
+        and use_chunked_forward is not None
+    ):
+        lm_head.use_chunked_forward = False
+    return getattr(lm_head, "use_chunked_forward", None)
+
+
 def parse_block_indices(value: str) -> list[int]:
     try:
         start_block, end_block = [int(index.strip()) for index in value.split(":")]
@@ -450,6 +465,8 @@ def main(argv=None) -> None:
         if artifact_verifier is not None:
             model_kwargs["artifact_verifier"] = artifact_verifier
         model = AutoDistributedModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+        lm_head_chunking = align_cpu_qualification_lm_head(model, device)
+        log(f"client_lm_head_use_chunked_forward={lm_head_chunking}")
         log_local_component_placement("client_input_embeddings", model.get_input_embeddings(), torch_dtype)
         log_local_component_placement("client_lm_head", model.get_output_embeddings(), torch_dtype)
 

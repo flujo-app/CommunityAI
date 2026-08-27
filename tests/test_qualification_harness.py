@@ -26,6 +26,7 @@ def test_extract_smoke_evidence_requires_exact_parity_and_completion():
         (
             "client_input_embeddings_placement=devices=['cpu'],dtypes=['float32']",
             "client_lm_head_placement=devices=['cpu'],dtypes=['float32']",
+            "client_lm_head_use_chunked_forward=False",
             "torch_num_threads=1",
             "output_ids=[[1, 2, 3]]",
             "reference_output_ids=[[1, 2, 3]]",
@@ -40,6 +41,7 @@ def test_extract_smoke_evidence_requires_exact_parity_and_completion():
     assert evidence["distributed_output_ids"] == [[1, 2, 3]]
     assert evidence["reference_output_ids"] == [[1, 2, 3]]
     assert evidence["client_input_embeddings_placement"] == "devices=['cpu'],dtypes=['float32']"
+    assert evidence["client_lm_head_use_chunked_forward"] is False
     assert evidence["torch_num_threads"] == 1
 
 
@@ -56,6 +58,25 @@ def test_cpu_qualification_pins_and_restores_torch_threads():
     assert torch.get_num_threads() == previous_num_threads
     assert local_swarm.configure_qualification_threads(torch.device("cuda")) is None
     assert torch.get_num_threads() == previous_num_threads
+
+
+def test_cpu_qualification_uses_the_stock_native_lm_head_projection():
+    class FakeModel:
+        def __init__(self):
+            self.lm_head = torch.nn.Linear(2, 2, bias=False).to(torch.bfloat16)
+            self.lm_head.use_chunked_forward = True
+
+        def get_output_embeddings(self):
+            return self.lm_head
+
+    model = FakeModel()
+
+    assert local_swarm.align_cpu_qualification_lm_head(model, torch.device("cpu")) is False
+    assert model.lm_head.use_chunked_forward is False
+
+    model.lm_head.use_chunked_forward = True
+    assert local_swarm.align_cpu_qualification_lm_head(model, torch.device("cuda")) is True
+    assert model.lm_head.use_chunked_forward is True
 
 
 def test_primary_parity_uses_the_failover_token_horizon():

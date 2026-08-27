@@ -218,6 +218,9 @@ def extract_smoke_evidence(stdout: str, *, failover: bool) -> dict[str, Any]:
             evidence["client_input_embeddings_placement"] = line.split("=", 1)[1]
         elif line.startswith("client_lm_head_placement="):
             evidence["client_lm_head_placement"] = line.split("=", 1)[1]
+        elif line.startswith("client_lm_head_use_chunked_forward="):
+            value = line.split("=", 1)[1]
+            evidence["client_lm_head_use_chunked_forward"] = {"True": True, "False": False}.get(value, value)
     if failover:
         evidence["selected_worker_interrupted"] = "interrupting selected worker" in stdout
         evidence["recovery_observed"] = "failover_recovery_seconds" in evidence
