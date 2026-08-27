@@ -59,7 +59,7 @@ RUN test -n "${SOURCE_COMMIT}" \
 
 COPY --from=contract image-contract.json /workspace/qualification/image-contract.json
 COPY --from=contract model-manifest.json /workspace/qualification/model-manifest.json
-COPY --from=snapshot . /cache/model
+COPY --from=snapshot --chown=65532:65532 . /cache/model
 
 RUN python scripts/qualification_image_contract.py verify \
       --contract /workspace/qualification/image-contract.json \

@@ -58,6 +58,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Qualification images now install their native build toolchain only during the locked
   environment build, isolate exact-source verification from the installed environment,
   and bind the runtime version to installed package metadata before publication.
+- Qualification workers now keep baked exact snapshots writable by their non-root runtime,
+  preserve p2pd parent-death protection when the healthy container supervisor is PID 1,
+  and permit non-quantized startup when an optional bitsandbytes installation is unusable.
 - Published the exact Qwen3.5 2B and Gemma 4 E2B qualification images as immutable GHCR
   indexes with verified Linux runtime manifests, SLSA provenance, SPDX SBOMs, bounded
   layers, measured image sizes, and evidence-derived 9 GB and 13 GB Fly rootfs plans.

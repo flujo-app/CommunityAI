@@ -32,8 +32,9 @@ logger = get_logger(__name__)
 # Held for the life of the process: closing the last handle to the job is what kills its members.
 _windows_job_handle = None
 
-# libc handle resolved before any fork so that the preexec hook does not need to dlopen after fork.
+# libc handle and spawning PID resolved before any fork so that the preexec hook stays minimal.
 _libc = None
+_linux_parent_pid = None
 
 
 def tie_child_processes_to_this_process() -> bool:
@@ -131,19 +132,23 @@ def _arm_windows_kill_on_close_job() -> bool:
 
 
 def _ensure_libc():
-    global _libc
+    global _libc, _linux_parent_pid
     if _libc is None:
         _libc = ctypes.CDLL(None, use_errno=True)
+    if _linux_parent_pid is None:
+        _linux_parent_pid = os.getpid()
     return _libc
 
 
 def _set_pdeathsig():
     """Runs in the child between fork and exec (subprocess preexec_fn): die when the parent dies."""
     PR_SET_PDEATHSIG = 1
+    expected_parent_pid = _linux_parent_pid if _linux_parent_pid is not None else os.getppid()
     _ensure_libc().prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
-    # If the parent already died in the window before prctl took effect, the signal never fires:
-    # we have been reparented (to init or a subreaper), so bail out instead of lingering forever.
-    if os.getppid() == 1:
+    # If the spawning process already died before prctl took effect, the signal never fires. Compare
+    # against the captured spawning PID instead of assuming PID 1 means orphaned: a healthy container
+    # entrypoint is PID 1, so its p2pd children legitimately report getppid() == 1.
+    if os.getppid() != expected_parent_pid:
         os._exit(1)
 
 

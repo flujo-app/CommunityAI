@@ -76,6 +76,32 @@ def test_linux_pdeathsig_kills_child_when_parent_dies():
     _assert_pid_exits(child_pid)
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux-only")
+def test_linux_pdeathsig_accepts_container_parent_pid_one(monkeypatch):
+    import drift.utils.process_lifetime as process_lifetime
+
+    prctl_calls = []
+
+    class FakeLibc:
+        @staticmethod
+        def prctl(*args):
+            prctl_calls.append(args)
+            return 0
+
+    monkeypatch.setattr(process_lifetime, "_linux_parent_pid", 1)
+    monkeypatch.setattr(process_lifetime, "_ensure_libc", lambda: FakeLibc())
+    monkeypatch.setattr(process_lifetime.os, "getppid", lambda: 1)
+    monkeypatch.setattr(
+        process_lifetime.os,
+        "_exit",
+        lambda code: pytest.fail(f"expected container parent PID 1 must not exit with {code}"),
+    )
+
+    process_lifetime._set_pdeathsig()
+
+    assert prctl_calls == [(1, process_lifetime.signal.SIGKILL, 0, 0, 0)]
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="The hivemind spawn wrapper is armed on Linux only")
 def test_linux_arming_patches_hivemind_p2pd_spawn():
     from hivemind.p2p import p2p_daemon

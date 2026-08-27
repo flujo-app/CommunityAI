@@ -625,7 +625,7 @@ def test_public_alpha_candidates_and_dockerfile_are_immutable_and_offline():
 
     assert dockerfile.count("@sha256:") == 2
     assert "COPY --from=contract image-contract.json" in dockerfile
-    assert "COPY --from=snapshot . /cache/model" in dockerfile
+    assert "COPY --from=snapshot --chown=65532:65532 . /cache/model" in dockerfile
     assert "qualification_image_contract.py verify" in dockerfile
     assert '--manifest-digest "${MANIFEST_DIGEST}"' in dockerfile
     assert '--declared-artifact-bytes "${DECLARED_ARTIFACT_BYTES}"' in dockerfile

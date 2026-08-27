@@ -22,9 +22,11 @@ from drift.utils.misc import get_size_in_bytes
 
 try:
     import bitsandbytes as bnb
-except ImportError:
-    # bitsandbytes provides CUDA-only int8/nf4 quantization and ships no macOS wheels. It's only
-    # needed to wrap already-quantized layers below; off CUDA there are none, so run without it.
+except Exception:  # noqa: BLE001 - optional native dependency can fail during import/JIT initialization
+    # bitsandbytes provides CUDA-only int8/nf4 quantization and may be installed without a usable
+    # native runtime or compiler. It is only needed to wrap already-quantized layers below, so a
+    # non-quantized worker can run without it. Quantized server startup probes bitsandbytes separately
+    # and still fails closed with an actionable error.
     bnb = None
 
 logger = get_logger(__name__)
