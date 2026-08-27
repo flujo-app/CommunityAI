@@ -431,6 +431,36 @@ def test_interrupted_download_can_resume_and_is_reverified(tmp_path, monkeypatch
         thread.join(timeout=5)
 
 
+def test_verified_artifact_promotion_retries_windows_sharing_violation(tmp_path, monkeypatch):
+    import drift.model_manifest as model_manifest
+
+    partial = tmp_path / "artifact.part"
+    final = tmp_path / "artifact.bin"
+    partial.write_bytes(b"verified")
+    attempts = 0
+    delays = []
+    real_replace = model_manifest.os.replace
+
+    def replace_after_release(source, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            error = PermissionError("sharing violation")
+            error.winerror = model_manifest._WINDOWS_SHARING_VIOLATION
+            raise error
+        real_replace(source, destination)
+
+    monkeypatch.setattr(model_manifest.os, "replace", replace_after_release)
+    monkeypatch.setattr(model_manifest.time, "sleep", delays.append)
+
+    model_manifest._replace_verified_artifact(partial, final)
+
+    assert attempts == 3
+    assert delays == [0.05, 0.1]
+    assert final.read_bytes() == b"verified"
+    assert not partial.exists()
+
+
 def test_mixed_cached_and_downloaded_artifacts_share_one_snapshot_root(tmp_path, monkeypatch):
     from huggingface_hub.utils import LocalEntryNotFoundError
 

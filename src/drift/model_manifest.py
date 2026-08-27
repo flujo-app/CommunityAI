@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -56,6 +57,22 @@ _CHECKPOINT_PREFERENCE = ("model.safetensors", "pytorch_model.bin")
 
 class ManifestError(ValueError):
     """A manifest is malformed, incompatible, or does not match its artifacts."""
+
+
+_WINDOWS_SHARING_VIOLATION = 32
+_VERIFIED_REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0)
+
+
+def _replace_verified_artifact(source: Path, destination: Path) -> None:
+    """Promote a verified artifact after transient Windows scanners release the file."""
+    for delay in (*_VERIFIED_REPLACE_RETRY_DELAYS, None):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) != _WINDOWS_SHARING_VIOLATION or delay is None:
+                raise
+            time.sleep(delay)
 
 
 def _require_object(value: Any, field: str) -> Mapping[str, Any]:
@@ -675,7 +692,7 @@ class ManifestArtifactVerifier:
                     partial.unlink()
                     offset = 0
                 else:
-                    os.replace(partial, final)
+                    _replace_verified_artifact(partial, final)
                     return str(final)
 
             url = hf_hub_url(self.repository, artifact.path, revision=self.revision)
@@ -720,7 +737,7 @@ class ManifestArtifactVerifier:
                 if partial.exists() and partial.stat().st_size >= artifact.size:
                     partial.unlink()
                 raise
-            os.replace(partial, final)
+            _replace_verified_artifact(partial, final)
             return str(final)
 
     def verify_resolved_file(
