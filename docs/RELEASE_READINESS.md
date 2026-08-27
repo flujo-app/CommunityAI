@@ -106,11 +106,12 @@ maximum estimate until actual cost is known.
 | Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
 | --- | --- | --- | ---: | ---: | --- | --- |
 | gatev-20260827-a | GCP | Gate V one-host Linux G2/L4 Qwen public vertical slice, 150 GB balanced disk, six-hour hard deadline, headroom, and contingency | USD 17 | — | [Passed run and cleanup proof](evidence/gate-v-20260827-a-public-vertical-slice.json): instance, disk, firewalls, subnet, network, addresses, routers, and resource policies absent at 2026-08-27T09:28:20Z; GPU usage zero; protected bootstrap running. Billing delayed, so retain the maximum. | CLEANED |
+| gate5-20260827-a | GCP | Gate 5 Qwen3.5 2B Windows/Linux qualification [source 55ddff6cc6fa8c8ab8da399112ce9d5da3f0ff32] | USD 69.00 | — | Not provisioned | PLANNED |
 
 Owner-set accounting baseline on 2026-08-27: **USD 0 spent before `gatev-20260827-a`**.
 The removed USD 99 total was a sum of worst-case reservations, not observed provider spend.
 This baseline is an owner authorization decision, not a Cloud Billing reconciliation.
-Remaining while the cleaned Gate V run retains its delayed maximum: **USD 83**.
+Remaining while the cleaned Gate V run retains its delayed maximum and the planned Gate 5 run reserves its maximum: **USD 14**.
 
 
 ## Evidence update rules
