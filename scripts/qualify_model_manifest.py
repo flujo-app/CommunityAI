@@ -207,6 +207,11 @@ def extract_smoke_evidence(stdout: str, *, failover: bool) -> dict[str, Any]:
                     evidence["worker_device"] = value
         elif line.startswith("torch_dtype="):
             evidence["worker_torch_dtype"] = line.split("=", 1)[1].removeprefix("torch.")
+        elif line.startswith("torch_num_threads="):
+            try:
+                evidence["torch_num_threads"] = int(line.split("=", 1)[1])
+            except ValueError:
+                evidence["torch_num_threads_unparsed"] = line.split("=", 1)[1]
         elif line.startswith("attention_implementation="):
             evidence["attention_implementation"] = line.split("=", 1)[1]
         elif line.startswith("client_input_embeddings_placement="):
@@ -228,6 +233,11 @@ def smoke_evidence_passed(evidence: dict[str, Any], *, failover: bool) -> bool:
             and evidence.get("recovery_observed") is True
         )
     return required
+
+
+def qualification_parity_tokens(new_tokens: int, *, with_failover: bool, failover_tokens: int) -> int:
+    """Exercise the primary route for the same horizon used by failover."""
+    return max(new_tokens, failover_tokens) if with_failover else new_tokens
 
 
 def build_smoke_command(
@@ -462,7 +472,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             cache_dir=cache_dir,
             device=args.device,
             prompt=args.prompt,
-            new_tokens=args.new_tokens,
+            new_tokens=qualification_parity_tokens(
+                args.new_tokens,
+                with_failover=args.with_failover,
+                failover_tokens=args.failover_tokens,
+            ),
             timeout=args.timeout,
             cache=args.cache,
             page_size=args.page_size,
