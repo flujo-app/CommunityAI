@@ -28,7 +28,9 @@ _KEYS_TO_IGNORE_ON_LOAD_UNEXPECTED = [
 class _Qwen3_5WrapperLoadMixin:
     @classmethod
     def from_pretrained(cls, model_name_or_path, *args, **kwargs):
-        if is_multimodal_wrapper_checkpoint(model_name_or_path, **kwargs):
+        artifact_verifier = kwargs.get("artifact_verifier")
+        config_source = artifact_verifier.snapshot_root if artifact_verifier is not None else model_name_or_path
+        if is_multimodal_wrapper_checkpoint(config_source, **kwargs):
             key_mapping = kwargs.setdefault("key_mapping", {})
             key_mapping.setdefault(r"^model\.language_model\.", "model.")
         return super().from_pretrained(model_name_or_path, *args, **kwargs)

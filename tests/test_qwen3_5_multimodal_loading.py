@@ -189,6 +189,29 @@ def test_qwen3_5_wrapper_mixin_injects_text_key_mapping(wrapper_checkpoint, text
     assert "key_mapping" not in captured["kwargs"]
 
 
+def test_qwen3_5_wrapper_uses_verified_snapshot_for_offline_detection(text_only_checkpoint):
+    captured = {}
+
+    class _Verifier:
+        snapshot_root = text_only_checkpoint
+
+    class _Base:
+        @classmethod
+        def from_pretrained(cls, model_name_or_path, *args, **kwargs):
+            captured["model_name_or_path"] = model_name_or_path
+            captured["kwargs"] = kwargs
+            return "loaded"
+
+    class _Model(_Qwen3_5WrapperLoadMixin, _Base):
+        pass
+
+    verifier = _Verifier()
+    assert _Model.from_pretrained("Qwen/Qwen3.5-2B", artifact_verifier=verifier, local_files_only=True) == "loaded"
+    assert captured["model_name_or_path"] == "Qwen/Qwen3.5-2B"
+    assert captured["kwargs"]["artifact_verifier"] is verifier
+    assert "key_mapping" not in captured["kwargs"]
+
+
 def test_qwen3_5_wrapper_key_mapping_loads_local_text_weights(wrapper_checkpoint):
     from transformers.models.qwen3_5 import Qwen3_5ForCausalLM
 
