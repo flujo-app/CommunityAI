@@ -14,9 +14,10 @@ import pytest
 import torch
 
 pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient
+
 from drift.api.server import build_generate_kwargs, create_app, message_text, trim_stop_strings
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime, ModelState
-from fastapi.testclient import TestClient
 
 NEW_TOKENS = [101, 102, 103]
 

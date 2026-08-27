@@ -1,6 +1,7 @@
 import json
 
 import pytest
+
 from drift.model_catalog import CATALOG_SCHEMA_VERSION, CatalogSigningKey, ModelCatalog, SignedModelCatalog
 from drift.model_manifest import ModelManifest
 from drift.node.catalog_bootstrap import (

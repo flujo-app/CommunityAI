@@ -23,6 +23,12 @@ from queue import Empty
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from hivemind.utils.logging import get_logger
+from pydantic import BaseModel
+from transformers import TextIteratorStreamer
+
 from drift.node.model_manager import (
     AmbiguousModelError,
     AutoModelUnavailableError,
@@ -31,11 +37,6 @@ from drift.node.model_manager import (
     ModelManagerClosedError,
     ModelNotFoundError,
 )
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from hivemind.utils.logging import get_logger
-from pydantic import BaseModel
-from transformers import TextIteratorStreamer
 
 logger = get_logger(__name__)
 

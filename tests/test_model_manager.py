@@ -3,6 +3,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+
 from drift.model_manifest import ModelManifest
 from drift.node.model_manager import (
     AmbiguousModelError,

@@ -7,8 +7,10 @@ import math
 import sys
 from pathlib import Path
 
-import drift
 import torch
+from hivemind.utils.logging import get_logger, use_hivemind_log_handler
+
+import drift
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery
@@ -31,7 +33,6 @@ from drift.node.worker_supervisor import (
 )
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
-from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 
 use_hivemind_log_handler("in_root_logger")
 logger = get_logger(__name__)
@@ -529,6 +530,7 @@ def main() -> None:
 
     try:
         import uvicorn
+
         from drift.node.server import create_node_app
     except ImportError as exc:
         raise SystemExit(f"drift node requires the 'api' extra: pip install drift[api] ({exc})") from exc
