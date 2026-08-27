@@ -17,6 +17,25 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
 | 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference; and Gate 5 passed the strict Qwen Windows/Linux CPU/CUDA matrix | The release bootstrap and initial catalog are not published or bundled; Gemma qualification and persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
 
+## Gate 6 Gemma 4 E2B strict four-profile qualification (in progress)
+
+On 2026-08-27, the sanitized [Windows CPU report](evidence/gate6-20260827-a-windows-cpu-qualification.json)
+passed at exact source `a45025a3262a88df65217b630392488e8548aaaf`, DRIFT
+`2.3.0.dev2`, Gemma revision `3e22461f65e89153144f8adb70e3b8c2cc9845a7`,
+and manifest
+`sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd`.
+It verified all five declared artifacts (10,278,818,149 bytes), BF16 eager CPU
+execution, stock-token parity, selected-worker interruption, and recovery in 22.781
+seconds. Its exact VM and disk were absence-proved before the Linux CPU host started.
+
+This does **not** pass Gate 6. Linux CPU is the sole current run host; native
+`gcloud` reauthentication expired while its buffered qualification was running.
+That host retains its 48,600-second provider `DELETE` backstop. No CUDA host may
+start until login is restored, only sanitized Linux CPU evidence is recovered, and
+the Linux CPU VM and disk are absence-proved. The gate still requires Linux CPU,
+Windows CUDA, Linux CUDA, a passing strict four-profile aggregate, and complete
+run-scoped perimeter cleanup.
+
 ## Gate 5 Qwen3.5 2B strict four-profile qualification
 
 On 2026-08-27, [Gate 5 qualification and cleanup evidence](evidence/gate5-20260827-qwen3.5-2b-qualification.json)
@@ -47,9 +66,9 @@ router, subnet, address, and network absent. L4 usage returned to zero and the p
 CPU used a lower-cost E2 high-memory fallback after N1 capacity failed in every regional
 zone. Both retry hosts retained one-hour provider deletion deadlines. The exact
 CI-listed offline suite passed 548 tests with 8 expected skips, and the focused
-qualification suite passed 80 tests. Provider billing remains delayed, so the ledger
-retains the cleaned runs' full conservative maxima and Gate 6 cannot yet fit under the
-combined USD 100 ceiling.
+qualification suite passed 80 tests. Provider billing remains delayed. The explicit owner reset moved the cleanup-proved
+Gate 5 maxima into historical `CLEANED-RELEASED` rows; Gate 6 now holds a USD 69
+maximum reservation in the current USD 100 accounting epoch.
 
 ## Gate V public Qwen vertical slice
 
