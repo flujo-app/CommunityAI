@@ -17,6 +17,21 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
 | 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference; and Gates 5 and 6 passed the strict Qwen and Gemma Windows/Linux CPU/CUDA matrices | The release bootstrap and initial catalog are not published or bundled; persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
 
+## Gate 7 Qwen3.5 2B separate-machine recovery (in progress)
+
+On 2026-08-27, after Gate 6 cleanup was proved, the owner explicitly reset the
+USD 100 accounting epoch and authorized the real CPU-only Fly recovery run. Run
+`gate7-20260827-a` reserves USD 30 maximum and leaves USD 70. Native Fly
+authentication is valid, the existing isolated `petals-revival-smoke` app has no
+Machines, and the pinned Gate 4 Qwen image contains the offline manifest, snapshot,
+and provider node entrypoint. The run will use one bootstrap and four workers in
+`gru`, each with four performance vCPUs and 16 GB RAM. It is not CUDA evidence.
+
+The cost guard authorizes the recorded reservation, and the focused Fly adapter,
+multi-machine controller, and ledger suite passes 84 tests. This does **not** pass
+Gate 7 yet: no Machine has been created and real selected-worker interruption,
+recovery, and exact cleanup evidence remain required.
+
 ## Gate 6 Gemma 4 E2B strict four-profile qualification
 
 On 2026-08-27, [Gate 6 qualification and cleanup evidence](evidence/gate6-20260827-gemma-4-e2b-qualification.json)
@@ -47,8 +62,8 @@ their 48,600-second provider deletion backstops.
 All four exact VMs and disks and the run-scoped firewall, NATs, routers, subnets,
 reserved addresses, and VPC are absent. Global GPU and regional L4 usage returned to
 zero, and `communityai-bootstrap-1` remains running. Provider billing is delayed, so
-the cleaned Gate 6 USD 79 maximum remains retained and USD 21 is available in the
-current owner-reset accounting epoch. The strict combiner rerun passed with all four
+the owner explicitly released Gate 6's historical USD 79 maximum after cleanup.
+Gate 7 now holds the new epoch's USD 30 reservation, leaving USD 70. The strict combiner rerun passed with all four
 profiles and empty missing, matrix-error, and report-error lists; the focused matrix,
 external-qualification, and cost-guard suite passed 51 tests. Separate-machine CPU-only
 Gemma recovery remains Gate 8.
