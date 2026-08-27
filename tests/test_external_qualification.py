@@ -166,7 +166,8 @@ def test_manual_workflow_bootstraps_patched_hivemind_before_windows_preflight_an
     assert workflow.count("actions/setup-go@v6") == 2
     assert workflow.count('uv pip install --no-deps "patch==1.16"') == 2
     assert workflow.count("scripts/build_hivemind_windows.py") == 2
-    assert workflow.count("uv pip install --no-deps $wheel.FullName") == 2
+    assert workflow.count("uv pip install $wheel.FullName") == 2
+    assert "uv pip install --no-deps $wheel.FullName" not in workflow
     assert preflight_sync < preflight_setup_go < preflight_build < validate < qualify_job
     assert qualify_sync < qualify_setup_go < qualify_build < qualify
     assert "uv run --no-sync python scripts/run_external_model_qualification.py" in workflow

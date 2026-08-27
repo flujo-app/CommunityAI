@@ -86,7 +86,7 @@ jobs:
           uv run --no-sync python scripts/build_hivemind_windows.py --out-dir "${{ runner.temp }}/hivemind-wheel"
           $wheel = Get-ChildItem "${{ runner.temp }}/hivemind-wheel/hivemind-1.1.12-*-win_amd64.whl" | Select-Object -Last 1
           if (-not $wheel) { throw "Hivemind wheel build produced no artifact" }
-          uv pip install --no-deps $wheel.FullName
+          uv pip install $wheel.FullName
 
       - name: Validate host configuration and device
         run: uv run --no-sync python scripts/run_external_model_qualification.py --candidate "${{ inputs.candidate }}" --profile "${{ matrix.profile }}" --source-commit "${{ github.sha }}" --preflight-only
@@ -135,7 +135,7 @@ jobs:
           uv run --no-sync python scripts/build_hivemind_windows.py --out-dir "${{ runner.temp }}/hivemind-wheel"
           $wheel = Get-ChildItem "${{ runner.temp }}/hivemind-wheel/hivemind-1.1.12-*-win_amd64.whl" | Select-Object -Last 1
           if (-not $wheel) { throw "Hivemind wheel build produced no artifact" }
-          uv pip install --no-deps $wheel.FullName
+          uv pip install $wheel.FullName
 
       - name: Run full-artifact parity and selected-worker recovery
         run: uv run --no-sync python scripts/run_external_model_qualification.py --candidate "${{ inputs.candidate }}" --profile "${{ matrix.profile }}" --source-commit "${{ github.sha }}" --timeout 7200 --output "${{ runner.temp }}/communityai-qualification/${{ matrix.profile }}.json"

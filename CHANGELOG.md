@@ -69,6 +69,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   layers, measured image sizes, and evidence-derived 9 GB and 13 GB Fly rootfs plans.
 - Model qualification now treats exact Windows/Linux CPU/CUDA coverage as the strict
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
+- Manifested qualification now passes the verified runtime cache to the distributed
+  client as well as the tokenizer/reference model, and Windows jobs install the patched
+  Hivemind wheel's declared dependency closure before offline execution.
 - The bounded GCP qualification plan now binds exact Windows/Ubuntu images, verifies
   created boot-disk sources, enforces a provider-side deletion deadline, creates scarce
   CUDA hosts before CPU hosts, and supports split-region N1/T4 or G2/L4 CUDA shapes

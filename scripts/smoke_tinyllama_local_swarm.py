@@ -377,6 +377,7 @@ def main(argv=None) -> None:
             manifest_digest=manifest.digest if manifest is not None else None,
             manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
             torch_dtype=torch_dtype,
+            cache_dir=args.cache_dir,
             request_timeout=3 if args.test_failover else 60,
             max_retries=3,
             min_backoff=0.1 if args.test_failover else 1,

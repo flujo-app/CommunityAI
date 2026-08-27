@@ -106,6 +106,15 @@ def test_smoke_command_is_manifest_driven_and_contains_no_provider_secret(tmp_pa
     assert "Maykeye/TinyLLama-v0" not in command
 
 
+def test_manifest_smoke_passes_runtime_cache_to_the_distributed_client():
+    smoke_source = (REPOSITORY_ROOT / "scripts" / "smoke_tinyllama_local_swarm.py").read_text(encoding="utf-8")
+    model_kwargs = smoke_source.split("        model_kwargs = dict(", 1)[1].split(
+        "        model = AutoDistributedModelForCausalLM.from_pretrained", 1
+    )[0]
+
+    assert "cache_dir=args.cache_dir," in model_kwargs
+
+
 def test_hub_snapshot_cache_is_inferred_narrowly(tmp_path):
     hub = tmp_path / "hub"
     snapshot = hub / "models--Qwen--Qwen3-1.7B" / "snapshots" / ("a" * 40)

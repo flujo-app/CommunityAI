@@ -110,6 +110,19 @@ still rounds to USD 69. Twenty-nine focused cost/plan and bootstrap-contract tes
 whitespace checks. This is execution safety evidence only; Gate 5 still requires the
 four real host reports and aggregate.
 
+The live serialized retry then reached the first real `windows-cpu` profile. The exact
+Qwen snapshot preflight passed eight artifacts totaling 4,571,197,320 bytes at manifest
+digest `sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`.
+The worker loaded and announced all 24 blocks, proving the patched Windows p2pd runtime.
+The client failed offline before inference because the smoke did not pass its verified
+runtime cache to `AutoDistributedModelForCausalLM`; the same attempt also proved that
+installing the Windows Hivemind wheel with `--no-deps` omitted its dependency closure.
+The bounded fixes thread `cache_dir` into the distributed client and install the local
+wheel's declared dependencies in both Windows workflow jobs. Eighteen focused tests plus
+Black, isort, and whitespace checks pass. This is failure/fix evidence, not a Gate 5
+profile pass; the exact fixed commit must still rerun on the live host and cleanup must
+be proven.
+
 ## Public-alpha exact qualification image inputs
 
 On 2026-08-26, the first Gate 4 slice added a credential-free Buildx contract and
