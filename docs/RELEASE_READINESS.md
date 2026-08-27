@@ -112,7 +112,11 @@ maximum estimate until actual cost is known.
 Owner-set accounting baseline on 2026-08-27: **USD 0 spent before `gatev-20260827-a`**.
 The removed USD 99 total was a sum of worst-case reservations, not observed provider spend.
 This baseline is an owner authorization decision, not a Cloud Billing reconciliation.
-Remaining while the cleaned Gate V and Gate 5 A/B runs retain their delayed maxima: **USD 0**. Gate 6 is externally blocked until observed costs release enough balance for its full conservative reservation.
+Remaining while the cleaned Gate V and Gate 5 A/B runs retain their delayed maxima:
+**USD 0**. Gate 6 is externally blocked until observed costs release enough balance for its
+full conservative reservation. Read-only reconciliation at 2026-08-27T15:42:15Z confirmed
+billing is enabled but the project has zero queryable BigQuery export datasets, so no
+observed-cost figure is available yet.
 
 
 ## Evidence update rules

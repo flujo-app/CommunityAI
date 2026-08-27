@@ -205,7 +205,13 @@
     "retained_total_usd": 100,
     "remaining_usd": 0,
     "observed_cost_usd": null,
-    "observed_cost_status": "provider billing delayed; conservative maxima retained"
+    "observed_cost_status": "provider billing delayed; conservative maxima retained",
+    "reconciliation": {
+      "checked_at": "2026-08-27T15:42:15Z",
+      "billing_enabled": true,
+      "queryable_export_dataset_count": 0,
+      "observed_cost_available": false
+    }
   },
   "privacy": {
     "contains_prompts": false,
