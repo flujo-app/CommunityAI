@@ -213,6 +213,7 @@ def _options(tmp_path, *, run_id="fly-qualification-a"):
         cpu_kind="performance",
         cpus=4,
         memory_mb=16384,
+        rootfs_size_gb=9,
         machine_timeout=30,
         identity_timeout=30,
         state_output=tmp_path / "private" / "state.json",
@@ -245,6 +246,7 @@ def test_provision_builds_controller_accepted_disjoint_split_topology(tmp_path, 
             "cpus": 4,
             "memory_mb": 16384,
         }
+        assert machine["config"]["rootfs"] == {"size_gb": 9}
         assert machine["config"]["env"]["COMMUNITYAI_QUALIFICATION_DEVICE"] == "cpu"
 
     plan = multi.load_control_plan(options.control_output, topology)
@@ -260,6 +262,37 @@ def test_provision_builds_controller_accepted_disjoint_split_topology(tmp_path, 
         assert not Path(state_argument).is_absolute()
     assert "FLY_API_TOKEN" not in control_text
     assert "FLY_API_TOKEN" not in options.state_output.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("rootfs_size_gb", [0, 1025])
+def test_provision_options_reject_out_of_bounds_rootfs_before_create(tmp_path, rootfs_size_gb):
+    args = adapter.build_parser().parse_args(
+        [
+            "provision",
+            str(CANDIDATES[0]),
+            "--run-id",
+            "fly-qualification-a",
+            "--app",
+            "qualification-app",
+            "--image",
+            "registry.fly.io/communityai-qualification:test",
+            "--region",
+            "iad",
+            "--remote-manifest",
+            "/workspace/model-manifest.json",
+            "--rootfs-size-gb",
+            str(rootfs_size_gb),
+            "--state-output",
+            str(tmp_path / "state.json"),
+            "--topology-output",
+            str(tmp_path / "topology.json"),
+            "--control-output",
+            str(tmp_path / "control.json"),
+        ]
+    )
+
+    with pytest.raises(adapter.AdapterError, match="rootfs-size-gb"):
+        adapter._options_from_args(args)
 
 
 def test_provision_rejects_separate_state_and_control_directories_before_create(tmp_path):

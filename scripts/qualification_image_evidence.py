@@ -147,7 +147,7 @@ def _docker(
     return result.stdout
 
 
-def _load_contract(path: Path) -> Mapping[str, Any]:
+def _load_contract(path: Path, *, expected_repository: str | None = None) -> Mapping[str, Any]:
     try:
         contract = image_contract._load_bounded_json(
             path, image_contract.MAX_CONTRACT_BYTES, "qualification image contract"
@@ -174,8 +174,13 @@ def _load_contract(path: Path) -> Mapping[str, Any]:
         image_contract._require_image_tag(image_tag, source_commit)
     except image_contract.QualificationImageError:
         raise QualificationImageEvidenceError("qualification image contract identity is invalid") from None
-    if image_tag.rsplit(":", 1)[0] != _EXPECTED_REPOSITORIES[candidate]:
-        raise QualificationImageEvidenceError("qualification image must use the reviewed GHCR repository")
+    reviewed_repository = _EXPECTED_REPOSITORIES[candidate] if expected_repository is None else expected_repository
+    try:
+        image_contract._require_image_tag(f"{reviewed_repository}:source-{source_commit}", source_commit)
+    except image_contract.QualificationImageError:
+        raise QualificationImageEvidenceError("explicitly reviewed image repository is invalid") from None
+    if image_tag.rsplit(":", 1)[0] != reviewed_repository:
+        raise QualificationImageEvidenceError("qualification image must use the explicitly reviewed repository")
     _require_digest(contract.get("manifest_digest"), "contract manifest digest")
     _require_digest(contract.get("source_tree_digest"), "contract source-tree digest")
     _require_digest(contract.get("dockerfile_digest"), "contract Dockerfile digest")
@@ -343,11 +348,12 @@ def collect_evidence(
     output_path: Path,
     docker_executable: str = "docker",
     runner: Runner = _run_command,
+    expected_repository: str | None = None,
 ) -> Mapping[str, Any]:
     resolved_output = Path(os.path.abspath(os.fspath(output_path.expanduser())))
     if resolved_output.exists():
         raise QualificationImageEvidenceError("evidence output must not already exist")
-    contract = _load_contract(contract_path)
+    contract = _load_contract(contract_path, expected_repository=expected_repository)
     metadata = _load_build_metadata(build_metadata_path)
     candidate = str(contract["candidate"])
     limits = _CANDIDATE_LIMITS[candidate]
@@ -528,6 +534,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--build-metadata", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--expected-repository",
+        help="Explicit credential-free registry repository reviewed for this publication",
+    )
     parser.add_argument("--docker", default="docker")
     return parser
 
@@ -540,6 +550,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             build_metadata_path=args.build_metadata,
             output_path=args.output,
             docker_executable=args.docker,
+            expected_repository=args.expected_repository,
         )
     except QualificationImageEvidenceError as exc:
         print(f"qualification image evidence failed: {exc}", file=sys.stderr)

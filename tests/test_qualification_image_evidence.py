@@ -192,13 +192,14 @@ class EvidenceFixture:
         raise AssertionError(f"unexpected Docker command: {command}")
 
 
-def _collect(tmp_path, fixture):
+def _collect(tmp_path, fixture, *, expected_repository=None):
     output = tmp_path / "evidence.json"
     report = evidence.collect_evidence(
         contract_path=fixture.contract_path,
         build_metadata_path=fixture.metadata_path,
         output_path=output,
         runner=fixture,
+        expected_repository=expected_repository,
     )
     return report, output
 
@@ -375,13 +376,28 @@ def test_gemma_has_a_larger_but_still_bounded_rootfs_plan(tmp_path):
     assert report["limits"]["maximum_fly_rootfs_gb"] == 28
 
 
+def test_accepts_explicitly_reviewed_credential_free_repository(tmp_path):
+    fixture = EvidenceFixture(tmp_path)
+    reviewed_repository = "registry.fly.io/petals-revival-smoke"
+    fixture.image_tag = reviewed_repository + ":source-" + SOURCE_COMMIT
+    fixture.repository = reviewed_repository
+    fixture.contract["image_tag"] = fixture.image_tag
+    fixture.contract["contract_digest"] = image_contract._contract_digest(fixture.contract)
+    fixture.contract_path.write_text(json.dumps(fixture.contract), encoding="utf-8")
+
+    report, _ = _collect(tmp_path, fixture, expected_repository=reviewed_repository)
+
+    assert report["image_tag"] == fixture.image_tag
+    assert report["image_reference"].startswith(reviewed_repository + "@sha256:")
+
+
 def test_rejects_unreviewed_registry_before_docker_access(tmp_path):
     fixture = EvidenceFixture(tmp_path)
     fixture.contract["image_tag"] = "registry.example/communityai/qwen3.5-2b:source-" + SOURCE_COMMIT
     fixture.contract["contract_digest"] = image_contract._contract_digest(fixture.contract)
     fixture.contract_path.write_text(json.dumps(fixture.contract), encoding="utf-8")
 
-    with pytest.raises(evidence.QualificationImageEvidenceError, match="reviewed GHCR"):
+    with pytest.raises(evidence.QualificationImageEvidenceError, match="explicitly reviewed repository"):
         _collect(tmp_path, fixture)
 
     assert fixture.calls == []

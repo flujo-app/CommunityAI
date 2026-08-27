@@ -126,6 +126,7 @@ class ProvisionOptions:
     cpu_kind: str
     cpus: int
     memory_mb: int
+    rootfs_size_gb: int
     machine_timeout: int
     identity_timeout: int
     state_output: Path
@@ -685,6 +686,7 @@ def _machine_payload(
                 "cpus": options.cpus,
                 "memory_mb": options.memory_mb,
             },
+            "rootfs": {"size_gb": options.rootfs_size_gb},
             "metadata": {
                 "communityai_qualification_run": options.run_id,
                 "communityai_qualification_resource": resource_id,
@@ -1116,6 +1118,8 @@ def _options_from_args(args: argparse.Namespace) -> ProvisionOptions:
         raise AdapterError("--cpu-kind must be shared or performance")
     if not 1 <= args.cpus <= 64 or not 256 <= args.memory_mb <= 262144:
         raise AdapterError("Fly guest CPU or memory request is outside the adapter bounds")
+    if not 1 <= args.rootfs_size_gb <= 1024:
+        raise AdapterError("--rootfs-size-gb must be between 1 and 1024")
     if not 1 <= args.machine_timeout <= 600 or not 1 <= args.identity_timeout <= 600:
         raise AdapterError("Fly machine and identity timeouts must be between 1 and 600 seconds")
     if args.device != "cpu":
@@ -1135,6 +1139,7 @@ def _options_from_args(args: argparse.Namespace) -> ProvisionOptions:
         cpu_kind=args.cpu_kind,
         cpus=args.cpus,
         memory_mb=args.memory_mb,
+        rootfs_size_gb=args.rootfs_size_gb,
         machine_timeout=args.machine_timeout,
         identity_timeout=args.identity_timeout,
         state_output=args.state_output,
@@ -1175,6 +1180,7 @@ def build_parser() -> argparse.ArgumentParser:
     provision_parser.add_argument("--cpu-kind", default="performance")
     provision_parser.add_argument("--cpus", type=int, default=4)
     provision_parser.add_argument("--memory-mb", type=int, default=16384)
+    provision_parser.add_argument("--rootfs-size-gb", type=int, default=8)
     provision_parser.add_argument("--machine-timeout", type=int, default=300)
     provision_parser.add_argument("--identity-timeout", type=int, default=120)
     provision_parser.add_argument("--flyctl", default=os.environ.get("COMMUNITYAI_FLYCTL", "flyctl"))
