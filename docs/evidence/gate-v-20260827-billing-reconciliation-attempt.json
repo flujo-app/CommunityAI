@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "evidence_id": "gate-v-20260827-billing-reconciliation-attempt",
+  "checked_at": "2026-08-27T06:45:37.7355521Z",
+  "gate": "V",
+  "source_commit": "39e18d55fd387a8a6723b1af23595b0baf73ab84",
+  "provider": "gcp",
+  "project": "community-ai-506321",
+  "billing": {
+    "billing_enabled": true,
+    "observed_cost_available": false,
+    "native_cli_has_cost_report": false,
+    "bigquery_enabled": true,
+    "billing_export_dataset_present": false,
+    "authenticated_billing_report_ui_available": false
+  },
+  "ledger": {
+    "ceiling_usd": 100.0,
+    "unreconciled_maximum_usd": 99.0,
+    "remaining_authorized_maximum_usd": 1.0,
+    "one_hour_g2_l4_compute_and_150_gib_disk_with_headroom_usd": 1.0773044525,
+    "egress_contingency_included_in_floor": false
+  },
+  "inventory": {
+    "temporary_instances_present": [],
+    "temporary_disks_present": [],
+    "protected_instances_present": [
+      "communityai-bootstrap-1"
+    ],
+    "protected_instance_state": "RUNNING"
+  },
+  "attempt": {
+    "temporary_resources_created": [],
+    "paid_operation_attempted": false,
+    "authorization_result": "blocked",
+    "reason": "No observed-cost source was available, and even the one-hour G2/L4 compute-and-disk floor exceeds the remaining conservative authorization before egress contingency."
+  },
+  "collection": {
+    "authentication": "native_gcloud_cli",
+    "sources": [
+      "Cloud Billing project linkage",
+      "BigQuery dataset inventory",
+      "Compute Engine instance inventory",
+      "Compute Engine disk inventory",
+      "repository-pinned qualification pricing"
+    ],
+    "raw_provider_output_retained": false
+  }
+}
