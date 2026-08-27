@@ -8,6 +8,8 @@ import torch
 import scripts.smoke_tinyllama_local_swarm as local_swarm
 from drift.model_manifest import ModelManifest
 from scripts.qualify_model_manifest import (
+    DEFAULT_QUALIFICATION_PROMPT,
+    build_parser as build_qualification_parser,
     build_smoke_command,
     extract_smoke_evidence,
     infer_hub_cache_dir,
@@ -26,7 +28,7 @@ def test_extract_smoke_evidence_requires_exact_parity_and_completion():
         (
             "client_input_embeddings_placement=devices=['cpu'],dtypes=['float32']",
             "client_lm_head_placement=devices=['cpu'],dtypes=['float32']",
-            "client_lm_head_use_chunked_forward=False",
+            "client_lm_head_use_chunked_forward=True",
             "torch_num_threads=1",
             "output_ids=[[1, 2, 3]]",
             "reference_output_ids=[[1, 2, 3]]",
@@ -41,7 +43,7 @@ def test_extract_smoke_evidence_requires_exact_parity_and_completion():
     assert evidence["distributed_output_ids"] == [[1, 2, 3]]
     assert evidence["reference_output_ids"] == [[1, 2, 3]]
     assert evidence["client_input_embeddings_placement"] == "devices=['cpu'],dtypes=['float32']"
-    assert evidence["client_lm_head_use_chunked_forward"] is False
+    assert evidence["client_lm_head_use_chunked_forward"] is True
     assert evidence["torch_num_threads"] == 1
 
 
@@ -60,7 +62,7 @@ def test_cpu_qualification_pins_and_restores_torch_threads():
     assert torch.get_num_threads() == previous_num_threads
 
 
-def test_cpu_qualification_uses_the_stock_native_lm_head_projection():
+def test_qualification_records_lm_head_projection_without_changing_it():
     class FakeModel:
         def __init__(self):
             self.lm_head = torch.nn.Linear(2, 2, bias=False).to(torch.bfloat16)
@@ -71,12 +73,15 @@ def test_cpu_qualification_uses_the_stock_native_lm_head_projection():
 
     model = FakeModel()
 
-    assert local_swarm.align_cpu_qualification_lm_head(model, torch.device("cpu")) is False
-    assert model.lm_head.use_chunked_forward is False
-
-    model.lm_head.use_chunked_forward = True
-    assert local_swarm.align_cpu_qualification_lm_head(model, torch.device("cuda")) is True
+    assert local_swarm.qualification_lm_head_chunking(model) is True
     assert model.lm_head.use_chunked_forward is True
+
+
+def test_default_qualification_prompt_is_the_wide_margin_recovery_vector():
+    args = build_qualification_parser().parse_args([str(VECTOR_MANIFEST)])
+
+    assert DEFAULT_QUALIFICATION_PROMPT == "The capital of France is"
+    assert args.prompt == DEFAULT_QUALIFICATION_PROMPT
 
 
 def test_primary_parity_uses_the_failover_token_horizon():

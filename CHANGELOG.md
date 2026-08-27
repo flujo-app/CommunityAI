@@ -73,8 +73,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   client as well as the tokenizer/reference model, and Windows jobs install the patched
   Hivemind wheel's declared dependency closure before offline execution.
 - CPU qualification pins and records one Torch intra-op thread, restores the caller
-  setting, disables the client's float32 chunked LM-head projection so distributed and
-  stock routes share native BF16 semantics, and uses the same parity horizon as failover.
+  setting, records the real client LM-head projection, and uses one fixed wide-margin
+  synthetic prompt plus the same token horizon for primary and failover parity.
 - The bounded GCP qualification plan now binds exact Windows/Ubuntu images, verifies
   created boot-disk sources, enforces a provider-side deletion deadline, creates scarce
   CUDA hosts before CPU hosts, and supports split-region N1/T4 or G2/L4 CUDA shapes

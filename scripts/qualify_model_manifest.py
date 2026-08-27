@@ -25,6 +25,7 @@ import drift
 from drift.model_manifest import ManifestError, ModelManifest
 
 LOCAL_QUALIFICATION_SCHEMA_VERSION = 1
+DEFAULT_QUALIFICATION_PROMPT = "The capital of France is"
 _PARITY_MARKER = "distributed output matches the stock model exactly"
 _SUCCESS_MARKER = "manifested local swarm qualification ok"
 _MAX_CAPTURE_CHARACTERS = 24_000
@@ -52,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--cache-dir", type=Path, help="Shared immutable model cache for the qualification run")
     parser.add_argument("--device", default="cpu", help="Worker-block and stock-reference torch device")
-    parser.add_argument("--prompt", default="Hello")
+    parser.add_argument("--prompt", default=DEFAULT_QUALIFICATION_PROMPT)
     parser.add_argument("--new-tokens", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=900, help="Per-smoke timeout in seconds")
     parser.add_argument("--cache", choices=("contiguous", "paged"), default="contiguous")
