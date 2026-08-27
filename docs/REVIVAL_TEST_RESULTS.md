@@ -21,15 +21,21 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 
 On 2026-08-27, after Gate 6 cleanup was proved, the owner explicitly reset the
 USD 100 accounting epoch and authorized the real CPU-only Fly recovery run. Run
-`gate7-20260827-a` reserves USD 30 maximum and leaves USD 70. Native Fly
-authentication is valid, the existing isolated `petals-revival-smoke` app has no
-Machines, and the pinned Gate 4 Qwen image contains the offline manifest, snapshot,
-and provider node entrypoint. The run will use one bootstrap and four workers in
-`gru`, each with four performance vCPUs and 16 GB RAM. It is not CUDA evidence.
+`gate7-20260827-a` reserves USD 30 maximum. A separate
+`gate7pub-20260827-a` recovery reservation holds USD 10, leaving USD 60.
+Native Fly authentication is valid and the existing isolated `petals-revival-smoke`
+app has no Machines. The run will use one bootstrap and four workers in `gru`, each
+with four performance vCPUs and 16 GB RAM. It is not CUDA evidence.
 
-The cost guard authorizes the recorded reservation, and the focused Fly adapter,
-multi-machine controller, and ledger suite passes 84 tests. This does **not** pass
-Gate 7 yet: no Machine has been created and real selected-worker interruption,
+The cost guard authorizes the recorded Fly reservation, and the focused Fly adapter,
+image-publication, multi-machine controller, and external-qualification suite passes
+87 tests. The exact source-bound Qwen image reproduces runtime manifest
+`sha256:39d94e44ca92ab2ebbaef54096ca67bafe12c99ec697b2100b8d2c6f7f72a8ae`, but two
+local Fly registry pushes were disconnected after exactly 3,601.7 seconds before a
+large layer could finish. No Machine was created. The USD 10 GCP recovery reservation
+covers one short-lived CPU-only Linux publisher with an 80 GB balanced disk and a
+four-hour DELETE backstop; it must be cleaned before the Fly topology begins. This
+does **not** pass Gate 7 yet: immutable publication, real selected-worker interruption,
 recovery, and exact cleanup evidence remain required.
 
 ## Gate 6 Gemma 4 E2B strict four-profile qualification
