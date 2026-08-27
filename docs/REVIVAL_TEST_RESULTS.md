@@ -203,8 +203,15 @@ zone, verifies all four exact disks as well as both regional network stacks, and
 sets a provider-enforced 14-hour `DELETE` deadline on every VM. Twenty-five cost
 guard tests cover the original ledger/ceiling contract plus exact images,
 split-region assignment, disjoint subnets, zone-scoped cleanup, hard deadlines, and
-same-region fallback rejection. No ledger reservation or paid resource was created
-by this implementation/preflight slice.
+same-region fallback rejection. No paid resource was created by this
+implementation/preflight slice.
+
+After the plan implementation was committed, the exact `qual-20260826-b` ledger row
+reserved USD 69 at source `7660e33`, bringing the combined unresolved maximum to
+USD 99. A fresh guard run returned `provisioning_authorized=true` and retained the
+shell-free [authorized plan](evidence/qual-20260826-b-cost-plan.json); USD 1 remains
+unreserved. This authorization is cost and cleanup-plan evidence only, not hardware or
+model qualification.
 
 ## Desktop milestone: control authority separation
 
