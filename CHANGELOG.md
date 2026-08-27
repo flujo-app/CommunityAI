@@ -41,6 +41,20 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 - Defined the first release as a Windows/Linux public inference alpha. macOS and all
   credit/payment features are explicitly deferred and will not be advertised as available.
+- Refocused the public-alpha critical path around a visible live vertical slice, followed
+  by real candidate qualification, automatic contributor model/block placement, clean
+  packaged onboarding, a bounded canary, and publication. TinyLlama is used only for cheap
+  route/UI bring-up before repeating the path with Qwen3.5 2B on a real public worker.
+- OpenAI-compatible requests may now use `model: "auto"`: the node preserves signed-catalog
+  priority, selects only a model with complete authenticated live block coverage, exposes
+  the reason and exact route through the control API, and returns an honest unavailable
+  response when no eligible route exists. The desktop displays the selected model, reason,
+  peer count, and complete block range.
+- Scoped the first alpha as a best-effort service with a minimum signed-catalog, exact-
+  artifact, authenticated-peer, bounded-admission, local-resource-control, privacy, and
+  disable-path safety floor. Production-SLO redundancy, independent threshold governance,
+  publisher-signed installers, automatic authenticated updates/rollback, and exhaustive
+  hostile-network campaigns are explicitly post-alpha hardening.
 - Qualification images now install their native build toolchain only during the locked
   environment build, isolate exact-source verification from the installed environment,
   and bind the runtime version to installed package metadata before publication.
@@ -95,3 +109,7 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Credits, receipts, balances, payments, earnings, payouts, or a compute marketplace.
 - macOS support.
 - Stable-service or production-SLO claims.
+- Production-SLO route/seed/mirror redundancy and independent threshold-key governance.
+- Operating-system publisher signing and authenticated automatic update/rollback.
+- Exhaustive malicious-load, Sybil/collusion, partition, herd-switching, and long-soak
+  qualification beyond the bounded alpha canary.

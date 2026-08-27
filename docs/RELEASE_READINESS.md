@@ -1,6 +1,6 @@
 # Public inference alpha release readiness
 
-Last verified: 2026-08-26
+Last verified: 2026-08-27
 
 This is the live source of truth for public-alpha implementation. Update it whenever a
 gate changes state. `docs/REVIVAL.md` defines the execution contract and long-term design;
@@ -15,6 +15,16 @@ gate changes state. `docs/REVIVAL.md` defines the execution contract and long-te
 - Deferred platform: macOS, until later CPU/MPS and packaged-device testing passes.
 - First catalog rung: Qwen3.5 2B primary, Gemma 4 E2B standby.
 - Not included: credits, earnings, payments, payouts, or a compute marketplace.
+- Availability promise: best effort. The alpha may initially depend on one CommunityAI
+  discovery seed and one complete candidate route, with a small fallback route and clear
+  unavailable/degraded states; it does not claim a production SLO.
+- Minimum trust floor: pinned signed catalog, exact verified manifests/artifacts,
+  authenticated peer announcements and transport, finite public admission/time limits,
+  authoritative local contribution limits, prompt-visibility disclosure, and a tested
+  route/catalog disable procedure.
+- Post-alpha hardening: independent route/seed/mirror redundancy, independent threshold
+  key holders, publisher-signed installers, authenticated automatic update/rollback, and
+  exhaustive malicious-load/Sybil/partition/long-soak programs.
 
 ## Status vocabulary
 
@@ -29,18 +39,24 @@ gate changes state. `docs/REVIVAL.md` defines the execution contract and long-te
 
 ## Critical path
 
-Work from top to bottom while prerequisites are satisfied. The current mandatory launch
-sequence is **Gate 4 → Gates 5 and 6 → Gates 7 and 8**. Do not begin or extend Gates
-9–16 until Gates 4–8 pass. Missing Docker, snapshots, local GPU hardware, or local host
-capacity is not an external blocker: use the authorized bounded GCP/Fly infrastructure.
-Only an owner/provider condition that remains after those alternatives were attempted
-permits a later gate, and only with explicit owner direction.
+Work from top to bottom while prerequisites are satisfied. Gate 4 has passed. The current
+mandatory sequence is **Gate V → Gates 5–8 → Gates 9–16 → Gate 17**. Gate V exists
+to prove the user-visible product path before more matrix work: cheap TinyLlama bring-up,
+then real Qwen3.5 2B inference through a public GCP L4 worker. After that, qualify both
+candidate models, prove recovery, complete automatic contribution, publish the minimal
+alpha catalog/routes, pass clean packages and the bounded canary, and release.
 
-Gate 4 now has both real immutable OCI publication reports. Gate 5 exhausted three
-N1/T4 stock attempts plus one G2/L4 quota attempt without creating a qualification host;
-every temporary stack was cleaned. Gate 5 is `BLOCKED` until the provider supplies
-Windows CUDA capacity through available T4 stock or nonzero global L4 quota. Do not
-request quota, touch credits, or proceed to Gate 6–8 without explicit owner direction.
+Do not work on the post-alpha items in the deferred table while an alpha gate can progress.
+Missing Docker, snapshots, local GPU hardware, or local host capacity is not an external
+blocker: use authorized bounded GCP/Fly infrastructure. A real gate failure justifies the
+smallest implementation fix; speculative harness expansion does not replace the outcome.
+
+The former Gate 5 quota blocker is resolved. The [2026-08-27 quota/probe evidence](evidence/gcp-l4-quota-probe-20260827.json)
+records `GPUS_ALL_REGIONS` limit `1`, usage `0`; the only running Compute Engine instance
+was the protected `communityai-bootstrap-1`. Its bounded G2/L4 Windows create/delete audit
+trail also proves that one L4 VM can be provisioned. This supports one CUDA host at a time and a
+genuine local-app-to-cloud-worker test, but not simultaneous redundant GPU routes. Reconcile
+the conservative spend ledger before any paid run expected to exceed its recorded remainder.
 
 | Order | Gate | Status | Current evidence | Next action |
 | ---: | --- | --- | --- | --- |
@@ -48,19 +64,20 @@ request quota, touch credits, or proceed to Gate 6–8 without explicit owner di
 | 2 | Make Windows/Linux the strict public-alpha qualification matrix | PASSED | Default dispatch, exact-profile aggregation, fleet readiness, and the recovery controller now require Windows CPU/CUDA plus Linux CPU/CUDA; focused contract tests pass | Provision four distinct labelled runners and retain real exact-profile evidence; macOS remains a separate deferred gate |
 | 3 | Prepare bounded provider automation and cost controls | PASSED | [PR #9](https://github.com/flujo-app/CommunityAI/pull/9) integrated [commit `1d4f7d4`](https://github.com/flujo-app/CommunityAI/commit/1d4f7d4453eb688994ce21c08e182c1ad8e63ae7) after [style](https://github.com/flujo-app/CommunityAI/actions/runs/32947541300), [tests](https://github.com/flujo-app/CommunityAI/actions/runs/32947541452), and [Windows/Linux production packaging](https://github.com/flujo-app/CommunityAI/actions/runs/32947541637) passed; the 28-test guard prices the exact four-host GCP fleet at USD 69 maximum, binds immutable OS images and hard deletion deadlines, supports split-region N1/T4 or G2/L4 CUDA capacity, and excludes `communityai-bootstrap-1` from exact cleanup; native `gcloud`, `flyctl`, and `gh` authentication is currently available | No further Gate 3 framework work. Revalidate provider quota immediately before Gate 4/5 provisioning and reserve a ledger row only immediately before a paid create |
 | 4 | Build immutable Qwen3.5 2B and Gemma 4 E2B qualification images/snapshots | PASSED | [Gate 4 attempt `gate4-20260826-b`](evidence/gate4-20260826-b-qualification-image-build-attempt.json) passed both exact snapshot/in-image checks and published source `7660e33` with SLSA provenance and SPDX SBOM. [Qwen evidence](evidence/gate4-20260826-b-qwen3.5-2b-publication-evidence.json) binds `ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed` ([metadata](evidence/gate4-20260826-b-qwen3.5-2b-build-metadata.json)): 6,913,811,781 compressed bytes, 6,913,829,173 uncompressed, 9 GB rootfs. [Gemma evidence](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json) binds `ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f` ([metadata](evidence/gate4-20260826-b-gemma-4-e2b-build-metadata.json)): 11,011,406,681 compressed bytes, 11,011,424,083 uncompressed, 13 GB rootfs. Both isolated builders and the complete retry network were deleted; the protected bootstrap remains. | Use these immutable digests and evidence-bound rootfs sizes for Gates 5 and 6 |
-| 5 | Qwen3.5 2B Windows/Linux CPU/CUDA qualification | BLOCKED | [Attempts 1–3](evidence/qual-20260826-b-capacity-attempt-3.json) tried three N1/T4 primary regions and each hit `ZONE_RESOURCE_POOL_EXHAUSTED` on Windows CUDA. [Attempt 4](evidence/qual-20260826-b-capacity-attempt-4.json) used the reviewed G2/L4 plan but the provider rejected its first Windows CUDA create because global `GPUS_ALL_REGIONS` quota is zero. No qualification VM was created in attempts 2–4; every exact stack was cleaned and the protected bootstrap remains. | Stop paid attempts. Resume only with explicit owner direction after provider T4 stock or nonzero global L4 quota exists; then re-preflight and authorize a fresh exact run |
-| 6 | Gemma 4 E2B Windows/Linux CPU/CUDA qualification | WAITING | The strict four-profile matrix can use the passed [immutable Gate 4 Gemma image](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json), but shared-fleet [attempts 1–4](evidence/qual-20260826-b-capacity-attempt-4.json) were cleaned before any qualification job and Gate 5 is blocked | After Gate 5 passes, provision or reuse an exact fleet and retain all four Gemma profile results plus the aggregate |
+| V | Pass a visible public vertical slice: app observes a remote worker, `auto` selects a model, and inference succeeds | IN PROGRESS | [Commit `2c49d68`](https://github.com/flujo-app/CommunityAI/commit/2c49d68892748650f1945fb9b21d3bb5371a8ae2) preserves signed-catalog priority, resolves `model: "auto"` only against a complete authenticated live DHT route, exposes the reason and exact coverage to the desktop, and fails unavailable with HTTP 503. Verification at that commit passed 141 focused node/API/catalog tests, all 51 desktop tests, Black, isort, and independent tester review. This is implementation evidence only: the release catalog is not yet bundled and no public candidate worker or remote inference result exists. | Reconcile delayed billing first: the worst-case ledger leaves USD 1. Then bundle the release catalog and create one bounded Linux G2/L4 Qwen worker only if the full conservative estimate fits the USD 100 ceiling; join it to the public DHT, show all 24 blocks and the `auto` reason in the desktop, generate through localhost, retain immutable evidence, and clean the VM. Do not pull Gemma or claim the gate from local tests. |
+| 5 | Qwen3.5 2B Windows/Linux CPU/CUDA qualification | READY | [Attempts 1–3](evidence/qual-20260826-b-capacity-attempt-3.json) recorded T4 stock failures and [attempt 4](evidence/qual-20260826-b-capacity-attempt-4.json) recorded the former zero-global-quota L4 rejection with complete cleanup. The [2026-08-27 quota/probe evidence](evidence/gcp-l4-quota-probe-20260827.json) records global GPU limit 1/usage 0 and a successful bounded G2/L4 Windows create/delete. One CUDA host can run at a time. | After Gate V, reconcile spend, re-preflight, and run Windows/Linux CPU/CUDA profiles sequentially where needed; retain the exact four-profile aggregate and complete cleanup evidence. Do not rebuild the harness unless a real run exposes a defect. |
+| 6 | Gemma 4 E2B Windows/Linux CPU/CUDA qualification | WAITING | The strict four-profile matrix can use the passed [immutable Gate 4 Gemma image](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json); no external profile has run and Gate 5 must prove the sequential one-GPU fleet path first. | After Gate 5 passes, reuse that proven path and retain all four Gemma profile results plus the aggregate. |
 | 7 | Qwen3.5 2B real separate-machine recovery | WAITING | Gate 4 and the controller/Fly adapter pass, but the Gate 5 four-profile matrix has not passed | After Gate 5 passes, reserve the priced Fly run, create one bootstrap plus four workers, kill the selected worker during generation, and prove exact recovery plus complete cleanup |
 | 8 | Gemma 4 E2B real separate-machine recovery | WAITING | Gate 4 and the same Gemma adapter path pass, but the Gate 6 four-profile matrix has not passed | After Gate 6 passes, repeat the real priced Fly interruption gate and retain recovery plus cleanup evidence |
-| 9 | Publish edge resource envelopes for selectable profiles | TODO | Older Qwen3 1.7B Windows CPU envelope exists; refreshed candidates lack complete supported-profile envelopes | Measure cold cache, disk, RAM/VRAM, first token, decode rate, and cleanup behavior on each supported device class |
-| 10 | Operate redundant public model routes | TODO | One discovery peer exists; no production candidate worker routes are public | Deploy bounded Qwen primary and Gemma standby workers with at least two complete routes and prove largest-worker-loss survival and soak |
-| 11 | Remove single-provider discovery and catalog availability | PAUSED | One GCP discovery peer is live; partial peer-cache, second-seed planning, and discovery-container work is preserved on `codex/fly-discovery-seed-adapter` | Do not extend Gate 11 until Gates 4–10 pass. Preserve the existing branch, then resume with the real second seed, two mirrors, and seed-loss/cached-peer drills |
-| 12 | Create and publish the signed alpha catalog/bootstrap | TODO | Schema, threshold verifier, rollback protection, consumer, publication preflight, and deterministic bundle builder pass locally | Establish alpha signing/public-key handling, publish qualified manifests through mirrors, and produce the exact self-verifying publication bundle without committing private keys |
-| 13 | Pass packaged clean-install inference on Windows and Linux | TODO | Unsigned engineering bundles and a Windows sidecar lifecycle smoke pass; no production bundle exists | Stage the publication bundle, install on clean hosts, discover public workers, generate through localhost, restart, and repeat without developer files or credentials |
-| 14 | Pass contribution-control hardware checks | PAUSED | [PR #11](https://github.com/flujo-app/CommunityAI/pull/11) and [PR #12](https://github.com/flujo-app/CommunityAI/pull/12) implemented the authenticated node-authoritative Sharing UI and atomic policy editing; real packaged hardware evidence is still absent | Resume only after Gates 4–13 pass, then validate enforcement, suspension, pause timing, restart persistence, and unsupported telemetry on real packaged Windows/Linux hardware |
-| 15 | Complete alpha release engineering | TODO | No signed installers, authenticated updater, rollback, or uninstall evidence | Establish publisher/signing inputs, build signed Windows/Linux artifacts, test install/update/rollback/uninstall and retained-data behavior, publish checksums and recovery instructions |
-| 16 | Complete public-alpha safety and operations | PAUSED | [PR #13](https://github.com/flujo-app/CommunityAI/pull/13) and [PR #14](https://github.com/flujo-app/CommunityAI/pull/14) implemented bounded admission, privacy-safe aggregate health, training-off defaults, rollback procedures, and bounded routine rejection logs; no public canary has run | Resume only after Gates 4–15 pass, then run the bounded malicious-load canary, monitored limited rollout, health reconstruction, and disable/rollback drill |
-| 17 | Publish and observe the public alpha | TODO | Owner has authorized a public inference alpha, but preceding gates are open | After gates 1–16 pass, publish with explicit alpha/support/privacy limitations, preserve rollback, and monitor real route/worker failures |
+| 9 | Publish edge resource envelopes for selectable profiles | TODO | Older Qwen3 1.7B Windows CPU envelope exists; refreshed candidates lack complete supported-profile envelopes. | Measure cold cache, disk, RAM/VRAM, first token, decode rate, and cleanup behavior needed for safe automatic selection on supported device classes. |
+| 10 | Implement automatic contributor model and block placement | TODO | The catalog selector can choose a model for a new client request and within-model balancing exists, but first-install config creates no workers and the node runner still requires each worker's model/block selection explicitly. | Observe signed catalog eligibility and live coverage/demand, filter through hard local policy, choose a model and block range, authorize/download exact artifacts, launch under supervision, and use hysteresis so the VRAM slider produces useful contribution without manual swarm knowledge. |
+| 11 | Operate initial public alpha routes | TODO | One discovery peer exists; no candidate inference worker route is public. Gate V will prove an ephemeral route. | Operate at least one complete Qwen candidate route and one small standby/fallback route with bounded cost, health visibility, clean shutdown, and honest degraded/unavailable behavior. Full independent redundant routes are post-alpha. |
+| 12 | Create, publish, and bundle the minimal signed alpha catalog/bootstrap | TODO | Schema, configurable threshold verifier, expiry, rollback protection, consumer, publication preflight, and deterministic bundle builder pass locally. | Pin at least one offline CommunityAI alpha release key, publish exact qualified manifests and seed configuration, and bundle the self-verifying first-install input. Independent threshold holders and interchangeable mirror governance are post-alpha. Never commit a private key. |
+| 13 | Pass packaged clean-install inference on Windows and Linux | TODO | Unsigned engineering bundles and a Windows sidecar lifecycle smoke pass exist; no installable alpha bundle includes the production bootstrap. | Install on clean hosts with no developer files or credentials, discover public workers, let `auto` select, generate through localhost, enable bounded contribution, restart, and repeat. |
+| 14 | Pass automatic-contribution and resource-control hardware checks | WAITING | [PR #11](https://github.com/flujo-app/CommunityAI/pull/11) and [PR #12](https://github.com/flujo-app/CommunityAI/pull/12) implemented the authenticated node-authoritative Sharing UI and atomic policy editing, but cross-model automatic placement and real packaged hardware evidence are absent. | After Gates 9–13, validate model/block choice, download authorization, VRAM/storage/bandwidth/power limits, suspension, pause timing, cleanup, restart persistence, and unsupported telemetry on real packaged Windows/Linux hardware. |
+| 15 | Complete minimal alpha release engineering | TODO | Reproducible unsigned engineering bundles, immutable qualification images, SLSA provenance, and SBOM evidence exist; manual application upgrade/reinstall and uninstall are unproven. | Publish checksums/provenance and explicit unsigned-alpha warnings, then test install, manual upgrade/reinstall, uninstall, retained-data choice, and recovery instructions on Windows/Linux. Publisher signing and automatic authenticated update/rollback are post-alpha. |
+| 16 | Complete the bounded public-alpha safety canary | WAITING | [PR #13](https://github.com/flujo-app/CommunityAI/pull/13) and [PR #14](https://github.com/flujo-app/CommunityAI/pull/14) implemented bounded admission, privacy-safe aggregate health, training-off defaults, rollback procedures, and bounded routine rejection logs; no public canary has run. | After Gates 11–15, run a small monitored canary proving finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. Exhaustive hostile-load, Sybil/collusion, partition, and long-soak campaigns are post-alpha. |
+| 17 | Publish and observe the public alpha | TODO | Owner has authorized a public inference alpha, but preceding mandatory alpha gates are open. | After Gate V and Gates 1–16 pass, publish with explicit best-effort availability, unsigned-package, support, and prompt-privacy limitations; preserve the disable path and monitor real route/worker failures. |
 
 ## Deferred work
 
@@ -70,6 +87,11 @@ request quota, touch credits, or proceed to Gate 6–8 without explicit owner di
 | Credits, receipts, balances, spend authorization, earnings, and payouts | DEFERRED | Public inference alpha is live and its reliability/privacy behavior is understood |
 | Compute marketplace and jurisdiction-specific payment onboarding | DEFERRED | Accounting threat model, legal review, and independent audit are complete |
 | Larger model ladder rungs | DEFERRED | First-rung public capacity and operations are stable |
+| Production-SLO model-route redundancy and largest-worker-loss survival | DEFERRED | The best-effort alpha is live and its real route-loss evidence identifies the required topology |
+| Independent multi-provider seeds, catalog mirrors, and outage survival | DEFERRED | The alpha seed/catalog dependency is measured and independent operators are available |
+| Independent threshold catalog key holders and compromise/rotation governance | DEFERRED | The pinned single-signer alpha catalog is operating and human key holders accept responsibility |
+| Publisher-signed installers plus authenticated automatic update/rollback | DEFERRED | Alpha packaging stabilizes and publisher identities/signing credentials are available |
+| Exhaustive malicious-load, Sybil/collusion, partition, herd-switching, and long-soak campaigns | DEFERRED | The bounded alpha canary passes and real public telemetry supplies representative workloads |
 
 ## Cloud authorization and spend ledger
 
@@ -85,10 +107,12 @@ maximum estimate until actual cost is known.
 | --- | --- | --- | ---: | ---: | --- | --- |
 | gate4-20260826-a | GCP | Gate 4 immutable image builder: exact `cai-g4-20260826-a`, e2-standard-4, 200 GB pd-standard, at most 4 hours including network-egress contingency | USD 10 | — | [Attempt report](evidence/gate4-20260826-a-qualification-image-build-attempt.json): billing delayed, retain maximum; registry logout succeeded; exact instance, ephemeral address, and auto-delete boot disk absent at 2026-08-26T20:58:20Z; excluded bootstrap remained present | CLEANED |
 | gate4-20260826-b | GCP | Gate 4 parallel retry at source `7660e33`: two e2-standard-4 no-address builders with 200 GB disks and shared NAT, at most 6 hours | USD 20 | — | [Attempt report](evidence/gate4-20260826-b-qualification-image-build-attempt.json) and [plan](evidence/gate4-20260826-b-cost-plan.json): billing delayed, retain maximum; both registry credentials removed; both instances/disks and the exact firewall, NAT, router, subnet, and network absent at 2026-08-26T23:34:31Z; excluded bootstrap remained present | CLEANED |
-| qual-20260826-b | GCP | Four-host Windows/Linux qualification fleet [source 7660e33e03326e5b868f81cb95282460ba649d5f] | USD 69.00 | — | [Attempts 1–4](evidence/qual-20260826-b-capacity-attempt-4.json): billing delayed, retain maximum; all exact instances/disks and firewall/NAT/router/subnet/network resources absent at 2026-08-27T00:51:28Z; excluded bootstrap remained present | CLEANED |
+| qual-20260826-b | GCP | Four-host Windows/Linux qualification fleet and bounded L4 quota probe [source 7660e33e03326e5b868f81cb95282460ba649d5f] | USD 69.00 | — | [Attempts 1–4](evidence/qual-20260826-b-capacity-attempt-4.json) plus [successful L4 create/delete and final inventory](evidence/gcp-l4-quota-probe-20260827.json): billing delayed, retain maximum; all exact test instances are absent, global GPU usage is zero, and the excluded bootstrap remains | CLEANED |
 
-Remaining authorized maximum: **USD 1**, less any later unresolved maximum estimates
-or observed new-resource cost recorded above.
+Remaining authorized maximum under the deliberately worst-case unreconciled ledger:
+**USD 1**. This is not a claim that USD 99 was actually charged. Reconcile provider billing
+before a longer paid run; Gate V may use a hard-deadline run only if its new conservative
+maximum, including storage and egress contingency, fits within this remainder.
 
 ## Evidence update rules
 

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "evidence_id": "gcp-l4-quota-probe-20260827",
+  "checked_at": "2026-08-27T05:15:07.8369240Z",
+  "provider": "gcp",
+  "quota": {
+    "metric": "GPUS_ALL_REGIONS",
+    "limit": 1,
+    "usage": 0
+  },
+  "probe": {
+    "instance": "caiq-l4-quota-probe-20260826-2",
+    "zone": "us-central1-b",
+    "machine_type": "g2-standard-8",
+    "accelerator": "nvidia-l4",
+    "operating_system": "windows-server-2022",
+    "insert_completed_at": "2026-08-27T01:27:27.873805Z",
+    "delete_completed_at": "2026-08-27T01:30:00.310952Z",
+    "result": "created_and_deleted"
+  },
+  "cleanup": {
+    "probe_instance_absent": true,
+    "global_gpu_usage": 0,
+    "remaining_compute_instances": [
+      "communityai-bootstrap-1"
+    ]
+  },
+  "collection": {
+    "authentication": "native_gcloud_cli",
+    "sources": [
+      "compute project-info quota",
+      "compute instance inventory",
+      "Cloud Audit Logs instance insert/delete operations"
+    ]
+  }
+}
