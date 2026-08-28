@@ -66,6 +66,11 @@ agent:
   the remaining balance.
 - Use the existing `gcloud`, `flyctl`, and `gh` logins. Do not require the owner to copy
   provider tokens into environment variables when native CLI authentication works.
+- On Windows, every registry token, remote credential, and Linux script must follow the
+  fail-closed [Windows registry-token and remote-script boundary](QUALIFICATION_RUNNER_OPERATIONS.md#windows-registry-token-and-remote-script-boundary).
+  Revalidate native auth immediately before paid creation; reject UTF-8 BOM/CRLF drift,
+  recover Fly token IDs by exact unique name, revoke them in unconditional cleanup, and
+  preserve Buildx state explicitly when isolating `DOCKER_CONFIG`.
 
 ### Public-alpha scope boundary
 

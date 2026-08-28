@@ -144,11 +144,64 @@ Do not edit the generated `source` or contract directories. Review the generated
 command array before executing it, and regenerate it if any input changes. Execute it
 only on a Docker-enabled builder after native registry authentication and any applicable
 cost reservation. Authenticate without copying a token into the working tree or command
-arguments, then execute the generated Buildx argument array:
+arguments, then execute the generated Buildx argument array. On Windows PowerShell
+5.1, do **not** pipe a PowerShell string or a redirected
+`System.Diagnostics.Process.StandardInput` stream into `docker login`, `plink`,
+or another native credential consumer. PowerShell can transcode the pipe or prepend
+the UTF-8 BOM bytes `EF BB BF`, which changes an otherwise valid token. Keep the
+entire credential pipe native instead:
 
 ```powershell
-gh auth token | docker login ghcr.io --username flujo-app --password-stdin
+cmd.exe /d /s /c "gh auth token|docker login ghcr.io --username flujo-app --password-stdin"
 ```
+
+Immediately verify the exact private source with a fresh registry request. A cached
+`docker buildx imagetools inspect` result does not prove that a new builder can fetch
+the private manifest or blobs. If `gh auth status`, `gh auth token`, or the fresh
+registry request fails, stop before creating a paid builder.
+
+### Windows registry-token and remote-script boundary
+
+Use this checklist for every Fly private-registry stage or remote builder. These are
+protocol requirements, not optional troubleshooting:
+
+1. Give every temporary Fly token a unique name and bounded expiry. In flyctl 0.4.87,
+   `flyctl tokens deploy --json` returns only a `token` property; it does not return
+   the token ID. After creation, run
+   `flyctl tokens list --app <app> --scope app`, match the **exact unique name**, retain
+   the first-column ID privately, and revoke that ID in a `finally` block. If the ID
+   cannot be resolved, stop and revoke it manually before proceeding.
+2. Put the deploy token only in the child process environment as
+   `FLY_ACCESS_TOKEN`, call `flyctl auth docker`, immediately clear the environment
+   variable and in-memory token, and use the derived registry credential. Always run
+   `docker logout registry.fly.io` and revoke the deploy token, including after build,
+   copy, or inspection failure. Neither token may enter logs or evidence.
+3. A temporary `DOCKER_CONFIG` intentionally isolates credentials, but it also hides
+   Buildx builders stored below the original Docker configuration. When reusing a
+   reviewed builder/cache, set `BUILDX_CONFIG` explicitly to the original
+   `<docker-config>/buildx`; do not change or repurpose `HOME` or `USERPROFILE`.
+   Prove `docker buildx inspect <builder>` under the exact environment before starting
+   a large push.
+4. Never pass a PowerShell-generated credential through redirected native stdin without
+   a byte check. Prefer a same-shell native pipe. When an SSH transfer is unavoidable,
+   serialize only a base64 credential payload with
+   `[IO.File]::WriteAllText(..., [Text.UTF8Encoding]::new($false))`, restrict the
+   temporary file to the current user, transfer it over SSH, decode it only into the
+   remote registry login, and delete both copies in unconditional cleanup. Verify the
+   first three bytes are not `EF BB BF`; do not compensate later by guessing that
+   bytes should be stripped.
+5. Generate Linux shell scripts as UTF-8 without BOM and LF-only. Before transfer,
+   reject any carriage-return byte and any BOM; after transfer, repeat the byte check
+   and run `bash -n`. Do not silently run `dos2unix` or `sed` on a source-bound
+   script, because that changes the reviewed bytes.
+
+A never-deployed Fly app may not yet have a registry repository even though app lookup
+and authentication succeed. Initialize it once through Fly's supported
+`fly deploy --build-only --push --local-only` path using a zero-byte sentinel and a
+minimal explicit `fly.toml`; prove that no Machine was created. Only then push or
+mirror the qualification image. For a remote mirror, install its auth-removal trap
+before the first registry request, validate source and destination digests independently,
+and delete the exact builder/disk whether the copy succeeds or fails.
 
 Preserve the Buildx metadata and collect evidence immediately after the push:
 
