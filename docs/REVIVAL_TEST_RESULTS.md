@@ -17,33 +17,41 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
 | 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference; and Gates 5 and 6 passed the strict Qwen and Gemma Windows/Linux CPU/CUDA matrices | The release bootstrap and initial catalog are not published or bundled; persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
 
-## Gate 7 Qwen3.5 2B separate-machine recovery (in progress)
+## Gate 7 Qwen3.5 2B separate-machine recovery (blocked)
 
 On 2026-08-27, after Gate 6 cleanup was proved, the owner explicitly reset the
-USD 100 accounting epoch and authorized the real CPU-only Fly recovery run. Run
-`gate7-20260827-a` reserves USD 30 maximum. The separate
-`gate7pub-20260827-a` recovery maximum remains committed at USD 10 because observed
-billing is unavailable, leaving USD 60. The topology remains one bootstrap and four
-workers in `gru`, each with four performance vCPUs and 16 GB RAM. It is not CUDA
-evidence.
+USD 100 accounting epoch and authorized the real CPU-only Fly recovery run. The
+current epoch commits a USD 30 Fly maximum plus four USD 10 GCP publication/mirror
+maxima, leaving USD 30. The topology remains one bootstrap and four workers in
+`gru`, each with four performance vCPUs and 16 GB RAM. It is CPU-only evidence,
+never CUDA qualification or a GPU benchmark.
 
-The bounded GCP publisher succeeded after two local registry transfers had timed out.
-[Attempt evidence](evidence/gate7-20260827-a-separate-machine-attempt.json) binds exact
-source `23a4078e17ed9d5ae6f31e7497bae69b83aecef6`, Qwen revision
+The first bounded publication produced a 9 GB rootfs that Fly rejected before any
+Machine was created. The [replacement publication](evidence/gate7-20260828-b-qwen3.5-2b-publication-evidence.json)
+then bound exact source `7570d94a4bacefb80ec7aa2135d6d85c0c24275d`, Qwen revision
 `15852e8c16360a2fea060d615a32b45270f8a8fc`, manifest
 `sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`,
-immutable image index `sha256:ce6f32a905040aa9069632abfe93d025746077790bde1c9c24bcc4f8d25a583b`,
-verified artifacts, SLSA provenance, and SPDX SBOM. The exact builder and boot disk
-are absent, the protected bootstrap remains running, and the isolated Fly app is
-empty.
+immutable index `sha256:1969b62ff7c5543d03677aa4a174dd2b0e453ea6b6ff0edcd0f1968b44b67b5f`,
+runtime manifest `sha256:cbdbb37657429223bc38695a78f6f80b81746a5aa0807b6b6ada495e7a5e2e62`,
+verified artifacts, SLSA provenance, SPDX SBOM, CPU-only runtime identity, and an
+8 GB rootfs. Its publisher cleanup passed.
 
-The published image measured 6,913,802,218 uncompressed bytes and its evidence-derived
-rootfs requirement was 9 GB. The first real Fly create then exposed the provider's
-current 8 GB hard rootfs limit before any Machine was created. The concrete fix uses
-the hash-pinned CPU Torch wheel, excludes CUDA and Triton payloads, records CPU-only
-image identity, and makes the evidence collector fail closed above 8 GB. Gate 7 is
-still open until a replacement immutable image fits, the five Machines execute the
-selected-worker interruption/recovery drill, and complete cleanup is proved.
+The [cleaned mirror attempt](evidence/g7mirror-20260828-c-fly-registry-attempt.json)
+proved that the never-deployed Fly app first required supported build-only repository
+initialization; the zero-byte sentinel created no Machine. [Retry d](evidence/g7mirror-20260828-d-fly-registry-attempt.json)
+then created its bounded GCP builder but failed before copying because a stale GHCR
+credential shadowed valid anonymous access to the exact public source. A fresh empty-
+configuration request proved the immutable source is anonymously readable, so the
+retry must use anonymous source access and destination-only Fly authentication.
+
+Fly currently has zero active Machines and app tokens. GCP instance/disk absence and
+the protected bootstrap state remain unproved because native `gcloud` requires
+interactive reauthentication. No new provider resource may be created until the owner
+reauthenticates, the exact retry-d builder/disk are verified absent or exact-deleted,
+and `communityai-bootstrap-1` is proved running. A new USD 10 mirror reservation
+would leave USD 20. Gate 7 remains open until the immutable Fly-registry index passes,
+the five CPU-only Machines execute selected-worker interruption/recovery, and complete
+run-tag cleanup is proved.
 
 ## Gate 6 Gemma 4 E2B strict four-profile qualification
 

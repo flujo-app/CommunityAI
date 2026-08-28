@@ -155,10 +155,13 @@ entire credential pipe native instead:
 cmd.exe /d /s /c "gh auth token|docker login ghcr.io --username flujo-app --password-stdin"
 ```
 
-Immediately verify the exact private source with a fresh registry request. A cached
+Immediately verify the exact source with a fresh registry request. A cached
 `docker buildx imagetools inspect` result does not prove that a new builder can fetch
-the private manifest or blobs. If `gh auth status`, `gh auth token`, or the fresh
-registry request fails, stop before creating a paid builder.
+the manifest or blobs. If the immutable source is public, repeat the request with an
+empty isolated `DOCKER_CONFIG`; do not attach a stale GHCR credential that can shadow
+valid anonymous access. If the source actually requires authentication and either
+`gh auth status`, `gh auth token`, or the fresh authenticated registry request fails,
+stop before creating a paid builder.
 
 ### Windows registry-token and remote-script boundary
 
@@ -203,8 +206,11 @@ and authentication succeed. Initialize it once through Fly's supported
 `fly deploy --build-only --push --local-only` path using a zero-byte sentinel and a
 minimal explicit `fly.toml`; prove that no Machine was created. Only then push or
 mirror the qualification image. For a remote mirror, install its auth-removal trap
-before the first registry request, validate source and destination digests independently,
-and delete the exact builder/disk whether the copy succeeds or fails.
+before the first registry request. When the exact source passed anonymous preflight,
+force anonymous source access (for example, Skopeo `copy --src-no-creds` and `inspect
+--no-creds`) while keeping authentication destination-only. Validate source and
+destination digests independently, and delete the exact builder/disk whether the copy
+succeeds or fails.
 
 Preserve the Buildx metadata and collect evidence immediately after the push:
 
