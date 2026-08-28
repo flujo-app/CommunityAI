@@ -72,6 +72,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Fly qualification images now install the exact hash-pinned CPU Torch wheel, exclude
   CUDA and Triton payloads, assert CPU-only runtime identity in-image, and fail closed
   when measured rootfs requirements exceed the provider's 8 GB limit.
+- Fly private-image staging now initializes an empty app repository through the supported
+  build-only push path before a digest-preserving mirror, without deploying a Machine.
 - Model qualification now treats exact Windows/Linux CPU/CUDA coverage as the strict
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
 - Qwen3.5 2B now passes that strict Windows/Linux CPU/CUDA matrix at one exact source,
