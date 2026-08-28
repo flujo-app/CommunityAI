@@ -172,12 +172,16 @@ The reviewed fail-closed limits are:
 
 | Candidate | Maximum compressed total | Maximum uncompressed size | Maximum Fly rootfs plan |
 | --- | ---: | ---: | ---: |
-| Qwen3.5 2B | 8,000,000,000 bytes | 16 GiB | 20 GB |
-| Gemma 4 E2B | 16,000,000,000 bytes | 24 GiB | 28 GB |
+| Qwen3.5 2B | 8,000,000,000 bytes | 16 GiB | 8 GB |
+| Gemma 4 E2B | 16,000,000,000 bytes | 24 GiB | 8 GB |
 
-Every individual GHCR layer is additionally capped at 10,000,000,000 bytes. The required
-Fly rootfs is the greater of its 8 GB default or the measured uncompressed GiB rounded
-up plus 2 GB headroom; reject an image above the candidate ceiling. The evidence report
+Every individual GHCR layer is additionally capped at 10,000,000,000 bytes. Fly Machines
+currently enforce an 8 GB rootfs hard limit. The required rootfs remains the greater of
+8 GB or the measured uncompressed GiB rounded up plus 2 GB headroom, so a Fly-specific
+qualification image must omit CUDA-only runtime payloads and fail closed when that result
+exceeds 8 GB. The previously published general Qwen and Gemma images measured 9 GB and
+13 GB rootfs plans and therefore are publication evidence only, not deployable Fly inputs.
+The evidence report
 records the exact immutable index/runtime references, descriptors, layer inventory,
 totals, limit sources, and required rootfs size. It sets `qualification_evidence=true`
 for the image-publication contract while keeping `complete_release_qualification=false`;

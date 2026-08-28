@@ -642,6 +642,13 @@ def test_public_alpha_candidates_and_dockerfile_are_immutable_and_offline():
     assert build_toolchain_purge in dockerfile
     assert dockerfile.index(build_toolchain_install) < dockerfile.index("uv sync --frozen")
     assert dockerfile.index("uv sync --frozen") < dockerfile.index(build_toolchain_purge)
+    assert "--no-install-package nvidia-cublas-cu12" in dockerfile
+    assert "--no-install-package triton" in dockerfile
+    assert "https://download-r2.pytorch.org/whl/cpu/torch-2.6.0%2Bcpu-cp312-cp312-linux_x86_64.whl#sha256=59e78aa0c690f70734e42670036d6b541930b8eabbaa18d94e090abf14cc4d91" in dockerfile
+    assert 'torch.__version__ == "2.6.0+cpu"' in dockerfile
+    assert "torch.version.cuda is None" in dockerfile
+    assert "uv pip check --python /workspace/.venv/bin/python" in dockerfile
+    assert 'communityai.qualification.device="cpu"' in dockerfile
     assert "from importlib.metadata import version" in dockerfile
     assert 'raise SystemExit(0 if __version__ == version("drift") else 1)' in dockerfile
     assert "assert __version__" not in dockerfile

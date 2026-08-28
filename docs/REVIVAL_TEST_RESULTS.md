@@ -1,6 +1,6 @@
 # Revival baseline results
 
-Test dates: 2026-08-21 through 2026-08-27
+Test dates: 2026-08-21 through 2026-08-28
 
 These tests exercise `Maykeye/TinyLLama-v0` as an eight-block model and compare
 greedy distributed generation with the stock Transformers implementation. The
@@ -21,22 +21,29 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 
 On 2026-08-27, after Gate 6 cleanup was proved, the owner explicitly reset the
 USD 100 accounting epoch and authorized the real CPU-only Fly recovery run. Run
-`gate7-20260827-a` reserves USD 30 maximum. A separate
-`gate7pub-20260827-a` recovery reservation holds USD 10, leaving USD 60.
-Native Fly authentication is valid and the existing isolated `petals-revival-smoke`
-app has no Machines. The run will use one bootstrap and four workers in `gru`, each
-with four performance vCPUs and 16 GB RAM. It is not CUDA evidence.
+`gate7-20260827-a` reserves USD 30 maximum. The separate
+`gate7pub-20260827-a` recovery maximum remains committed at USD 10 because observed
+billing is unavailable, leaving USD 60. The topology remains one bootstrap and four
+workers in `gru`, each with four performance vCPUs and 16 GB RAM. It is not CUDA
+evidence.
 
-The cost guard authorizes the recorded Fly reservation, and the focused Fly adapter,
-image-publication, multi-machine controller, and external-qualification suite passes
-87 tests. The exact source-bound Qwen image reproduces runtime manifest
-`sha256:39d94e44ca92ab2ebbaef54096ca67bafe12c99ec697b2100b8d2c6f7f72a8ae`, but two
-local Fly registry pushes were disconnected after exactly 3,601.7 seconds before a
-large layer could finish. No Machine was created. The USD 10 GCP recovery reservation
-covers one short-lived CPU-only Linux publisher with an 80 GB balanced disk and a
-four-hour DELETE backstop; it must be cleaned before the Fly topology begins. This
-does **not** pass Gate 7 yet: immutable publication, real selected-worker interruption,
-recovery, and exact cleanup evidence remain required.
+The bounded GCP publisher succeeded after two local registry transfers had timed out.
+[Attempt evidence](evidence/gate7-20260827-a-separate-machine-attempt.json) binds exact
+source `23a4078e17ed9d5ae6f31e7497bae69b83aecef6`, Qwen revision
+`15852e8c16360a2fea060d615a32b45270f8a8fc`, manifest
+`sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`,
+immutable image index `sha256:ce6f32a905040aa9069632abfe93d025746077790bde1c9c24bcc4f8d25a583b`,
+verified artifacts, SLSA provenance, and SPDX SBOM. The exact builder and boot disk
+are absent, the protected bootstrap remains running, and the isolated Fly app is
+empty.
+
+The published image measured 6,913,802,218 uncompressed bytes and its evidence-derived
+rootfs requirement was 9 GB. The first real Fly create then exposed the provider's
+current 8 GB hard rootfs limit before any Machine was created. The concrete fix uses
+the hash-pinned CPU Torch wheel, excludes CUDA and Triton payloads, records CPU-only
+image identity, and makes the evidence collector fail closed above 8 GB. Gate 7 is
+still open until a replacement immutable image fits, the five Machines execute the
+selected-worker interruption/recovery drill, and complete cleanup is proved.
 
 ## Gate 6 Gemma 4 E2B strict four-profile qualification
 

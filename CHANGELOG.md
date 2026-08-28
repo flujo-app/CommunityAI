@@ -66,7 +66,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   during atomic promotion while all other file errors and integrity failures remain closed.
 - Published the exact Qwen3.5 2B and Gemma 4 E2B qualification images as immutable GHCR
   indexes with verified Linux runtime manifests, SLSA provenance, SPDX SBOMs, bounded
-  layers, measured image sizes, and evidence-derived 9 GB and 13 GB Fly rootfs plans.
+  layers, and measured image sizes. A real Fly attempt later proved their 9 GB and 13 GB
+  rootfs plans exceed the provider's current 8 GB hard limit, so Fly recovery uses new
+  CPU-only images rather than silently treating those publication results as deployable.
+- Fly qualification images now install the exact hash-pinned CPU Torch wheel, exclude
+  CUDA and Triton payloads, assert CPU-only runtime identity in-image, and fail closed
+  when measured rootfs requirements exceed the provider's 8 GB limit.
 - Model qualification now treats exact Windows/Linux CPU/CUDA coverage as the strict
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
 - Qwen3.5 2B now passes that strict Windows/Linux CPU/CUDA matrix at one exact source,

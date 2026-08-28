@@ -39,12 +39,12 @@ GHCR_MAX_LAYER_BYTES = 10_000_000_000
 GIB = 1024**3
 MIN_FLY_ROOTFS_GB = 8
 FLY_ROOTFS_HEADROOM_GB = 2
-LIMITS_REVIEWED_ON = "2026-08-26"
+LIMITS_REVIEWED_ON = "2026-08-27"
 GHCR_LIMITS_SOURCE = (
     "https://docs.github.com/en/packages/working-with-a-github-packages-registry/"
     "working-with-the-container-registry#troubleshooting"
 )
-FLY_ROOTFS_SOURCE = "https://fly.io/docs/machines/flyctl/fly-machine-create/"
+FLY_ROOTFS_SOURCE = "https://fly.io/docs/getting-started/troubleshooting/#image-size-limit"
 OCI_SOURCE = "https://github.com/flujo-app/CommunityAI"
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _LAYER_MEDIA_TYPES = {
@@ -56,12 +56,12 @@ _CANDIDATE_LIMITS = {
     "qwen3.5-2b": {
         "maximum_compressed_bytes": 8_000_000_000,
         "maximum_uncompressed_bytes": 16 * GIB,
-        "maximum_rootfs_gb": 20,
+        "maximum_rootfs_gb": 8,
     },
     "gemma-4-e2b": {
         "maximum_compressed_bytes": 16_000_000_000,
         "maximum_uncompressed_bytes": 24 * GIB,
-        "maximum_rootfs_gb": 28,
+        "maximum_rootfs_gb": 8,
     },
 }
 _EXPECTED_REPOSITORIES = {
@@ -305,6 +305,7 @@ def _require_image_labels(image: Mapping[str, Any], contract: Mapping[str, Any])
         "org.opencontainers.image.source": OCI_SOURCE,
         "org.opencontainers.image.revision": contract["source_commit"],
         "communityai.qualification.candidate": contract["candidate"],
+        "communityai.qualification.device": "cpu",
         "communityai.qualification.manifest": contract["manifest_digest"],
         "communityai.qualification.artifact-bytes": str(contract["declared_artifact_bytes"]),
         "communityai.qualification.source-tree": contract["source_tree_digest"],

@@ -107,6 +107,7 @@ class EvidenceFixture:
                     "org.opencontainers.image.source": evidence.OCI_SOURCE,
                     "org.opencontainers.image.revision": SOURCE_COMMIT,
                     "communityai.qualification.candidate": candidate,
+                    "communityai.qualification.device": "cpu",
                     "communityai.qualification.manifest": self.contract["manifest_digest"],
                     "communityai.qualification.artifact-bytes": str(self.contract["declared_artifact_bytes"]),
                     "communityai.qualification.source-tree": self.contract["source_tree_digest"],
@@ -117,7 +118,7 @@ class EvidenceFixture:
         self.local = {
             "Architecture": "amd64",
             "Os": "linux",
-            "Size": 8_000_000_000,
+            "Size": 5_500_000_000,
             "RootFS": {
                 "Type": "layers",
                 "Layers": ["sha256:" + "8" * 64, "sha256:" + "9" * 64],
@@ -215,8 +216,8 @@ def test_collects_immutable_attested_bounded_publication_evidence(tmp_path):
     assert report["runtime_manifest_digest"] == fixture.runtime_digest
     assert report["attestation_manifest_digest"] == fixture.attestation_digest
     assert report["compressed_layer_bytes"] == 4_500_000_000
-    assert report["uncompressed_image_bytes"] == 8_000_000_000
-    assert report["required_fly_rootfs_gb"] == 10
+    assert report["uncompressed_image_bytes"] == 5_500_000_000
+    assert report["required_fly_rootfs_gb"] == 8
     assert report["provenance"] == "slsa"
     assert report["sbom"] == "spdx"
     assert report["image_built"] is True
@@ -362,7 +363,7 @@ def test_rejects_invalid_local_uncompressed_inspection(tmp_path, local_change, e
         _collect(tmp_path, fixture)
 
 
-def test_gemma_has_a_larger_but_still_bounded_rootfs_plan(tmp_path):
+def test_rejects_gemma_image_that_exceeds_fly_hard_rootfs_limit(tmp_path):
     fixture = EvidenceFixture(tmp_path, candidate="gemma-4-e2b")
     fixture.contract["declared_artifact_bytes"] = 10_278_818_149
     fixture.contract["contract_digest"] = image_contract._contract_digest(fixture.contract)
@@ -370,10 +371,8 @@ def test_gemma_has_a_larger_but_still_bounded_rootfs_plan(tmp_path):
     fixture.image["config"]["Labels"]["communityai.qualification.artifact-bytes"] = "10278818149"
     fixture.local["Size"] = 18 * evidence.GIB
 
-    report, _ = _collect(tmp_path, fixture)
-
-    assert report["required_fly_rootfs_gb"] == 20
-    assert report["limits"]["maximum_fly_rootfs_gb"] == 28
+    with pytest.raises(evidence.QualificationImageEvidenceError, match="bounded Fly rootfs plan"):
+        _collect(tmp_path, fixture)
 
 
 def test_accepts_explicitly_reviewed_credential_free_repository(tmp_path):
