@@ -32,6 +32,8 @@
     "disk_absence_proved": false,
     "protected_bootstrap_status_proved": false,
     "native_authentication": "interactive_reauthentication_required",
+    "last_read_only_recheck_at": "2026-08-28T20:29:14Z",
+    "last_read_only_recheck_result": "interactive_reauthentication_required",
     "result": "unproved"
   },
   "local_verification": {
