@@ -1003,7 +1003,7 @@ def provision(
                 private=True,
             )
             return state
-    except BaseException:
+    except BaseException as provisioning_error:
         cleanup_error: BaseException | None = None
         try:
             cleanup_run(
@@ -1016,8 +1016,13 @@ def provision(
         except BaseException as exc:
             cleanup_error = exc
         if cleanup_error is not None:
+            primary_detail = (
+                str(provisioning_error)
+                if isinstance(provisioning_error, AdapterError)
+                else "an internal provisioning operation failed"
+            )
             raise AdapterError(
-                "Fly provisioning failed and the outer cleanup trap could not prove cleanup"
+                f"Fly provisioning failed ({primary_detail}) and the outer cleanup trap could not prove cleanup"
             ) from cleanup_error
         raise
 

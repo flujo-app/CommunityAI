@@ -197,6 +197,21 @@ class RepeatedIdentityReader:
         return _peer("R")
 
 
+class ProvisionAndCleanupFailureAPI(FakeFlyAPI):
+    def __init__(self):
+        super().__init__()
+        self.list_calls = 0
+
+    def list_run_machines(self, run_id):
+        self.list_calls += 1
+        if self.list_calls > 1:
+            raise adapter.AdapterError("simulated cleanup list failure")
+        return []
+
+    def create_machine(self, payload):
+        raise adapter.AdapterError("simulated create failure")
+
+
 def _options(tmp_path, *, run_id="fly-qualification-a"):
     return adapter.ProvisionOptions(
         run_id=run_id,
@@ -344,6 +359,18 @@ def test_provision_outer_trap_cleans_ambiguous_partial_create(tmp_path):
     assert all(machine["state"] == "destroyed" for machine in api.machines.values())
     state = adapter.load_state(options.state_output, require_ready=False)
     assert state.status == "cleaned_after_failure"
+
+
+def test_provision_reports_sanitized_primary_error_when_cleanup_also_fails(tmp_path):
+    manifest = ModelManifest.load(CANDIDATES[0])
+    options = _options(tmp_path)
+    api = ProvisionAndCleanupFailureAPI()
+
+    with pytest.raises(
+        adapter.AdapterError,
+        match="simulated create failure.*outer cleanup trap could not prove cleanup",
+    ):
+        adapter.provision(manifest, options, api=api, identity_reader=FakeIdentityReader())
 
 
 def test_provision_outer_trap_reconciles_delayed_partial_create(tmp_path):
