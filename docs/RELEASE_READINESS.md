@@ -118,6 +118,7 @@ new epoch.
 | gate6-20260827-a | GCP | Gate 6 Gemma 4 E2B four-profile qualification; serial 48 GB CUDA recovery after a native Windows failover-load crash | USD 79.00 | — | [Passed qualification and cleanup proof](evidence/gate6-20260827-gemma-4-e2b-qualification.json): all four profile hosts/disks and the exact firewall, NATs, routers, subnets, addresses, and network are absent; global GPU and regional L4 usage are zero; protected bootstrap running. Historical maximum released by explicit owner reset on 2026-08-27; billing remains informational. | CLEANED-RELEASED |
 | gate7-20260827-a | FLY | Gate 7 Qwen3.5 2B CPU-only separate-machine recovery [source 23a4078e17ed9d5ae6f31e7497bae69b83aecef6] | USD 30.00 | — | Not provisioned | PLANNED |
 | gate7pub-20260827-a | GCP | Gate 7 exact Qwen CPU image publisher after repeat 3,601.7-second Fly registry disconnects; 80 GB disk, four-hour DELETE deadline, egress, and contingency | USD 10.00 | — | [Attempt and cleanup proof](evidence/gate7-20260827-a-separate-machine-attempt.json): exact builder and boot disk absent at 2026-08-28T01:24:30Z; protected bootstrap running. The maximum remains committed because observed billing is unavailable. | CLEANED |
+| gate7pub-20260828-b | GCP | Gate 7 exact CPU-only Qwen image republish from verified source `7570d94`; `e2-standard-4`, 80 GB balanced disk, four-hour DELETE deadline, egress, and contingency | USD 10.00 | — | Not provisioned | PLANNED |
 
 Owner-set accounting baseline on 2026-08-27: **USD 0 spent before `gatev-20260827-a`**.
 The removed USD 99 total was a sum of worst-case reservations, not observed provider spend.
@@ -130,8 +131,10 @@ so its maximum remains historical evidence but no longer consumes the new epoch.
 `gate7pub-20260827-a` maximum remains committed at USD 10 after its short-lived
 CPU-only GCP builder published the exact image and cleanup was proved; observed billing
 is still unavailable. The resulting 9 GB rootfs plan exceeded Fly's current 8 GB hard
-limit before any Machine was created. Together the cleaned unresolved builder maximum
-and the Fly reservation leave **USD 60**. The Fly reservation prices five
+limit before any Machine was created. Run `gate7pub-20260828-b` reserves a further
+USD 10 maximum for one short-lived CPU builder after the verified replacement image's
+local GHCR transfer stalled; it must be cleaned before Fly provisioning. The two builder
+maxima plus the Fly reservation leave **USD 50**. The Fly reservation prices five
 same-region CPU-only Machines at 4 performance vCPUs and 16 GB RAM each for a bounded
 run, with headroom for image startup, cleanup, and minor network/rootfs charges. The GCP
 reservation prices one 4-hour CPU builder, its 80 GB balanced disk, network egress,
