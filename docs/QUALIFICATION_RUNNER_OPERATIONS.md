@@ -165,7 +165,10 @@ registry request fails, stop before creating a paid builder.
 Use this checklist for every Fly private-registry stage or remote builder. These are
 protocol requirements, not optional troubleshooting:
 
-1. Give every temporary Fly token a unique name and bounded expiry. In flyctl 0.4.87,
+1. Give every temporary Fly token a unique name and bounded expiry that exceeds the
+   measured image bytes divided by the slowest observed upload rate, plus inspection and
+   cleanup headroom. The reviewed 4 GB Gate 7 push uses four hours; a one-hour token is
+   not sufficient when the observed upload is near 1 MB/s. In flyctl 0.4.87,
    `flyctl tokens deploy --json` returns only a `token` property; it does not return
    the token ID. After creation, run
    `flyctl tokens list --app <app> --scope app`, match the **exact unique name**, retain
