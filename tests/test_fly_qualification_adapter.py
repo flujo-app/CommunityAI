@@ -731,6 +731,25 @@ def test_fly_api_rejects_missing_or_malformed_auth_tokens(token):
         adapter.FlyAPI(app="qualification-app", token=token)
 
 
+def test_machine_wait_repeats_provider_bounded_timeouts_under_outer_deadline(monkeypatch):
+    api = adapter.FlyAPI(app="qualification-app", token="test-token")
+    calls = []
+
+    def request(method, suffix, *, payload=None, allow_not_found=False):
+        calls.append((method, suffix, allow_not_found))
+        if len(calls) == 1:
+            raise adapter.ProviderRequestTimeout("simulated HTTP 408")
+        return {}
+
+    monkeypatch.setattr(api, "_request", request)
+
+    api.wait_state("machine123", "started", timeout=600)
+
+    assert len(calls) == 2
+    assert all("timeout=600" not in suffix for _, suffix, _ in calls)
+    assert all("state=started" in suffix for _, suffix, _ in calls)
+
+
 def test_hard_kill_wait_is_bound_to_the_selected_machine_instance(monkeypatch):
     api = adapter.FlyAPI(app="qualification-app", token="test-token")
     calls = []
@@ -771,6 +790,28 @@ def test_hard_kill_wait_is_bound_to_the_selected_machine_instance(monkeypatch):
     wait_call = next(call for call in calls if "/wait?" in call[1])
     assert "state=stopped" in wait_call[1]
     assert "instance_id=instanceABC123" in wait_call[1]
+
+
+def test_api_classifies_provider_wait_timeout_without_exposing_body():
+    def opener(request, timeout):
+        raise adapter.urllib.error.HTTPError(
+            request.full_url,
+            408,
+            "provider wait body",
+            {},
+            None,
+        )
+
+    api = adapter.FlyAPI(
+        app="qualification-app",
+        token="test-token",
+        opener=opener,
+    )
+
+    with pytest.raises(adapter.ProviderRequestTimeout, match="HTTP 408") as captured:
+        api._request("GET", "/bounded-wait")
+
+    assert "provider wait body" not in str(captured.value)
 
 
 def test_api_errors_do_not_expose_token_endpoint_or_provider_body():

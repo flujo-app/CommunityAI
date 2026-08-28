@@ -41,6 +41,7 @@ DEFAULT_PORT = 31337
 MAX_PROVIDER_RESPONSE_BYTES = 1_000_000
 MAX_EXEC_OUTPUT_BYTES = 65_536
 CLEANUP_RECONCILIATION_CONFIRMATIONS = 3
+MAX_PROVIDER_WAIT_SECONDS = 60
 _LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _APP_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _REGION_RE = re.compile(r"^[a-z0-9]{3,12}$")
@@ -65,6 +66,10 @@ class AdapterError(ValueError):
 
 class ProviderNotFound(AdapterError):
     """A provider resource no longer exists."""
+
+
+class ProviderRequestTimeout(AdapterError):
+    """A bounded provider wait expired before the outer operation deadline."""
 
 
 @dataclass(frozen=True)
@@ -365,7 +370,8 @@ class FlyAPI:
         except urllib.error.HTTPError as exc:
             if allow_not_found and exc.code == 404:
                 return None
-            raise AdapterError(f"Fly Machines API {method} request returned HTTP {exc.code}") from exc
+            error_type = ProviderRequestTimeout if exc.code == 408 else AdapterError
+            raise error_type(f"Fly Machines API {method} request returned HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise AdapterError(f"Fly Machines API {method} request failed") from exc
         if len(body) > MAX_PROVIDER_RESPONSE_BYTES:
@@ -409,17 +415,29 @@ class FlyAPI:
     ) -> None:
         if state not in {"started", "stopped", "destroyed"}:
             raise AdapterError("unsupported Fly Machine wait state")
-        query_fields: dict[str, Any] = {"state": state, "timeout": timeout}
+        query_fields: dict[str, Any] = {"state": state}
         if state == "stopped":
             if instance_id is None:
                 raise AdapterError("Fly stopped-state wait requires the selected Machine instance ID")
             query_fields["instance_id"] = _require_provider_id(instance_id, "provider instance ID")
-        query = urllib.parse.urlencode(query_fields)
-        self._request(
-            "GET",
-            f"{self._machines_path(machine_id)}/wait?{query}",
-            allow_not_found=allow_not_found,
-        )
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AdapterError(f"Fly Machine did not reach the requested {state} state")
+            request_fields = dict(query_fields)
+            if remaining < MAX_PROVIDER_WAIT_SECONDS:
+                request_fields["timeout"] = max(1, int(remaining))
+            query = urllib.parse.urlencode(request_fields)
+            try:
+                self._request(
+                    "GET",
+                    f"{self._machines_path(machine_id)}/wait?{query}",
+                    allow_not_found=allow_not_found,
+                )
+                return
+            except ProviderRequestTimeout:
+                continue
 
     def get_machine(self, machine_id: str, *, allow_not_found: bool = False) -> Mapping[str, Any] | None:
         value = self._request("GET", self._machines_path(machine_id), allow_not_found=allow_not_found)
