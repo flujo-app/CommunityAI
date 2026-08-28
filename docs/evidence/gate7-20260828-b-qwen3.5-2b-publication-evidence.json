@@ -1,0 +1,116 @@
+{
+  "artifact_hashes_verified": true,
+  "attestation_manifest_digest": "sha256:0aeec8904800c98633d124d61ecaf536a9950842ed8ea5e8e088eb2e02bf65f8",
+  "attestation_manifest_size": 1112,
+  "candidate": "qwen3.5-2b",
+  "complete_release_qualification": false,
+  "compressed_layer_bytes": 4017668521,
+  "contract_digest": "sha256:39a4285e6667ff8ba8c6622c2e2b3d037946239c161ac258b65a403de99ac160",
+  "image_built": true,
+  "image_published": true,
+  "image_reference": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:1969b62ff7c5543d03677aa4a174dd2b0e453ea6b6ff0edcd0f1968b44b67b5f",
+  "image_tag": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b:source-7570d94a4bacefb80ec7aa2135d6d85c0c24275d",
+  "index_digest": "sha256:1969b62ff7c5543d03677aa4a174dd2b0e453ea6b6ff0edcd0f1968b44b67b5f",
+  "index_size": 857,
+  "layers": [
+    {
+      "compressed_size": 28232590,
+      "digest": "sha256:039e6f9f9752f74a3ff4a6a224f64c7c864da16ed98f882107704328f41b9c42",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 3520804,
+      "digest": "sha256:e8e392f3681c10ad9c2b19ab6614fd158f6d5a03e0f71694aea9429d38813dbd",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 13667988,
+      "digest": "sha256:8e0b0d5a4a0425bc991b95b78af125c6005a0a82a89011f076802a0265d8ff32",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 248,
+      "digest": "sha256:1634f3c69c84a41815c187086e80cf5fdec289c6ce620014ef3ca9b54c019279",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 24607104,
+      "digest": "sha256:cfc315ad6e77733d71c5d1199ac80aff4e4d60ec5d636aaaaf21508368f434fd",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 97,
+      "digest": "sha256:388c474bf48a0d8d22e5ed901f9be0b70703294ffca48b6f7bbd874d76d6b743",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 163224,
+      "digest": "sha256:e4cc22cb32c8ff3fa8684504e17e5b38dcc90ef13489c823cf489bf4b2abf74c",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 257549,
+      "digest": "sha256:71a5821539670ecd87279085565183b4b0522eca5f0cf0bd8059ba827f91da15",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 9759,
+      "digest": "sha256:c187b6f2543e1fcec62b0847c1348e3c1443506593075ca210616b27d7b75957",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 429978,
+      "digest": "sha256:0b862553da976343f8d5dc3a84ff7218cec886c81dafb5fa9a0934c3688a42b2",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 374027783,
+      "digest": "sha256:4707132989bfbdc389e6aab686480f71e0211b24dec567278ace985b3378c5ae",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 8758,
+      "digest": "sha256:0cd4a8b166bdc9f19f44fe0aaee18e765718eb4088e7957a704137fb078f5d87",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 1086,
+      "digest": "sha256:e1b9eae03ac5da7d3b326393b3d47285840108f25f829c51f7e562b8d421e27f",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 3572741463,
+      "digest": "sha256:61b2846085d0685f20e63a54ae24397e845383feacb5044ef5cabae46526cea1",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 90,
+      "digest": "sha256:d24ff1fbcbb5e1b4e28e291985ae79f2d06c0d8f534abb76221e9365196ed105",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    }
+  ],
+  "limits": {
+    "fly_rootfs_source": "https://fly.io/docs/getting-started/troubleshooting/#image-size-limit",
+    "ghcr_max_layer_bytes": 10000000000,
+    "ghcr_source": "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#troubleshooting",
+    "maximum_compressed_bytes": 8000000000,
+    "maximum_fly_rootfs_gb": 8,
+    "maximum_uncompressed_bytes": 17179869184,
+    "reviewed_on": "2026-08-27"
+  },
+  "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+  "model_repository": "Qwen/Qwen3.5-2B",
+  "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "platform": "linux/amd64",
+  "provenance": "slsa",
+  "qualification_evidence": true,
+  "required_fly_rootfs_gb": 8,
+  "result": "passed",
+  "runtime_manifest_digest": "sha256:cbdbb37657429223bc38695a78f6f80b81746a5aa0807b6b6ada495e7a5e2e62",
+  "runtime_manifest_size": 3152,
+  "sbom": "spdx",
+  "schema_version": 1,
+  "scope": "qualification-image-publication-evidence",
+  "source_commit": "7570d94a4bacefb80ec7aa2135d6d85c0c24275d",
+  "uncompressed_image_bytes": 4017687194
+}
