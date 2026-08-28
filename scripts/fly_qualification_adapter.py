@@ -305,7 +305,13 @@ class FlyAPI:
         opener: Callable[..., Any] = urllib.request.urlopen,
     ) -> None:
         self.app = _require_app(app)
-        if not token or len(token) > 8192 or any(character.isspace() or ord(character) < 32 for character in token):
+        opaque_token = bool(token) and not any(character.isspace() for character in token)
+        fly_v1_payload = token.removeprefix("FlyV1 ") if token.startswith("FlyV1 ") else ""
+        fly_v1_token = bool(fly_v1_payload) and not any(
+            character.isspace() for character in fly_v1_payload
+        )
+        has_control_character = any(ord(character) < 32 or ord(character) == 127 for character in token)
+        if len(token) > 8192 or has_control_character or not (opaque_token or fly_v1_token):
             raise AdapterError("Fly API authentication token is missing or invalid")
         if base_url != DEFAULT_API_BASE and not base_url.startswith("https://"):
             raise AdapterError("Fly Machines API base URL must use HTTPS")

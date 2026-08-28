@@ -678,6 +678,32 @@ def test_worker_entrypoint_rejects_full_range(monkeypatch):
         node.build_worker_args()
 
 
+def test_fly_api_accepts_current_deploy_token_shape():
+    token = "FlyV1 fm2_" + "a" * 128
+
+    api = adapter.FlyAPI(app="qualification-app", token=token)
+
+    assert api._token == token
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "",
+        " FlyV1 fm2_payload",
+        "FlyV1 ",
+        "FlyV1  fm2_payload",
+        "FlyV1\tfm2_payload",
+        "opaque token",
+        "opaque\ntoken",
+        "opaque\x7ftoken",
+    ],
+)
+def test_fly_api_rejects_missing_or_malformed_auth_tokens(token):
+    with pytest.raises(adapter.AdapterError, match="authentication token"):
+        adapter.FlyAPI(app="qualification-app", token=token)
+
+
 def test_hard_kill_wait_is_bound_to_the_selected_machine_instance(monkeypatch):
     api = adapter.FlyAPI(app="qualification-app", token="test-token")
     calls = []
