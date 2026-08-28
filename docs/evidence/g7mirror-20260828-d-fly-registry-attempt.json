@@ -28,13 +28,15 @@
     "result": "passed"
   },
   "gcp_cleanup": {
-    "instance_absence_proved": false,
-    "disk_absence_proved": false,
-    "protected_bootstrap_status_proved": false,
-    "native_authentication": "interactive_reauthentication_required",
+    "instance_absence_proved": true,
+    "disk_absence_proved": true,
+    "protected_bootstrap_status_proved": true,
+    "protected_bootstrap_status": "RUNNING",
+    "native_authentication": "passed",
     "last_read_only_recheck_at": "2026-08-28T20:29:14Z",
     "last_read_only_recheck_result": "interactive_reauthentication_required",
-    "result": "unproved"
+    "verified_at": "2026-08-28T20:57:38Z",
+    "result": "passed"
   },
   "local_verification": {
     "anonymous_exact_manifest_preflight": "passed",
@@ -45,6 +47,6 @@
     "result": "passed"
   },
   "complete_release_qualification": false,
-  "next_action": "Reauthenticate native gcloud, verify or exact-delete the run-named builder and disk, prove the protected bootstrap remains running, then reserve a new bounded retry and mirror with anonymous source access plus destination-only authentication.",
-  "result": "blocked"
+  "next_action": "Use the recorded bounded retry-e reservation to mirror with anonymous source access plus destination-only authentication, then validate the immutable destination index before provisioning.",
+  "result": "continued"
 }
