@@ -1,9 +1,9 @@
 # Qualification runner operations
 
-Status: repository-side host preparation, a fail-closed combined-cloud cost guard,
-and exact qualification-image input contracts are implemented. No image, Windows/Linux
-qualification fleet, four-profile candidate matrix, or separate-machine recovery result
-is claimed by this runbook.
+Status: both exact qualification images are published, and repository-side host
+preparation plus the fail-closed combined-cloud cost guard are implemented. No
+Windows/Linux four-profile candidate matrix or separate-machine recovery result is
+claimed by this runbook.
 
 This procedure prepares one dedicated repository-level GitHub Actions runner for
 exactly one qualification profile. Repeat it on separate hosts for
@@ -25,32 +25,50 @@ proof, and unresolved
 observed cost above an estimate counts at the higher amount. It never
 contacts a provider or prints provider responses.
 
-For the four-host GCP fleet, the 2026-08-26 on-demand price snapshot uses four
-`n1-highmem-8` VMs, two T4 GPUs, two 8-vCPU Windows licenses, and four 150 GiB
-standard persistent disks. The base is approximately USD 3.36/hour. A 14-hour
-lifecycle, 25 percent headroom, and USD 10 network/setup contingency produce USD
-68.83, rounded up to a **USD 69 maximum**. The pinned inputs come from Google's
+For the four-host GCP fleet, the 2026-08-26 on-demand price snapshot supports two
+reviewed CUDA shapes. The original uses four `n1-highmem-8` VMs, two attached T4s,
+and standard persistent disks: approximately USD 3.36/hour and USD 69 maximum for 14
+hours. The capacity fallback retains two N1 CPU hosts but uses two `g2-standard-8`
+hosts with included L4s and required balanced persistent disks: approximately USD
+3.45/hour and USD 69 maximum for 13.5 hours. Both include two 8-vCPU Windows licenses,
+25 percent headroom, USD 10 network/setup contingency, and one additional split-region
+NAT address-hour at USD 0.005. Fourteen hours of the G2/L4 shape rounds to USD 71 and
+cannot use the existing reservation. The pinned inputs come from Google's
 [current N1 resource rates](https://cloud.google.com/products/compute/resources/pricing),
-[T4 rates](https://cloud.google.com/products/compute/gpus-pricing), and
-[Windows/disk rates](https://cloud.google.com/compute/disks-image-pricing).
+[T4 rates](https://cloud.google.com/products/compute/gpus-pricing),
+[G2/L4 rates](https://cloud.google.com/products/compute/pricing/accelerator-optimized),
+and [Windows/disk rates](https://cloud.google.com/compute/disks-image-pricing).
 The guard fails after 2026-09-25 until those rates are reviewed and updated.
 
 Generate the exact plan from the source commit that will be dispatched:
 
 ```powershell
-$sourceCommit = git rev-parse HEAD
+$sourceCommit = "7660e33e03326e5b868f81cb95282460ba649d5f"
+$windowsImage = gcloud compute images describe-from-family windows-2022 `
+  --project windows-cloud --format="value(name)"
+$linuxImage = gcloud compute images describe-from-family ubuntu-2404-lts-amd64 `
+  --project ubuntu-os-cloud --format="value(name)"
 uv run --no-sync python scripts/qualification_cost_guard.py `
-  --run-id qual-20260826-a `
+  --run-id qual-20260826-b `
   --provider gcp `
   --workload gcp-qualification-fleet `
   --purpose "Four-host Windows/Linux qualification fleet" `
   --source-commit $sourceCommit `
   --project community-ai-506321 `
-  --zone us-central1-a `
-  --maximum-hours 14 `
+  --zone us-central1-b `
+  --cuda-fallback-zone us-east1-b `
+  --cuda-shape g2-l4 `
+  --windows-image $windowsImage `
+  --linux-image $linuxImage `
+  --maximum-hours 13.5 `
   --ledger docs/RELEASE_READINESS.md `
   --output qualification-cost-plan.json
 ```
+
+The image-family lookups above are provider preflight only: review their returned exact
+names before passing them into the provider-neutral guard. The emitted create commands
+use `--image`, never a mutable family, and the plan records post-create boot-disk source
+checks for all four instances.
 
 The first plan reports `provisioning_authorized=false` and supplies one exact
 `required_ledger_row`. Add that row to the ledger, commit it, and rerun the same
@@ -215,33 +233,43 @@ The GCP plan contains shell-free argument arrays for every create, cleanup, and
 cleanup-verification command. Its resolved resources are isolated from the existing
 bootstrap:
 
-- one run-labelled custom VPC, subnet, router, Cloud NAT, and IAP-only firewall rule;
-- four uniquely named `n1-highmem-8` hosts for `windows-cpu`, `windows-cuda`,
-  `linux-cpu`, and `linux-cuda`;
-- one T4 on each CUDA host, a private 150 GiB auto-delete boot disk per host, no
-  external VM address, and no VM service account or API scopes; and
+- one run-labelled custom VPC and IAP-only firewall rule;
+- one subnet/router/Cloud NAT stack per selected region, with disjoint exact CIDRs;
+- four uniquely named hosts for `windows-cpu`, `windows-cuda`, `linux-cpu`, and
+  `linux-cuda`; CPU hosts remain `n1-highmem-8`, while CUDA hosts are either N1 plus
+  T4 or `g2-standard-8` with included L4; the optional fallback places only
+  `linux-cuda` in its second region so each region needs one matching GPU quota slot;
+- exact immutable OS images, private 150 GiB auto-delete disks (`pd-balanced` for G2,
+  otherwise `pd-standard`), no external VM address, and no VM service account/scopes;
+- a provider-enforced `DELETE` action at the plan's reviewed hard deadline; and
 - only IAP-source TCP 22/3389 ingress. No inference or DHT port is opened.
 
-Before create, use native `gcloud` authentication and the plan's explicit project
-and zone to prove the account, project, images, `n1-highmem-8`, T4 availability,
-GPU/CPU/address quota, and all planned names. Prove separately that
-`communityai-bootstrap-1` is present and healthy; do not pass its name to any
-create, update, stop, or delete command. Provider responses and account details stay
-out of committed reports.
+Before create, use native `gcloud` authentication and the plan's explicit project and
+zones to prove the account, project, exact images, selected N1/T4 or G2/L4 machine
+shape, required disk type, regional GPU/CPU/address quota, and all planned names. After create, compare every boot
+disk `sourceImage` returned by `verify_create_commands` with the corresponding exact
+`expected_source_images` value before installing anything. Prove separately that
+`communityai-bootstrap-1` is present and healthy; do not pass its name to any create,
+update, stop, or delete command. Provider responses and account details stay out of
+committed reports.
 
-Execute the plan's `create_commands` in order and stop at the first failure. If any
-create command was attempted, immediately run every `cleanup_commands` entry in
-order even when setup, snapshot transfer, runner registration, preflight, or a
-workflow fails. The 14-hour maximum is a destruction deadline, not permission to
-leave idle hosts running.
+Execute the plan's `create_commands` in order and stop at the first failure. The
+plan creates the two scarce CUDA hosts before either CPU-only host, so provider stock
+failures are discovered before avoidable CPU runtime accrues. Quota and accelerator-type
+preflight do not guarantee zonal stock. If any create command was attempted, immediately
+run every `cleanup_commands` entry in order even when capacity, setup, snapshot transfer,
+runner registration, preflight, or a workflow fails. Preserve a bounded attempt report,
+then choose a newly preflighted placement and regenerate the exact plan before retrying.
+The plan's 14-hour T4 or 13.5-hour L4 maximum is a destruction deadline, not permission to leave idle hosts running.
 
 Prepare and register each host using the profile-specific procedure below, dispatch
 both exact public-alpha candidate matrices from the same source commit, and retain
 the bounded GitHub reports. Host readiness output is not qualification evidence.
 
 Cleanup succeeds only when every `verify_cleanup_commands` entry returns empty
-stdout after all four VMs/disks, the firewall, NAT, router, subnet, and VPC are
-deleted. If any output remains, mark the run failed, record the surviving exact
+stdout after all four VMs/disks, the firewall, every regional NAT/router/subnet stack,
+and the VPC are deleted. If any output remains, mark the run failed, record the
+surviving exact
 resource names privately, stop new provisioning, and recover them before proceeding.
 After proven cleanup, replace the unresolved ledger maximum with observed cost when
 billing is available; otherwise keep the USD 69 maximum reserved.
