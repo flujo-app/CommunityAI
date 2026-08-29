@@ -50,8 +50,77 @@ _PROVIDER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{5,127}$")
 _PEER_ID_RE = re.compile(r"^[A-Za-z0-9]{20,128}$")
 _REMOTE_PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]{1,511}$")
 _IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,511}$")
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _IDENTITY_MARKER = "COMMUNITYAI_QUALIFICATION_IDENTITY="
 _FLY_PRIVATE_NETWORK = ipaddress.ip_network("fdaa::/16")
+_GIB = 1024**3
+_MIN_FLY_ROOTFS_GB = 8
+_FLY_ROOTFS_HEADROOM_GB = 2
+_GHCR_MAX_LAYER_BYTES = 10_000_000_000
+_LAYER_MEDIA_TYPES = {
+    "application/vnd.oci.image.layer.v1.tar+gzip",
+    "application/vnd.oci.image.layer.v1.tar+zstd",
+    "application/vnd.docker.image.rootfs.diff.tar.gzip",
+}
+_CANDIDATE_LIMITS = {
+    "qwen3.5-2b": (8_000_000_000, 16 * _GIB, 20),
+    "gemma-4-e2b": (16_000_000_000, 24 * _GIB, 28),
+}
+_CANDIDATE_PUBLICATIONS = {
+    "qwen3.5-2b": (
+        "Qwen/Qwen3.5-2B",
+        "15852e8c16360a2fea060d615a32b45270f8a8fc",
+        "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b",
+    ),
+    "gemma-4-e2b": (
+        "google/gemma-4-E2B-it",
+        "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+        "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b",
+    ),
+}
+_PUBLICATION_EVIDENCE_KEYS = {
+    "schema_version",
+    "scope",
+    "result",
+    "candidate",
+    "source_commit",
+    "model_repository",
+    "model_revision",
+    "manifest_digest",
+    "contract_digest",
+    "image_tag",
+    "image_reference",
+    "runtime_image_reference",
+    "index_digest",
+    "index_size",
+    "runtime_manifest_digest",
+    "runtime_manifest_size",
+    "attestation_manifest_digest",
+    "attestation_manifest_size",
+    "platform",
+    "provenance",
+    "sbom",
+    "layers",
+    "compressed_layer_bytes",
+    "uncompressed_image_bytes",
+    "required_fly_rootfs_gb",
+    "limits",
+    "artifact_hashes_verified",
+    "image_built",
+    "image_published",
+    "qualification_evidence",
+    "complete_release_qualification",
+}
+_PUBLICATION_LIMIT_KEYS = {
+    "reviewed_on",
+    "ghcr_max_layer_bytes",
+    "maximum_compressed_bytes",
+    "maximum_uncompressed_bytes",
+    "maximum_fly_rootfs_gb",
+    "ghcr_source",
+    "fly_rootfs_source",
+}
 _RESOURCE_LAYOUT = (
     ("bootstrap-a", "bootstrap-a", "bootstrap", ()),
     ("worker-a", "host-a", "worker", None),
@@ -71,6 +140,12 @@ class ProviderNotFound(AdapterError):
 
 class ProviderRequestTimeout(AdapterError):
     """A bounded provider wait expired before the outer operation deadline."""
+
+
+@dataclass(frozen=True)
+class PublicationBinding:
+    image: str
+    rootfs_gb: int
 
 
 @dataclass(frozen=True)
@@ -132,7 +207,7 @@ class ProvisionOptions:
     cpu_kind: str
     cpus: int
     memory_mb: int
-    rootfs_size_gb: int
+    rootfs_gb: int
     machine_timeout: int
     identity_timeout: int
     state_output: Path
@@ -720,7 +795,7 @@ def _machine_payload(
                 "cpus": options.cpus,
                 "memory_mb": options.memory_mb,
             },
-            "rootfs": {"size_gb": options.rootfs_size_gb},
+            "rootfs": {"size_gb": options.rootfs_gb},
             "metadata": {
                 "communityai_qualification_run": options.run_id,
                 "communityai_qualification_resource": resource_id,
@@ -1142,11 +1217,140 @@ def _parse_regions(value: str | None, bootstrap_region: str) -> tuple[str, str, 
     return regions  # type: ignore[return-value]
 
 
-def _options_from_args(args: argparse.Namespace) -> ProvisionOptions:
+def _positive_integer(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise AdapterError(f"{field} must be a positive integer")
+    return value
+
+
+def load_publication_binding(path: Path, manifest: ModelManifest) -> PublicationBinding:
+    evidence = _read_bounded_json(path, "qualification image publication evidence")
+    if set(evidence) != _PUBLICATION_EVIDENCE_KEYS:
+        raise AdapterError("qualification image publication evidence schema is invalid")
+    candidate = evidence.get("candidate")
+    publication = _CANDIDATE_PUBLICATIONS.get(candidate) if isinstance(candidate, str) else None
+    source_commit = evidence.get("source_commit")
+    if (
+        evidence.get("schema_version") != 1
+        or evidence.get("scope") != "qualification-image-publication-evidence"
+        or evidence.get("result") != "passed"
+        or publication is None
+        or not isinstance(source_commit, str)
+        or not _SOURCE_COMMIT_RE.fullmatch(source_commit)
+        or evidence.get("platform") != "linux/amd64"
+        or evidence.get("provenance") != "slsa"
+        or evidence.get("sbom") != "spdx"
+        or evidence.get("artifact_hashes_verified") is not True
+        or evidence.get("image_built") is not True
+        or evidence.get("image_published") is not True
+        or evidence.get("qualification_evidence") is not True
+        or evidence.get("complete_release_qualification") is not False
+    ):
+        raise AdapterError("qualification image publication evidence result is invalid")
+
+    repository, revision, image_repository = publication
+    if (
+        evidence.get("model_repository") != repository
+        or evidence.get("model_revision") != revision
+        or manifest.source.repository != repository
+        or manifest.source.revision != revision
+        or evidence.get("manifest_digest") != manifest.digest_id
+    ):
+        raise AdapterError("qualification image publication evidence does not match the exact manifest")
+
+    index_digest = evidence.get("index_digest")
+    runtime_digest = evidence.get("runtime_manifest_digest")
+    contract_digest = evidence.get("contract_digest")
+    attestation_digest = evidence.get("attestation_manifest_digest")
+    if any(
+        not isinstance(value, str) or not _DIGEST_RE.fullmatch(value)
+        for value in (index_digest, runtime_digest, contract_digest, attestation_digest)
+    ):
+        raise AdapterError("qualification image publication evidence contains an invalid digest")
+    expected_tag = f"{image_repository}:source-{source_commit}"
+    expected_index = f"{image_repository}@{index_digest}"
+    expected_runtime = f"{image_repository}@{runtime_digest}"
+    if (
+        evidence.get("image_tag") != expected_tag
+        or evidence.get("image_reference") != expected_index
+        or evidence.get("runtime_image_reference") != expected_runtime
+    ):
+        raise AdapterError("qualification image publication references are not exactly bound")
+
+    for field in (
+        "index_size",
+        "runtime_manifest_size",
+        "attestation_manifest_size",
+        "compressed_layer_bytes",
+        "uncompressed_image_bytes",
+        "required_fly_rootfs_gb",
+    ):
+        _positive_integer(evidence.get(field), f"publication evidence {field}")
+
+    limits = evidence.get("limits")
+    if not isinstance(limits, dict) or set(limits) != _PUBLICATION_LIMIT_KEYS:
+        raise AdapterError("qualification image publication limits are invalid")
+    for field in (
+        "ghcr_max_layer_bytes",
+        "maximum_compressed_bytes",
+        "maximum_uncompressed_bytes",
+        "maximum_fly_rootfs_gb",
+    ):
+        _positive_integer(limits.get(field), f"publication limit {field}")
+    uncompressed_bytes = int(evidence["uncompressed_image_bytes"])
+    rootfs_gb = int(evidence["required_fly_rootfs_gb"])
+    expected_rootfs_gb = max(
+        _MIN_FLY_ROOTFS_GB,
+        (uncompressed_bytes + _GIB - 1) // _GIB + _FLY_ROOTFS_HEADROOM_GB,
+    )
+    if rootfs_gb != expected_rootfs_gb:
+        raise AdapterError("qualification image publication rootfs does not match its measured size")
+    expected_limits = _CANDIDATE_LIMITS[str(candidate)]
+    if (
+        not isinstance(limits.get("reviewed_on"), str)
+        or limits.get("ghcr_max_layer_bytes") != _GHCR_MAX_LAYER_BYTES
+        or limits.get("maximum_compressed_bytes") != expected_limits[0]
+        or limits.get("maximum_uncompressed_bytes") != expected_limits[1]
+        or limits.get("maximum_fly_rootfs_gb") != expected_limits[2]
+        or limits.get("ghcr_source")
+        != "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#troubleshooting"
+        or limits.get("fly_rootfs_source") != "https://fly.io/docs/machines/flyctl/fly-machine-create/"
+        or int(evidence["compressed_layer_bytes"]) > int(limits["maximum_compressed_bytes"])
+        or uncompressed_bytes > int(limits["maximum_uncompressed_bytes"])
+        or rootfs_gb < _MIN_FLY_ROOTFS_GB
+        or rootfs_gb > int(limits["maximum_fly_rootfs_gb"])
+        or int(limits["maximum_fly_rootfs_gb"]) > 32
+    ):
+        raise AdapterError("qualification image publication exceeds the reviewed limits")
+
+    layers = evidence.get("layers")
+    if not isinstance(layers, list) or not layers or len(layers) > 128:
+        raise AdapterError("qualification image publication layer inventory is invalid")
+    compressed_total = 0
+    for index, layer in enumerate(layers):
+        if not isinstance(layer, dict) or set(layer) != {"digest", "media_type", "compressed_size"}:
+            raise AdapterError(f"qualification image publication layer {index} is invalid")
+        digest = layer.get("digest")
+        media_type = layer.get("media_type")
+        size = _positive_integer(layer.get("compressed_size"), f"publication layer {index} size")
+        if (
+            not isinstance(digest, str)
+            or not _DIGEST_RE.fullmatch(digest)
+            or media_type not in _LAYER_MEDIA_TYPES
+            or size > _GHCR_MAX_LAYER_BYTES
+        ):
+            raise AdapterError(f"qualification image publication layer {index} exceeds its contract")
+        compressed_total += size
+    if compressed_total != evidence["compressed_layer_bytes"]:
+        raise AdapterError("qualification image publication compressed total does not match its layers")
+    return PublicationBinding(expected_runtime, rootfs_gb)
+
+
+def _options_from_args(args: argparse.Namespace, publication: PublicationBinding) -> ProvisionOptions:
     run_id = _require_label(args.run_id, "--run-id")
     app = _require_app(args.app)
-    if not _IMAGE_RE.fullmatch(args.image) or "://" in args.image:
-        raise AdapterError("--image must be a credential-free bounded container image reference")
+    if not _IMAGE_RE.fullmatch(publication.image) or "://" in publication.image:
+        raise AdapterError("publication evidence contains an invalid image reference")
     if not _REGION_RE.fullmatch(args.region):
         raise AdapterError("--region is invalid")
     for field in ("remote_node_script", "remote_manifest", "remote_cache_dir", "identity_path"):
@@ -1157,8 +1361,6 @@ def _options_from_args(args: argparse.Namespace) -> ProvisionOptions:
         raise AdapterError("--cpu-kind must be shared or performance")
     if not 1 <= args.cpus <= 64 or not 256 <= args.memory_mb <= 262144:
         raise AdapterError("Fly guest CPU or memory request is outside the adapter bounds")
-    if not 1 <= args.rootfs_size_gb <= 1024:
-        raise AdapterError("--rootfs-size-gb must be between 1 and 1024")
     if not 1 <= args.machine_timeout <= 600 or not 1 <= args.identity_timeout <= 600:
         raise AdapterError("Fly machine and identity timeouts must be between 1 and 600 seconds")
     if args.device != "cpu":
@@ -1166,7 +1368,7 @@ def _options_from_args(args: argparse.Namespace) -> ProvisionOptions:
     return ProvisionOptions(
         run_id=run_id,
         app=app,
-        image=args.image,
+        image=publication.image,
         bootstrap_region=args.region,
         worker_regions=_parse_regions(args.worker_regions, args.region),
         remote_node_script=args.remote_node_script,
@@ -1178,7 +1380,7 @@ def _options_from_args(args: argparse.Namespace) -> ProvisionOptions:
         cpu_kind=args.cpu_kind,
         cpus=args.cpus,
         memory_mb=args.memory_mb,
-        rootfs_size_gb=args.rootfs_size_gb,
+        rootfs_gb=publication.rootfs_gb,
         machine_timeout=args.machine_timeout,
         identity_timeout=args.identity_timeout,
         state_output=args.state_output,
@@ -1197,7 +1399,12 @@ def build_parser() -> argparse.ArgumentParser:
     provision_parser.add_argument("manifest", type=Path)
     provision_parser.add_argument("--run-id", required=True)
     provision_parser.add_argument("--app", required=True, help="Existing isolated Fly app")
-    provision_parser.add_argument("--image", required=True, help="Prebuilt exact-candidate qualification image")
+    provision_parser.add_argument(
+        "--image-evidence",
+        type=Path,
+        required=True,
+        help="Passed immutable publication evidence for the exact candidate image",
+    )
     provision_parser.add_argument("--region", required=True, help="Bootstrap region and default worker region")
     provision_parser.add_argument("--worker-regions", help="Exactly four comma-separated worker regions")
     provision_parser.add_argument(
@@ -1219,7 +1426,6 @@ def build_parser() -> argparse.ArgumentParser:
     provision_parser.add_argument("--cpu-kind", default="performance")
     provision_parser.add_argument("--cpus", type=int, default=4)
     provision_parser.add_argument("--memory-mb", type=int, default=16384)
-    provision_parser.add_argument("--rootfs-size-gb", type=int, default=8)
     provision_parser.add_argument("--machine-timeout", type=int, default=300)
     provision_parser.add_argument("--identity-timeout", type=int, default=120)
     provision_parser.add_argument("--flyctl", default=os.environ.get("COMMUNITYAI_FLYCTL", "flyctl"))
@@ -1238,8 +1444,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "provision":
-            options = _options_from_args(args)
             manifest = ModelManifest.load(args.manifest.expanduser().resolve())
+            publication = load_publication_binding(args.image_evidence.expanduser().resolve(), manifest)
+            options = _options_from_args(args, publication)
             api = FlyAPI.from_authentication(
                 options.app,
                 timeout=options.machine_timeout,

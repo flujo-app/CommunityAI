@@ -108,6 +108,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   under the same USD 69 ceiling.
 - Fly qualification now reuses the existing native `flyctl` login by default instead of
   requiring a manually supplied token environment variable.
+- Fly Machine provisioning now derives its immutable runtime manifest and measured rootfs
+  size from exact Gate 4 publication evidence, recomputes the rootfs requirement from the
+  measured uncompressed bytes, and rejects altered manifests, references, layers, sizing,
+  or ceilings before provider authentication or resource creation.
 - Model qualification dispatch no longer requires a persistent GitHub runner-inventory
   administration token.
 - Production desktop CI now packages the public alpha on Windows and Linux only; macOS

@@ -1002,11 +1002,24 @@ covers partial provisioning before controller preflight. The app is never delete
 adapter now reuses the existing `flyctl` login by default and keeps an explicit token only
 as an optional headless-CI override.
 
+On 2026-08-26, the adapter boundary was connected to Gate 4 publication evidence. The
+provision command no longer accepts a free-form image: before authentication or create it
+requires the exact report schema and candidate source/revision/manifest identity, derives
+the immutable runtime-manifest reference, rechecks the source-bound GHCR references,
+SLSA/SPDX result, layer digests/media/sizes and totals, measured uncompressed size, and
+hard-coded reviewed ceilings. It recomputes the exact rootfs requirement from the measured
+size before every bootstrap/worker payload receives that bounded `rootfs.size_gb`;
+modified limits, mismatched rootfs sizing or totals, unknown layer media, or an
+unrelated runtime fail before provider access. Repository-only tests cover both candidate
+bindings and confirm the measured rootfs is present on all five create payloads. No Fly
+resource was created and this does not pass either real recovery gate.
+
 The offline controller state-machine suite has 16 passing tests covering independence,
 coverage, complete matrix-host binding, selected replacement, acknowledgement freshness
 and exact schemas, token equality, clean post-recovery routing, client shutdown evidence,
 bounded input/output, cleanup after accepted preflight, redaction, and failure reporting.
-The provider suite adds 36 passing cases for both candidate block layouts, native-login
+The provider suite has 46 passing cases for both candidate block layouts, exact
+publication-report/runtime/rootfs binding, tamper and ceiling rejection, native-login
 authentication and bounded stdout/stderr separation, controller
 schema compatibility, unique provider resources, ambiguous partial-create and delayed
 visibility cleanup, selected hard-kill binding, complete cleanup, shell-free local argv
