@@ -1,0 +1,128 @@
+{
+  "artifact_hashes_verified": true,
+  "attestation_manifest_digest": "sha256:09f6ce467607149ffe85af62115d6b5446fce691c38800d61a2ba0a032e0fd62",
+  "attestation_manifest_size": 1112,
+  "candidate": "gemma-4-e2b",
+  "carrier_evidence_digest": "sha256:3d6f2eb8ddf50c4d42af9604017ccfb2cdf4bb99dc605967028692e7a8e5abbf",
+  "carrier_evidence_verified": true,
+  "carrier_index_reference": "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f",
+  "carrier_runtime_image": "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:406f94b7a53bcef847fb4ea04eae0036310a4b5f92e87beade6ec919629530f8",
+  "complete_release_qualification": false,
+  "compressed_layer_bytes": 11011554181,
+  "contract_digest": "sha256:b9f1d300c22782ccd1a0ace7f79386145a4c62d56751096089656aa0c887f3c7",
+  "cuda_version": "12.4",
+  "device": "cuda",
+  "dockerfile_digest": "sha256:04eb0c95af84412439d5d32ff29a0e88301beb3e3593839013f45cb3864ae89a",
+  "full_block_span": "0:35",
+  "health_state_path": "/run/communityai/health.json",
+  "image_built": true,
+  "image_published": true,
+  "image_reference": "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b@sha256:bfa183a7e2b7bb03cdc45dcd6bc14dfe4a02d2872813f7b466165470e076a796",
+  "image_tag": "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b:source-d2ea7dea5f3541b86293279b0a650bb46ab82583",
+  "index_digest": "sha256:bfa183a7e2b7bb03cdc45dcd6bc14dfe4a02d2872813f7b466165470e076a796",
+  "index_size": 857,
+  "layers": [
+    {
+      "compressed_size": 28232590,
+      "digest": "sha256:039e6f9f9752f74a3ff4a6a224f64c7c864da16ed98f882107704328f41b9c42",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 3520804,
+      "digest": "sha256:e8e392f3681c10ad9c2b19ab6614fd158f6d5a03e0f71694aea9429d38813dbd",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 13667988,
+      "digest": "sha256:8e0b0d5a4a0425bc991b95b78af125c6005a0a82a89011f076802a0265d8ff32",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 248,
+      "digest": "sha256:1634f3c69c84a41815c187086e80cf5fdec289c6ce620014ef3ca9b54c019279",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 24607088,
+      "digest": "sha256:f042764fd2109ef54e53a6df3cab4609211410499c8a4c11334b2a5bf7a6531d",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 99,
+      "digest": "sha256:21854c3d58794ed2f3f7fbe02666711377bbf2096f1ab9d177fd29c9427d655b",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 163437,
+      "digest": "sha256:53da9489537c08fd7437c5a8b0829f80d5898a535a5ee1e81b9ee327272f6d66",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 282502,
+      "digest": "sha256:e6d316b7a71532d3df86824ca83c8722baa2098b5a3c2014e27c0c292cb04560",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 17418,
+      "digest": "sha256:53a28ec1c45d2231412f9cd21c35fd5bdacb5fb9ab965fe36ebb927326c194b9",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 462719,
+      "digest": "sha256:b535753c3b2da723f7ee1b091a2b53fbd2779d3e6cc915f2b855f7e2b7dec8df",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 9296,
+      "digest": "sha256:ebdc4c139cc2ca4942877003f8266c408be8834fdc1a7d47dbe0bdd6bf7dc3fe",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 915,
+      "digest": "sha256:2fac3b36aac0c55088beef33b9d8b702119c6091fb76473f1de93145cd43c0ec",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 1838,
+      "digest": "sha256:7ca3e1e66a35a4b673d33d07ba896d39b4ae8677398029fee2d250a77c30fdf6",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 7670350290,
+      "digest": "sha256:605e01404e58364f9b5f18adcb1822bf99dce527779ae0ff2b922f50343cc971",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 3270236949,
+      "digest": "sha256:85da5ff462b085ba1fa1a11dadc9486c9d7bcdaa681d82b088e3f68ef2e2b14a",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    }
+  ],
+  "limits": {
+    "combined_route_disk_ceiling_bytes": 171798691840,
+    "ghcr_max_layer_bytes": 10000000000,
+    "maximum_compressed_bytes": 32000000000,
+    "maximum_uncompressed_bytes": 60129542144,
+    "planned_boot_disk_bytes": 214748364800
+  },
+  "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+  "model_repository": "google/gemma-4-E2B-it",
+  "model_revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+  "nonroot_uid": 65532,
+  "platform": "linux/amd64",
+  "provenance": "slsa-build-arguments-and-materials-verified",
+  "result": "passed",
+  "runtime_image_reference": "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b@sha256:b59f737e19db25513e3eb34d43d45ef5be5c287eb5184f5587d648dd491634b3",
+  "runtime_manifest_digest": "sha256:b59f737e19db25513e3eb34d43d45ef5be5c287eb5184f5587d648dd491634b3",
+  "runtime_manifest_size": 3155,
+  "sbom": "spdx-2.3-required-cuda-packages-verified",
+  "schema_version": 1,
+  "scope": "public-route-image-publication-evidence",
+  "source_commit": "d2ea7dea5f3541b86293279b0a650bb46ab82583",
+  "source_hashes_verified": true,
+  "source_tree_digest": "sha256:d21a32b4700ec97f5228be11df7ccd6f01942b3d92b5c4cd6c799a71882e84f2",
+  "torch_version": "2.6.0+cu124",
+  "training_rpcs": "disabled",
+  "uncompressed_image_bytes": 11011575237,
+  "uv_lock_digest": "sha256:26056576fdb25cbb2cffd13b928edd78625a3468e5e165c051f7c4c0a17fe0fd"
+}

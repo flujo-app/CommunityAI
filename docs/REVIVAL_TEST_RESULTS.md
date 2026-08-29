@@ -1541,11 +1541,57 @@ alone. No provider call, reservation, route, or cloud spend occurred in the life
 slice.
 
 The earlier USD 26 estimate was unreserved. After the three cleaned Gate 9 maxima,
-the live authorization epoch has only USD 16 remaining, so the lifecycle deliberately
-cannot regenerate a reservable plan. Gate 11 remains `IN PROGRESS`: retry the exact
-Qwen push from an adequate-bandwidth builder, publish and strictly collect Gemma, then
-obtain billing reconciliation or an explicit cleanup-backed owner reset before any USD
-26 reservation or provider creation.
+the live authorization epoch had only USD 16 remaining, so the lifecycle deliberately
+could not regenerate a reservable plan.
+
+## Gate 11 exact-source CUDA image publication
+
+On 2026-08-29, bounded publisher `gate11pub-20260829-a` used one source-bound
+`e2-standard-4` builder with a 200 GB balanced auto-delete boot disk and a six-hour
+provider DELETE deadline. It executed only the image contract's exact emitted Buildx
+arguments for source `d2ea7dea5f3541b86293279b0a650bb46ab82583`. No route or GPU
+resource was created.
+
+The strict [Qwen publication evidence](evidence/gate11pub-20260829-a-qwen3.5-2b-publication-evidence.json)
+passes at immutable index
+`sha256:a62d7100cf2179a362cf8973d3c397ccd216f11a05af9354bc44fd1250024764`
+and Linux runtime
+`sha256:dac280c6b13825a95e1df1944909ed80fd3f271bb82865ed8aae31ba7892cb35`.
+It verifies all declared artifacts, the exact carrier and committed source hashes,
+15 bounded layers, non-root CUDA 12.4 / Torch 2.6.0 configuration, the fixed full block
+span, SLSA build arguments and materials, and required SPDX 2.3 CUDA packages. The
+published runtime is 6,913,972,002 measured uncompressed bytes.
+
+The strict [Gemma publication evidence](evidence/gate11pub-20260829-a-gemma-4-e2b-publication-evidence.json)
+passes at immutable index
+`sha256:bfa183a7e2b7bb03cdc45dcd6bc14dfe4a02d2872813f7b466165470e076a796`
+and Linux runtime
+`sha256:b59f737e19db25513e3eb34d43d45ef5be5c287eb5184f5587d648dd491634b3`.
+It verifies the same fail-closed contract for Gemma's exact manifest, revision, carrier,
+full block span, and 15 bounded layers; the published runtime is 11,011,575,237 measured
+uncompressed bytes. The first immutable carrier pull received a GHCR 429. A bounded retry
+reused the unchanged exact build plan and published successfully. Strict collector retry
+two passed after one registry-command failure.
+
+Current BuildKit provenance emits a digest-only carrier purl without a redundant
+`@sha256:<digest>` version segment. Collector commit
+`3088f3c801733e73c88f1336e03075871da5980e` canonicalizes only that exact equivalent
+form; repository or digest drift still fails. Its evidence/contract focus passes 30 tests,
+and Black, isort, and diff checks pass. The Qwen and Gemma reports both have
+`result: passed`, exact source commit and tree identities, artifact/source/carrier
+verification, required attestations, and immutable runtime references.
+
+The [publication attempt record](evidence/gate11pub-20260829-a-publication-attempt.json)
+proves registry logout and absence of both root and operator credential files. Immediate
+exact-builder deletion was attempted after evidence capture, but the existing local GCP
+credential required interactive reauthentication and no application-default credential
+was available. The builder and auto-delete disk therefore remain `CLEANUP PENDING` under
+the six-hour provider DELETE backstop, conservatively estimated at
+2026-08-30T00:09:18Z. The USD 10 maximum remains fully committed and leaves USD 6; exact
+builder/disk absence and the protected bootstrap must be revalidated before this run is
+marked cleaned. Gate 11 remains `IN PROGRESS`, and the USD 26 route must not be reserved
+or created without cleanup proof plus billing reconciliation or an explicit cleanup-backed
+owner reset.
 
 ## Follow-up issues
 

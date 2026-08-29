@@ -47,10 +47,15 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   read-only primary/standby actions; enforces fresh health, inference, fallback,
   restoration, resource, restart, deadline, cleanup, and privacy boundaries; and always
   attempts exact teardown and absence verification. Recursive snapshot chmod was removed
-  from the CUDA image so large carrier layers do not copy up during build. The Qwen image
-  passes its complete local OCI, permission, provenance, and SBOM probe, but publication is
-  externally blocked by the current builder's upload rate; Gemma remains unpublished. The
-  USD 26 plan remains unreserved and cannot fit the current USD 16 ledger balance.
+  from the CUDA image so large carrier layers do not copy up during build. Exact-source
+  Qwen and Gemma CUDA route images are now published as immutable GHCR indexes and pass
+  strict artifact, source, carrier, Linux-runtime, non-root/config, layer-size, SLSA
+  provenance, and SPDX SBOM collection. The collector narrowly accepts BuildKit's equivalent
+  digest-only carrier purl while still rejecting repository or digest drift. Registry
+  credentials were removed after collection. Provider cleanup remains pending under the
+  builder's six-hour DELETE backstop because local GCP authentication required interactive
+  reauthentication; no route was created. The USD 26 route plan remains unreserved and
+  cannot fit the current USD 6 ledger balance.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
