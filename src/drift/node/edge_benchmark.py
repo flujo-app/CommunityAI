@@ -134,6 +134,21 @@ def _release_accelerator_caches(torch_module) -> None:
                 pass
 
 
+def _trim_native_heap() -> bool:
+    """Return unused glibc arenas to the OS after large Linux client teardown."""
+    if platform.system() != "Linux":
+        return False
+    try:
+        import ctypes
+
+        malloc_trim = getattr(ctypes.CDLL(None), "malloc_trim")
+        malloc_trim.argtypes = [ctypes.c_size_t]
+        malloc_trim.restype = ctypes.c_int
+        return bool(malloc_trim(0))
+    except (AttributeError, OSError):
+        return False
+
+
 class _ResourceSampler:
     """Sample the complete client process tree and accelerator allocations."""
 
@@ -240,6 +255,7 @@ def benchmark_client_runtime(
     cleanup_samples = 0
     cleanup_elapsed_seconds = 0.0
     cleanup_deadline_reached = False
+    native_heap_trimmed = False
     try:
         load_started = time.perf_counter()
         runtime = loader()
@@ -298,6 +314,7 @@ def benchmark_client_runtime(
                             "clean": False,
                             "error_type": type(exc).__name__,
                         }
+                native_heap_trimmed = _trim_native_heap() or native_heap_trimmed
                 post_close_rss, accelerator_post_close = sampler.sample()
                 post_close_child_process_ids = sampler.child_process_ids()
                 route_clean = (
@@ -323,6 +340,7 @@ def benchmark_client_runtime(
             cleanup_observer = None
             gc.collect()
             _release_accelerator_caches(torch)
+            native_heap_trimmed = _trim_native_heap() or native_heap_trimmed
             post_close_rss, accelerator_post_close = sampler.sample()
             post_close_child_process_ids = sampler.child_process_ids()
             sampler.close()
@@ -432,6 +450,7 @@ def benchmark_client_runtime(
                 "process_tree_rss_post_close_bytes": post_close_rss,
                 "process_tree_rss_post_close_delta_bytes": post_close_rss_delta,
                 "rss_tolerance_bytes": POST_CLOSE_RSS_TOLERANCE_BYTES,
+                "native_heap_trimmed": native_heap_trimmed,
                 "clean": memory_clean,
             },
             "accelerators": {

@@ -103,6 +103,31 @@ def test_edge_benchmark_reports_cache_memory_and_token_timing(tmp_path):
     assert result["cleanup"]["passed"] is True
 
 
+def test_edge_benchmark_trims_native_heap_during_cleanup(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    trim_calls = []
+    monkeypatch.setattr(
+        "drift.node.edge_benchmark._trim_native_heap",
+        lambda: trim_calls.append(True) or True,
+    )
+
+    result = benchmark_client_runtime(
+        manifest,
+        lambda: ModelRuntime(
+            _Model(),
+            _Tokenizer(),
+            close=lambda: None,
+            cleanup_health=lambda: {"observed": True, "clean": True},
+        ),
+        cache_dir=tmp_path / "cache",
+        max_new_tokens=2,
+    )
+
+    assert trim_calls
+    assert result["cleanup"]["memory"]["native_heap_trimmed"] is True
+    assert result["cleanup"]["passed"] is True
+
+
 def test_edge_benchmark_fails_closed_without_route_manager_cleanup_observation(tmp_path):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
 

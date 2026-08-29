@@ -56,6 +56,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   evidence. It releases local model tensors before its final sample, detects replacement
   child PIDs, permits only 16 MiB of RSS allocator jitter, and fails closed when cleanup
   is not proved.
+- Linux routes now default Hivemind/Torch tensor transport to file-descriptor-backed shared
+  memory, preventing a named shared-memory unlink race from aborting model startup. Explicit
+  operator overrides remain honored.
+- Edge benchmarking now asks glibc to return unused Linux heap arenas during its bounded
+  post-close stabilization window and records whether native heap trimming occurred, while
+  retaining the strict 16 MiB cleanup threshold.
 - Scoped the first alpha as a best-effort service with a minimum signed-catalog, exact-
   artifact, authenticated-peer, bounded-admission, local-resource-control, privacy, and
   disable-path safety floor. Production-SLO redundancy, independent threshold governance,
