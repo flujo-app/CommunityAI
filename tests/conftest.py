@@ -24,7 +24,19 @@ def event_loop():
     fails if the loop is closed, but works if the loop is only stopped).
     """
 
-    yield asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        # asyncio.run() clears the thread's current loop on Python 3.12. Some
+        # synchronous tests use it before a pytest-asyncio test requests this
+        # fixture, so restore an open loop instead of depending on test order.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    yield loop
 
 
 @pytest.fixture(autouse=True, scope="session")
