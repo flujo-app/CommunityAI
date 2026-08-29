@@ -348,9 +348,12 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
     manager.shutdown()
 
 
-@pytest.mark.parametrize("pause_while_waiting, expected_desired", [(False, True), (True, False)])
+@pytest.mark.parametrize(
+    "pause_while_waiting, publish_succeeds, expected_desired",
+    [(False, True, True), (True, True, False), (False, False, None)],
+)
 def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
-    monkeypatch, tmp_path, pause_while_waiting, expected_desired
+    monkeypatch, tmp_path, pause_while_waiting, publish_succeeds, expected_desired
 ):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
@@ -396,6 +399,13 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     }
     state.last_updated = time.monotonic()
 
+    publish_calls = []
+
+    def publish_intent(digest_id, source):
+        publish_calls.append((digest_id, source))
+        return publish_succeeds
+
+    monkeypatch.setattr(discovery, "publish_intent", publish_intent)
     registry = PlacementRegistry()
     supervisor = _build_worker_supervisor(
         config,
@@ -418,13 +428,28 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     service.reconcile_once()
 
     launch = supervisor.launches[0]
-    assert launch.model_id == manifest.name
-    assert launch.block_indices == "1:2"
-    assert launch.policy_admitted is True
     snapshot = supervisor.snapshot("automatic")
-    assert snapshot["desired_running"] is expected_desired
-    assert snapshot["operator_paused"] is pause_while_waiting
-    assert registry.snapshot()["automatic"].decision.manifest_digest == manifest.digest_id
+    assert len(publish_calls) == 1
+    assert publish_calls[0][0] == manifest.digest_id
+    published = publish_calls[0][1]
+    assert published["kind"] == "intent_lease"
+    assert published["payload"]["manifest_digest"] == manifest.digest
+    assert published["payload"]["start_block"] == 1
+    assert published["payload"]["end_block"] == 2
+    assert "private_path" not in published["payload"]["resource_claims"]
+    if publish_succeeds:
+        assert launch.model_id == manifest.name
+        assert launch.block_indices == "1:2"
+        assert launch.policy_admitted is True
+        assert snapshot["desired_running"] is expected_desired
+        assert snapshot["operator_paused"] is pause_while_waiting
+        assert registry.snapshot()["automatic"].decision.manifest_digest == manifest.digest_id
+    else:
+        assert launch.model_id == "auto"
+        assert launch.policy_admitted is False
+        assert "signed placement intent" in launch.policy_reason
+        assert snapshot["pid"] is None
+        assert registry.snapshot()["automatic"].decision is None
     service.close()
     supervisor.shutdown()
     manager.shutdown()

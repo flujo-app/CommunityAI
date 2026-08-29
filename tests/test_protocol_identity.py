@@ -173,13 +173,53 @@ def test_intent_lease_is_signed_bounded_and_replay_checked(tmp_path):
         manifest_digest=MANIFEST_DIGEST,
         start_block=2,
         end_block=6,
-        resource_claims={"vram_bytes": 8_000_000_000, "throughput": 4.5},
+        resource_claims={
+            "schema_version": 1,
+            "artifact_bytes": 8_000_000_000,
+            "block_count": 4,
+            "throughput_milli_rps": 4_500,
+        },
         issued_at=now,
         expires_at=now + 30,
         sequence=4,
         nonce="00112233445566778899aabbccddeeff",
     )
     assert verify_intent_lease(lease.to_dict(), expected_manifest_digest=MANIFEST_DIGEST, now=now).peer_id
+
+    with pytest.raises(ProtocolSecurityError, match="unknown fields"):
+        create_intent_lease(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            start_block=2,
+            end_block=6,
+            resource_claims={
+                "schema_version": 1,
+                "artifact_bytes": 8_000_000_000,
+                "block_count": 4,
+                "throughput_milli_rps": None,
+                "private_path": "forbidden",
+            },
+            issued_at=now,
+            expires_at=now + 30,
+            sequence=5,
+        )
+
+    with pytest.raises(ProtocolSecurityError, match="block_count"):
+        create_intent_lease(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            start_block=2,
+            end_block=6,
+            resource_claims={
+                "schema_version": 1,
+                "artifact_bytes": 8_000_000_000,
+                "block_count": 3,
+                "throughput_milli_rps": None,
+            },
+            issued_at=now,
+            expires_at=now + 30,
+            sequence=6,
+        )
 
     with pytest.raises(ProtocolSecurityError, match="different manifest"):
         verify_intent_lease(lease.to_dict(), expected_manifest_digest="b" * 64, now=now)

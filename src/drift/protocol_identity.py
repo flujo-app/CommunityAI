@@ -529,6 +529,30 @@ def verify_worker_announcement(
     return record
 
 
+INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION = 1
+
+
+def _validate_intent_resource_claims(value: Mapping[str, Any]) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ProtocolSecurityError("intent lease resource_claims must be an object")
+    fields = ("schema_version", "artifact_bytes", "block_count", "throughput_milli_rps")
+    _strict_fields(value, fields, name="intent lease resource_claims")
+    schema_version = _require_int(value["schema_version"], name="resource_claims.schema_version", minimum=1)
+    if schema_version != INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION:
+        raise ProtocolSecurityError(f"unsupported intent resource claims schema version {schema_version}")
+    artifact_bytes = _require_int(value["artifact_bytes"], name="resource_claims.artifact_bytes", minimum=0)
+    block_count = _require_int(value["block_count"], name="resource_claims.block_count", minimum=1)
+    throughput = value["throughput_milli_rps"]
+    if throughput is not None:
+        throughput = _require_int(throughput, name="resource_claims.throughput_milli_rps", minimum=1)
+    return {
+        "schema_version": schema_version,
+        "artifact_bytes": artifact_bytes,
+        "block_count": block_count,
+        "throughput_milli_rps": throughput,
+    }
+
+
 def create_intent_lease(
     identity: NodeIdentity,
     *,
@@ -545,12 +569,15 @@ def create_intent_lease(
     end_block = _require_int(end_block, name="end_block", minimum=1)
     if end_block <= start_block:
         raise ProtocolSecurityError("intent lease end_block must be greater than start_block")
+    normalized_claims = _validate_intent_resource_claims(resource_claims)
+    if normalized_claims["block_count"] != end_block - start_block:
+        raise ProtocolSecurityError("intent lease block_count does not match its block range")
     payload = {
         "peer_id": identity.peer_id.to_base58(),
         "manifest_digest": _require_digest(manifest_digest, name="manifest_digest"),
         "start_block": start_block,
         "end_block": end_block,
-        "resource_claims": _normalize_json(resource_claims, path="resource_claims"),
+        "resource_claims": normalized_claims,
         "issued_at_ms": int(issued_at * 1000),
         "expires_at_ms": int(expires_at * 1000),
         "sequence": _require_int(sequence, name="sequence", minimum=0),
@@ -591,8 +618,9 @@ def verify_intent_lease(
     end = _require_int(record.payload["end_block"], name="end_block", minimum=1)
     if end <= start:
         raise ProtocolSecurityError("intent lease end_block must be greater than start_block")
-    if not isinstance(record.payload["resource_claims"], Mapping):
-        raise ProtocolSecurityError("intent lease resource_claims must be an object")
+    resource_claims = _validate_intent_resource_claims(record.payload["resource_claims"])
+    if resource_claims["block_count"] != end - start:
+        raise ProtocolSecurityError("intent lease block_count does not match its block range")
     _require_text(record.payload["nonce"], name="nonce")
     _validate_lifetime(record.payload, now=now)
     if revocations is not None:

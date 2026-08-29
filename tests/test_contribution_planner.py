@@ -144,6 +144,37 @@ def test_planner_holds_assignment_until_residency_and_margin_are_met():
     assert planner.plan((qwen_weaker, gemma_needed), sharing_enabled=True, now=11).decision.model_id == "gemma"
 
 
+def test_planner_proposal_does_not_advance_hysteresis_before_commit():
+    planner = AutomaticContributionPlanner(
+        num_blocks=1,
+        jitter_seed="node-a",
+        minimum_residency_seconds=10,
+        cooldown_seconds=0,
+        switch_margin=0,
+    )
+    qwen_initial = _candidate(
+        "qwen",
+        digest="sha256:" + "1" * 64,
+        counts=(0,),
+        preferred=True,
+    )
+    gemma_initial = _candidate(
+        "gemma",
+        digest="sha256:" + "2" * 64,
+        counts=(1,),
+        priority=1,
+    )
+    initial = planner.propose((qwen_initial, gemma_initial), sharing_enabled=True, now=0)
+    assert initial.decision.model_id == "qwen"
+
+    qwen_weaker = _candidate("qwen", digest="sha256:" + "1" * 64, counts=(2,))
+    gemma_needed = _candidate("gemma", digest="sha256:" + "2" * 64, counts=(0,), priority=1)
+    assert planner.propose((qwen_weaker, gemma_needed), sharing_enabled=True, now=5).decision.model_id == "gemma"
+
+    planner.commit(initial, now=0)
+    assert planner.propose((qwen_weaker, gemma_needed), sharing_enabled=True, now=5).decision.model_id == "qwen"
+
+
 def test_disabled_sharing_preserves_fail_closed_status_and_registry_is_copying():
     planner = AutomaticContributionPlanner(num_blocks=1, jitter_seed="node-a")
     plan = planner.plan((), sharing_enabled=False, now=0)

@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Mapping
 
 import torch
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
+from hivemind.utils.timed_storage import get_dht_time
 
 import drift
 from drift.model_manifest import ManifestError, ModelManifest
@@ -39,6 +41,12 @@ from drift.node.worker_supervisor import (
     WorkerLaunch,
     WorkerSupervisor,
     WorkerSupervisorSettings,
+)
+from drift.protocol_identity import (
+    INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION,
+    NodeIdentity,
+    ProtocolSecurityError,
+    create_intent_lease,
 )
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
@@ -626,6 +634,59 @@ def _build_automatic_placement_service(
         )
         for worker in automatic_workers
     }
+    intent_ttl_seconds = 10 * 60
+    intent_refresh_seconds = 2 * 60
+    intent_identities = {}
+    intent_sequences = {}
+    intent_leases = {}
+
+    def publish_intent(worker_id, worker, decision) -> bool:
+        identity_path = str(worker.identity_path)
+        decision_key = (decision.manifest_digest, decision.block_indices, identity_path)
+        now = get_dht_time()
+        current_lease = intent_leases.get(worker_id)
+        if (
+            current_lease is not None
+            and current_lease["decision_key"] == decision_key
+            and current_lease["expires_at"] - now > intent_refresh_seconds
+        ):
+            return True
+        try:
+            identity_entry = intent_identities.get(worker_id)
+            if identity_entry is None or identity_entry[0] != identity_path:
+                identity = NodeIdentity.ensure(worker.identity_path)
+                intent_identities[worker_id] = (identity_path, identity)
+            else:
+                identity = identity_entry[1]
+            start_block, end_block = (int(value) for value in decision.block_indices.split(":"))
+            throughput = None if isinstance(worker.throughput, str) else max(1, round(worker.throughput * 1000))
+            sequence = max(intent_sequences.get(worker_id, 0) + 1, time.time_ns())
+            intent_sequences[worker_id] = sequence
+            expires_at = now + intent_ttl_seconds
+            record = create_intent_lease(
+                identity,
+                manifest_digest=decision.manifest_digest.removeprefix("sha256:"),
+                start_block=start_block,
+                end_block=end_block,
+                resource_claims={
+                    "schema_version": INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION,
+                    "artifact_bytes": decision.artifact_bytes,
+                    "block_count": end_block - start_block,
+                    "throughput_milli_rps": throughput,
+                },
+                issued_at=now,
+                expires_at=expires_at,
+                sequence=sequence,
+            )
+        except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
+            return False
+        if not discovery.publish_intent(decision.manifest_digest, record.to_dict()):
+            return False
+        intent_leases[worker_id] = {
+            "decision_key": decision_key,
+            "expires_at": expires_at,
+        }
+        return True
 
     def reconcile() -> None:
         current = config if config_path is None else NodeConfig.load(config_path)
@@ -633,6 +694,7 @@ def _build_automatic_placement_service(
         current_workers = {
             worker.worker_id.casefold(): worker for worker in current.workers if worker.model.casefold() == "auto"
         }
+        previous_plans = registry.snapshot()
         plans = {}
         for worker_id, planner in planners.items():
             worker = current_workers.get(worker_id)
@@ -645,10 +707,25 @@ def _build_automatic_placement_service(
                 worker,
                 token=token,
             )
-            plans[worker_id] = planner.plan(
+            proposal = planner.propose(
                 candidates,
                 sharing_enabled=current.contribution_policy.sharing_enabled,
             )
+            if proposal.decision is not None:
+                if not publish_intent(worker_id, worker, proposal.decision):
+                    previous = previous_plans.get(worker_id)
+                    plans[worker_id] = (
+                        previous
+                        if previous is not None and previous.decision is not None
+                        else PlacementPlan(
+                            None,
+                            "signed placement intent could not be published to a remote peer",
+                            proposal.evaluated_models,
+                        )
+                    )
+                    continue
+                planner.commit(proposal)
+            plans[worker_id] = proposal
         registry.replace(plans)
         settings = _prepare_worker_supervisor_settings(
             current,

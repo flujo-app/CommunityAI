@@ -163,7 +163,7 @@ class AutomaticContributionPlanner:
             "",
         )
 
-    def plan(
+    def propose(
         self,
         candidates: Sequence[PlacementCandidate],
         *,
@@ -203,18 +203,40 @@ class AutomaticContributionPlanner:
             elif best.manifest_digest != current.manifest_digest and best.score < current.score + self._switch_margin:
                 best = self._current
 
+        return PlacementPlan(best, best.reason, len(candidates))
+
+    def commit(self, plan: PlacementPlan, *, now: Optional[float] = None) -> PlacementPlan:
+        """Commit a proposal only after its external pre-download checks pass."""
+
+        decision = plan.decision
+        if decision is None:
+            return plan
+        now = self._clock() if now is None else now
         if self._current is None:
             self._assigned_at = now
-        elif best.manifest_digest != self._current.manifest_digest:
+        elif decision.manifest_digest != self._current.manifest_digest:
             self._assigned_at = now
             self._last_switch_at = now
-        elif best.block_indices != self._current.block_indices:
+        elif decision.block_indices != self._current.block_indices:
             # A range handoff uses the same residency/cooldown boundary as a model
             # migration. The service pauses the old child before replacing it.
             self._assigned_at = now
             self._last_switch_at = now
-        self._current = best
-        return PlacementPlan(best, best.reason, len(candidates))
+        self._current = decision
+        return plan
+
+    def plan(
+        self,
+        candidates: Sequence[PlacementCandidate],
+        *,
+        sharing_enabled: bool,
+        now: Optional[float] = None,
+    ) -> PlacementPlan:
+        now = self._clock() if now is None else now
+        return self.commit(
+            self.propose(candidates, sharing_enabled=sharing_enabled, now=now),
+            now=now,
+        )
 
 
 class AutomaticPlacementService:

@@ -20,7 +20,7 @@ from hivemind.p2p import PeerID
 from drift.data_structures import UID_DELIMITER
 from drift.model_manifest import ModelManifest
 from drift.node.route_health import module_infos_route_health
-from drift.protocol_identity import ReplayGuard, RevocationStore
+from drift.protocol_identity import ProtocolSecurityError, ReplayGuard, RevocationStore, verify_intent_lease
 from drift.utils.dht import get_remote_module_infos
 
 logger = logging.getLogger(__name__)
@@ -279,6 +279,7 @@ class ModelCoverageDiscovery:
             self._states[digest] = state
             self._groups.setdefault(target.initial_peers, []).append(state)
 
+        self._group_io_locks = {initial_peers: threading.Lock() for initial_peers in self._groups}
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -388,15 +389,16 @@ class ModelCoverageDiscovery:
                         for block_index in range(manifest.model.num_blocks)
                     ]
                     try:
-                        module_infos = self._lookup(
-                            dht,
-                            uids,
-                            manifest_digest=manifest.digest,
-                            manifest_execution_profile=manifest.runtime.to_dict(),
-                            revocations=state.revocations,
-                            replay_guard=state.replay_guard,
-                            latest=True,
-                        )
+                        with self._group_io_locks[initial_peers]:
+                            module_infos = self._lookup(
+                                dht,
+                                uids,
+                                manifest_digest=manifest.digest,
+                                manifest_execution_profile=manifest.runtime.to_dict(),
+                                revocations=state.revocations,
+                                replay_guard=state.replay_guard,
+                                latest=True,
+                            )
                         self._set_success(state, module_infos_route_health(module_infos))
                         any_success = True
                     except Exception as exc:
@@ -421,6 +423,44 @@ class ModelCoverageDiscovery:
                     self._shutdown_dht_once(dht)
                 except Exception:
                     logger.exception("Failed to close a coverage-discovery DHT")
+
+    def publish_intent(self, digest_id: str, source: Mapping[str, Any]) -> bool:
+        """Publish one verified, expiring intent to at least one remote DHT peer."""
+
+        state = self._states.get(digest_id)
+        if state is None:
+            raise KeyError(digest_id)
+        manifest = state.target.manifest
+        try:
+            record = verify_intent_lease(
+                source,
+                expected_manifest_digest=manifest.digest,
+                revocations=state.revocations,
+            )
+            expiration_time = record.payload["expires_at_ms"] / 1000
+            initial_peers = state.target.initial_peers
+            with self._lock:
+                dht = self._dhts.get(initial_peers)
+            if dht is None:
+                return False
+            with self._group_io_locks[initial_peers]:
+                with self._lock:
+                    if self._dhts.get(initial_peers) is not dht:
+                        return False
+                if not dht.is_alive():
+                    return False
+                return bool(
+                    dht.store(
+                        key=f"{manifest.dht_prefix}.intent-v1",
+                        subkey=record.key_id,
+                        value=record.to_dict(),
+                        expiration_time=expiration_time,
+                        exclude_self=True,
+                    )
+                )
+        except (ProtocolSecurityError, OSError, RuntimeError, TypeError, ValueError):
+            logger.warning("Could not publish a signed placement intent for %s", digest_id)
+            return False
 
     def close(self) -> None:
         with self._lock:

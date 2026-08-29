@@ -16,6 +16,7 @@ from drift.node.discovery import (
     PeerCache,
     _connected_peer_addresses,
 )
+from drift.protocol_identity import NodeIdentity, create_intent_lease
 
 PUBLIC_PEER = "/ip4/8.8.8.8/tcp/31337/p2p/Qm" + "A" * 44
 SECOND_PUBLIC_PEER = "/ip6/2606:4700:4700::1111/tcp/31337/p2p/Qm" + "B" * 44
@@ -38,6 +39,17 @@ class FakeDHT:
         self.shutdown_calls += 1
 
 
+class IntentFakeDHT(FakeDHT):
+    def __init__(self, *, store_result=True):
+        super().__init__()
+        self.store_result = store_result
+        self.store_calls = []
+
+    def store(self, **kwargs):
+        self.store_calls.append(kwargs)
+        return self.store_result
+
+
 class StrictFakeDHT(FakeDHT):
     def is_alive(self):
         # Mimic Hivemind's short shutdown race: process liveness may remain true
@@ -48,6 +60,63 @@ class StrictFakeDHT(FakeDHT):
         if self.shutdown_calls:
             raise OSError("handle is closed")
         self.shutdown_calls += 1
+
+
+def test_intent_publication_requires_a_remote_dht_store(tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    initial_peers = ("peer-one",)
+    dht = IntentFakeDHT()
+    discovery = ModelCoverageDiscovery([CoverageTarget(manifest, initial_peers)])
+    discovery._dhts[initial_peers] = dht
+    now = time.time()
+    identity = NodeIdentity.create(tmp_path / "intent.key")
+    record = create_intent_lease(
+        identity,
+        manifest_digest=manifest.digest,
+        start_block=1,
+        end_block=2,
+        resource_claims={
+            "schema_version": 1,
+            "artifact_bytes": 100,
+            "block_count": 1,
+            "throughput_milli_rps": None,
+        },
+        issued_at=now,
+        expires_at=now + 60,
+        sequence=1,
+    )
+
+    assert discovery.publish_intent(manifest.digest_id, record.to_dict()) is True
+    call = dht.store_calls[0]
+    assert call["key"] == f"{manifest.dht_prefix}.intent-v1"
+    assert call["subkey"] == record.key_id
+    assert call["exclude_self"] is True
+    assert call["expiration_time"] == record.payload["expires_at_ms"] / 1000
+    assert call["value"] == record.to_dict()
+
+    dht.store_result = False
+    record = create_intent_lease(
+        identity,
+        manifest_digest=manifest.digest,
+        start_block=2,
+        end_block=3,
+        resource_claims={
+            "schema_version": 1,
+            "artifact_bytes": 100,
+            "block_count": 1,
+            "throughput_milli_rps": None,
+        },
+        issued_at=now,
+        expires_at=now + 60,
+        sequence=2,
+    )
+    assert discovery.publish_intent(manifest.digest_id, record.to_dict()) is False
+
+    def unavailable_store(**kwargs):
+        raise RuntimeError("remote store unavailable")
+
+    dht.store = unavailable_store
+    assert discovery.publish_intent(manifest.digest_id, record.to_dict()) is False
 
 
 def test_peer_cache_retains_only_fresh_unique_public_peers(tmp_path):

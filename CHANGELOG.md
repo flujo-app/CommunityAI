@@ -41,7 +41,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   for fresh authenticated coverage, filters exact manifests through local policy and
   resource ceilings, targets a least-covered contiguous range with per-node jitter and
   migration hysteresis, launches under existing artifact-verifying supervision, reports
-  its decision, and preserves an explicit operator pause.
+  its decision, and preserves an explicit operator pause. Before a new or migrated worker
+  can enter the artifact path, it signs an expiring exact-manifest/range intent with a
+  fixed privacy-safe claim schema and requires acknowledgement from a remote DHT peer;
+  rejected or failed publication leaves a first worker stopped and retains an admitted
+  existing placement without advancing planner hysteresis.
 
 ### Changed
 
