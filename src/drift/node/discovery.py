@@ -43,6 +43,7 @@ _CACHE_SCOPE_RE = re.compile(r"^[0-9a-f]{64}$")
 _PEER_ADDRESS_RE = re.compile(r"^/(ip4|ip6)/([^/]+)/tcp/([1-9][0-9]{0,4})/p2p/([^/]{20,128})$")
 _KEY_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_ROUTE_DEMAND_RAW_RECORDS = 256
+_MAX_ROUTE_DEMAND_AUTHORITY_ROOTS = 32
 _MAX_ROUTE_DEMAND_NODES = 256
 _MAX_ROUTE_DEMAND_DEPTH = 8
 _MAX_ROUTE_DEMAND_STRING = 4096
@@ -303,6 +304,7 @@ class ModelCoverageDiscovery:
         lookup: Callable[..., Any] = get_remote_module_infos,
         peer_cache: Optional[PeerCache] = None,
         replay_history_dir: Optional[Path | str] = None,
+        route_demand_authority_roots: Sequence[str] = (),
         peer_snapshot: Callable[[Any], Sequence[str]] = _default_peer_snapshot,
     ) -> None:
         if update_period <= 0 or startup_timeout <= 0:
@@ -312,6 +314,19 @@ class ModelCoverageDiscovery:
         self._dht_factory = dht_factory
         self._lookup = lookup
         self._peer_cache = peer_cache
+        authority_roots = tuple(route_demand_authority_roots)
+        if authority_roots and not 2 <= len(authority_roots) <= _MAX_ROUTE_DEMAND_AUTHORITY_ROOTS:
+            raise ValueError(
+                "route demand authority roots must be empty or contain between 2 and "
+                f"{_MAX_ROUTE_DEMAND_AUTHORITY_ROOTS} keys"
+            )
+        if any(not isinstance(key_id, str) or _KEY_ID_RE.fullmatch(key_id) is None for key_id in authority_roots):
+            raise ValueError("route demand authority roots must be canonical sha256 identifiers")
+        if len(set(authority_roots)) != len(authority_roots):
+            raise ValueError("route demand authority roots must not contain duplicates")
+        if authority_roots != tuple(sorted(authority_roots)):
+            raise ValueError("route demand authority roots must be sorted by key id")
+        self._route_demand_authority_roots = frozenset(authority_roots)
         self._replay_history_dir = (
             None
             if replay_history_dir is None
@@ -395,6 +410,8 @@ class ModelCoverageDiscovery:
     def register_local_route_demand_key(self, key_id: str) -> None:
         if not isinstance(key_id, str) or _KEY_ID_RE.fullmatch(key_id) is None:
             raise ValueError("route demand key_id must be a canonical sha256 identifier")
+        if key_id not in self._route_demand_authority_roots:
+            raise ValueError("route demand key_id is not authorized by the signed catalog")
         with self._lock:
             self._local_route_demand_keys.add(key_id)
 
@@ -435,6 +452,8 @@ class ModelCoverageDiscovery:
         for subkey, wrapped in container.items():
             if len(seen) >= 32:
                 break
+            if subkey not in self._route_demand_authority_roots:
+                continue
             source = getattr(wrapped, "value", wrapped)
             try:
                 if not isinstance(source, Mapping) or source.get("key_id") != subkey:
@@ -610,6 +629,8 @@ class ModelCoverageDiscovery:
                 expected_manifest_digest=manifest.digest,
                 revocations=state.revocations,
             )
+            if record.key_id not in self._route_demand_authority_roots:
+                return False
             expiration_time = record.payload["expires_at_ms"] / 1000
             initial_peers = state.target.initial_peers
             with self._lock:

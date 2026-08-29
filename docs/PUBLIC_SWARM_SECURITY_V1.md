@@ -81,6 +81,27 @@ resource claims. The autonomous allocator is milestone 6 work, but it can only
 publish and consume these already-validated leases rather than inventing another
 identity format.
 
+### Route-demand observations
+
+`route_demand` also uses the signed envelope, with an exact manifest digest, strict
+coarse observation buckets, a 90-second maximum lifetime, and replay ordering. Identity
+signatures alone are not Sybil resistance: an attacker can create many valid RSA keys.
+Consumers therefore accept observations only from the 2–32 sorted RSA root fingerprints
+in the threshold-signed model catalog. Missing or empty roots disable remote demand;
+unlisted keys are ignored before they can consume a signer or replay-history slot.
+
+At least two distinct authorized roots must contribute. The lower median makes one high
+compromised observer unable to inflate a lower honest observation, and the planner's
+remote-demand contribution remains capped at two points. Local records are excluded.
+Only a separately provisioned `route-demand.key` matching a catalog root can publish;
+ordinary nodes neither generate that key nor need one to consume trusted observations.
+The catalog contains public fingerprints only, never observer private keys, operator
+names, addresses, prompts, outputs, request IDs, or per-request history. Key rotation
+requires a new signed catalog root list for now. A hot-edited root list disables both
+publication and consumption until restart so discovery cannot mix trust epochs. Operator
+independence, collusion, and catalog-signing-key compromise remain explicit governance
+and canary risks.
+
 ## Rotation and revocation
 
 An identity rotation contains one common payload naming the old/new key IDs and

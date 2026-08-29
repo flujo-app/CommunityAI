@@ -49,10 +49,15 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   now contribute exact-manifest demand, useful-throughput, and reliability through two
   bounded five-minute aggregate windows that retain no per-request history. Only strict
   quantized buckets reach placement. Closed windows with at least four completed routes may
-  be signed by a dedicated router identity and published to remote DHT peers with a 90-second
-  lifetime; consumers reject local, duplicate, stale, malformed, revoked, replayed, or
-  mismatched records, require two remote signers, and median at most 32 observations. Local
-  utility is capped at six points and signed remote utility at two, so their combined hint
+  be signed by a pre-provisioned router identity and published to remote DHT peers with a
+  90-second lifetime. The threshold-signed catalog now authorizes a sorted set of 2–32 RSA
+  observer roots; missing or empty roots disable remote demand, and startup never generates
+  an observer key. Consumers reject local, unlisted, duplicate, stale, malformed, revoked,
+  replayed, or mismatched records, require two authorized roots, and median at most 32
+  observations. Thirty valid attacker identities plus one authorized observer cannot meet
+  the threshold, while one high authorized observer cannot inflate a lower second vote.
+  A hot-edited root list disables publication and consumption until restart. Local utility
+  is capped at six points and signed remote utility at two, so their combined hint
   stays below the migration margin and cannot override coverage, policy, signed intent, or
   operator pause. The node now preserves verified replay-order watermarks across restarts in
   bounded, atomic, per-manifest journals. Only public identity/order metadata is retained;

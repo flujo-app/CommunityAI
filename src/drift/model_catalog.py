@@ -37,6 +37,7 @@ CATALOG_SIGNATURE_ALGORITHM = "ed25519"
 CATALOG_SIGNATURE_DOMAIN = b"communityai-model-catalog-v1\x00"
 MAX_CATALOG_LIFETIME_SECONDS = 180 * 24 * 60 * 60
 MAX_CATALOG_CLOCK_SKEW_SECONDS = 5 * 60
+MAX_ROUTE_DEMAND_AUTHORITY_ROOTS = 32
 
 _RUNG_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 
@@ -86,6 +87,21 @@ def _require_digest_id(value: Any, name: str) -> str:
     if len(digest) != 64 or digest.lower() != digest or any(char not in "0123456789abcdef" for char in digest):
         raise ModelCatalogError(f"{name} must be a sha256: digest identifier")
     return value
+
+
+def _require_route_demand_authority_roots(value: Any, name: str) -> Tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ModelCatalogError(f"{name} must be a JSON array")
+    if value and not 2 <= len(value) <= MAX_ROUTE_DEMAND_AUTHORITY_ROOTS:
+        raise ModelCatalogError(
+            f"{name} must be empty or contain between 2 and {MAX_ROUTE_DEMAND_AUTHORITY_ROOTS} keys"
+        )
+    roots = tuple(_require_digest_id(item, f"{name}[]") for item in value)
+    if len(set(roots)) != len(roots):
+        raise ModelCatalogError(f"{name} must not contain duplicates")
+    if roots != tuple(sorted(roots)):
+        raise ModelCatalogError(f"{name} must be sorted by key id")
+    return roots
 
 
 def _require_b64(value: Any, name: str) -> bytes:
@@ -474,12 +490,18 @@ class ModelCatalog:
     expires_at_ms: int
     rungs: Tuple[CatalogRung, ...]
     models: Tuple[CatalogModel, ...]
+    route_demand_authority_roots: Optional[Tuple[str, ...]] = None
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any]) -> "ModelCatalog":
         source = _require_mapping(source, "model catalog")
         fields = ("catalog_id", "sequence", "issued_at_ms", "expires_at_ms", "rungs", "models")
-        _strict_fields(source, "model catalog", required=fields)
+        _strict_fields(
+            source,
+            "model catalog",
+            required=fields,
+            optional=("route_demand_authority_roots",),
+        )
         rungs_value, models_value = source["rungs"], source["models"]
         if not isinstance(rungs_value, list) or not rungs_value:
             raise ModelCatalogError("model catalog rungs must be a non-empty array")
@@ -521,10 +543,17 @@ class ModelCatalog:
             expires_at_ms=expires_at_ms,
             rungs=rungs,
             models=models,
+            route_demand_authority_roots=(
+                None
+                if "route_demand_authority_roots" not in source
+                else _require_route_demand_authority_roots(
+                    source["route_demand_authority_roots"], "model catalog route_demand_authority_roots"
+                )
+            ),
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "catalog_id": self.catalog_id,
             "sequence": self.sequence,
             "issued_at_ms": self.issued_at_ms,
@@ -532,6 +561,9 @@ class ModelCatalog:
             "rungs": [rung.to_dict() for rung in self.rungs],
             "models": [model.to_dict() for model in self.models],
         }
+        if self.route_demand_authority_roots is not None:
+            result["route_demand_authority_roots"] = list(self.route_demand_authority_roots)
+        return result
 
     @property
     def canonical_json(self) -> str:

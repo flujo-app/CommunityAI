@@ -168,6 +168,7 @@ def _load_node_config(args: argparse.Namespace, *, persisted_config: NodeConfig 
             max_loaded_models=args.max_loaded_models,
             models=configured.models,
             auto_model_priority=configured.auto_model_priority,
+            route_demand_authority_roots=configured.route_demand_authority_roots,
             workers=configured.workers,
             contribution_policy=configured.contribution_policy,
             discovery_update_period=configured.discovery_update_period,
@@ -244,6 +245,7 @@ def _build_model_manager(
             startup_timeout=config.discovery_startup_timeout,
             peer_cache=peer_cache,
             replay_history_dir=replay_history_dir,
+            route_demand_authority_roots=config.route_demand_authority_roots,
         )
         manager.add_shutdown_callback(discovery.close)
         for model_config, manifest in configured_manifests:
@@ -622,15 +624,26 @@ def _build_worker_supervisor(
     )
 
 
-def _prepare_route_identity(discovery: ModelCoverageDiscovery, route_identity_path: Path | None) -> NodeIdentity | None:
-    if route_identity_path is None:
+def _prepare_route_identity(
+    discovery: ModelCoverageDiscovery,
+    route_identity_path: Path | None,
+    authority_roots: tuple[str, ...],
+) -> NodeIdentity | None:
+    if route_identity_path is None or not route_identity_path.is_file() or route_identity_path.is_symlink():
         return None
     try:
-        identity = NodeIdentity.ensure(route_identity_path)
+        identity = NodeIdentity.load(route_identity_path)
+        if identity.key_id not in authority_roots:
+            logger.warning(
+                "Signed route-demand publication is disabled because the local key is not catalog-authorized"
+            )
+            return None
         discovery.register_local_route_demand_key(identity.key_id)
         return identity
     except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError) as exc:
-        logger.warning("Signed remote demand is disabled because the router identity is unavailable: %s", exc)
+        logger.warning(
+            "Signed route-demand publication is disabled because the router identity is unavailable: %s", exc
+        )
         return None
 
 
@@ -663,7 +676,7 @@ def _build_automatic_placement_service(
     intent_identities = {}
     intent_sequences = {}
     intent_leases = {}
-    route_identity = _prepare_route_identity(discovery, route_identity_path)
+    route_identity = _prepare_route_identity(discovery, route_identity_path, config.route_demand_authority_roots)
     route_sequences = {}
     route_leases = {}
 
@@ -760,7 +773,8 @@ def _build_automatic_placement_service(
         }
         previous_plans = registry.snapshot()
         plans = {}
-        if current.contribution_policy.sharing_enabled:
+        route_demand_authorities_unchanged = current.route_demand_authority_roots == config.route_demand_authority_roots
+        if current.contribution_policy.sharing_enabled and route_demand_authorities_unchanged:
             for model_config in current.models:
                 publish_route_demand(ModelManifest.load(model_config.manifest_path))
         for worker_id, planner in planners.items():
@@ -774,7 +788,9 @@ def _build_automatic_placement_service(
                 worker,
                 token=token,
                 route_outcomes=route_outcomes,
-                allow_remote_route_demand=route_identity is not None,
+                allow_remote_route_demand=(
+                    route_demand_authorities_unchanged and bool(config.route_demand_authority_roots)
+                ),
             )
             proposal = planner.propose(
                 candidates,

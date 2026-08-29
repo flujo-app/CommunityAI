@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from drift.cli import run_node as run_node_module
 from drift.cli.run_node import (
     _build_automatic_placement_service,
     _build_model_manager,
@@ -69,6 +70,7 @@ def test_node_config_resolves_paths_relative_to_its_own_directory(tmp_path):
     assert config.discovery_update_period == 12
     assert config.discovery_startup_timeout == 4
     assert config.auto_model_priority == ()
+    assert config.route_demand_authority_roots == ()
     model = config.models[0]
     assert model.manifest_path == (tmp_path / "manifests/one.json").resolve()
     assert model.cache_dir == (tmp_path / "cache/one").resolve()
@@ -86,6 +88,21 @@ def test_node_config_accepts_a_unique_catalog_auto_priority(tmp_path):
     source["auto_model_priority"] = ["Standby Model", "standby model"]
     with pytest.raises(NodeConfigError, match="case-insensitive duplicates"):
         NodeConfig.from_dict(source, base_dir=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "roots, error",
+    [
+        (["sha256:" + "a" * 64], "between 2 and 32"),
+        (["sha256:INVALID", "sha256:" + "b" * 64], "canonical sha256"),
+        (["sha256:" + "a" * 64, "sha256:" + "a" * 64], "duplicates"),
+        (["sha256:" + "b" * 64, "sha256:" + "a" * 64], "sorted"),
+        ([f"sha256:{index:064x}" for index in range(33)], "between 2 and 32"),
+    ],
+)
+def test_node_config_route_demand_authority_roots_are_strict_and_bounded(tmp_path, roots, error):
+    with pytest.raises(NodeConfigError, match=error):
+        NodeConfig.from_dict(_config_dict(route_demand_authority_roots=roots), base_dir=tmp_path)
 
 
 def test_cached_peers_extend_runtime_config_without_mutating_persisted_config(tmp_path):
@@ -369,31 +386,35 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    route_identity = NodeIdentity.create(tmp_path / "route-demand.key")
+    second_authority = NodeIdentity.create(tmp_path / "second-route-demand.key")
+    authority_roots = tuple(sorted((route_identity.key_id, second_authority.key_id)))
     monkeypatch.setattr(
         "drift.cli.run_node.make_manifest_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
-    config = NodeConfig.from_dict(
-        _config_dict(
-            models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
-            auto_model_priority=[manifest.digest_id],
-            workers=[
-                {
-                    "id": "automatic",
-                    "model": "auto",
-                    "identity_path": "automatic.key",
-                    "num_blocks": 1,
-                    "enabled": True,
-                    "device": "cpu",
-                }
-            ],
-            contribution_policy={
-                "sharing_enabled": True,
-                "max_disk_space": "1GiB",
-            },
-        ),
-        base_dir=tmp_path,
+    config_source = _config_dict(
+        models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+        auto_model_priority=[manifest.digest_id],
+        route_demand_authority_roots=list(authority_roots),
+        workers=[
+            {
+                "id": "automatic",
+                "model": "auto",
+                "identity_path": "automatic.key",
+                "num_blocks": 1,
+                "enabled": True,
+                "device": "cpu",
+            }
+        ],
+        contribution_policy={
+            "sharing_enabled": True,
+            "max_disk_space": "1GiB",
+        },
     )
+    config_path = tmp_path / "node-config.json"
+    config_path.write_text(json.dumps(config_source), encoding="utf-8")
+    config = NodeConfig.load(config_path)
     manager, _, discovery = _build_model_manager(config, token=None)
     counts = [1] * manifest.model.num_blocks
     counts[1] = 0
@@ -457,12 +478,13 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         supervisor,
         registry,
         token=None,
-        config_path=None,
+        config_path=config_path,
         peer_cache=PeerCache(tmp_path / "peers.json"),
         route_outcomes=route_outcomes,
         route_identity_path=tmp_path / "route-demand.key",
     )
     router_key_id = NodeIdentity.load(tmp_path / "route-demand.key").key_id
+    assert router_key_id == route_identity.key_id
     assert router_key_id in discovery._local_route_demand_keys
     if pause_while_waiting:
         supervisor.pause_worker("automatic")
@@ -507,6 +529,22 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         assert "signed placement intent" in launch.policy_reason
         assert snapshot["pid"] is None
         assert registry.snapshot()["automatic"].decision is None
+
+    original_candidates = run_node_module._automatic_placement_candidates
+    remote_consumption = []
+
+    def capture_remote_consumption(*args, **kwargs):
+        remote_consumption.append(kwargs["allow_remote_route_demand"])
+        return original_candidates(*args, **kwargs)
+
+    monkeypatch.setattr(run_node_module, "_automatic_placement_candidates", capture_remote_consumption)
+    config_source["route_demand_authority_roots"] = ["sha256:" + "0" * 64, "sha256:" + "f" * 64]
+    config_path.write_text(json.dumps(config_source), encoding="utf-8")
+    demand_calls.clear()
+    service.reconcile_once()
+    assert demand_calls == []
+    assert remote_consumption == [False]
+
     service.close()
     supervisor.shutdown()
     manager.shutdown()
@@ -957,15 +995,35 @@ def test_accelerator_worker_requires_node_wide_vram_pool(monkeypatch, tmp_path):
     manager.shutdown()
 
 
-@pytest.mark.parametrize("error", [OSError("unwritable"), ProtocolSecurityError("corrupt")])
-def test_router_identity_failure_disables_only_remote_demand(monkeypatch, tmp_path, error):
+def test_router_identity_is_never_generated_and_must_match_a_catalog_authority(tmp_path):
     registered = []
 
     class Discovery:
         def register_local_route_demand_key(self, key_id):
             registered.append(key_id)
 
-    monkeypatch.setattr(NodeIdentity, "ensure", lambda path: (_ for _ in ()).throw(error))
+    path = tmp_path / "route-demand.key"
+    roots = ("sha256:" + "a" * 64, "sha256:" + "b" * 64)
+    assert _prepare_route_identity(Discovery(), path, roots) is None
+    assert not path.exists()
 
-    assert _prepare_route_identity(Discovery(), tmp_path / "route-demand.key") is None
+    NodeIdentity.create(path)
+    assert _prepare_route_identity(Discovery(), path, roots) is None
+    assert registered == []
+
+
+@pytest.mark.parametrize("error", [OSError("unwritable"), ProtocolSecurityError("corrupt")])
+def test_router_identity_failure_disables_only_publication(monkeypatch, tmp_path, error):
+    registered = []
+
+    class Discovery:
+        def register_local_route_demand_key(self, key_id):
+            registered.append(key_id)
+
+    path = tmp_path / "route-demand.key"
+    path.write_bytes(b"present")
+    monkeypatch.setattr(NodeIdentity, "load", lambda path: (_ for _ in ()).throw(error))
+
+    roots = ("sha256:" + "a" * 64, "sha256:" + "b" * 64)
+    assert _prepare_route_identity(Discovery(), path, roots) is None
     assert registered == []

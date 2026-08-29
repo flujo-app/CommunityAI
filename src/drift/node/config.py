@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from humanfriendly import parse_size
 
 NODE_CONFIG_SCHEMA_VERSION = 1
+MAX_ROUTE_DEMAND_AUTHORITY_ROOTS = 32
+_ROUTE_DEMAND_KEY_ID_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class NodeConfigError(ValueError):
@@ -81,6 +83,17 @@ def _require_model_list(value: Any, field: str) -> Tuple[str, ...]:
     normalized = [item.casefold() for item in result]
     if len(set(normalized)) != len(normalized):
         raise NodeConfigError(f"{field} must not contain case-insensitive duplicates")
+    return result
+
+
+def _require_route_demand_authority_roots(value: Any, field: str) -> Tuple[str, ...]:
+    result = _require_string_list(value, field)
+    if result and not 2 <= len(result) <= MAX_ROUTE_DEMAND_AUTHORITY_ROOTS:
+        raise NodeConfigError(f"{field} must be empty or contain between 2 and {MAX_ROUTE_DEMAND_AUTHORITY_ROOTS} keys")
+    if any(_ROUTE_DEMAND_KEY_ID_RE.fullmatch(item) is None for item in result):
+        raise NodeConfigError(f"{field} must contain only canonical sha256 key identifiers")
+    if result != tuple(sorted(result)):
+        raise NodeConfigError(f"{field} must be sorted by key id")
     return result
 
 
@@ -504,6 +517,7 @@ class NodeConfig:
     max_loaded_models: int
     models: Tuple[NodeModelConfig, ...]
     auto_model_priority: Tuple[str, ...] = ()
+    route_demand_authority_roots: Tuple[str, ...] = ()
     workers: Tuple[WorkerConfig, ...] = ()
     contribution_policy: ContributionPolicyConfig = ContributionPolicyConfig()
     discovery_update_period: float = 30.0
@@ -523,6 +537,7 @@ class NodeConfig:
                 "workers",
                 "contribution_policy",
                 "auto_model_priority",
+                "route_demand_authority_roots",
             ),
         )
         schema_version = _require_positive_int(source["schema_version"], "schema_version")
@@ -555,6 +570,9 @@ class NodeConfig:
             max_loaded_models=_require_positive_int(source.get("max_loaded_models", 1), "max_loaded_models"),
             models=models,
             auto_model_priority=_require_model_list(source.get("auto_model_priority", []), "auto_model_priority"),
+            route_demand_authority_roots=_require_route_demand_authority_roots(
+                source.get("route_demand_authority_roots", []), "route_demand_authority_roots"
+            ),
             workers=workers,
             contribution_policy=contribution_policy,
             discovery_update_period=_require_positive_number(

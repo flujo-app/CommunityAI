@@ -515,6 +515,7 @@ class CatalogBootstrapInstaller:
             "max_loaded_models": self.bootstrap.max_loaded_models,
             "models": models,
             "auto_model_priority": [model.manifest_digest for _, model in ranked_models],
+            "route_demand_authority_roots": list(catalog.route_demand_authority_roots or ()),
             "workers": [
                 {
                     "id": "automatic",

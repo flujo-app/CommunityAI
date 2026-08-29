@@ -371,9 +371,13 @@ def test_route_demand_publication_is_remote_only_and_uses_a_router_subkey(tmp_pa
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     initial_peers = ("peer-one",)
     dht = IntentFakeDHT()
-    discovery = ModelCoverageDiscovery([CoverageTarget(manifest, initial_peers)])
-    discovery._dhts[initial_peers] = dht
     identity = NodeIdentity.create(tmp_path / "router.key")
+    second_identity = NodeIdentity.create(tmp_path / "router-two.key")
+    authority_roots = tuple(sorted((identity.key_id, second_identity.key_id)))
+    discovery = ModelCoverageDiscovery(
+        [CoverageTarget(manifest, initial_peers)], route_demand_authority_roots=authority_roots
+    )
+    discovery._dhts[initial_peers] = dht
     now = time.time()
     record = _route_demand_record(identity, manifest, now=now, attempts=4, successes=2, sequence=1)
 
@@ -387,11 +391,14 @@ def test_route_demand_publication_is_remote_only_and_uses_a_router_subkey(tmp_pa
 
 def test_remote_route_demand_is_verified_deduplicated_and_thresholded(tmp_path):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
-    discovery = ModelCoverageDiscovery([CoverageTarget(manifest, ("peer-one",))])
-    state = discovery._states[manifest.digest_id]
     now = time.time()
     first_identity = NodeIdentity.create(tmp_path / "router-one.key")
     second_identity = NodeIdentity.create(tmp_path / "router-two.key")
+    authority_roots = tuple(sorted((first_identity.key_id, second_identity.key_id)))
+    discovery = ModelCoverageDiscovery(
+        [CoverageTarget(manifest, ("peer-one",))], route_demand_authority_roots=authority_roots
+    )
+    state = discovery._states[manifest.digest_id]
     first = _route_demand_record(first_identity, manifest, now=now, attempts=4, successes=2, sequence=1)
     second = _route_demand_record(second_identity, manifest, now=now, attempts=16, successes=8, sequence=1)
 
@@ -404,12 +411,24 @@ def test_remote_route_demand_is_verified_deduplicated_and_thresholded(tmp_path):
             assert latest is True
             return SimpleNamespace(value={name: SimpleNamespace(value=value) for name, value in self.values.items()})
 
-    crowded = {f"wrong-subkey-{index}": first.to_dict() for index in range(32)}
-    crowded[first.key_id] = first.to_dict()
-    crowded[second.key_id] = second.to_dict()
+    attacker_records = {}
+    for index in range(30):
+        attacker = NodeIdentity.create(tmp_path / f"attacker-{index}.key")
+        record = _route_demand_record(attacker, manifest, now=now, attempts=64, successes=64, sequence=1)
+        attacker_records[record.key_id] = record.to_dict()
+
+    one_authority = {**attacker_records, first.key_id: first.to_dict()}
+    assert discovery._read_remote_route_observations(state, RemoteDemandDHT(one_authority)) is None
+
+    crowded = {**attacker_records, first.key_id: first.to_dict(), second.key_id: second.to_dict()}
     aggregate = discovery._read_remote_route_observations(state, RemoteDemandDHT(crowded))
     assert aggregate["attempts_bucket"] == 4
     assert aggregate["successes_bucket"] == 2
+
+    disabled = ModelCoverageDiscovery([CoverageTarget(manifest, ("peer-one",))])
+    assert (
+        disabled._read_remote_route_observations(disabled._states[manifest.digest_id], RemoteDemandDHT(crowded)) is None
+    )
 
     deeply_nested = {}
     cursor = deeply_nested
@@ -432,7 +451,8 @@ def test_remote_route_demand_is_verified_deduplicated_and_thresholded(tmp_path):
 
     discovery._set_remote_route_observation(state, aggregate)
     state.remote_route_updated = time.monotonic() - 16
-    assert discovery.route_demand_snapshot(manifest.digest_id)["age_seconds_bucket"] == 45
+    expected_age = min(aggregate["window_seconds"], aggregate["age_seconds_bucket"] + 30)
+    assert discovery.route_demand_snapshot(manifest.digest_id)["age_seconds_bucket"] == expected_age
 
     discovery.register_local_route_demand_key(first_identity.key_id)
     assert (
@@ -462,7 +482,12 @@ def test_remote_route_demand_replay_order_survives_discovery_restart(tmp_path):
             assert latest is True
             return SimpleNamespace(value={name: SimpleNamespace(value=value) for name, value in self.values.items()})
 
-    discovery = ModelCoverageDiscovery([CoverageTarget(manifest, ("peer-one",))], replay_history_dir=replay_history_dir)
+    authority_roots = tuple(sorted((first_identity.key_id, second_identity.key_id)))
+    discovery = ModelCoverageDiscovery(
+        [CoverageTarget(manifest, ("peer-one",))],
+        replay_history_dir=replay_history_dir,
+        route_demand_authority_roots=authority_roots,
+    )
     state = discovery._states[manifest.digest_id]
     assert discovery._read_remote_route_observations(
         state, RemoteDemandDHT({first.key_id: first.to_dict(), second.key_id: second.to_dict()})
@@ -479,7 +504,11 @@ def test_remote_route_demand_replay_order_survives_discovery_restart(tmp_path):
         successes=2,
         sequence=999,
     )
-    restarted = ModelCoverageDiscovery([CoverageTarget(manifest, ("peer-one",))], replay_history_dir=replay_history_dir)
+    restarted = ModelCoverageDiscovery(
+        [CoverageTarget(manifest, ("peer-one",))],
+        replay_history_dir=replay_history_dir,
+        route_demand_authority_roots=authority_roots,
+    )
     restarted_state = restarted._states[manifest.digest_id]
     assert (
         restarted._read_remote_route_observations(

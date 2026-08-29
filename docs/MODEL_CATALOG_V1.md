@@ -119,7 +119,8 @@ signed envelope covers a strict canonical JSON payload with:
 - `catalog_id`, monotonically increasing `sequence`, issue time, and expiry;
 - ordered promotion rungs and their complete safety/SLO policy; and
 - exact `sha256:` manifest digests, HTTPS manifest mirrors, rung and primary/standby
-  role, total and active parameter counts, and manifested weight bytes.
+  role, total and active parameter counts, and manifested weight bytes; and
+- an optional sorted, bounded set of RSA route-demand authority root key IDs.
 
 Unknown fields, duplicate JSON keys, duplicate model digests, duplicate signatures,
 untrusted signers, malformed keys, non-canonical base64, invalid signatures,
@@ -130,6 +131,31 @@ A persistent rollback guard stores the highest accepted sequence and its payload
 digest for each catalog. It rejects an older sequence and rejects a different payload
 signed at an already accepted sequence. The state is updated only after the catalog's
 schema, time, trust root, and threshold signatures have passed.
+
+### Route-demand authority roots
+
+`route_demand_authority_roots` binds the online route observers to the same offline,
+threshold-signed catalog decision as the approved manifests. The optional field is
+strictly sorted and duplicate-free. It is either empty, which disables remote demand,
+or contains between 2 and 32 canonical `sha256:` fingerprints of RSA public keys.
+Omitting it preserves the canonical bytes and safe disabled behavior of earlier signed
+catalogs.
+
+An accepted catalog installer copies the exact list into the node configuration.
+Discovery discards every unlisted DHT subkey before signature and replay processing,
+then requires two distinct listed roots and uses the conservative lower median. A
+single listed observer can suppress its own vote but cannot inflate a lower honest
+observation; any number of newly generated keys contributes no vote. The remote
+placement influence remains capped below migration and coverage margins.
+
+Observer private keys are online operational credentials, never catalog signing keys or
+release assets. A node may consume trusted observations without possessing one. It
+publishes only when `route-demand.key` was separately pre-provisioned and its public
+fingerprint is listed; node startup never creates that key. Rotation requires a new
+threshold-signed catalog list in this first slice. Only public fingerprints are added,
+not operator names, network addresses, prompts, request identifiers, or route contents.
+Real-world operator independence, collusion, and catalog-key compromise remain governance
+and canary risks rather than properties inferred from distinct keys.
 
 Trust-root rotation is deliberately not smuggled into catalog v1. A later root-update
 format must prove old-to-new authorization, expiry and rollback behavior before the
