@@ -97,7 +97,7 @@ RUN test -n "${SOURCE_COMMIT}" \
       --carrier-index-digest "${CARRIER_INDEX_DIGEST}" \
       --carrier-runtime-digest "${CARRIER_RUNTIME_DIGEST}" \
     && python -c 'from importlib.metadata import version; from drift import __version__; raise SystemExit(0 if __version__ == version("drift") else 1)' \
-    && python -c 'import torch; arches=torch.cuda.get_arch_list(); raise SystemExit(0 if torch.__version__ == "2.6.0+cu124" and torch.version.cuda == "12.4" and "sm_86" in arches and "sm_90" in arches else 1)' \
+    && python -c 'import torch; arches=(torch._C._cuda_getArchFlags() or "").split(); raise SystemExit(0 if torch.__version__ == "2.6.0+cu124" and torch.version.cuda == "12.4" and "sm_86" in arches and "sm_90" in arches else 1)' \
     && apt-get purge --auto-remove --yes build-essential \
     && chmod -R a+rX,a-w /cache/model \
     && rm -rf /var/lib/apt/lists/* /public-route-source /workspace/public-route/image-contract.json /workspace/public-route/carrier-evidence.json \

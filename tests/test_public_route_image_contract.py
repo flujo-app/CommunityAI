@@ -13,6 +13,14 @@ QWEN_EVIDENCE = REPOSITORY_ROOT / "docs" / "evidence" / "gate4-20260826-b-qwen3.
 GEMMA_EVIDENCE = REPOSITORY_ROOT / "docs" / "evidence" / "gate4-20260826-b-gemma-4-e2b-publication-evidence.json"
 
 
+def test_cuda_arch_contract_reads_compile_time_flags_without_a_runtime_gpu():
+    dockerfile = (REPOSITORY_ROOT / contract.DOCKERFILE).read_text(encoding="utf-8")
+
+    assert "torch._C._cuda_getArchFlags()" in dockerfile
+    assert "torch.cuda.get_arch_list()" not in dockerfile
+    assert '"sm_86" in arches and "sm_90" in arches' in dockerfile
+
+
 @pytest.fixture(autouse=True)
 def _stub_committed_archive(monkeypatch):
     def archive(repository_root, source_commit, repository_commit, candidate):
