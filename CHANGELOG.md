@@ -26,6 +26,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - A fail-closed combined GCP/Fly qualification cost guard with a conservative USD 69
   G2/L4 four-profile plan, one-host-at-a-time CUDA-safe phases, checksum-pinned GPU and
   Windows SSH bootstrap, named NAT addresses, and exact isolated cleanup verification.
+- A finite Gate 11 public-route plan now binds one isolated G2/L4 host to the
+  immutable qualified Qwen primary and Gemma standby image/manifests, their publication
+  evidence, public ports, aggregate health, primary-disable/standby-fallback/restoration
+  checks, honest co-location/unavailable behavior, a 14-hour automatic deletion boundary,
+  and exact run-scoped cleanup. Its conservative USD 26 maximum is computed against the
+  combined ledger; plan generation never calls a provider and cannot authorize creation
+  until an exact ledger row is recorded and revalidated.
 - Exact-snapshot qualification image preparation with commit-derived tracked-only source
   contexts, exact candidate-manifest binding, digest-pinned base images, bounded
   source-bound tags, credential-free offline runtime inputs, provenance/SBOM push plans,

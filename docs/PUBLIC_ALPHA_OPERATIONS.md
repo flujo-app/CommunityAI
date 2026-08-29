@@ -1,6 +1,6 @@
 # Public alpha operations runbook
 
-Status: repository contract implemented; real monitored rollout has not run.
+Status: finite Gate 11 operating contract implemented; real monitored rollout has not run.
 
 This runbook is for the Windows/Linux public inference alpha. It does not authorize
 a deployment by itself and it does not replace the release gates in
@@ -14,17 +14,50 @@ Do not expose a public model worker until all of these are true:
    digest accepted by the release tracker;
 2. its signed identity and revocation inputs are backed up and the announcement is
    bound to the exact manifest;
-3. at least two complete public routes exist, the largest-worker-loss drill has
-   passed, and discovery/catalog rollback is available;
-4. the packaged Windows/Linux contribution policy is enabled deliberately, every
-   local resource limit is admitted, and pause has been exercised;
+3. the exact run has a finite, ledger-bound provider plan with a hard deletion
+   deadline, failure cleanup, and honest degraded/unavailable behavior;
+4. manifested-worker admission, aggregate health, training-off defaults, and the
+   affected worker's independent disable path are enabled and observable;
 5. the operator has a last-known-good immutable artifact and can stop the worker
    without depending on the public swarm; and
 6. any paid rollout fits the combined cloud ledger before provisioning.
 
+The alpha's Qwen primary and Gemma standby may share one bounded host. That is fallback
+coverage, not independent redundancy: host loss removes both routes and must be shown as
+unavailable. Independent routes and largest-worker-loss availability are post-alpha.
+The later packaged contribution gate still must prove user policy and pause controls on
+real Windows/Linux hardware; it is not a prerequisite for operating these provider-owned
+initial routes.
+
 Never use the existing discovery peer `communityai-bootstrap-1` as a test cleanup
 target. Never place prompts, credentials, private endpoints, provider output, or raw
 peer/session identifiers in an incident report.
+
+## Gate 11 finite route contract
+
+Generate a `gcp-public-route` authorization with
+`scripts/qualification_cost_guard.py` before provisioning. The schema-v2 plan binds:
+
+- one `g2-standard-8`/L4 host, a 200 GiB balanced disk, an instance-lifetime ephemeral public IPv4,
+  isolated network/subnet/firewalls, public TCP 31337-31338, and a maximum 14-hour
+  `DELETE` deadline;
+- immutable qualified Qwen3.5 2B primary and Gemma 4 E2B standby image and manifest
+  digests, plus the digests of their publication evidence;
+- a 60-minute startup boundary, five-minute privacy-safe health sampling, exact
+  primary and standby inference, Qwen-disable/Gemma-fallback/restoration evidence,
+  and explicit stop conditions; and
+- exact reverse-order cleanup and empty-output absence checks scoped only to the run.
+  Partial creation or any stop condition requires immediate cleanup. A successful
+  observation may retain the exact resources only through the plan deadline; renewal
+  or baseline transition needs another exact authorization.
+
+Before the first provider call, re-run the cost guard against the ledger row and require
+`provisioning_authorized=true`; revalidate native `gcloud` and `gh` authentication,
+one unused global/zonal L4 slot, exact machine availability, OS image state, both
+publication-evidence files and GHCR digests, and protected-bootstrap presence. The cost
+guard is intentionally provider-call-free and does not itself attest the evidence files.
+Do not run its emitted create commands until a lifecycle runner enforces those preflight,
+startup, health, fallback, stop, and cleanup phases.
 
 ## Manifest-mode admission defaults
 

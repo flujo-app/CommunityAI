@@ -80,6 +80,46 @@ command. Only the matching `PLANNED` run ID, provider, workload, purpose/source 
 provider-plan digest, and maximum changes the cost authorization to true. Provider authentication, target
 availability, quota, and absence checks remain mandatory even after cost authorization.
 
+Gate 11's initial routes use the separate `gcp-public-route` workload. It fixes one
+run-bound G2/L4 host, the Qwen primary and Gemma standby immutable image/manifests,
+their publication-evidence digests, public ports, isolated network resources, health
+and fallback evidence, a 14-hour maximum, automatic instance deletion, and exact
+failure/success cleanup. Co-location is explicit fallback coverage, not independent
+redundancy.
+
+Generate the provider-call-free plan first. At the pinned 2026-08-26 GCP rate snapshot,
+14 hours rounds conservatively to USD 26 including 25% headroom and the fixed USD 10
+network/setup contingency:
+
+```powershell
+uv run --no-sync python scripts/qualification_cost_guard.py `
+  --run-id route-20260829-a `
+  --provider gcp `
+  --workload gcp-public-route `
+  --purpose "Gate 11 finite Qwen primary and Gemma standby routes" `
+  --source-commit $sourceCommit `
+  --maximum-hours 14 `
+  --project community-ai-506321 `
+  --zone us-central1-a `
+  --linux-image ubuntu-2404-noble-amd64-v20260826 `
+  --cuda-shape g2-l4 `
+  --primary-image "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed" `
+  --primary-image-evidence-digest "sha256:47c767121a6a01fb69a7b802809701e4ebbd330cf4afb4a469014d543a7e0714" `
+  --standby-image "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f" `
+  --standby-image-evidence-digest "sha256:3d6f2eb8ddf50c4d42af9604017ccfb2cdf4bb99dc605967028692e7a8e5abbf" `
+  --ledger docs/RELEASE_READINESS.md `
+  --output gcp-route-cost-plan.json
+```
+
+The first output must say `provisioning_authorized=false`. Review its exact ledger row
+and plan, record that row only while the current ledger can absorb USD 26, then rerun
+the identical command and require `provisioning_authorized=true`. Even then, do not
+create until native authentication, global/zonal L4 quota and availability, immutable
+OS image state, both evidence files and both GHCR digests, exact run-resource absence,
+and protected-bootstrap presence pass. The lifecycle runner must also enforce the
+startup, health, primary-disable/standby-fallback, restoration, stop, and cleanup
+contracts in the plan.
+
 For Fly, calculate a conservative maximum from current Fly pricing for the exact
 image, five-Machine topology, regions, CPU, memory, and maximum lifetime, then pass
 it explicitly:
@@ -105,7 +145,7 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
 This Fly example is not a USD 20 authorization: current provider pricing must justify
 the chosen maximum, and the exact row still must be recorded before the adapter runs.
 
-Gate 11 uses a separate `fly-discovery-seed` workload. Its exact plan binds the
+A later provider-diversity follow-up uses the separate `fly-discovery-seed` workload. Its exact plan binds the
 run-derived dedicated app, one shared-CPU 1 GB Machine, one 1 GB identity volume, shared
 IPv4, Anycast IPv6, region, an immutable image from the reviewed GHCR repository, the
 publication-evidence digest and source commit, TCP 31337, a finite priced retention

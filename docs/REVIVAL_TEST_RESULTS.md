@@ -1371,6 +1371,34 @@ was executed, and the cloud ledger remains USD 0. Gate 16 remains `IN PROGRESS` 
 the malicious-load canary, monitored limited rollout, and disable/rollback drill
 produce immutable evidence.
 
+## Gate 11 finite public-route operating contract
+
+On 2026-08-29, the first current-critical-path Gate 11 slice added the
+`gcp-public-route` workload to the shared schema-v2 cloud guard. Its canonical
+provider-plan digest now binds one isolated `g2-standard-8`/L4 host, a 200 GiB
+balanced disk, an instance-lifetime ephemeral IPv4, a run-derived network/subnet and two firewalls, public TCP 31337-31338,
+and a hard maximum 14-hour `DELETE` deadline. The same plan binds the exact qualified
+Qwen3.5 2B primary and Gemma 4 E2B standby image and manifest digests and the SHA-256
+digests of both publication-evidence files.
+
+The operating contract requires a 60-minute startup bound, five-minute privacy-safe
+aggregate health, complete exact-manifest announcements, one primary and one standby
+inference, deliberate Qwen disable with Gemma fallback, Qwen restoration, explicit
+degraded/unavailable states, and immediate cleanup on a stop condition. The topology
+is deliberately honest: both routes may share the bounded host for the first alpha,
+so it is fallback coverage rather than independent redundancy and host loss removes
+both routes. Exact reverse-order cleanup and six empty-output absence checks cannot
+target the protected bootstrap or unnamed resources.
+
+At the pinned pricing snapshot, 14 hours of the single host, disk, and address with
+25% headroom and the fixed USD 10 contingency round to a conservative USD 26. That
+fits the current USD 44 balance but was not reserved. All 56 focused cost-contract
+tests pass. This slice made no provider call, created no resource, changed no cloud
+state, and spent USD 0. Gate 11 remains `IN PROGRESS`: a reviewed lifecycle runner
+must attest both publication evidence files before authentication, enforce the
+preflight/startup/health/fallback/stop/cleanup phases, and emit bounded evidence before
+an exact pushed-source plan may be reserved and operated.
+
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts

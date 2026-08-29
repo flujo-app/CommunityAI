@@ -13,6 +13,10 @@ FLY_IMAGE = guard.FLY_DISCOVERY_IMAGE_REPOSITORY + "@sha256:" + "b" * 64
 FLY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "c" * 64
 WINDOWS_IMAGE = "windows-server-2022-dc-v20260814"
 LINUX_IMAGE = "ubuntu-2404-noble-amd64-v20260826"
+PRIMARY_IMAGE = guard.GCP_PRIMARY_IMAGE_REPOSITORY + "@sha256:" + "d" * 64
+STANDBY_IMAGE = guard.GCP_STANDBY_IMAGE_REPOSITORY + "@sha256:" + "e" * 64
+PRIMARY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "f" * 64
+STANDBY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "1" * 64
 
 
 def _ledger(*rows: str) -> str:
@@ -78,6 +82,36 @@ def _fly_discovery_authorization(entries=(), **overrides):
     return guard.build_authorization(**values)
 
 
+def _gcp_public_route_authorization(entries=(), **overrides):
+    values = {
+        "entries": entries,
+        "run_id": "route-20260829-a",
+        "provider": "gcp",
+        "workload": guard.GCP_PUBLIC_ROUTE_WORKLOAD,
+        "purpose": "Gate 11 finite Qwen primary and Gemma standby routes",
+        "source_commit": SOURCE_COMMIT,
+        "maximum_hours": Decimal("14"),
+        "project": "community-ai-506321",
+        "zone": "us-central1-a",
+        "windows_image": None,
+        "linux_image": LINUX_IMAGE,
+        "cuda_fallback_zone": None,
+        "cuda_shape": "g2-l4",
+        "manual_maximum_usd": None,
+        "fly_app": None,
+        "fly_region": None,
+        "fly_image": None,
+        "fly_image_evidence_digest": None,
+        "primary_image": PRIMARY_IMAGE,
+        "primary_image_evidence_digest": PRIMARY_IMAGE_EVIDENCE_DIGEST,
+        "standby_image": STANDBY_IMAGE,
+        "standby_image_evidence_digest": STANDBY_IMAGE_EVIDENCE_DIGEST,
+        "today": date(2026, 8, 29),
+    }
+    values.update(overrides)
+    return guard.build_authorization(**values)
+
+
 def test_empty_placeholder_ledger_has_no_commitment():
     entries = guard.parse_spend_ledger(_ledger("| No new paid run recorded | — | — | USD 0 | USD 0 | — | READY |"))
 
@@ -95,6 +129,23 @@ def test_ledger_counts_unresolved_maximum_and_cleaned_observed_cost():
     assert entries[0].committed_usd == Decimal("20")
     assert entries[1].committed_usd == Decimal("3.25")
     assert sum((entry.committed_usd for entry in entries), Decimal("0")) == Decimal("23.25")
+
+
+def test_canceled_unprovisioned_run_commits_observed_zero_not_stale_maximum():
+    entries = guard.parse_spend_ledger(
+        _ledger("| canceled | GCP | stopped before create | USD 10 | USD 0 | no resources created | CANCELED |")
+    )
+
+    assert entries[0].committed_usd == Decimal("0")
+
+    with pytest.raises(guard.CostGuardError, match="requires cleanup proof"):
+        guard.parse_spend_ledger(
+            _ledger("| canceled | GCP | stopped before create | USD 10 | USD 0 | Not provisioned | CANCELED |")
+        )
+    with pytest.raises(guard.CostGuardError, match="observed cost"):
+        guard.parse_spend_ledger(
+            _ledger("| canceled | GCP | stopped before create | USD 10 | — | no resources created | CANCELED |")
+        )
 
 
 @pytest.mark.parametrize(
@@ -594,6 +645,127 @@ def test_fly_discovery_exact_reservation_binds_every_mutable_plan_input():
 def test_fly_discovery_seed_plan_rejects_unsafe_targets(overrides, message):
     with pytest.raises(guard.CostGuardError, match=message):
         _fly_discovery_authorization(**overrides)
+
+
+def test_gcp_public_route_plan_binds_finite_routes_health_and_cleanup():
+    report = _gcp_public_route_authorization()
+
+    assert report["workload"] == guard.GCP_PUBLIC_ROUTE_WORKLOAD
+    assert report["maximum_estimate_usd"] == "26.00"
+    assert report["remaining_after_run_maximum_usd"] == "74.00"
+    assert report["provisioning_authorized"] is False
+    assert report["cleanup_required_for_pass"] is False
+    assert report["failure_cleanup_required"] is True
+    assert report["persistent_resources_after_pass"] is True
+
+    plan = report["provider_plan"]
+    assert plan["maximum_runtime_hours"] == "14"
+    assert plan["machine"] == {
+        "machine_type": "g2-standard-8",
+        "accelerator": "NVIDIA L4",
+        "boot_disk_gib": 200,
+        "boot_disk_type": "pd-balanced",
+        "os_image": LINUX_IMAGE,
+        "service_account": False,
+        "scopes": [],
+        "public_ipv4": "ephemeral and bound to the instance lifetime",
+        "public_tcp_ports": [31337, 31338],
+        "max_run_seconds": 50400,
+        "termination_action": "DELETE",
+    }
+    assert [(route["role"], route["candidate"], route["manifest_digest"]) for route in plan["routes"]] == [
+        ("primary", "qwen3.5-2b", guard.GCP_PRIMARY_MANIFEST_DIGEST),
+        ("standby", "gemma-4-e2b", guard.GCP_STANDBY_MANIFEST_DIGEST),
+    ]
+    assert plan["routes"][0]["image"] == PRIMARY_IMAGE
+    assert plan["routes"][1]["image"] == STANDBY_IMAGE
+    assert "not independent redundancy" in plan["topology"]
+    assert plan["operating_contract"]["health_sample_period_seconds"] == 300
+    assert any("auto selects Qwen" in item for item in plan["operating_contract"]["required_ready_evidence"])
+    assert any("unavailable" in item for item in plan["operating_contract"]["stop_conditions"])
+    assert "both routes" in plan["operating_contract"]["disable_contract"]
+    assert "no redundancy claim" in plan["operating_contract"]["degraded_contract"]
+    assert len(plan["create_commands"]) == 5
+    assert len(plan["cleanup_commands"]) == 5
+    assert len(plan["verify_cleanup_commands"]) == 6
+    iap_firewall = plan["create_commands"][-2]
+    assert "tcp:22" in iap_firewall
+    assert guard.GCP_IAP_SOURCE_RANGE in iap_firewall
+    create_instance = plan["create_commands"][-1]
+    assert ["--max-run-duration", "50400s"] == create_instance[
+        create_instance.index("--max-run-duration") : create_instance.index("--max-run-duration") + 2
+    ]
+    assert ["--instance-termination-action", "DELETE"] == create_instance[
+        create_instance.index("--instance-termination-action") : create_instance.index("--instance-termination-action")
+        + 2
+    ]
+    flattened_cleanup = {part for command in plan["cleanup_commands"] for part in command}
+    assert "communityai-bootstrap-1" not in flattened_cleanup
+    assert report["provider_plan_digest"] in report["ledger_purpose"]
+
+
+def test_gcp_public_route_exact_reservation_binds_every_mutable_input():
+    planned = _gcp_public_route_authorization()
+    reservation = guard.LedgerEntry(
+        run_id=planned["run_id"],
+        provider="GCP",
+        purpose=planned["ledger_purpose"],
+        maximum_usd=Decimal("26"),
+        observed_usd=None,
+        cleanup_proof="Not provisioned",
+        state="PLANNED",
+    )
+
+    authorized = _gcp_public_route_authorization(entries=(reservation,))
+    assert authorized["provisioning_authorized"] is True
+    assert authorized["remaining_after_run_maximum_usd"] == "74.00"
+
+    mutations = (
+        {"zone": "us-east1-b"},
+        {"maximum_hours": Decimal("13")},
+        {"primary_image": guard.GCP_PRIMARY_IMAGE_REPOSITORY + "@sha256:" + "2" * 64},
+        {"primary_image_evidence_digest": "sha256:" + "3" * 64},
+        {"standby_image": guard.GCP_STANDBY_IMAGE_REPOSITORY + "@sha256:" + "4" * 64},
+        {"standby_image_evidence_digest": "sha256:" + "5" * 64},
+    )
+    for mutation in mutations:
+        with pytest.raises(guard.CostGuardError, match="purpose/source/plan"):
+            _gcp_public_route_authorization(entries=(reservation,), **mutation)
+
+
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        ({"windows_image": WINDOWS_IMAGE}, "does not accept Windows"),
+        ({"cuda_shape": "n1-t4"}, "requires g2-l4"),
+        ({"maximum_hours": Decimal("0")}, "greater than zero"),
+        ({"maximum_hours": Decimal("14.01")}, "no more than 14"),
+        ({"primary_image": guard.GCP_PRIMARY_IMAGE_REPOSITORY + ":latest"}, "immutable Qwen"),
+        ({"standby_image": guard.GCP_STANDBY_IMAGE_REPOSITORY + ":latest"}, "immutable Gemma"),
+        ({"primary_image_evidence_digest": "SHA256:" + "f" * 64}, "publication-evidence digest"),
+        ({"standby_image_evidence_digest": None}, "both immutable images"),
+    ],
+)
+def test_gcp_public_route_plan_rejects_unsafe_or_incomplete_targets(overrides, message):
+    with pytest.raises(guard.CostGuardError, match=message):
+        _gcp_public_route_authorization(**overrides)
+
+
+def test_gcp_public_route_plan_respects_existing_combined_commitments():
+    entries = (
+        guard.LedgerEntry(
+            run_id="existing-run",
+            provider="GCP",
+            purpose="previous run",
+            maximum_usd=Decimal("75"),
+            observed_usd=None,
+            cleanup_proof="cleanup pending",
+            state="CLEANED",
+        ),
+    )
+
+    with pytest.raises(guard.CostGuardError, match="USD 100"):
+        _gcp_public_route_authorization(entries=entries)
 
 
 def test_provider_and_workload_must_match():
