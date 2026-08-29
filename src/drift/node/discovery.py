@@ -302,6 +302,7 @@ class ModelCoverageDiscovery:
         dht_factory: Callable[..., Any] = _default_dht_factory,
         lookup: Callable[..., Any] = get_remote_module_infos,
         peer_cache: Optional[PeerCache] = None,
+        replay_history_dir: Optional[Path | str] = None,
         peer_snapshot: Callable[[Any], Sequence[str]] = _default_peer_snapshot,
     ) -> None:
         if update_period <= 0 or startup_timeout <= 0:
@@ -311,6 +312,11 @@ class ModelCoverageDiscovery:
         self._dht_factory = dht_factory
         self._lookup = lookup
         self._peer_cache = peer_cache
+        self._replay_history_dir = (
+            None
+            if replay_history_dir is None
+            else Path(os.path.abspath(os.fspath(Path(replay_history_dir).expanduser())))
+        )
         self._peer_snapshot = peer_snapshot
         self._states: Dict[str, _TargetState] = {}
         self._groups: Dict[Tuple[str, ...], list[_TargetState]] = {}
@@ -321,7 +327,11 @@ class ModelCoverageDiscovery:
             state = _TargetState(
                 target=target,
                 revocations=RevocationStore.from_files(target.revocation_files),
-                replay_guard=ReplayGuard(),
+                replay_guard=ReplayGuard(
+                    None
+                    if self._replay_history_dir is None
+                    else self._replay_history_dir / f"{target.manifest.digest}.json"
+                ),
             )
             self._states[digest] = state
             self._groups.setdefault(target.initial_peers, []).append(state)

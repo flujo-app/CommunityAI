@@ -218,10 +218,12 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
     )
 
     cache_scopes = {first_path: ("shipped-one",), second_path: ("shipped-two",)}
+    replay_history_dir = tmp_path / "replay-history"
     manager, descriptors, discovery = _build_model_manager(
         config,
         token="provider-token",
         peer_cache_scopes=cache_scopes,
+        replay_history_dir=replay_history_dir,
     )
 
     assert [descriptor.model_id for descriptor in descriptors] == [first.name, second.name]
@@ -237,6 +239,12 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
     assert discovery.snapshot(first.digest_id)["status"] == "unknown"
     assert discovery._states[first.digest_id].target.cache_scope == ("shipped-one",)
     assert discovery._states[second.digest_id].target.cache_scope == ("shipped-two",)
+    first_history_path = discovery._states[first.digest_id].replay_guard.path
+    second_history_path = discovery._states[second.digest_id].replay_guard.path
+    assert first_history_path == replay_history_dir / f"{first.digest}.json"
+    assert second_history_path == replay_history_dir / f"{second.digest}.json"
+    assert ":" not in first_history_path.name
+    assert ":" not in second_history_path.name
     manager.shutdown()
 
 

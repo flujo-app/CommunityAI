@@ -442,3 +442,49 @@ def test_remote_route_demand_is_verified_deduplicated_and_thresholded(tmp_path):
         )
         is None
     )
+
+
+def test_remote_route_demand_replay_order_survives_discovery_restart(tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    replay_history_dir = tmp_path / "replay-history"
+    now = time.time()
+    first_identity = NodeIdentity.create(tmp_path / "router-one.key")
+    second_identity = NodeIdentity.create(tmp_path / "router-two.key")
+    first = _route_demand_record(first_identity, manifest, now=now, attempts=4, successes=2, sequence=2)
+    second = _route_demand_record(second_identity, manifest, now=now, attempts=16, successes=8, sequence=1)
+
+    class RemoteDemandDHT:
+        def __init__(self, values):
+            self.values = values
+
+        def get(self, key, latest):
+            assert key == f"{manifest.dht_prefix}.demand-v1"
+            assert latest is True
+            return SimpleNamespace(value={name: SimpleNamespace(value=value) for name, value in self.values.items()})
+
+    discovery = ModelCoverageDiscovery([CoverageTarget(manifest, ("peer-one",))], replay_history_dir=replay_history_dir)
+    state = discovery._states[manifest.digest_id]
+    assert discovery._read_remote_route_observations(
+        state, RemoteDemandDHT({first.key_id: first.to_dict(), second.key_id: second.to_dict()})
+    )
+    history_path = replay_history_dir / f"{manifest.digest}.json"
+    assert ":" not in history_path.name
+    assert history_path.is_file()
+
+    stale_first = _route_demand_record(
+        first_identity,
+        manifest,
+        now=now - 1,
+        attempts=4,
+        successes=2,
+        sequence=999,
+    )
+    restarted = ModelCoverageDiscovery([CoverageTarget(manifest, ("peer-one",))], replay_history_dir=replay_history_dir)
+    restarted_state = restarted._states[manifest.digest_id]
+    assert (
+        restarted._read_remote_route_observations(
+            restarted_state,
+            RemoteDemandDHT({stale_first.key_id: stale_first.to_dict(), second.key_id: second.to_dict()}),
+        )
+        is None
+    )

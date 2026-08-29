@@ -19,11 +19,12 @@ import json
 import math
 import os
 import secrets
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 import multihash
 from cryptography import exceptions
@@ -39,6 +40,9 @@ SIGNATURE_ALGORITHM = "rsa-pss-sha256"
 TRANSPORT_SECURITY = "libp2p-tls1.3"
 MAX_SIGNED_RECORD_TTL_SECONDS = 60 * 60
 MAX_CLOCK_SKEW_SECONDS = 60
+REPLAY_HISTORY_SCHEMA_VERSION = 1
+MAX_REPLAY_HISTORY_BYTES = 256 * 1024
+MAX_REPLAY_HISTORY_ENTRIES = 256
 
 _RSA_PADDING = padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH)
 _RSA_HASH = hashes.SHA256()
@@ -325,9 +329,139 @@ def _validate_lifetime(payload: Mapping[str, Any], *, now: Optional[float]) -> T
 
 @dataclass
 class ReplayGuard:
-    """Reject older records while allowing one signed announcement to cover many blocks."""
+    """Reject older records and optionally preserve the live ordering window across restarts."""
 
-    _latest: Dict[Tuple[str, str], Tuple[int, int, str, int]] = field(default_factory=dict)
+    path: Optional[Path | str] = None
+    max_entries: int = MAX_REPLAY_HISTORY_ENTRIES
+    clock: Callable[[], float] = time.time
+    _latest: Dict[Tuple[str, str], Tuple[int, int, str, int]] = field(default_factory=dict, init=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_entries, bool) or not isinstance(self.max_entries, int) or self.max_entries <= 0:
+            raise ValueError("replay history entry limit must be a positive integer")
+        if self.path is None:
+            return
+        self.path = Path(os.path.abspath(os.fspath(Path(self.path).expanduser())))
+        try:
+            self._latest = self._load()
+        except ProtocolSecurityError:
+            raise
+        except (OSError, UnicodeError, TypeError, ValueError) as exc:
+            raise ProtocolSecurityError("replay history could not be loaded safely") from exc
+
+    @staticmethod
+    def _strict_json(source: str) -> Mapping[str, Any]:
+        def reject_duplicate_keys(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ProtocolSecurityError(f"replay history contains duplicate key {key!r}")
+                result[key] = value
+            return result
+
+        def reject_non_finite(value):
+            raise ProtocolSecurityError(f"replay history contains non-finite number {value}")
+
+        value = json.loads(source, object_pairs_hook=reject_duplicate_keys, parse_constant=reject_non_finite)
+        if not isinstance(value, dict):
+            raise ProtocolSecurityError("replay history must be a JSON object")
+        return value
+
+    def _load(self) -> Dict[Tuple[str, str], Tuple[int, int, str, int]]:
+        if self.path is None:
+            return {}
+        if self.path.parent.exists() and (self.path.parent.is_symlink() or not self.path.parent.is_dir()):
+            raise ProtocolSecurityError("replay history directory is not a regular directory")
+        if self.path.is_symlink():
+            raise ProtocolSecurityError("replay history path is not a regular file")
+        if not self.path.exists():
+            return {}
+        if not self.path.is_file():
+            raise ProtocolSecurityError("replay history path is not a regular file")
+        if self.path.stat().st_size > MAX_REPLAY_HISTORY_BYTES:
+            raise ProtocolSecurityError("replay history exceeds its byte limit")
+        source = self._strict_json(self.path.read_text(encoding="utf-8"))
+        schema_version = source.get("schema_version")
+        if (
+            set(source) != {"schema_version", "entries"}
+            or isinstance(schema_version, bool)
+            or schema_version != REPLAY_HISTORY_SCHEMA_VERSION
+        ):
+            raise ProtocolSecurityError("replay history schema is invalid")
+        entries = source["entries"]
+        if not isinstance(entries, list) or len(entries) > self.max_entries:
+            raise ProtocolSecurityError("replay history entry list is invalid")
+
+        latest: Dict[Tuple[str, str], Tuple[int, int, str, int]] = {}
+        now_ms = int(self.clock() * 1000)
+        fields = {"kind", "key_id", "issued_at_ms", "sequence", "record_digest", "retain_until_ms"}
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != fields:
+                raise ProtocolSecurityError("replay history entry schema is invalid")
+            kind = _require_text(entry["kind"], name="replay history kind")
+            if len(kind) > 64:
+                raise ProtocolSecurityError("replay history kind is too long")
+            key_id = _require_key_id(entry["key_id"], name="replay history key_id")
+            issued_at_ms = _require_int(entry["issued_at_ms"], name="issued_at_ms", minimum=0)
+            sequence = _require_int(entry["sequence"], name="sequence", minimum=0)
+            digest = _require_digest(entry["record_digest"], name="record_digest")
+            retain_until_ms = _require_int(entry["retain_until_ms"], name="retain_until_ms", minimum=0)
+            if retain_until_ms <= issued_at_ms:
+                raise ProtocolSecurityError("replay history entry retention ends before it was issued")
+            replay_scope = (kind, key_id)
+            if replay_scope in latest:
+                raise ProtocolSecurityError("replay history contains a duplicate identity scope")
+            if retain_until_ms > now_ms:
+                latest[replay_scope] = (issued_at_ms, sequence, digest, retain_until_ms)
+        return latest
+
+    def _persist(self, latest: Mapping[Tuple[str, str], Tuple[int, int, str, int]]) -> None:
+        if self.path is None:
+            return
+        if self.path.is_symlink() or (self.path.exists() and not self.path.is_file()):
+            raise ProtocolSecurityError("replay history path is not a regular file")
+        entries = [
+            {
+                "kind": kind,
+                "key_id": key_id,
+                "issued_at_ms": item[0],
+                "sequence": item[1],
+                "record_digest": item[2],
+                "retain_until_ms": item[3],
+            }
+            for (kind, key_id), item in sorted(latest.items())
+        ]
+        rendered = (
+            json.dumps(
+                {"schema_version": REPLAY_HISTORY_SCHEMA_VERSION, "entries": entries},
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        if len(rendered.encode("utf-8")) > MAX_REPLAY_HISTORY_BYTES:
+            raise ProtocolSecurityError("rendered replay history exceeds its byte limit")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.parent.is_symlink() or not self.path.parent.is_dir():
+            raise ProtocolSecurityError("replay history directory is not a regular directory")
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+        try:
+            with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+                stream.write(rendered)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                temporary.chmod(0o600)
+            except OSError:
+                pass
+            os.replace(temporary, self.path)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
     def check(self, record: SignedRecord) -> None:
         payload = record.payload
@@ -335,19 +469,37 @@ class ReplayGuard:
         expires_at_ms = _require_int(payload.get("expires_at_ms"), name="expires_at_ms", minimum=0)
         sequence = _require_int(payload.get("sequence"), name="sequence", minimum=0)
         replay_scope = (record.kind, record.key_id)
-        current = self._latest.get(replay_scope)
         order = (issued_at_ms, sequence)
-        if current is not None:
-            previous_order = current[:2]
-            if order < previous_order:
-                raise ProtocolSecurityError("signed record is older than a record already observed for this identity")
-            if order == previous_order and record.digest != current[2]:
-                raise ProtocolSecurityError("identity equivocated by signing different records at one sequence")
-        if current is None or order > current[:2]:
-            self._latest[replay_scope] = (issued_at_ms, sequence, record.digest, expires_at_ms)
-
-        now_ms = int(time.time() * 1000)
-        self._latest = {key: item for key, item in self._latest.items() if item[3] > now_ms}
+        maximum_ttl_seconds = (
+            ROUTE_DEMAND_MAX_TTL_SECONDS if record.kind == "route_demand" else MAX_SIGNED_RECORD_TTL_SECONDS
+        )
+        retain_until_ms = max(expires_at_ms, issued_at_ms + maximum_ttl_seconds * 1000)
+        with self._lock:
+            now_ms = int(self.clock() * 1000)
+            latest = {key: item for key, item in self._latest.items() if item[3] > now_ms}
+            current = latest.get(replay_scope)
+            if current is not None:
+                previous_order = current[:2]
+                if order < previous_order:
+                    raise ProtocolSecurityError(
+                        "signed record is older than a record already observed for this identity"
+                    )
+                if order == previous_order and record.digest != current[2]:
+                    raise ProtocolSecurityError("identity equivocated by signing different records at one sequence")
+            changed = latest != self._latest
+            if current is None or order > current[:2]:
+                latest[replay_scope] = (issued_at_ms, sequence, record.digest, retain_until_ms)
+                changed = True
+            if len(latest) > self.max_entries:
+                raise ProtocolSecurityError("replay history reached its active entry limit")
+            if changed:
+                try:
+                    self._persist(latest)
+                except ProtocolSecurityError:
+                    raise
+                except (OSError, UnicodeError, TypeError, ValueError) as exc:
+                    raise ProtocolSecurityError("replay history could not be persisted safely") from exc
+                self._latest = latest
 
 
 @dataclass

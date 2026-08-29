@@ -215,6 +215,7 @@ def _build_model_manager(
     token: str | None,
     peer_cache: PeerCache | None = None,
     peer_cache_scopes: dict[Path, tuple[str, ...]] | None = None,
+    replay_history_dir: Path | None = None,
 ) -> tuple[ModelManager, tuple[ModelDescriptor, ...], ModelCoverageDiscovery]:
     manager = ModelManager(max_loaded_models=config.max_loaded_models)
     descriptors = []
@@ -242,6 +243,7 @@ def _build_model_manager(
             update_period=config.discovery_update_period,
             startup_timeout=config.discovery_startup_timeout,
             peer_cache=peer_cache,
+            replay_history_dir=replay_history_dir,
         )
         manager.add_shutdown_callback(discovery.close)
         for model_config, manifest in configured_manifests:
@@ -878,6 +880,7 @@ def main() -> None:
             token=args.token,
             peer_cache=peer_cache,
             peer_cache_scopes=peer_cache_scopes,
+            replay_history_dir=args.data_dir / "replay-history",
         )
         placement_registry = PlacementRegistry()
         route_outcomes = RouteOutcomeTracker()

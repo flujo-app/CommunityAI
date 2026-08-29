@@ -54,7 +54,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   mismatched records, require two remote signers, and median at most 32 observations. Local
   utility is capped at six points and signed remote utility at two, so their combined hint
   stays below the migration margin and cannot override coverage, policy, signed intent, or
-  operator pause.
+  operator pause. The node now preserves verified replay-order watermarks across restarts in
+  bounded, atomic, per-manifest journals. Only public identity/order metadata is retained;
+  malformed, oversized, symlinked, non-regular, or unwritable history fails closed before a
+  stale or equivocating record can be trusted.
 
 ### Changed
 
