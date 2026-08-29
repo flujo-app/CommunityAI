@@ -202,8 +202,9 @@ the required number of distinct signatures is present.
    cross-platform, edge-envelope, and public-route qualification. The evidence contract
    and earlier harness proof are defined in
    [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
-2. Publish the signed catalog through interchangeable HTTPS mirrors and build the
-   release bootstrap containing its independent trust root and public seeds.
+2. Publish the signed alpha catalog through at least one pinned HTTPS mirror and build
+   the release bootstrap containing its independent trust root and public seed. Multiple
+   interchangeable mirrors and independently operated seeds are post-alpha hardening.
 3. Bundle that bootstrap and pass the clean-install packaged inference gate. The
    implemented sidecar consumer fetches manifests, verifies their digest against the
    catalog, and registers them without trusting catalog display metadata.

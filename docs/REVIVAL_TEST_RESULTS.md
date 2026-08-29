@@ -1593,6 +1593,26 @@ marked cleaned. Gate 11 remains `IN PROGRESS`, and the USD 26 route must not be 
 or created without cleanup proof plus billing reconciliation or an explicit cleanup-backed
 owner reset.
 
+## Gate 12 best-effort alpha publication contract
+
+A local Gate 12 review found that the publication preflight still imposed two HTTPS
+mirrors, two public seeds, two replicas, and two independent routes even though the
+settled alpha contract explicitly defers independent mirror/seed operators and
+production-SLO route redundancy. The preflight now accepts the honest alpha minimum of
+one pinned public HTTPS mirror, one public seed, one complete replica, one route, and
+one surviving replica. Exact signature threshold and expiry, catalog/manifest digests,
+weight totals, selector uniqueness, public endpoint validation, and distinct hosts,
+addresses, and peer identities for every additional endpoint remain fail-closed. The
+report explicitly leaves mirror/seed redundancy, independent operator ownership,
+public-route redundancy/soak, real qualification, and packaged inference unproved.
+
+The focused publication suite passes 32 tests, and the catalog/bootstrap/model/desktop
+publication superset passes 92. Coverage includes a one-mirror/one-seed/one-route alpha
+vector plus the existing duplicate-endpoint, unsafe transport, altered manifest,
+noncanonical bundle, symlink, overwrite, signature, and expiry boundaries. No private
+release key or production bundle was created: Gate 12 still waits for the real Gate 11
+route before offline signing and publication.
+
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts

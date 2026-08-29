@@ -1,8 +1,8 @@
 # Catalog bootstrap v1
 
 Status: the strict sidecar consumer, desktop lifecycle integration, last-known-good
-cache, deterministic publication-bundle contract, and fail-closed packaging handoff are
-implemented. A production bundle is deliberately not checked in until the first model
+cache, best-effort-alpha publication-bundle contract, and fail-closed packaging handoff
+are implemented. A production bundle is deliberately not checked in until the first model
 manifests have completed qualification and the corresponding catalog has been signed and
 published.
 
@@ -41,8 +41,7 @@ Create the release input after the offline root and catalog are ready:
 ```text
 drift catalog bootstrap-config \
   --root catalog-root.json \
-  --catalog-mirror https://mirror-one.example.com/communityai/catalog.signed.json \
-  --catalog-mirror https://mirror-two.example.com/communityai/catalog.signed.json \
+  --catalog-mirror https://mirror.example.com/communityai/catalog.signed.json \
   --initial-peer /dns4/bootstrap.communityai.flujo.com.co/tcp/31337/p2p/QmZhGcSVR6qPLZTq3TJPZEi734GbMkouv3kPxQLdDY2qUo \
   --output catalog-bootstrap.json
 ```
@@ -58,13 +57,15 @@ drift catalog publication-preflight catalog.signed.json \
 ```
 
 The preflight verifies the signature threshold and expiry against the embedded root,
-requires catalog mirrors on distinct hosts plus distinct seed addresses and peer
-identities, matches every catalog digest and manifested weight-byte total, rejects
-extra manifests and selector collisions, and requires redundant promotion policies.
-Its report binds the exact canonical bootstrap digest and always retains
-`complete_release_qualification=false`: different endpoint strings do not prove live
-DNS resolution, reachability, shared hosting, or independent operators, and real
-qualification, worker soak, and packaged inference remain separate gates.
+requires at least one public HTTPS mirror and one public seed, and requires distinct
+hosts, addresses, and peer identities whenever additional endpoints are supplied. It
+matches every catalog digest and manifested weight-byte total, rejects extra manifests
+and selector collisions, and accepts the alpha policy minimum of one complete replica,
+one route, and one surviving replica. Its report binds the exact canonical bootstrap
+digest and always retains `complete_release_qualification=false`: endpoint strings do not
+prove live DNS resolution, reachability, redundancy, independent operators, or real
+qualification. Multiple independent mirrors, seeds, and routes remain post-alpha
+hardening; worker soak and packaged inference remain separate gates.
 
 Assemble the repository-auditable handoff as a deterministic directory:
 

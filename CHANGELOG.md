@@ -146,6 +146,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   disable-path safety floor. Production-SLO redundancy, independent threshold governance,
   publisher-signed installers, automatic authenticated updates/rollback, and exhaustive
   hostile-network campaigns are explicitly post-alpha hardening.
+- Signed-catalog publication now accepts the honest best-effort alpha minimum of one pinned
+  public HTTPS mirror, one public seed, and one complete route policy. Exact signatures,
+  manifests, public endpoint validation, and distinctness of any additional endpoints
+  remain fail-closed, and the preflight explicitly reports redundancy and independent
+  operator ownership as unproved.
 - Qualification images now install their native build toolchain only during the locked
   environment build, isolate exact-source verification from the installed environment,
   and bind the runtime version to installed package metadata before publication.
