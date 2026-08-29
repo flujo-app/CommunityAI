@@ -303,7 +303,11 @@ def test_dockerfile_is_fresh_pinned_nonroot_cuda_runtime():
     assert f'org.opencontainers.image.base.name="{qualification.PYTHON_IMAGE}"' in dockerfile
     assert qualification.UV_IMAGE in dockerfile
     assert "COPY --from=snapshot --chown=0:0 /cache/model /cache/model" in dockerfile
-    assert "chmod -R a+rX,a-w /cache/model" in dockerfile
+    assert "find /cache/model" in dockerfile
+    assert "! -user root" in dockerfile and "! -group root" in dockerfile
+    assert "-perm -0002" in dockerfile
+    assert "! -perm -0004" in dockerfile and "! -perm -0005" in dockerfile
+    assert "chmod -R a+rX,a-w /cache/model" not in dockerfile
     assert "scripts/qualification_image_contract.py ./scripts/" in dockerfile
     assert "scripts/qualification_image_contract.py" in contract._SOURCE_SCRIPT_FILES
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
