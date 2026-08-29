@@ -63,6 +63,16 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   of Hivemind-valid global-IP TCP routing peers when configured seeds are unavailable.
   Cached peers are isolated by the exact configured seed set and merged only at runtime,
   leaving persisted configuration unchanged.
+- Cloud cost authorization now binds the complete canonical provider-plan digest into
+  the ledger identity and emits a separate finite-horizon Fly discovery-seed plan. The
+  plan requires a run-derived app plus the expected reviewed-GHCR image/evidence identity,
+  while explicitly requiring the provider adapter to hash and semantically validate the
+  actual evidence before provider authentication. An unrelated or target-mutated
+  reservation cannot authorize provisioning.
+- Release bootstrap inputs now reject local, private, reserved, special-use, scoped,
+  control-bearing, type-confused, dotted-numeric DNS-lookalike, malformed, or noncanonical
+  mirror and seed endpoints
+  before fetching catalog data.
 - Model qualification dispatch no longer requires a persistent GitHub runner-inventory
   administration token.
 - Production desktop CI now packages the public alpha on Windows and Linux only; macOS

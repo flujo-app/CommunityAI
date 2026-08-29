@@ -17,8 +17,12 @@ Deferred macOS qualification is a separate operation that requires distinct
 Run `scripts/qualification_cost_guard.py` before any new GCP or Fly resource is
 created. It parses the spend ledger in `RELEASE_READINESS.md`, counts unresolved
 maximums and cleaned observed costs across both providers, and refuses a plan that
-could exceed USD 100. A cleaned row cannot discount its maximum without cleanup proof,
-and unresolved observed cost above an estimate counts at the higher amount. It never
+could exceed USD 100. Authorization schema v2 binds each ledger purpose to an explicit
+provider workload and the SHA-256 digest of the complete canonical provider plan, so a
+five-Machine recovery reservation—or a reservation for different target inputs—cannot
+authorize a discovery seed. A cleaned row cannot discount its maximum without cleanup
+proof, and unresolved
+observed cost above an estimate counts at the higher amount. It never
 contacts a provider or prints provider responses.
 
 For the four-host GCP fleet, the 2026-08-26 on-demand price snapshot supports two
@@ -47,6 +51,7 @@ $linuxImage = gcloud compute images describe-from-family ubuntu-2404-lts-amd64 `
 uv run --no-sync python scripts/qualification_cost_guard.py `
   --run-id qual-20260826-b `
   --provider gcp `
+  --workload gcp-qualification-fleet `
   --purpose "Four-host Windows/Linux qualification fleet" `
   --source-commit $sourceCommit `
   --project community-ai-506321 `
@@ -67,8 +72,8 @@ checks for all four instances.
 
 The first plan reports `provisioning_authorized=false` and supplies one exact
 `required_ledger_row`. Add that row to the ledger, commit it, and rerun the same
-command. Only the matching `PLANNED` run ID, provider, purpose/source commit, and
-maximum changes the cost authorization to true. Provider authentication, target
+command. Only the matching `PLANNED` run ID, provider, workload, purpose/source commit,
+provider-plan digest, and maximum changes the cost authorization to true. Provider authentication, target
 availability, quota, and absence checks remain mandatory even after cost authorization.
 
 For Fly, calculate a conservative maximum from current Fly pricing for the exact
@@ -79,6 +84,7 @@ it explicitly:
 uv run --no-sync python scripts/qualification_cost_guard.py `
   --run-id fly-recovery-a `
   --provider fly `
+  --workload fly-recovery `
   --purpose "Candidate separate-machine recovery" `
   --source-commit $sourceCommit `
   --manual-maximum-usd 20 `
@@ -88,6 +94,49 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
 
 This Fly example is not a USD 20 authorization: current provider pricing must justify
 the chosen maximum, and the exact row still must be recorded before the adapter runs.
+
+Gate 11 uses a separate `fly-discovery-seed` workload. Its exact plan binds the
+run-derived dedicated app, one shared-CPU 1 GB Machine, one 1 GB identity volume, shared
+IPv4, Anycast IPv6, region, an immutable image from the reviewed GHCR repository, the
+publication-evidence digest and source commit, TCP 31337, a finite priced retention
+horizon, and persistent-versus-failure-cleanup behavior.
+Fly's current list prices are region-dependent; compute, the USD 0.15/GB-month volume,
+included shared IPv4/IPv6 allocations, and variable egress must all fit the chosen
+maximum ([current Fly pricing](https://fly.io/docs/about/pricing/)). Generate but do not
+reserve this plan until the immutable seed image and lifecycle adapter are reviewed:
+
+```powershell
+uv run --no-sync python scripts/qualification_cost_guard.py `
+  --run-id seed-20260826-a `
+  --provider fly `
+  --workload fly-discovery-seed `
+  --purpose "Gate 11 second-provider discovery seed" `
+  --source-commit $sourceCommit `
+  --manual-maximum-usd 10 `
+  --maximum-hours 168 `
+  --fly-app communityai-seed-20260826-a `
+  --fly-region iad `
+  --fly-image ghcr.io/flujo-app/communityai-discovery-seed@sha256:<64-lowercase-hex> `
+  --fly-image-evidence-digest sha256:<64-lowercase-hex> `
+  --ledger docs/RELEASE_READINESS.md `
+  --output fly-seed-cost-plan.json
+```
+
+This command validates and binds only the expected evidence digest; it does not load or
+semantically attest a not-yet-created seed-image report. The JSON therefore sets
+`cost_authorization_only=true`, `provider_preflight_required=true`,
+`provider_calls_authorized_without_preflight=false`, and
+`image_publication_evidence.validated_by_cost_guard=false`. The lifecycle adapter must
+load a bounded regular evidence file, recompute the expected digest, and validate its
+schema, source commit, reviewed repository, and immutable image digest before provider
+authentication or any provider call.
+
+A successful discovery seed is intentional retained alpha infrastructure only through
+the plan's `maximum_runtime_hours` deadline. Before that deadline, clean up the exact
+resources, renew them with a new exact ledger reservation, or transition them through a
+separately authorized baseline. A failed or partial creation must remove and prove
+absence of only the exact run-bound app, Machine, volume, and IP allocations. Never
+target the existing GCP bootstrap or an unrelated Fly application.
 
 ## Exact qualification image inputs
 

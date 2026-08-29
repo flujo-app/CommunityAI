@@ -9,6 +9,7 @@ run ID and maximum estimate are recorded in the ledger.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -20,11 +21,12 @@ from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 CLOUD_CEILING_USD = Decimal("100.00")
 PRICING_AS_OF = date(2026, 8, 26)
 PRICING_REVALIDATE_BY = date(2026, 9, 25)
 MAX_GCP_FLEET_HOURS = Decimal("14")
+MAX_FLY_DISCOVERY_HOURS = Decimal("744")
 GCP_MACHINE_HOURLY_USD = Decimal("0.473212")
 GCP_G2_MACHINE_HOURLY_USD = Decimal("0.853624312")
 GCP_T4_HOURLY_USD = Decimal("0.35")
@@ -48,6 +50,19 @@ _PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 _ZONE_RE = re.compile(r"^[a-z]+(?:-[a-z0-9]+)+-[a-z]$")
 _IMAGE_RE = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
 _USD_RE = re.compile(r"^USD ([0-9]+(?:\.[0-9]{1,2})?)$")
+_FLY_APP_RE = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
+_FLY_REGION_RE = re.compile(r"^[a-z]{3}$")
+_SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+FLY_DISCOVERY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-discovery-seed"
+_FLY_DISCOVERY_IMAGE_RE = re.compile(rf"^{re.escape(FLY_DISCOVERY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
+
+GCP_QUALIFICATION_WORKLOAD = "gcp-qualification-fleet"
+FLY_RECOVERY_WORKLOAD = "fly-recovery"
+FLY_DISCOVERY_SEED_WORKLOAD = "fly-discovery-seed"
+_WORKLOADS_BY_PROVIDER = {
+    "GCP": {GCP_QUALIFICATION_WORKLOAD},
+    "FLY": {FLY_RECOVERY_WORKLOAD, FLY_DISCOVERY_SEED_WORKLOAD},
+}
 
 _GCP_PROFILES = (
     ("windows-cuda", "windows-2022", "windows-cloud", True),
@@ -147,7 +162,7 @@ def parse_spend_ledger(content: str) -> tuple[LedgerEntry, ...]:
             raise CostGuardError("spend ledger contains an invalid run ID")
         if provider not in {"GCP", "FLY"}:
             raise CostGuardError(f"{run_id} provider must be GCP or Fly")
-        if not purpose or len(purpose) > 180:
+        if not purpose or len(purpose) > 384:
             raise CostGuardError(f"{run_id} purpose must be a bounded non-empty value")
         if maximum <= 0:
             raise CostGuardError(f"{run_id} maximum estimate must be positive")
@@ -276,6 +291,17 @@ def _gcp_cost(
         "calculated_hourly_usd": _usd(hourly),
     }
     return maximum, assumptions
+
+
+def _provider_plan_digest(provider_plan: Mapping[str, Any]) -> str:
+    payload = json.dumps(
+        provider_plan,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def _command(*parts: str) -> list[str]:
@@ -696,6 +722,7 @@ def build_authorization(
     entries: Sequence[LedgerEntry],
     run_id: str,
     provider: str,
+    workload: str,
     purpose: str,
     source_commit: str,
     maximum_hours: Decimal,
@@ -706,12 +733,18 @@ def build_authorization(
     cuda_fallback_zone: str | None,
     cuda_shape: str,
     manual_maximum_usd: Decimal | None,
+    fly_app: str | None = None,
+    fly_region: str | None = None,
+    fly_image: str | None = None,
+    fly_image_evidence_digest: str | None = None,
     today: date | None = None,
 ) -> Mapping[str, Any]:
     _require_run_identity(run_id, source_commit)
     normalized_provider = provider.upper()
     if normalized_provider not in {"GCP", "FLY"}:
         raise CostGuardError("provider must be GCP or Fly")
+    if workload not in _WORKLOADS_BY_PROVIDER[normalized_provider]:
+        raise CostGuardError(f"workload {workload!r} is not valid for provider {normalized_provider}")
     if not purpose.strip() or len(purpose) > 120 or any(character in purpose for character in "\x00\r\n|"):
         raise CostGuardError("purpose must be a bounded single-line ledger value")
 
@@ -719,6 +752,8 @@ def build_authorization(
     if normalized_provider == "GCP":
         if manual_maximum_usd is not None:
             raise CostGuardError("GCP maximum is calculated from the pinned rate snapshot")
+        if any(value is not None for value in (fly_app, fly_region, fly_image, fly_image_evidence_digest)):
+            raise CostGuardError("GCP planning must not contain Fly target fields")
         effective_today = today or date.today()
         if effective_today > PRICING_REVALIDATE_BY:
             raise CostGuardError("GCP pricing snapshot is stale and must be revalidated before planning")
@@ -748,16 +783,94 @@ def build_authorization(
         if manual_maximum_usd is None or not manual_maximum_usd.is_finite() or manual_maximum_usd <= 0:
             raise CostGuardError("Fly planning requires a finite positive manual maximum estimate")
         maximum_usd = manual_maximum_usd.quantize(Decimal("0.01"), rounding=ROUND_CEILING)
-        assumptions = {
-            "resource_count": "5",
-            "topology": "one isolated bootstrap plus four exact-manifest workers",
-            "estimate_source": "operator-supplied current Fly pricing maximum",
-        }
-        provider_plan = {
-            "adapter": "scripts/fly_qualification_adapter.py",
-            "resource_count": 5,
-            "cleanup_contract": "adapter cleanup acknowledgement must list all five resources and no survivors",
-        }
+        if workload == FLY_RECOVERY_WORKLOAD:
+            if any(value is not None for value in (fly_app, fly_region, fly_image, fly_image_evidence_digest)):
+                raise CostGuardError("Fly recovery planning does not accept discovery-seed target fields")
+            assumptions = {
+                "resource_count": "5",
+                "topology": "one isolated bootstrap plus four exact-manifest workers",
+                "estimate_source": "operator-supplied current Fly pricing maximum",
+            }
+            provider_plan = {
+                "adapter": "scripts/fly_qualification_adapter.py",
+                "resource_count": 5,
+                "cleanup_contract": "adapter cleanup acknowledgement must list all five resources and no survivors",
+            }
+        else:
+            expected_app = f"communityai-{run_id}"
+            if fly_app is None or _FLY_APP_RE.fullmatch(fly_app) is None or fly_app != expected_app:
+                raise CostGuardError(f"Fly discovery-seed app must be the dedicated run-derived name {expected_app!r}")
+            if fly_region is None or _FLY_REGION_RE.fullmatch(fly_region) is None:
+                raise CostGuardError("Fly discovery-seed planning requires an exact three-letter region")
+            if fly_image is None or _FLY_DISCOVERY_IMAGE_RE.fullmatch(fly_image) is None:
+                raise CostGuardError(
+                    "Fly discovery-seed image must be an immutable digest in the reviewed GHCR repository"
+                )
+            if fly_image_evidence_digest is None or _SHA256_DIGEST_RE.fullmatch(fly_image_evidence_digest) is None:
+                raise CostGuardError(
+                    "Fly discovery-seed planning requires a canonical image publication-evidence digest"
+                )
+            if not maximum_hours.is_finite() or maximum_hours <= 0 or maximum_hours > MAX_FLY_DISCOVERY_HOURS:
+                raise CostGuardError("Fly discovery-seed maximum hours must be greater than zero and no more than 744")
+            machine = f"{run_id}-seed"
+            volume = f"{run_id}-identity"
+            assumptions = {
+                "resource_count": "5",
+                "topology": "one public discovery-only Machine with persistent identity and dual-stack app service",
+                "estimate_source": "operator-supplied current Fly pricing maximum",
+                "maximum_runtime_hours": str(maximum_hours),
+            }
+            provider_plan = {
+                "adapter": "scripts/fly_discovery_seed.py",
+                "app": fly_app,
+                "region": fly_region,
+                "image": fly_image,
+                "image_publication_evidence": {
+                    "expected_digest": fly_image_evidence_digest,
+                    "required_repository": FLY_DISCOVERY_IMAGE_REPOSITORY,
+                    "source_commit": source_commit,
+                    "validated_by_cost_guard": False,
+                    "adapter_validation_contract": (
+                        "before provider authentication or calls, load the bounded regular evidence file, "
+                        "recompute expected_digest, and validate its schema, source commit, repository, "
+                        "and immutable image digest"
+                    ),
+                },
+                "maximum_runtime_hours": str(maximum_hours),
+                "renewal_or_cleanup_deadline": "provisioned_at + maximum_runtime_hours",
+                "resource_count": 5,
+                "resources": [
+                    {"type": "app", "name": fly_app},
+                    {"type": "machine", "name": machine, "count": 1},
+                    {"type": "volume", "name": volume, "size_gb": 1},
+                    {"type": "shared_ipv4", "count": 1},
+                    {"type": "anycast_ipv6", "count": 1},
+                ],
+                "machine": {
+                    "guest": {"cpu_kind": "shared", "cpus": 1, "memory_mb": 1024},
+                    "rootfs_size_gb": 8,
+                    "internal_port": 31337,
+                    "public_tcp_port": 31337,
+                    "auto_stop": False,
+                    "restart_policy": "always",
+                    "identity_mount": "/data",
+                },
+                "failure_cleanup_contract": (
+                    "remove only the exact run-bound Machine, volume, IP allocations, and dedicated app; "
+                    "verify every resource absent"
+                ),
+                "success_retention_contract": (
+                    "retain the exact five resources only through maximum_runtime_hours; before the deadline, "
+                    "clean them up, renew with an exact ledger reservation, or transition through a separately "
+                    "authorized baseline"
+                ),
+                "protected_resources": ["communityai-bootstrap-1", "unrelated Fly applications"],
+            }
+
+    provider_plan_digest = _provider_plan_digest(provider_plan)
+    ledger_purpose = (
+        f"{purpose.strip()} [workload {workload}] [source {source_commit}] " f"[plan {provider_plan_digest}]"
+    )
 
     existing = [entry for entry in entries if entry.run_id == run_id]
     if len(existing) > 1:
@@ -768,14 +881,13 @@ def build_authorization(
         reservation = existing[0]
         if reservation.state != "PLANNED":
             raise CostGuardError("proposed run ID already exists in a non-PLANNED ledger state")
-        ledger_purpose = f"{purpose.strip()} [source {source_commit}]"
         if (
             reservation.provider != normalized_provider
             or reservation.purpose != ledger_purpose
             or reservation.maximum_usd != maximum_usd
         ):
             raise CostGuardError(
-                "existing ledger reservation does not match the proposed provider, purpose/source, and maximum"
+                "existing ledger reservation does not match the proposed provider, purpose/source/plan, and maximum"
             )
         unreserved_committed = committed - reservation.committed_usd
         remaining_before = CLOUD_CEILING_USD - unreserved_committed
@@ -788,17 +900,17 @@ def build_authorization(
     if remaining_before < 0 or remaining_after < 0:
         raise CostGuardError("proposed run could exceed the combined USD 100 cloud ceiling")
 
-    ledger_purpose = f"{purpose.strip()} [source {source_commit}]"
     ledger_row = (
         f"| {run_id} | {normalized_provider} | {ledger_purpose} | USD {_usd(maximum_usd)} | "
         "— | Not provisioned | PLANNED |"
     )
     return {
         "schema_version": SCHEMA_VERSION,
-        "scope": "qualification-cloud-cost-authorization",
+        "scope": "communityai-cloud-cost-authorization",
         "result": "passed",
         "run_id": run_id,
         "provider": normalized_provider,
+        "workload": workload,
         "source_commit": source_commit,
         "cloud_ceiling_usd": _usd(CLOUD_CEILING_USD),
         "ledger_committed_before_run_usd": _usd(CLOUD_CEILING_USD - remaining_before),
@@ -807,13 +919,19 @@ def build_authorization(
         "remaining_after_run_maximum_usd": _usd(remaining_after),
         "reservation_recorded": reservation_recorded,
         "provisioning_authorized": reservation_recorded,
+        "cost_authorization_only": True,
         "provider_preflight_required": True,
+        "provider_calls_authorized_without_preflight": False,
         "required_ledger_row": ledger_row,
+        "ledger_purpose": ledger_purpose,
+        "provider_plan_digest": provider_plan_digest,
         "pricing_as_of": PRICING_AS_OF.isoformat() if normalized_provider == "GCP" else None,
         "pricing_revalidate_by": PRICING_REVALIDATE_BY.isoformat() if normalized_provider == "GCP" else None,
         "cost_assumptions": assumptions,
         "provider_plan": provider_plan,
-        "cleanup_required_for_pass": True,
+        "cleanup_required_for_pass": workload != FLY_DISCOVERY_SEED_WORKLOAD,
+        "failure_cleanup_required": True,
+        "persistent_resources_after_pass": workload == FLY_DISCOVERY_SEED_WORKLOAD,
         "qualification_evidence": False,
         "complete_release_qualification": False,
     }
@@ -849,11 +967,16 @@ def _decimal_argument(value: str) -> Decimal:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Authorize a bounded GCP or Fly qualification run against the shared cloud ledger",
+        description="Authorize a bounded CommunityAI GCP or Fly workload against the shared cloud ledger",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--provider", required=True, choices=("gcp", "fly"))
+    parser.add_argument(
+        "--workload",
+        required=True,
+        choices=(GCP_QUALIFICATION_WORKLOAD, FLY_RECOVERY_WORKLOAD, FLY_DISCOVERY_SEED_WORKLOAD),
+    )
     parser.add_argument("--purpose", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--ledger", type=Path, default=Path("docs/RELEASE_READINESS.md"))
@@ -866,6 +989,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cuda-fallback-zone")
     parser.add_argument("--cuda-shape", choices=("n1-t4", "g2-l4"), default="n1-t4")
     parser.add_argument("--manual-maximum-usd", type=_decimal_argument)
+    parser.add_argument("--fly-app")
+    parser.add_argument("--fly-region")
+    parser.add_argument("--fly-image")
+    parser.add_argument("--fly-image-evidence-digest")
     return parser
 
 
@@ -876,6 +1003,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             entries=load_spend_ledger(args.ledger),
             run_id=args.run_id,
             provider=args.provider,
+            workload=args.workload,
             purpose=args.purpose,
             source_commit=args.source_commit,
             maximum_hours=args.maximum_hours,
@@ -886,6 +1014,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             cuda_fallback_zone=args.cuda_fallback_zone,
             cuda_shape=args.cuda_shape,
             manual_maximum_usd=args.manual_maximum_usd,
+            fly_app=args.fly_app,
+            fly_region=args.fly_region,
+            fly_image=args.fly_image,
+            fly_image_evidence_digest=args.fly_image_evidence_digest,
         )
         _atomic_json(args.output, report)
     except CostGuardError as exc:
