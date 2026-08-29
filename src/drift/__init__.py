@@ -3,6 +3,13 @@ import platform
 
 os.environ.setdefault("BITSANDBYTES_NOWELCOME", "1")
 
+if platform.system() == "Linux":
+    # Hivemind defaults to Torch's file_system sharing strategy, whose torch_shm_manager
+    # can unlink a tensor before its allocator closes and abort route startup in C++.
+    # Linux's file_descriptor strategy avoids named-file unlink races; the server already
+    # raises its file-descriptor limit before starting multiprocessing workers.
+    os.environ.setdefault("HIVEMIND_MEMORY_SHARING_STRATEGY", "file_descriptor")
+
 if platform.system() == "Darwin":
     # Necessary for forks to work properly on macOS, see https://github.com/kevlened/pytest-parallel/issues/93
     os.environ.setdefault("no_proxy", "*")

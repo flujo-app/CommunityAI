@@ -1,6 +1,8 @@
 import multiprocessing as mp
 import os
 import platform
+import subprocess
+import sys
 import time
 
 import pytest
@@ -17,6 +19,24 @@ forked_posix_only = (
     if hasattr(os, "fork")
     else pytest.mark.skip(reason="Requires os.fork; on Windows handlers run as threads, covered by the Linux CI leg")
 )
+
+
+@pytest.mark.skipif(platform.system() != "Linux", reason="Linux-only Torch shared-memory contract")
+def test_linux_defaults_to_file_descriptor_sharing():
+    env = os.environ.copy()
+    env.pop("HIVEMIND_MEMORY_SHARING_STRATEGY", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import drift; import torch.multiprocessing as mp; print(mp.get_sharing_strategy())",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.stdout.strip() == "file_descriptor"
 
 
 def _submit_tasks(runtime_ready, pools, results_valid):
