@@ -39,9 +39,11 @@ it automatically when `~/.drift/node/node-config.json` is absent. It authenticat
 bounded HTTPS catalog against a bundled root, enforces expiry and persistent rollback
 state, installs only exact digest-matched manifests, generates the seed-backed node
 configuration, and retains an unexpired last-known-good catalog for offline recovery.
-The release bootstrap file and first qualified public manifests are not published or
-bundled yet, so current unsigned builds still render the missing-catalog state on a
-truly clean install. See [`CATALOG_BOOTSTRAP_V1.md`](../docs/CATALOG_BOOTSTRAP_V1.md).
+The first signed public-alpha bootstrap and its exact Qwen/Gemma manifests are
+published under [`public-alpha/catalog-v1`](../public-alpha/catalog-v1). Production
+desktop CI verifies and bundles those inputs; an input-free local engineering build
+remains available and honestly renders the missing-catalog state on a truly clean
+install. See [`CATALOG_BOOTSTRAP_V1.md`](../docs/CATALOG_BOOTSTRAP_V1.md).
 
 Cross-platform packaged validation of native-store promotion and the new
 single-instance/login-startup behavior, contribution budgets, accessibility validation,
@@ -101,19 +103,44 @@ bundle into the product with:
 
 ```shell
 python build_desktop.py \
-  --publication-bundle ../path/to/catalog-publication-bundle
+  --publication-bundle ../public-alpha/catalog-v1 \
+  --source-commit <full-git-object-id> \
+  --build-workflow local
 ```
 
 The builder revalidates the bundle index plus the exact signed catalog, bootstrap,
 manifests, and publication preflight before PyInstaller starts. It then reloads the
 actual packaged copy and requires its complete evidence to match the pre-copy evidence
 before recording catalog/bootstrap identity, the bundle-index digest, member count, and
-member digests in `desktop-metrics.json`. The retained
-`complete_release_qualification=false` value makes clear that this repository audit
-bundle is not model, worker, public-infrastructure, or packaged-inference qualification.
+member digests in `desktop-metrics.json`. After every packaged smoke passes, it
+also writes a sorted `SHA256SUMS` inventory for exact regular files under
+`CommunityAI/`, source/build/catalog-bound `provenance.json`, and
+`release-metadata.json` with an explicit unsigned public-alpha warning. Verify a
+completed output in a fresh process with:
+
+```shell
+python build_desktop.py \
+  --verify-release-output dist/desktop \
+  --publication-bundle ../public-alpha/catalog-v1 \
+  --source-commit <full-git-object-id> \
+  --build-workflow local \
+  --verify-build-environment
+```
+
+Supplying the expected inputs makes the fresh process revalidate the catalog bundle and
+require the recorded source commit/tree, workflow, platform, Python, and PyInstaller
+identity to match. Omitting them performs only structural metadata and payload
+verification.
+
+These checksums identify the exact emitted bytes; they are not a publisher signature or
+a claim that two independent PyInstaller environments produce identical bytes. The
+retained `complete_release_qualification=false` value makes clear that this repository
+audit bundle is not model, worker, public-infrastructure, or packaged-inference
+qualification.
 
 On Windows the GUI build uses the GUI subsystem, so double-clicking the application does
 not open a terminal. The build runs the packaged GUI runtime check, headless control-API
 contract, connected UI smoke, automatic-reconnect smoke, and the frozen node/worker
 runtime checks. It also writes GUI and sidecar size/runtime evidence to `dist/desktop`.
-These bundles are CI evidence, not signed installers or release candidates.
+These bundles are checksum-verifiable unsigned public-alpha engineering evidence, not
+publisher-signed installers or completed release qualification.

@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/desktop.yaml"
       - "desktop/**"
+      - "public-alpha/**"
       - "pyproject.toml"
       - "src/**"
       - "scripts/build_hivemind_windows.py"
@@ -59,14 +60,26 @@ jobs:
         run: |
           python -m unittest discover -s tests -v
           communityai-desktop --self-test
-      - name: Build and smoke unsigned production bundle
-        run: python build_desktop.py
+      - name: Build and smoke unsigned public-alpha bundle
+        run: >-
+          python build_desktop.py
+          --publication-bundle ../public-alpha/catalog-v1
+          --source-commit "${{ github.sha }}"
+          --build-workflow "${{ github.workflow_ref }}"
+      - name: Independently verify release checksums and expected provenance
+        run: >-
+          python build_desktop.py
+          --verify-release-output dist/desktop
+          --publication-bundle ../public-alpha/catalog-v1
+          --source-commit "${{ github.sha }}"
+          --build-workflow "${{ github.workflow_ref }}"
+          --verify-build-environment
       - name: Exercise packaged node, native credentials, and public seed
         if: runner.os == 'Windows'
         run: >-
           python ../scripts/smoke_desktop_managed_node.py
           --node-command dist/desktop/CommunityAI/node/CommunityAI-Node.exe
-      - name: Upload unsigned bundle and metrics
+      - name: Upload unsigned bundle, checksums, provenance, and metrics
         uses: actions/upload-artifact@v6
         with:
           name: communityai-desktop-${{ matrix.os }}

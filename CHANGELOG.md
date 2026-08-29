@@ -24,6 +24,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   and a best-effort one-route policy. A fresh consumer verified and installed the remotely
   published inputs; the private release key is excluded, remote-demand roots are disabled,
   and the bundle does not claim route, packaging, redundancy, or release qualification.
+- Windows/Linux desktop packaging now emits a stable sorted SHA-256 inventory, provenance
+  bound to the exact Git commit/tree, build workflow/platform, and verified catalog bundle,
+  plus an explicit unsigned public-alpha warning. A fresh-process verifier rejects changed,
+  missing, extra, linked, special, or case-colliding payloads and any overstated signing,
+  update, platform, credits, or qualification claim.
 - Authoritative opt-in contribution policies for model admission, storage, scheduling,
   VRAM, bandwidth, power, and bounded pause behavior.
 - Provider-neutral separate-machine qualification controller and a Fly Machines adapter

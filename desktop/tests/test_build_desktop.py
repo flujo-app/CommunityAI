@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
+import subprocess
 import sys
 import time
 import unittest
@@ -187,6 +189,246 @@ class DesktopReleaseInputTests(unittest.TestCase):
 
         with self.assertRaisesRegex(CatalogBootstrapError, "incomplete release qualification"):
             build_desktop._prepare_release_inputs(bundle_path)
+
+
+class DesktopReleaseArtifactTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporary_directory = TemporaryDirectory()
+        self.addCleanup(self._temporary_directory.cleanup)
+        self.tmp_path = Path(self._temporary_directory.name)
+
+    def _bundle(self, name: str, files: dict[str, bytes]) -> tuple[Path, Path]:
+        output_root = self.tmp_path / name
+        bundle_root = output_root / build_desktop.APP_NAME
+        for relative_path, content in files.items():
+            path = bundle_root / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        return output_root, bundle_root
+
+    def _write(
+        self,
+        name: str,
+        files: dict[str, bytes] | None = None,
+        *,
+        publication_evidence: dict[str, object] | None = None,
+    ) -> tuple[Path, Path, dict[str, object]]:
+        output_root, bundle_root = self._bundle(
+            name,
+            files or {"zeta.txt": b"zeta\n", "nested/alpha.bin": b"alpha\x00"},
+        )
+        summary = build_desktop._write_release_attestations(
+            output_root,
+            bundle_root,
+            source_commit="A" * 40,
+            source_tree="B" * 40,
+            build_workflow="desktop.yaml@refs/heads/test",
+            build_pyinstaller="6.11.1",
+            publication_evidence=publication_evidence,
+        )
+        return output_root, bundle_root, summary
+
+    def test_release_attestations_are_stable_sorted_and_explicitly_unsigned(self):
+        publication_evidence = {
+            "catalog_digest": "sha256:" + "1" * 64,
+            "bundle_index_digest": "sha256:" + "2" * 64,
+            "complete_release_qualification": False,
+        }
+        first_root, _, first_summary = self._write("first", publication_evidence=publication_evidence)
+        second_root, _, second_summary = self._write("second", publication_evidence=publication_evidence)
+
+        for filename in (
+            build_desktop.CHECKSUMS_NAME,
+            build_desktop.RELEASE_METADATA_NAME,
+            build_desktop.PROVENANCE_NAME,
+        ):
+            first_bytes = (first_root / filename).read_bytes()
+            self.assertEqual(first_bytes, (second_root / filename).read_bytes())
+            self.assertNotIn(b"\r\n", first_bytes)
+
+        checksum_lines = (first_root / build_desktop.CHECKSUMS_NAME).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            [line.split("  ", 1)[1] for line in checksum_lines],
+            ["CommunityAI/nested/alpha.bin", "CommunityAI/zeta.txt"],
+        )
+        metadata = json.loads((first_root / build_desktop.RELEASE_METADATA_NAME).read_text(encoding="utf-8"))
+        self.assertIs(metadata["unsigned"], True)
+        self.assertIs(metadata["publisher_signature"], False)
+        self.assertIs(metadata["automatic_updates"], False)
+        self.assertEqual(metadata["supported_platforms"], ["Windows", "Linux"])
+        self.assertIs(metadata["macos_supported"], False)
+        self.assertIs(metadata["credits_enabled"], False)
+        self.assertIs(metadata["complete_release_qualification"], False)
+        self.assertIn("Unsigned public-alpha", metadata["warning"])
+
+        provenance = json.loads((first_root / build_desktop.PROVENANCE_NAME).read_text(encoding="utf-8"))
+        self.assertEqual(provenance["source_commit"], "a" * 40)
+        self.assertEqual(provenance["source_tree"], "b" * 40)
+        self.assertEqual(provenance["build_workflow"], "desktop.yaml@refs/heads/test")
+        self.assertEqual(provenance["build_pyinstaller"], "6.11.1")
+        self.assertEqual(provenance["catalog_publication_bundle"], publication_evidence)
+        self.assertEqual(first_summary, second_summary)
+        self.assertEqual(build_desktop._verify_release_attestations(first_root), first_summary)
+
+    def test_release_output_verifies_in_a_fresh_process(self):
+        output_root, _, expected = self._write("fresh-process")
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = os.pathsep.join(
+            (
+                str(DESKTOP_SOURCE),
+                str(REPOSITORY / "src"),
+                environment.get("PYTHONPATH", ""),
+            )
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPOSITORY / "desktop" / "build_desktop.py"),
+                "--verify-release-output",
+                str(output_root),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=REPOSITORY,
+            env=environment,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+
+    def test_modified_missing_and_extra_bundle_files_are_detected(self):
+        for mutation in ("modified", "missing", "extra"):
+            with self.subTest(mutation=mutation):
+                output_root, bundle_root, _ = self._write(mutation)
+                if mutation == "modified":
+                    (bundle_root / "zeta.txt").write_bytes(b"changed\n")
+                elif mutation == "missing":
+                    (bundle_root / "zeta.txt").unlink()
+                else:
+                    (bundle_root / "extra.txt").write_bytes(b"unexpected\n")
+
+                with self.assertRaisesRegex(RuntimeError, "checksum manifest does not match"):
+                    build_desktop._verify_release_attestations(output_root)
+
+    def test_expected_provenance_inputs_reject_canonical_rewrites(self):
+        publication_evidence = {
+            "catalog_digest": "sha256:" + "1" * 64,
+            "complete_release_qualification": False,
+        }
+        mutations: dict[str, object] = {
+            "source_commit": "c" * 40,
+            "source_tree": "d" * 40,
+            "build_workflow": "different-workflow",
+            "build_platform": "different-platform",
+            "build_python": "0.0.0",
+            "build_pyinstaller": "0.0.0",
+            "catalog_publication_bundle": None,
+        }
+        for field, replacement in mutations.items():
+            with self.subTest(field=field):
+                output_root, _, _ = self._write(
+                    f"rewrite-{field}",
+                    publication_evidence=publication_evidence,
+                )
+                provenance_path = output_root / build_desktop.PROVENANCE_NAME
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                provenance[field] = replacement
+                provenance_path.write_bytes(build_desktop._canonical_json(provenance).encode("utf-8"))
+
+                with self.assertRaisesRegex(RuntimeError, f"provenance {field} does not match"):
+                    build_desktop._verify_release_attestations(
+                        output_root,
+                        expected_source_commit="a" * 40,
+                        expected_source_tree="b" * 40,
+                        expected_build_workflow="desktop.yaml@refs/heads/test",
+                        expected_build_platform=provenance["build_platform"]
+                        if field != "build_platform"
+                        else build_desktop.platform.platform(),
+                        expected_build_python=provenance["build_python"]
+                        if field != "build_python"
+                        else build_desktop.platform.python_version(),
+                        expected_build_pyinstaller="6.11.1",
+                        expected_publication_evidence=publication_evidence,
+                    )
+
+    def test_source_identity_rejects_dirty_release_inputs(self):
+        repository = self.tmp_path / "source-repository"
+        source_file = repository / "desktop" / "build_desktop.py"
+        source_file.parent.mkdir(parents=True)
+        source_file.write_text("print('clean')\n", encoding="utf-8")
+
+        def git(*arguments: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(repository), *arguments],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        git("init")
+        git("config", "user.email", "release-test@example.invalid")
+        git("config", "user.name", "Release Test")
+        git("add", "desktop/build_desktop.py")
+        git("commit", "-m", "test source")
+        head = git("rev-parse", "HEAD")
+        source_tree = git("rev-parse", "HEAD^{tree}")
+
+        self.assertEqual(build_desktop._source_identity(repository, head), (head, source_tree))
+        source_file.write_text("print('dirty')\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "differ from the checked-out Git HEAD"):
+            build_desktop._source_identity(repository, head)
+
+    def test_unsafe_paths_duplicates_commits_and_claims_are_rejected(self):
+        for unsafe_path in (
+            "../escape",
+            "CommunityAI/../escape",
+            "/CommunityAI/absolute",
+            "CommunityAI\\backslash",
+            "CommunityAI/control\nname",
+        ):
+            with self.subTest(path=unsafe_path):
+                with self.assertRaisesRegex(RuntimeError, "unsafe|outside"):
+                    build_desktop._validate_artifact_path(unsafe_path)
+
+        digest = "0" * 64
+        with self.assertRaisesRegex(RuntimeError, "duplicate normalized"):
+            build_desktop._render_sha256sums(
+                [
+                    {"path": "CommunityAI/readme.txt", "sha256": digest, "size_bytes": 1},
+                    {"path": "CommunityAI/README.txt", "sha256": digest, "size_bytes": 1},
+                ]
+            )
+        with self.assertRaisesRegex(RuntimeError, "source commit"):
+            build_desktop._normalize_source_commit("not-a-commit")
+        with self.assertRaisesRegex(RuntimeError, "does not match"):
+            build_desktop._source_identity(REPOSITORY, "0" * 40)
+
+        output_root, _, _ = self._write("claims")
+        metadata_path = output_root / build_desktop.RELEASE_METADATA_NAME
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["automatic_updates"] = True
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "unsupported alpha claims"):
+            build_desktop._verify_release_attestations(output_root)
+
+    def test_symlink_and_non_regular_files_are_rejected(self):
+        output_root, bundle_root = self._bundle("unsafe-entries", {"payload.txt": b"payload"})
+        target = output_root / "outside.txt"
+        target.write_bytes(b"outside")
+        link = bundle_root / "linked.txt"
+        try:
+            link.symlink_to(target)
+        except OSError as exc:
+            self.skipTest(f"symlink creation is unavailable: {exc}")
+        with self.assertRaisesRegex(RuntimeError, "non-regular file"):
+            build_desktop._bundle_artifacts(bundle_root)
+
+        if hasattr(os, "mkfifo"):
+            link.unlink()
+            fifo = bundle_root / "special"
+            os.mkfifo(fifo)
+            with self.assertRaisesRegex(RuntimeError, "non-regular file"):
+                build_desktop._bundle_artifacts(bundle_root)
 
 
 if __name__ == "__main__":
