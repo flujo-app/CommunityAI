@@ -640,9 +640,9 @@ def _prepare_route_identity(
             return None
         discovery.register_local_route_demand_key(identity.key_id)
         return identity
-    except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError) as exc:
+    except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
         logger.warning(
-            "Signed route-demand publication is disabled because the router identity is unavailable: %s", exc
+            "Signed route-demand publication is disabled because the router identity could not be loaded safely"
         )
         return None
 

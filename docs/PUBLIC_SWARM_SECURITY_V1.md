@@ -100,7 +100,8 @@ names, addresses, prompts, outputs, request IDs, or per-request history. Key rot
 requires a new signed catalog root list for now. A hot-edited root list disables both
 publication and consumption until restart so discovery cannot mix trust epochs. Operator
 independence, collusion, and catalog-signing-key compromise remain explicit governance
-and canary risks.
+and canary risks. The complete collection, retention, linkability, log, and residual-risk
+review is in [Automatic placement privacy review v1](AUTOMATIC_PLACEMENT_PRIVACY_V1.md).
 
 ## Rotation and revocation
 

@@ -62,7 +62,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   operator pause. The node now preserves verified replay-order watermarks across restarts in
   bounded, atomic, per-manifest journals. Only public identity/order metadata is retained;
   malformed, oversized, symlinked, non-regular, or unwritable history fails closed before a
-  stale or equivocating record can be trusted.
+  stale or equivocating record can be trusted. An explicit automatic-placement privacy review
+  now inventories every in-memory, DHT, journal, catalog, API, and log field and its retention,
+  linkability, exclusions, and residual risk. Its executable contract fixes the aggregate and
+  public-record schemas and prevents observer credential errors from logging exception details
+  or private filesystem paths.
 
 ### Changed
 
