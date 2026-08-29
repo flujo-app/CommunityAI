@@ -59,17 +59,41 @@ agent:
 - Use the existing `gcloud`, `flyctl`, and `gh` logins. Do not require the owner to copy
   provider tokens into environment variables when native CLI authentication works.
 
+### Non-negotiable launch sequence
+
+The immediate release critical path is **Gate 4 → Gates 5 and 6 → Gates 7 and 8** in
+[`RELEASE_READINESS.md`](RELEASE_READINESS.md). Until all five gates pass, do not start,
+extend, or polish Gates 9–16 unless the work is strictly necessary to execute one of
+Gates 4–8. Preserve already completed later-gate work, but leave it paused.
+
+Missing local tooling is work to solve, not permission to skip the critical path. In
+particular, an unavailable local Docker daemon, absent model snapshots, absent local
+CUDA hardware, or missing local multi-machine capacity is **not** an external blocker.
+Use the authorized GCP/Fly infrastructure, start an available local service, download
+the exact verified artifacts, or build a bounded temporary host. Native `gcloud`,
+`flyctl`, and `gh` authentication is currently available; re-check it immediately before
+use rather than relying on an older evidence note.
+
+The next required external deliverable is not another harness or unit-test expansion.
+It is two published immutable qualification images with retained Gate 4 publication
+reports. After that, run the real Windows/Linux CPU/CUDA matrices and real Fly recovery
+drills. Supporting code is justified only when a concrete attempt at the current gate
+exposes a specific failure that the code fixes.
+
 ### Execution loop
 
 On every implementation run:
 
 1. Inspect the worktree and recent commits. Preserve unfinished and unrelated work; do
    not reset or discard it.
-2. Read the live tracker and select the highest-priority unfinished item whose
-   prerequisites are satisfied.
-3. Implement the smallest complete vertical slice. Do not spend a run merely rewriting
-   the roadmap or restating blockers when useful code, tests, packaging, or operational
-   preparation can proceed.
+2. Read the live tracker and select the earliest unfinished mandatory gate. During the
+   launch sequence above, do not select a later gate merely because it has easier local
+   software work available.
+3. Attempt the gate's real deliverable first. Implement the smallest code fix required
+   by a concrete failure, then return to the real attempt in the same run. Do not spend a
+   run adding speculative validation layers, expanding test infrastructure, rewriting
+   the roadmap, or restating blockers without producing or attempting the external
+   artifact, hardware result, multi-machine result, or deployment the gate requires.
 4. Run verification proportional to risk. External evidence must name the exact source
    commit, model manifest, device/profile, and cleanup result.
 5. Update `RELEASE_READINESS.md`, `CHANGELOG.md` when user-visible behavior changed, and
@@ -79,8 +103,12 @@ On every implementation run:
 6. Commit each verified slice with a descriptive message. Push the working branch and
    open or update its pull request when the slice is ready for CI; never merge failing
    required checks or rewrite shared history.
-7. Continue with the next unblocked item. Stop only when the run ends, the release is
-   complete, or every remaining item needs owner input or unavailable external state.
+7. Continue with the next mandatory gate. A gate is externally blocked only after safe
+   authorized provisioning/tooling alternatives were attempted and failed because of a
+   provider outage, expired owner login, exhausted authorized budget, unavailable owner
+   credential, or another condition the agent cannot resolve. Stop only when the run
+   ends, the release is complete, or that narrow definition applies to every permitted
+   task on the current critical path.
 
 ### Cloud safety rules
 

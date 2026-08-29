@@ -41,8 +41,18 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 - Defined the first release as a Windows/Linux public inference alpha. macOS and all
   credit/payment features are explicitly deferred and will not be advertised as available.
+- Qualification images now install their native build toolchain only during the locked
+  environment build, isolate exact-source verification from the installed environment,
+  and bind the runtime version to installed package metadata before publication.
+- Published the exact Qwen3.5 2B and Gemma 4 E2B qualification images as immutable GHCR
+  indexes with verified Linux runtime manifests, SLSA provenance, SPDX SBOMs, bounded
+  layers, measured image sizes, and evidence-derived 9 GB and 13 GB Fly rootfs plans.
 - Model qualification now treats exact Windows/Linux CPU/CUDA coverage as the strict
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
+- The bounded GCP qualification plan now binds exact Windows/Ubuntu images, verifies
+  created boot-disk sources, enforces a provider-side deletion deadline, creates scarce
+  CUDA hosts before CPU hosts, and supports split-region N1/T4 or G2/L4 CUDA shapes
+  under the same USD 69 ceiling.
 - Fly qualification now reuses the existing native `flyctl` login by default instead of
   requiring a manually supplied token environment variable.
 - Fly Machine provisioning now derives its immutable runtime manifest and measured rootfs
