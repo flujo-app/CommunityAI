@@ -307,6 +307,33 @@ def test_collects_bounded_cuda_route_publication_evidence(tmp_path):
     assert not any(forbidden in json.dumps(report).lower() for forbidden in ("password", "credential", "private_key"))
 
 
+def test_accepts_buildkit_digest_only_purl_without_version(tmp_path):
+    fixture = EvidenceFixture(tmp_path)
+    canonical, digest = evidence._provenance_material(fixture.contract["carrier_runtime_image"])
+    alias = canonical.replace(f"@sha256:{digest}?digest=", "?digest=", 1)
+    dependency = next(
+        item for item in fixture.provenance["buildDefinition"]["resolvedDependencies"] if item["uri"] == canonical
+    )
+    dependency["uri"] = alias
+
+    report, _output = _collect(tmp_path, fixture)
+
+    assert report["provenance"] == "slsa-build-arguments-and-materials-verified"
+
+
+def test_rejects_digest_only_purl_for_different_repository(tmp_path):
+    fixture = EvidenceFixture(tmp_path)
+    canonical, digest = evidence._provenance_material(fixture.contract["carrier_runtime_image"])
+    alias = canonical.replace(f"@sha256:{digest}?digest=", "?digest=", 1)
+    dependency = next(
+        item for item in fixture.provenance["buildDefinition"]["resolvedDependencies"] if item["uri"] == canonical
+    )
+    dependency["uri"] = alias.replace("communityai-qualification-qwen3.5-2b", "unreviewed-carrier")
+
+    with pytest.raises(evidence.PublicRouteImageEvidenceError, match="exact public-route build"):
+        _collect(tmp_path, fixture)
+
+
 def test_rejects_provenance_build_argument_mutation(tmp_path):
     fixture = EvidenceFixture(tmp_path)
     fixture.provenance["buildDefinition"]["externalParameters"]["request"]["args"]["build-arg:CANDIDATE"] = "other"

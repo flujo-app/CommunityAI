@@ -213,6 +213,15 @@ def _provenance_material(reference: str) -> tuple[str, str]:
     return uri, digest
 
 
+def _provenance_material_aliases(reference: str) -> tuple[set[str], str]:
+    canonical, digest = _provenance_material(reference)
+    image_name = reference.rsplit("@sha256:", 1)[0]
+    aliases = {canonical}
+    if image_name.rfind(":") <= image_name.rfind("/"):
+        aliases.add(canonical.replace(f"@sha256:{digest}?digest=", "?digest=", 1))
+    return aliases, digest
+
+
 def _require_provenance(provenance: Mapping[str, Any], contract: Mapping[str, Any]) -> None:
     build_definition = provenance.get("buildDefinition")
     external = build_definition.get("externalParameters") if isinstance(build_definition, dict) else None
@@ -262,6 +271,15 @@ def _require_provenance(provenance: Mapping[str, Any], contract: Mapping[str, An
             sha256 = digest.get("sha256")
             if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
                 break
+            for reference in (
+                contract["carrier_runtime_image"],
+                contract["python_image"],
+                contract["uv_image"],
+            ):
+                aliases, expected_digest = _provenance_material_aliases(str(reference))
+                if sha256 == expected_digest and uri in aliases:
+                    uri = _provenance_material(str(reference))[0]
+                    break
             observed_materials.add((uri, sha256))
     if (
         not isinstance(build_definition, dict)
