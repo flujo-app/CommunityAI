@@ -1477,6 +1477,76 @@ was created, no cloud state changed, and this slice spent USD 0. Gate 11 remains
 CUDA images and retain their bounded evidence, then implement and review the lifecycle
 runner before any exact plan may be reserved or operated.
 
+
+## Gate 11 CUDA publication attempt and fail-closed lifecycle
+
+On 2026-08-29, the first exact-source public-route build exposed a local Docker
+storage failure before publication: recursively changing the copied snapshot's mode
+forced a second copy of the multi-gigabyte carrier layer. Pushed source
+`d2ea7dea5f3541b86293279b0a650bb46ab82583` removes that copy-up and instead
+requires every root-owned snapshot entry to already be world-readable/traversable and
+non-writable. The 28-test image-contract focus passes.
+
+The exact Qwen context then completed a local OCI build and probe. It verified all
+4,571,197,320 declared artifact bytes, the snapshot permission contract, provenance,
+SBOM, 15 compressed layers below the 10 GB per-layer ceiling, local index
+`sha256:94d651088c8c65325a13084c79b0dcedef6793f18367a872569ad94c87bf96dc`,
+and Linux runtime manifest
+`sha256:1b6c995c98f985e7252f2418744d2243c678113dea47bf5a3e36a65e931620c4`.
+The largest model and CUDA layers were 3,572,741,562 and 3,270,207,187 bytes.
+
+The [bounded Qwen publication attempt](evidence/gate11-20260829-qwen-publication-attempt.json)
+executed only the emitted Buildx argv against its distinct source-bound GHCR tag.
+Docker reproduced the probed runtime manifest and authenticated the push, but the final
+five-minute transfer delta was 50,511,460 bytes. After 2,386 seconds, the still
+uncommitted upload session was stopped at the bounded transport limit and tag absence
+was verified. Gemma was not built or published after that external transport result.
+The attempt made no GCP or Fly call, created no cloud resource, and spent USD 0.
+
+The next provider-call-free slice implements the lifecycle boundary. The cost plan now
+also binds the exact initial discovery peer and committed host-controller and acceptance-
+probe SHA-256/byte identities. The lifecycle recomputes the complete authorization from
+the live ledger and canonical plan, requires exact passed publication evidence for both
+immutable route images, and validates every bound source file before provider
+authentication. Its native preflight requires active GCP and GitHub authentication,
+the exact G2/L4 shape, one free regional L4 and global GPU quota slot, the protected
+bootstrap running, and every run-scoped resource absent.
+
+After exact creation and bootstrap verification, only fixed host actions are accepted.
+The host controller starts digest-pinned Qwen primary and Gemma standby containers
+non-root with a read-only root filesystem, private persistent identity storage, training
+disabled, and the exact complete block spans. The lifecycle requires fresh monotonic
+machine-readable health, exact privacy-safe one-token primary, standby, automatic,
+fallback, and restored-primary acceptance, zero container restarts and unattributed GPU
+memory, and the plan's 7/15/22 GiB GPU, 30 GiB RAM, 160 GiB route-storage, and 1 GiB
+log ceilings. Any stop condition enters an unconditional cleanup path that attempts all
+five deletes and all six absence checks. Its bounded report retains no prompt, output,
+token ID, credential, path, endpoint, peer/provider ID, provider output, or command argv.
+
+The lifecycle/cost/host focus passes 102 tests, including altered local bindings before
+authentication, whitespace/control-bearing peer rejection plus DNS names containing
+`s`, quota schema/headroom, exact GCP duration parsing, one anchored 60-minute startup
+deadline propagated through both remote starts and health, separately bounded acceptance
+probes, shell-free fixed actions, mandatory pre-Docker acceptance binding, distinct
+root-executable and non-root-readable helper modes, helper-install compilation, pinned
+live-driver verification, fail-closed regular absolute log accounting, health
+freshness/identity/counter monotonicity, resource/restart stop boundaries, first-create-
+failure cleanup, protected-bootstrap revalidation, cleanup continuation, and evidence
+privacy. The stable shared startup/node/image-evidence/cost/lifecycle/host subset passes
+146 tests. Independent review reproduced all 102 focused tests with only two external
+SWIG deprecation warnings; Black, isort, and the diff check passed. Earlier inclusion of
+the unchanged image-contract materialization tests produced one or two intermittent
+Windows directory-rename failures in the FLUJO temporary root; each affected test passed
+alone. No provider call, reservation, route, or cloud spend occurred in the lifecycle
+slice.
+
+The earlier USD 26 estimate was unreserved. After the three cleaned Gate 9 maxima,
+the live authorization epoch has only USD 16 remaining, so the lifecycle deliberately
+cannot regenerate a reservable plan. Gate 11 remains `IN PROGRESS`: retry the exact
+Qwen push from an adequate-bandwidth builder, publish and strictly collect Gemma, then
+obtain billing reconciliation or an explicit cleanup-backed owner reset before any USD
+26 reservation or provider creation.
+
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts

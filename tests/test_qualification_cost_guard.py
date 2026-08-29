@@ -22,6 +22,15 @@ RUNTIME_BOOTSTRAP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "gcp_
 RUNTIME_BOOTSTRAP_PAYLOAD = RUNTIME_BOOTSTRAP_PATH.read_bytes()
 RUNTIME_BOOTSTRAP_DIGEST = "sha256:" + hashlib.sha256(RUNTIME_BOOTSTRAP_PAYLOAD).hexdigest()
 RUNTIME_BOOTSTRAP_BYTES = len(RUNTIME_BOOTSTRAP_PAYLOAD)
+HOST_CONTROLLER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "gcp_public_route_host.py"
+HOST_CONTROLLER_PAYLOAD = HOST_CONTROLLER_PATH.read_bytes()
+HOST_CONTROLLER_DIGEST = "sha256:" + hashlib.sha256(HOST_CONTROLLER_PAYLOAD).hexdigest()
+HOST_CONTROLLER_BYTES = len(HOST_CONTROLLER_PAYLOAD)
+ACCEPTANCE_PROBE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "public_route_acceptance.py"
+ACCEPTANCE_PROBE_PAYLOAD = ACCEPTANCE_PROBE_PATH.read_bytes()
+ACCEPTANCE_PROBE_DIGEST = "sha256:" + hashlib.sha256(ACCEPTANCE_PROBE_PAYLOAD).hexdigest()
+ACCEPTANCE_PROBE_BYTES = len(ACCEPTANCE_PROBE_PAYLOAD)
+INITIAL_PEER = "/ip4/34.42.181.232/tcp/31337/p2p/QmYwAPJzv5CZsnAzt8auVZRnGi2Cj8Xn4K6q5V9z8M2w7P"
 
 
 def _ledger(*rows: str) -> str:
@@ -113,6 +122,11 @@ def _gcp_public_route_authorization(entries=(), **overrides):
         "standby_image_evidence_digest": STANDBY_IMAGE_EVIDENCE_DIGEST,
         "runtime_bootstrap_digest": RUNTIME_BOOTSTRAP_DIGEST,
         "runtime_bootstrap_bytes": RUNTIME_BOOTSTRAP_BYTES,
+        "initial_peer": INITIAL_PEER,
+        "host_controller_digest": HOST_CONTROLLER_DIGEST,
+        "host_controller_bytes": HOST_CONTROLLER_BYTES,
+        "acceptance_probe_digest": ACCEPTANCE_PROBE_DIGEST,
+        "acceptance_probe_bytes": ACCEPTANCE_PROBE_BYTES,
         "today": date(2026, 8, 29),
     }
     values.update(overrides)
@@ -693,6 +707,21 @@ def test_gcp_public_route_plan_binds_finite_routes_health_and_cleanup():
         "source_commit_bound": True,
         "validated_by_cost_guard": False,
     }
+    assert plan["host_controller"] == {
+        "relative_path": "scripts/gcp_public_route_host.py",
+        "sha256": HOST_CONTROLLER_DIGEST,
+        "byte_size": HOST_CONTROLLER_BYTES,
+        "source_commit_bound": True,
+        "validated_by_cost_guard": False,
+    }
+    assert plan["acceptance_probe"] == {
+        "relative_path": "scripts/public_route_acceptance.py",
+        "sha256": ACCEPTANCE_PROBE_DIGEST,
+        "byte_size": ACCEPTANCE_PROBE_BYTES,
+        "source_commit_bound": True,
+        "validated_by_cost_guard": False,
+    }
+    assert plan["initial_peer"] == INITIAL_PEER
     assert plan["operating_contract"]["resource_ceilings"] == {
         "qwen_device_memory_gib": 7,
         "gemma_device_memory_gib": 15,
@@ -753,6 +782,11 @@ def test_gcp_public_route_exact_reservation_binds_every_mutable_input():
         {"standby_image_evidence_digest": "sha256:" + "5" * 64},
         {"runtime_bootstrap_digest": "sha256:" + "6" * 64},
         {"runtime_bootstrap_bytes": RUNTIME_BOOTSTRAP_BYTES - 1},
+        {"initial_peer": INITIAL_PEER.replace("34.42.181.232", "35.42.181.232")},
+        {"host_controller_digest": "sha256:" + "7" * 64},
+        {"host_controller_bytes": HOST_CONTROLLER_BYTES - 1},
+        {"acceptance_probe_digest": "sha256:" + "8" * 64},
+        {"acceptance_probe_bytes": ACCEPTANCE_PROBE_BYTES - 1},
     )
     for mutation in mutations:
         with pytest.raises(guard.CostGuardError, match="purpose/source/plan"):
@@ -781,11 +815,27 @@ def test_gcp_public_route_exact_reservation_binds_every_mutable_input():
         ({"runtime_bootstrap_digest": "SHA256:" + "4" * 64}, "canonical source digest"),
         ({"runtime_bootstrap_bytes": 0}, "between 1 and 16384 bytes"),
         ({"runtime_bootstrap_bytes": 16_385}, "between 1 and 16384 bytes"),
+        ({"initial_peer": "/ip4/127.0.0.1/tcp/1"}, "authenticated multiaddr"),
+        ({"initial_peer": INITIAL_PEER.replace("/tcp", " /tcp")}, "authenticated multiaddr"),
+        ({"initial_peer": INITIAL_PEER.replace("/tcp", "\t/tcp")}, "authenticated multiaddr"),
+        ({"initial_peer": INITIAL_PEER + "\n"}, "authenticated multiaddr"),
+        ({"host_controller_digest": "SHA256:" + "5" * 64}, "canonical source digest"),
+        ({"host_controller_bytes": 0}, "between 1 and 131072 bytes"),
+        ({"acceptance_probe_digest": "SHA256:" + "6" * 64}, "canonical source digest"),
+        ({"acceptance_probe_bytes": 65_537}, "between 1 and 65536 bytes"),
     ],
 )
 def test_gcp_public_route_plan_rejects_unsafe_or_incomplete_targets(overrides, message):
     with pytest.raises(guard.CostGuardError, match=message):
         _gcp_public_route_authorization(**overrides)
+
+
+def test_gcp_public_route_peer_allows_dns_names_containing_s():
+    peer = INITIAL_PEER.replace("/ip4/34.42.181.232/", "/dns4/seed.communityai.example/")
+
+    authorization = _gcp_public_route_authorization(initial_peer=peer)
+
+    assert authorization["provider_plan"]["initial_peer"] == peer
 
 
 def test_gcp_public_route_plan_respects_existing_combined_commitments():

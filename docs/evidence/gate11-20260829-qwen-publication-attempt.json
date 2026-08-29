@@ -1,0 +1,40 @@
+{
+  "candidate": "qwen3.5-2b",
+  "cloud_provider_calls": false,
+  "cloud_spend_usd": "0.00",
+  "exact_emitted_buildx_argv_executed": true,
+  "image_tag": "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b:source-d2ea7dea5f3541b86293279b0a650bb46ab82583",
+  "local_probe": {
+    "artifact_bytes_verified": 4571197320,
+    "contract_tests_passed": 28,
+    "largest_compressed_layers": [
+      {
+        "compressed_bytes": 3572741562,
+        "digest": "sha256:d63d5cbd72f2e38ee5b62850ace3f715956d68bd380f04dc36aa44337eb598be",
+        "purpose": "model_snapshot"
+      },
+      {
+        "compressed_bytes": 3270207187,
+        "digest": "sha256:b9d39674904f5964c816ff523249ff376a1dd5acec9fb0f0d87e49e2af66b97c",
+        "purpose": "cuda_runtime"
+      }
+    ],
+    "layer_count": 15,
+    "local_index_digest": "sha256:94d651088c8c65325a13084c79b0dcedef6793f18367a872569ad94c87bf96dc",
+    "runtime_manifest_digest": "sha256:1b6c995c98f985e7252f2418744d2243c678113dea47bf5a3e36a65e931620c4",
+    "sbom_generated": true,
+    "snapshot_permission_assertions_passed": true
+  },
+  "publication_attempt": {
+    "ended_at": "2026-08-29T17:20:04.9512938Z",
+    "elapsed_seconds": 2386,
+    "final_five_minute_transmit_bytes": 50511460,
+    "result": "stopped_at_bounded_transport_limit",
+    "started_at": "2026-08-29T16:40:19.1780000Z",
+    "tag_absence_verified_after_attempt": true
+  },
+  "result": "blocked",
+  "schema_version": 1,
+  "scope": "gate11-public-route-image-publication-attempt",
+  "source_commit": "d2ea7dea5f3541b86293279b0a650bb46ab82583"
+}

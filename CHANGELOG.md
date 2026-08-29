@@ -41,8 +41,16 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   package/config labels, layer bounds, and measured local size. The fail-closed Ubuntu
   bootstrap invalidates stale readiness first, then pins and verifies the NVIDIA driver,
   Docker, containerd, and NVIDIA Container Toolkit before writing a private readiness record.
-  Its conservative USD 26 maximum remains unreserved; publication evidence and the
-  lifecycle runner are still required before a cloud route may be authorized.
+  A source-bound lifecycle controller now rejects altered authorization, ledger, image
+  evidence, bootstrap, host controller, or acceptance-probe inputs before authentication;
+  checks exact regional/global GPU quota and initial absence; operates fixed non-root,
+  read-only primary/standby actions; enforces fresh health, inference, fallback,
+  restoration, resource, restart, deadline, cleanup, and privacy boundaries; and always
+  attempts exact teardown and absence verification. Recursive snapshot chmod was removed
+  from the CUDA image so large carrier layers do not copy up during build. The Qwen image
+  passes its complete local OCI, permission, provenance, and SBOM probe, but publication is
+  externally blocked by the current builder's upload rate; Gemma remains unpublished. The
+  USD 26 plan remains unreserved and cannot fit the current USD 16 ledger balance.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

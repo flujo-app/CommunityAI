@@ -63,6 +63,7 @@ GCP_PRIMARY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-public-route-qwen3
 GCP_STANDBY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b"
 _GCP_PRIMARY_IMAGE_RE = re.compile(rf"^{re.escape(GCP_PRIMARY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
 _GCP_STANDBY_IMAGE_RE = re.compile(rf"^{re.escape(GCP_STANDBY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
+_PUBLIC_ROUTE_PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
 GCP_PRIMARY_MANIFEST_DIGEST = "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33"
 GCP_STANDBY_MANIFEST_DIGEST = "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd"
 
@@ -363,6 +364,11 @@ def _gcp_public_route_plan(
     standby_image_evidence_digest: str,
     runtime_bootstrap_digest: str,
     runtime_bootstrap_bytes: int,
+    initial_peer: str,
+    host_controller_digest: str,
+    host_controller_bytes: int,
+    acceptance_probe_digest: str,
+    acceptance_probe_bytes: int,
 ) -> Mapping[str, Any]:
     region = _require_gcp_target(project, zone)
     if _IMAGE_RE.fullmatch(linux_image) is None:
@@ -377,12 +383,22 @@ def _gcp_public_route_plan(
         raise CostGuardError("GCP public-route standby image requires a canonical publication-evidence digest")
     if _SHA256_DIGEST_RE.fullmatch(runtime_bootstrap_digest or "") is None:
         raise CostGuardError("GCP public-route runtime bootstrap requires a canonical source digest")
+    source_bindings = (
+        (runtime_bootstrap_digest, runtime_bootstrap_bytes, "runtime bootstrap", 16_384),
+        (host_controller_digest, host_controller_bytes, "host controller", 131_072),
+        (acceptance_probe_digest, acceptance_probe_bytes, "acceptance probe", 65_536),
+    )
+    for digest, byte_size, field, maximum_bytes in source_bindings:
+        if _SHA256_DIGEST_RE.fullmatch(digest or "") is None:
+            raise CostGuardError(f"GCP public-route {field} requires a canonical source digest")
+        if isinstance(byte_size, bool) or not isinstance(byte_size, int) or not 1 <= byte_size <= maximum_bytes:
+            raise CostGuardError(f"GCP public-route {field} must be between 1 and {maximum_bytes} bytes")
     if (
-        isinstance(runtime_bootstrap_bytes, bool)
-        or not isinstance(runtime_bootstrap_bytes, int)
-        or not 1 <= runtime_bootstrap_bytes <= 16_384
+        not isinstance(initial_peer, str)
+        or len(initial_peer) > 2048
+        or _PUBLIC_ROUTE_PEER_RE.fullmatch(initial_peer) is None
     ):
-        raise CostGuardError("GCP public-route runtime bootstrap must be between 1 and 16384 bytes")
+        raise CostGuardError("GCP public-route initial peer must be one bounded authenticated multiaddr")
 
     instance = f"{run_id}-route"
     network = f"{run_id}-net"
@@ -662,6 +678,21 @@ def _gcp_public_route_plan(
             "source_commit_bound": True,
             "validated_by_cost_guard": False,
         },
+        "host_controller": {
+            "relative_path": "scripts/gcp_public_route_host.py",
+            "sha256": host_controller_digest,
+            "byte_size": host_controller_bytes,
+            "source_commit_bound": True,
+            "validated_by_cost_guard": False,
+        },
+        "acceptance_probe": {
+            "relative_path": "scripts/public_route_acceptance.py",
+            "sha256": acceptance_probe_digest,
+            "byte_size": acceptance_probe_bytes,
+            "source_commit_bound": True,
+            "validated_by_cost_guard": False,
+        },
+        "initial_peer": initial_peer,
         "routes": [
             {
                 "role": "primary",
@@ -695,6 +726,10 @@ def _gcp_public_route_plan(
             (
                 "rehash the committed fresh-VM runtime bootstrap and require its exact relative path, digest, "
                 "byte size, source commit, pinned driver, Docker, containerd, and NVIDIA toolkit versions"
+            ),
+            (
+                "rehash the committed fixed-action host controller and privacy-safe acceptance probe and require "
+                "their exact path, digest, byte size, source commit, and planned authenticated bootstrap peer"
             ),
             (
                 "load each bounded publication-evidence file, recompute its digest, and verify its candidate, "
@@ -1392,6 +1427,11 @@ def build_authorization(
     standby_image_evidence_digest: str | None = None,
     runtime_bootstrap_digest: str | None = None,
     runtime_bootstrap_bytes: int | None = None,
+    initial_peer: str | None = None,
+    host_controller_digest: str | None = None,
+    host_controller_bytes: int | None = None,
+    acceptance_probe_digest: str | None = None,
+    acceptance_probe_bytes: int | None = None,
     today: date | None = None,
 ) -> Mapping[str, Any]:
     _require_run_identity(run_id, source_commit)
@@ -1421,6 +1461,11 @@ def build_authorization(
             standby_image_evidence_digest,
             runtime_bootstrap_digest,
             runtime_bootstrap_bytes,
+            initial_peer,
+            host_controller_digest,
+            host_controller_bytes,
+            acceptance_probe_digest,
+            acceptance_probe_bytes,
         )
         if workload == GCP_QUALIFICATION_WORKLOAD:
             if windows_image is None:
@@ -1466,6 +1511,11 @@ def build_authorization(
                 standby_image_evidence_digest=standby_image_evidence_digest,
                 runtime_bootstrap_digest=runtime_bootstrap_digest,
                 runtime_bootstrap_bytes=runtime_bootstrap_bytes,
+                initial_peer=initial_peer,
+                host_controller_digest=host_controller_digest,
+                host_controller_bytes=host_controller_bytes,
+                acceptance_probe_digest=acceptance_probe_digest,
+                acceptance_probe_bytes=acceptance_probe_bytes,
             )
     else:
         if (
@@ -1483,6 +1533,11 @@ def build_authorization(
                     standby_image_evidence_digest,
                     runtime_bootstrap_digest,
                     runtime_bootstrap_bytes,
+                    initial_peer,
+                    host_controller_digest,
+                    host_controller_bytes,
+                    acceptance_probe_digest,
+                    acceptance_probe_bytes,
                 )
             )
             or cuda_shape != "n1-t4"
@@ -1712,6 +1767,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--standby-image-evidence-digest")
     parser.add_argument("--runtime-bootstrap-digest")
     parser.add_argument("--runtime-bootstrap-bytes", type=int)
+    parser.add_argument("--initial-peer")
+    parser.add_argument("--host-controller-digest")
+    parser.add_argument("--host-controller-bytes", type=int)
+    parser.add_argument("--acceptance-probe-digest")
+    parser.add_argument("--acceptance-probe-bytes", type=int)
     return parser
 
 
@@ -1743,6 +1803,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             standby_image_evidence_digest=args.standby_image_evidence_digest,
             runtime_bootstrap_digest=args.runtime_bootstrap_digest,
             runtime_bootstrap_bytes=args.runtime_bootstrap_bytes,
+            initial_peer=args.initial_peer,
+            host_controller_digest=args.host_controller_digest,
+            host_controller_bytes=args.host_controller_bytes,
+            acceptance_probe_digest=args.acceptance_probe_digest,
+            acceptance_probe_bytes=args.acceptance_probe_bytes,
         )
         _atomic_json(args.output, report)
     except CostGuardError as exc:
