@@ -85,6 +85,14 @@ Before any model run, make the benchmark JSON report post-close memory, accelera
 process, and route-manager cleanup. Validate that code with fake/local unit fixtures;
 do not add a TinyLlama or other real-model prerequisite.
 
+Cleanup passes only when runtime close and route-manager shutdown are observed, no child
+process absent from the baseline survives, accelerator allocations return to baseline,
+and process-tree RSS is no more than 16 MiB above baseline. The RSS allowance covers
+bounded allocator and sampling jitter; a retained 32 MiB client allocation fails the
+fixture. The sampler gives asynchronous teardown up to five seconds to stabilize. It
+compares child-process identities so replacement leaks cannot hide behind an unchanged
+count, but publishes counts rather than raw process IDs.
+
 Then perform exactly this sequence:
 
 1. Create or start one complete Qwen route with a unique run ID and an already-armed

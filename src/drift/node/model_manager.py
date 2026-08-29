@@ -62,6 +62,7 @@ class ModelRuntime:
     tokenizer: Any
     close: Optional[Callable[[], None]] = None
     route_health: Optional[Callable[[], Dict[str, Any]]] = None
+    cleanup_health: Optional[Callable[[], Dict[str, Any]]] = None
 
 
 @dataclass(frozen=True)

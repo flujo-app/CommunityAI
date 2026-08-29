@@ -64,6 +64,7 @@ def make_manifest_loader(
             tokenizer=tokenizer,
             close=_runtime_closer(model),
             route_health=_runtime_route_observer(model),
+            cleanup_health=_runtime_cleanup_observer(model),
         )
 
     return load
@@ -108,5 +109,25 @@ def _runtime_route_observer(model) -> Callable[[], dict]:
         result["source"] = "runtime"
         result["last_error"] = None
         return result
+
+    return observe
+
+
+def _runtime_cleanup_observer(model) -> Callable[[], dict]:
+    """Report whether the distributed client's route-manager processes stopped."""
+    remote_layers = model.transformer.h
+    sequence_manager = remote_layers.sequence_manager
+    update_thread = sequence_manager._thread
+    dht = getattr(sequence_manager, "dht", None)
+
+    def observe() -> dict:
+        update_thread_alive = bool(update_thread.is_alive())
+        dht_process_alive = bool(dht is not None and dht.is_alive())
+        return {
+            "observed": True,
+            "sequence_manager_update_thread_alive": update_thread_alive,
+            "dht_process_alive": dht_process_alive,
+            "clean": not update_thread_alive and not dht_process_alive,
+        }
 
     return observe

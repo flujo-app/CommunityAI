@@ -96,6 +96,8 @@ def main() -> None:
     else:
         json.dump(result, sys.stdout, ensure_ascii=False, allow_nan=False, indent=2, sort_keys=True)
         sys.stdout.write("\n")
+    if result.get("cleanup", {}).get("passed") is not True:
+        parser.error("post-close cleanup was not proved; inspect the benchmark JSON")
 
 
 if __name__ == "__main__":

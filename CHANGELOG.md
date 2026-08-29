@@ -51,6 +51,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   the reason and exact route through the control API, and returns an honest unavailable
   response when no eligible route exists. The desktop displays the selected model, reason,
   peer count, and complete block range.
+- `drift edge-benchmark` now emits schema-v2 post-close runtime, route-manager,
+  process-tree memory/child-process, accelerator, and bounded-stabilization cleanup
+  evidence. It releases local model tensors before its final sample, detects replacement
+  child PIDs, permits only 16 MiB of RSS allocator jitter, and fails closed when cleanup
+  is not proved.
 - Scoped the first alpha as a best-effort service with a minimum signed-catalog, exact-
   artifact, authenticated-peer, bounded-admission, local-resource-control, privacy, and
   disable-path safety floor. Production-SLO redundancy, independent threshold governance,
