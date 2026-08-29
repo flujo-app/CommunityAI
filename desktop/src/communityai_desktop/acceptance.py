@@ -143,24 +143,56 @@ def _handler(state: _FakeNodeState):
                         "started_at": 1,
                         "openai_base_url": f"http://127.0.0.1:{self.server.server_port}/v1",
                         "runtime_budget": {"max_loaded_models": 1, "resident_models": 0},
+                        "auto_selection": {
+                            "selector": "auto",
+                            "status": "selected",
+                            "model": "Qwen 3 8B",
+                            "manifest_digest": "sha256:" + "b" * 64,
+                            "reason": (
+                                "Selected catalog priority 1: live discovery reports a complete "
+                                "36/36-block route from 31 verified peers."
+                            ),
+                            "covered_blocks": 36,
+                            "total_blocks": 36,
+                            "peer_count": 31,
+                            "source": "discovery",
+                        },
                         "models": [
                             {
                                 "id": "Llama 3.1 8B",
                                 "state": "ready",
                                 "active_requests": 0,
-                                "route": {"covered_blocks": 32, "total_blocks": 32, "peer_count": 47},
+                                "route": {
+                                    "status": "complete",
+                                    "source": "discovery",
+                                    "covered_blocks": 32,
+                                    "total_blocks": 32,
+                                    "peer_count": 47,
+                                },
                             },
                             {
                                 "id": "Qwen 3 8B",
                                 "state": "ready",
                                 "active_requests": 2,
-                                "route": {"covered_blocks": 36, "total_blocks": 36, "peer_count": 31},
+                                "route": {
+                                    "status": "complete",
+                                    "source": "discovery",
+                                    "covered_blocks": 36,
+                                    "total_blocks": 36,
+                                    "peer_count": 31,
+                                },
                             },
                             {
                                 "id": "Mistral Small",
                                 "state": "degraded",
                                 "active_requests": 0,
-                                "route": {"covered_blocks": 35, "total_blocks": 40, "peer_count": 18},
+                                "route": {
+                                    "status": "incomplete",
+                                    "source": "discovery",
+                                    "covered_blocks": 35,
+                                    "total_blocks": 40,
+                                    "peer_count": 18,
+                                },
                             },
                         ],
                         "workers": state.workers(),
@@ -286,6 +318,11 @@ def run_contract(client: NodeClient) -> Dict[str, Any]:
         raise AssertionError("desktop did not preserve the node's model-policy decision")
     if desktop["contribution"]["vram_percent"] != 50:
         raise AssertionError("desktop did not preserve the node's resolved VRAM budget")
+    if desktop["auto_selection"]["model"] != "Qwen 3 8B":
+        raise AssertionError("desktop did not preserve the node's automatic model choice")
+    selected = next(model for model in desktop["models"] if model["auto_selected"])
+    if selected["coverage"] != "36/36" or not selected["route_complete"]:
+        raise AssertionError("desktop did not preserve the selected model's complete route")
     current_policy = client.get_contribution_policy()
     updated_policy = dict(current_policy["policy"])
     updated_policy["pause_timeout"] = 12.0
@@ -324,6 +361,7 @@ def run_contract(client: NodeClient) -> Dict[str, Any]:
         "key_lifecycle": "passed",
         "contribution_policy": "passed",
         "policy_update": "passed",
+        "auto_selection": "passed",
     }
 
 

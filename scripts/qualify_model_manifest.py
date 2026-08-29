@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import re
@@ -25,6 +26,7 @@ import drift
 from drift.model_manifest import ManifestError, ModelManifest
 
 LOCAL_QUALIFICATION_SCHEMA_VERSION = 1
+DEFAULT_QUALIFICATION_PROMPT = "The capital of France is"
 _PARITY_MARKER = "distributed output matches the stock model exactly"
 _SUCCESS_MARKER = "manifested local swarm qualification ok"
 _MAX_CAPTURE_CHARACTERS = 24_000
@@ -52,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--cache-dir", type=Path, help="Shared immutable model cache for the qualification run")
     parser.add_argument("--device", default="cpu", help="Worker-block and stock-reference torch device")
-    parser.add_argument("--prompt", default="Hello")
+    parser.add_argument("--prompt", default=DEFAULT_QUALIFICATION_PROMPT)
     parser.add_argument("--new-tokens", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=900, help="Per-smoke timeout in seconds")
     parser.add_argument("--cache", choices=("contiguous", "paged"), default="contiguous")
@@ -63,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="also start two full replicas, interrupt the selected worker, and require exact parity",
     )
     parser.add_argument("--failover-tokens", type=int, default=8)
+    parser.add_argument(
+        "--failover-request-timeout",
+        type=float,
+        default=10.0,
+        help="per-RPC timeout for the failover smoke, including slow CPU first-token latency",
+    )
     parser.add_argument(
         "--machine-id",
         help="Privacy-safe opaque machine label used to prove distinct external qualification hosts",
@@ -198,6 +206,11 @@ def extract_smoke_evidence(stdout: str, *, failover: bool) -> dict[str, Any]:
                 evidence["failover_recovery_seconds"] = float(line.split("=", 1)[1])
             except ValueError:
                 evidence["failover_recovery_seconds_unparsed"] = line.split("=", 1)[1]
+        elif line.startswith("failover_request_timeout_seconds="):
+            try:
+                evidence["failover_request_timeout_seconds"] = float(line.split("=", 1)[1])
+            except ValueError:
+                evidence["failover_request_timeout_seconds_unparsed"] = line.split("=", 1)[1]
         elif line.startswith("torch="):
             for item in line.split(","):
                 key, separator, value = item.strip().partition("=")
@@ -207,12 +220,20 @@ def extract_smoke_evidence(stdout: str, *, failover: bool) -> dict[str, Any]:
                     evidence["worker_device"] = value
         elif line.startswith("torch_dtype="):
             evidence["worker_torch_dtype"] = line.split("=", 1)[1].removeprefix("torch.")
+        elif line.startswith("torch_num_threads="):
+            try:
+                evidence["torch_num_threads"] = int(line.split("=", 1)[1])
+            except ValueError:
+                evidence["torch_num_threads_unparsed"] = line.split("=", 1)[1]
         elif line.startswith("attention_implementation="):
             evidence["attention_implementation"] = line.split("=", 1)[1]
         elif line.startswith("client_input_embeddings_placement="):
             evidence["client_input_embeddings_placement"] = line.split("=", 1)[1]
         elif line.startswith("client_lm_head_placement="):
             evidence["client_lm_head_placement"] = line.split("=", 1)[1]
+        elif line.startswith("client_lm_head_use_chunked_forward="):
+            value = line.split("=", 1)[1]
+            evidence["client_lm_head_use_chunked_forward"] = {"True": True, "False": False}.get(value, value)
     if failover:
         evidence["selected_worker_interrupted"] = "interrupting selected worker" in stdout
         evidence["recovery_observed"] = "failover_recovery_seconds" in evidence
@@ -230,6 +251,11 @@ def smoke_evidence_passed(evidence: dict[str, Any], *, failover: bool) -> bool:
     return required
 
 
+def qualification_parity_tokens(new_tokens: int, *, with_failover: bool, failover_tokens: int) -> int:
+    """Exercise the primary route for the same horizon used by failover."""
+    return max(new_tokens, failover_tokens) if with_failover else new_tokens
+
+
 def build_smoke_command(
     manifest_path: Path,
     *,
@@ -243,6 +269,7 @@ def build_smoke_command(
     page_size: int,
     failover: bool,
     failover_tokens: int,
+    failover_request_timeout: float,
 ) -> list[str]:
     smoke = Path(__file__).resolve().with_name("smoke_manifest_local_swarm.py")
     command = [
@@ -268,7 +295,15 @@ def build_smoke_command(
     if cache_dir is not None:
         command.extend(("--cache-dir", str(cache_dir)))
     if failover:
-        command.extend(("--test-failover", "--failover-tokens", str(failover_tokens)))
+        command.extend(
+            (
+                "--test-failover",
+                "--failover-tokens",
+                str(failover_tokens),
+                "--failover-request-timeout",
+                str(failover_request_timeout),
+            )
+        )
     return command
 
 
@@ -370,6 +405,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--new-tokens must be at least 1")
     if args.failover_tokens < 2:
         parser.error("--failover-tokens must be at least 2")
+    if not math.isfinite(args.failover_request_timeout) or args.failover_request_timeout <= 0:
+        parser.error("--failover-request-timeout must be finite and positive")
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     if args.page_size <= 0:
@@ -440,6 +477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "artifact_verification": artifact_root is not None,
             "local_parity": not args.manifest_only,
             "local_failover": args.with_failover,
+            "failover_request_timeout_seconds": args.failover_request_timeout if args.with_failover else None,
             "device": args.device,
             "cache": args.cache,
             "artifact_root": "<artifact-root>" if artifact_root is not None else None,
@@ -462,11 +500,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             cache_dir=cache_dir,
             device=args.device,
             prompt=args.prompt,
-            new_tokens=args.new_tokens,
+            new_tokens=qualification_parity_tokens(
+                args.new_tokens,
+                with_failover=args.with_failover,
+                failover_tokens=args.failover_tokens,
+            ),
             timeout=args.timeout,
             cache=args.cache,
             page_size=args.page_size,
             failover_tokens=args.failover_tokens,
+            failover_request_timeout=args.failover_request_timeout,
         )
         parity = run_smoke_stage(
             "local_distributed_stock_parity",

@@ -24,7 +24,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Provider-neutral separate-machine qualification controller and a Fly Machines adapter
   with selected-worker hard kill and fail-closed resource cleanup.
 - A fail-closed combined GCP/Fly qualification cost guard with a conservative USD 69
-  four-host GCP plan and exact isolated create, cleanup, and cleanup-verification targets.
+  G2/L4 four-profile plan, one-host-at-a-time CUDA-safe phases, checksum-pinned GPU and
+  Windows SSH bootstrap, named NAT addresses, and exact isolated cleanup verification.
 - Exact-snapshot qualification image preparation with commit-derived tracked-only source
   contexts, exact candidate-manifest binding, digest-pinned base images, bounded
   source-bound tags, credential-free offline runtime inputs, provenance/SBOM push plans,
@@ -41,14 +42,66 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 - Defined the first release as a Windows/Linux public inference alpha. macOS and all
   credit/payment features are explicitly deferred and will not be advertised as available.
+- Refocused the public-alpha critical path around a visible live vertical slice, followed
+  by real candidate qualification, automatic contributor model/block placement, clean
+  packaged onboarding, a bounded canary, and publication. TinyLlama is used only for cheap
+  route/UI bring-up before repeating the path with Qwen3.5 2B on a real public worker.
+- OpenAI-compatible requests may now use `model: "auto"`: the node preserves signed-catalog
+  priority, selects only a model with complete authenticated live block coverage, exposes
+  the reason and exact route through the control API, and returns an honest unavailable
+  response when no eligible route exists. The desktop displays the selected model, reason,
+  peer count, and complete block range.
+- `drift edge-benchmark` now emits schema-v2 post-close runtime, route-manager,
+  process-tree memory/child-process, accelerator, and bounded-stabilization cleanup
+  evidence. It releases local model tensors before its final sample, detects replacement
+  child PIDs, permits only 16 MiB of RSS allocator jitter, and fails closed when cleanup
+  is not proved.
+- Scoped the first alpha as a best-effort service with a minimum signed-catalog, exact-
+  artifact, authenticated-peer, bounded-admission, local-resource-control, privacy, and
+  disable-path safety floor. Production-SLO redundancy, independent threshold governance,
+  publisher-signed installers, automatic authenticated updates/rollback, and exhaustive
+  hostile-network campaigns are explicitly post-alpha hardening.
 - Qualification images now install their native build toolchain only during the locked
   environment build, isolate exact-source verification from the installed environment,
   and bind the runtime version to installed package metadata before publication.
+- Qualification workers now keep baked exact snapshots writable by their non-root runtime,
+  preserve p2pd parent-death protection when the healthy container supervisor is PID 1,
+  and permit non-quantized startup when an optional bitsandbytes installation is unusable.
+- Fully verified artifact downloads now tolerate a bounded transient Windows sharing lock
+  during atomic promotion while all other file errors and integrity failures remain closed.
 - Published the exact Qwen3.5 2B and Gemma 4 E2B qualification images as immutable GHCR
   indexes with verified Linux runtime manifests, SLSA provenance, SPDX SBOMs, bounded
-  layers, measured image sizes, and evidence-derived 9 GB and 13 GB Fly rootfs plans.
+  layers, and measured image sizes. A real Fly attempt later proved their 9 GB and 13 GB
+  rootfs plans exceed the provider's current 8 GB hard limit, so Fly recovery uses new
+  CPU-only images rather than silently treating those publication results as deployable.
+- Fly qualification images now install the exact hash-pinned CPU Torch wheel, exclude
+  CUDA and Triton payloads, assert CPU-only runtime identity in-image, and fail closed
+  when measured rootfs requirements exceed the provider's 8 GB limit.
+- Fly private-image staging now initializes an empty app repository through the supported
+  build-only push path before a digest-preserving mirror, without deploying a Machine.
+- Public immutable registry sources are now preflighted with an empty isolated Docker
+  configuration and mirrored anonymously with destination-only authentication, preventing
+  a stale source credential from shadowing valid anonymous access.
 - Model qualification now treats exact Windows/Linux CPU/CUDA coverage as the strict
   public-alpha matrix; macOS CPU/MPS evidence is collected as a separate deferred gate.
+- Qwen3.5 2B now passes that strict Windows/Linux CPU/CUDA matrix at one exact source,
+  with exact-artifact verification, 24/24 manifested stock-token parity, BF16 eager
+  execution, and selected-worker interruption recovery on every required profile.
+- Gemma 4 E2B now passes the same strict matrix at one exact source, with all five
+  artifacts verified, 35/35 manifested stock-token parity, BF16 eager execution, and
+  selected-worker interruption recovery on every profile. CUDA qualification uses a
+  conservative 48 GB host-memory class after a 32 GB Windows failover-load crash.
+- Qualification cost authorization now supports explicit owner-reset budget epochs after
+  complete cleanup, preserving historical maxima without letting delayed billing block the
+  next authorized run or falsely recording prior cost as zero.
+- The Fly separate-machine qualification adapter is now explicitly CPU-only and rejects a
+  non-CPU device before provisioning; Fly recovery evidence cannot satisfy CUDA qualification.
+- Manifested qualification now passes the verified runtime cache to the distributed
+  client as well as the tokenizer/reference model, and Windows jobs install the patched
+  Hivemind wheel's declared dependency closure before offline execution.
+- CPU qualification pins and records one Torch intra-op thread, restores the caller
+  setting, records the real client LM-head projection, and uses one fixed wide-margin
+  synthetic prompt plus the same token horizon for primary and failover parity.
 - The bounded GCP qualification plan now binds exact Windows/Ubuntu images, verifies
   created boot-disk sources, enforces a provider-side deletion deadline, creates scarce
   CUDA hosts before CPU hosts, and supports split-region N1/T4 or G2/L4 CUDA shapes
@@ -113,3 +166,7 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Credits, receipts, balances, payments, earnings, payouts, or a compute marketplace.
 - macOS support.
 - Stable-service or production-SLO claims.
+- Production-SLO route/seed/mirror redundancy and independent threshold-key governance.
+- Operating-system publisher signing and authenticated automatic update/rollback.
+- Exhaustive malicious-load, Sybil/collusion, partition, herd-switching, and long-soak
+  qualification beyond the bounded alpha canary.

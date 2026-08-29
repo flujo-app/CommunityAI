@@ -31,6 +31,7 @@ from transformers import TextIteratorStreamer
 
 from drift.node.model_manager import (
     AmbiguousModelError,
+    AutoModelUnavailableError,
     LoadedModel,
     ModelManager,
     ModelManagerClosedError,
@@ -201,6 +202,8 @@ def create_app(
             raise
         except AmbiguousModelError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except AutoModelUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ModelNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ModelManagerClosedError as exc:

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "scope": "gate7-qwen-separate-machine-attempt",
+  "run_id": "gate7-20260827-a",
+  "publisher_run_id": "gate7pub-20260828-b",
+  "source_commit": "7570d94a4bacefb80ec7aa2135d6d85c0c24275d",
+  "matrix_source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6",
+  "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+  "image": {
+    "publication_evidence": "gate7-20260828-b-qwen3.5-2b-publication-evidence.json",
+    "index_digest": "sha256:1969b62ff7c5543d03677aa4a174dd2b0e453ea6b6ff0edcd0f1968b44b67b5f",
+    "runtime_manifest_digest": "sha256:cbdbb37657429223bc38695a78f6f80b81746a5aa0807b6b6ada495e7a5e2e62",
+    "compressed_layer_bytes": 4017668521,
+    "uncompressed_image_bytes": 4017687194,
+    "required_fly_rootfs_gb": 8,
+    "cpu_only": true,
+    "provenance": "slsa",
+    "sbom": "spdx",
+    "result": "passed"
+  },
+  "publisher_cleanup": {
+    "builder_instances_remaining": 0,
+    "builder_disks_remaining": 0,
+    "protected_bootstrap": "running",
+    "verified_at": "2026-08-28T02:35:02Z",
+    "result": "passed"
+  },
+  "fly_attempt": {
+    "topology": {
+      "bootstrap_count": 1,
+      "worker_count": 4,
+      "region": "gru",
+      "device": "cpu",
+      "cpu_kind": "performance",
+      "cpus_per_machine": 4,
+      "memory_mb_per_machine": 16384,
+      "rootfs_gb": 8
+    },
+    "external_registry_anonymous_pull_available": false,
+    "machine_create_accepted": false,
+    "machines_created": 0,
+    "machines_remaining": 0,
+    "run_token_revoked": true,
+    "failure_class": "private_external_registry_requires_fly_registry_mirror",
+    "provider_guidance": "https://fly.io/docs/blueprints/using-the-fly-docker-registry/",
+    "cleanup_result": "passed"
+  },
+  "qualification_evidence": false,
+  "complete_release_qualification": false,
+  "next_action": "Mirror the verified immutable image into the isolated app's Fly registry, validate digest binding, then rerun the same CPU-only topology.",
+  "result": "continued"
+}

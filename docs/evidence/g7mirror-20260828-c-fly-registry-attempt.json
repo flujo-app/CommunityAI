@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "scope": "gate7-fly-registry-mirror-attempt",
+  "run_id": "g7mirror-20260828-c",
+  "source_commit": "7570d94a4bacefb80ec7aa2135d6d85c0c24275d",
+  "source_index_digest": "sha256:1969b62ff7c5543d03677aa4a174dd2b0e453ea6b6ff0edcd0f1968b44b67b5f",
+  "runtime_manifest_digest": "sha256:cbdbb37657429223bc38695a78f6f80b81746a5aa0807b6b6ada495e7a5e2e62",
+  "mirror_attempt": {
+    "authenticated_source": true,
+    "authenticated_destination": true,
+    "preserve_digests_requested": true,
+    "copy_completed": false,
+    "failure_class": "fly_app_repository_not_initialized",
+    "qualification_evidence": false
+  },
+  "fly_repository_initialization": {
+    "method": "supported_build_only_local_push",
+    "sentinel_index_digest": "sha256:c3138bd2f06b9b964c5ac0af9ddf874be24a2dbdb9a6d38051631b390127b191",
+    "sentinel_uncompressed_bytes": 0,
+    "machines_created": 0,
+    "machines_remaining": 0,
+    "result": "passed"
+  },
+  "credential_cleanup": {
+    "source_registry_logout": true,
+    "destination_registry_logout": true,
+    "remote_config_removed": true,
+    "result": "passed"
+  },
+  "builder_cleanup": {
+    "builder_instances_remaining": 0,
+    "builder_disks_remaining": 0,
+    "protected_bootstrap": "running",
+    "verified_at": "2026-08-28T02:57:09Z",
+    "result": "passed"
+  },
+  "complete_release_qualification": false,
+  "next_action": "Repeat the bounded digest-preserving mirror now that the isolated Fly app repository exists, then validate the immutable index before provisioning.",
+  "result": "continued"
+}

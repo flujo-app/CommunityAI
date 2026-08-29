@@ -16,6 +16,7 @@ LABEL org.opencontainers.image.title="CommunityAI qualification runtime" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
       org.opencontainers.image.base.name="python:3.12.13-slim-bookworm" \
       communityai.qualification.candidate="${CANDIDATE}" \
+      communityai.qualification.device="cpu" \
       communityai.qualification.manifest="${MANIFEST_DIGEST}" \
       communityai.qualification.artifact-bytes="${DECLARED_ARTIFACT_BYTES}" \
       communityai.qualification.source-tree="${SOURCE_TREE_DIGEST}" \
@@ -52,6 +53,24 @@ RUN test -n "${SOURCE_COMMIT}" \
     && apt-get update \
     && apt-get install --no-install-recommends -y build-essential \
     && uv sync --frozen --no-dev --no-editable --python /usr/local/bin/python \
+         --no-install-package torch \
+         --no-install-package nvidia-cublas-cu12 \
+         --no-install-package nvidia-cuda-cupti-cu12 \
+         --no-install-package nvidia-cuda-nvrtc-cu12 \
+         --no-install-package nvidia-cuda-runtime-cu12 \
+         --no-install-package nvidia-cudnn-cu12 \
+         --no-install-package nvidia-cufft-cu12 \
+         --no-install-package nvidia-curand-cu12 \
+         --no-install-package nvidia-cusolver-cu12 \
+         --no-install-package nvidia-cusparse-cu12 \
+         --no-install-package nvidia-cusparselt-cu12 \
+         --no-install-package nvidia-nccl-cu12 \
+         --no-install-package nvidia-nvjitlink-cu12 \
+         --no-install-package nvidia-nvtx-cu12 \
+         --no-install-package triton \
+    && uv pip install --python /workspace/.venv/bin/python --no-deps \
+         'https://download-r2.pytorch.org/whl/cpu/torch-2.6.0%2Bcpu-cp312-cp312-linux_x86_64.whl#sha256=59e78aa0c690f70734e42670036d6b541930b8eabbaa18d94e090abf14cc4d91' \
+    && uv pip check --python /workspace/.venv/bin/python \
     && apt-get purge --auto-remove -y build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /workspace/qualification /cache/model /tmp/communityai \
@@ -59,7 +78,7 @@ RUN test -n "${SOURCE_COMMIT}" \
 
 COPY --from=contract image-contract.json /workspace/qualification/image-contract.json
 COPY --from=contract model-manifest.json /workspace/qualification/model-manifest.json
-COPY --from=snapshot . /cache/model
+COPY --from=snapshot --chown=65532:65532 . /cache/model
 
 RUN python scripts/qualification_image_contract.py verify \
       --contract /workspace/qualification/image-contract.json \
@@ -73,6 +92,7 @@ RUN python scripts/qualification_image_contract.py verify \
       --source-tree-digest "${SOURCE_TREE_DIGEST}" \
       --dockerfile-digest "${DOCKERFILE_DIGEST}" \
     && python -c 'from importlib.metadata import version; from drift import __version__; raise SystemExit(0 if __version__ == version("drift") else 1)' \
+    && python -c 'import torch; raise SystemExit(0 if torch.__version__ == "2.6.0+cpu" and torch.version.cuda is None else 1)' \
     && rm -rf /qualification-source
 
 USER 65532:65532

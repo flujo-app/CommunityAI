@@ -274,6 +274,11 @@ parameter storage, process-tree RSS and accelerator allocations, load and first
 token latency, and post-first-token decode rate. A nonempty cache is rejected unless
 `--allow_warm_cache` is supplied so an accidental warm run cannot be labeled cold.
 
+Public-alpha Gate 9 measurements follow the bounded
+[edge resource envelope runbook](EDGE_RESOURCE_ENVELOPE_RUNBOOK.md). That contract
+uses one attempt per model, disables benchmark retries, and forbids Fly operations,
+image builds or pushes, registry mirrors, and qualification/recovery reruns.
+
 ## Single-model shorthand
 
 The original preview command remains supported and creates an equivalent in-memory

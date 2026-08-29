@@ -28,11 +28,15 @@ time.sleep(300)
 """
 
 LINUX_PARENT_SCRIPT = """
-import subprocess, sys, time
+import os, subprocess, sys, time
+from functools import partial
 from drift.utils.process_lifetime import _ensure_libc, _set_pdeathsig
 
 _ensure_libc()
-child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"], preexec_fn=_set_pdeathsig)
+child = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(300)"],
+    preexec_fn=partial(_set_pdeathsig, os.getpid()),
+)
 print(child.pid, flush=True)
 time.sleep(300)
 """
@@ -76,6 +80,31 @@ def test_linux_pdeathsig_kills_child_when_parent_dies():
     _assert_pid_exits(child_pid)
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux-only")
+def test_linux_pdeathsig_accepts_container_parent_pid_one(monkeypatch):
+    import drift.utils.process_lifetime as process_lifetime
+
+    prctl_calls = []
+
+    class FakeLibc:
+        @staticmethod
+        def prctl(*args):
+            prctl_calls.append(args)
+            return 0
+
+    monkeypatch.setattr(process_lifetime, "_ensure_libc", lambda: FakeLibc())
+    monkeypatch.setattr(process_lifetime.os, "getppid", lambda: 1)
+    monkeypatch.setattr(
+        process_lifetime.os,
+        "_exit",
+        lambda code: pytest.fail(f"expected container parent PID 1 must not exit with {code}"),
+    )
+
+    process_lifetime._set_pdeathsig(1)
+
+    assert prctl_calls == [(1, process_lifetime.signal.SIGKILL, 0, 0, 0)]
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="The hivemind spawn wrapper is armed on Linux only")
 def test_linux_arming_patches_hivemind_p2pd_spawn():
     from hivemind.p2p import p2p_daemon
@@ -93,6 +122,8 @@ def test_linux_arming_patches_hivemind_p2pd_spawn():
 
 
 def test_subprocess_wrapper_injects_preexec_fn():
+    import os
+
     captured = {}
 
     class FakeSubprocess:
@@ -109,7 +140,9 @@ def test_subprocess_wrapper_injects_preexec_fn():
     assert wrapper.create_subprocess_exec("p2pd", "-arg", stdout="out") == "spawned"
     assert captured["args"] == ("p2pd", "-arg")
     assert captured["kwargs"]["stdout"] == "out"
-    assert captured["kwargs"]["preexec_fn"] is _set_pdeathsig
+    preexec_fn = captured["kwargs"]["preexec_fn"]
+    assert preexec_fn.func is _set_pdeathsig
+    assert preexec_fn.args == (os.getpid(),)
 
     # An explicitly provided preexec_fn must win over the injected one
     sentinel = object()

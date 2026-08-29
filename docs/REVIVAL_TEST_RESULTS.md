@@ -1,6 +1,6 @@
 # Revival baseline results
 
-Test dates: 2026-08-21 through 2026-08-26
+Test dates: 2026-08-21 through 2026-08-28
 
 These tests exercise `Maykeye/TinyLLama-v0` as an eight-block model and compare
 greedy distributed generation with the stock Transformers implementation. The
@@ -12,10 +12,130 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | Milestone | Status | Evidence | Remaining gate |
 | --- | --- | --- | --- |
 | 1. Reproducible execution baseline | Complete | Windows CPU, Docker Linux CPU, Windows CUDA, and native hosted Apple Silicon macOS all served blocks `0:8` and produced exact token parity; macOS also passed the MPS block-portability checks | None |
-| 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
+| 2. Real multi-machine swarm | Complete | Gate 7 ran one bootstrap plus four TinyLlama workers on Fly with two replicas per block; a selected worker was SIGKILLed during generation, the client rerouted, replayed its prefix, and retained exact stock-token parity | None; this provider recovery mechanism is model-independent |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
-| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; and the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics | The release bootstrap and initial catalog are not published or bundled; qualified public manifests and workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+| 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference; and Gates 5 and 6 passed the strict Qwen and Gemma Windows/Linux CPU/CUDA matrices | The release bootstrap and initial catalog are not published or bundled; persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
+
+## Gate 7 provider-level separate-machine recovery (passed)
+
+On 2026-08-28, [run `gate7-tiny-20260828-j`](evidence/gate7-20260828-tinyllama-recovery.json)
+passed the CPU-only Fly recovery gate in `gru`. One bootstrap and four TinyLlama
+workers provided two replicas for every block. During a live inference session,
+`host-a` was SIGKILLed while serving blocks `0:4`; the client selected `host-c`,
+replayed two cached activation tokens, completed the same session, and retained exact
+stock-token parity. Recovery took 16.395 seconds.
+
+The run destroyed the bootstrap and all four workers, left no run resources, and
+revoked its deploy token. Gate 7 validates the provider control and redundant-route
+recovery mechanism once; it is not repeated for every catalog model. Qwen and Gemma
+already have their model/platform qualification evidence in Gates 5 and 6. The next
+product-realistic recovery test belongs after automatic placement and the production
+signed catalog exist: clean install, enable contribution, automatic assignment, kill
+one contributor, and observe recovery. The exact operational lessons and stop
+conditions are retained in the [recovery test runbook](RECOVERY_TEST_RUNBOOK.md).
+
+## Gate 6 Gemma 4 E2B strict four-profile qualification
+
+On 2026-08-27, [Gate 6 qualification and cleanup evidence](evidence/gate6-20260827-gemma-4-e2b-qualification.json)
+and the [strict aggregate](evidence/gate6-20260827-gemma-4-e2b-matrix.json)
+passed Gemma 4 E2B on Windows CPU, Windows CUDA, Linux CPU, and Linux CUDA.
+Every sanitized report binds exact source
+`a45025a3262a88df65217b630392488e8548aaaf`, DRIFT `2.3.0.dev2`,
+Gemma revision `3e22461f65e89153144f8adb70e3b8c2cc9845a7`, and manifest
+`sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd`.
+The aggregate required all four profiles and reported no missing profiles, matrix
+errors, or report errors.
+
+The [Windows CPU](evidence/gate6-20260827-a-windows-cpu-qualification.json),
+[Windows CUDA](evidence/gate6-20260827-a-windows-cuda-qualification.json),
+[Linux CPU](evidence/gate6-20260827-a-linux-cpu-qualification.json), and
+[Linux CUDA](evidence/gate6-20260827-a-linux-cuda-qualification.json) reports each
+prove all five declared artifacts (10,278,818,149 bytes), a complete 35/35-block
+manifested route, exact stock-token parity, BF16 eager execution on the requested
+device, selected-worker interruption, and observed recovery. Recovery took 22.781,
+13.906, 25.577, and 11.187 seconds respectively.
+
+The first Windows CUDA attempt reached exact parity on a 32 GB G2 host but exited
+with native status `0xC0000005` while loading the second failover replica. A bounded
+same-host resize to 48 GB passed; Linux CUDA then used the same conservative memory
+class and passed without a code change. Both CUDA profiles remained serial and kept
+their 48,600-second provider deletion backstops.
+
+All four exact VMs and disks and the run-scoped firewall, NATs, routers, subnets,
+reserved addresses, and VPC are absent. Global GPU and regional L4 usage returned to
+zero, and `communityai-bootstrap-1` remains running. Provider billing is delayed, so
+the owner explicitly released Gate 6's historical USD 79 maximum after cleanup.
+Gate 7 subsequently passed the provider recovery mechanism with TinyLlama. The strict combiner rerun passed with all four
+profiles and empty missing, matrix-error, and report-error lists; the focused matrix,
+external-qualification, and cost-guard suite passed 51 tests. Per-model duplicate
+separate-machine recovery is not required for the public alpha.
+
+## Gate 5 Qwen3.5 2B strict four-profile qualification
+
+On 2026-08-27, [Gate 5 qualification and cleanup evidence](evidence/gate5-20260827-qwen3.5-2b-qualification.json)
+and the [strict aggregate](evidence/gate5-20260827-qwen3.5-2b-matrix.json)
+passed Qwen3.5 2B on Windows CPU, Windows CUDA, Linux CPU, and Linux CUDA.
+Every sanitized report binds exact source
+`23a4078e17ed9d5ae6f31e7497bae69b83aecef6`, DRIFT `2.3.0.dev2`,
+Qwen revision `15852e8c16360a2fea060d615a32b45270f8a8fc`, and manifest
+`sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`.
+The aggregate required all four profiles and reported no missing profiles, matrix
+errors, or report errors.
+
+The [Windows CPU](evidence/gate5-20260827-b-windows-cpu-qualification.json),
+[Windows CUDA](evidence/gate5-20260827-a-windows-cuda-qualification.json),
+[Linux CPU](evidence/gate5-20260827-b-linux-cpu-qualification.json), and
+[Linux CUDA](evidence/gate5-20260827-a-linux-cuda-qualification.json) reports each
+prove all eight declared artifacts, a complete 24/24-block manifested route, exact
+stock-token parity, BF16 eager execution on the requested device, selected-worker
+interruption, and observed recovery. Recovery took 35.032, 12.719, 26.288, and
+11.072 seconds respectively. The reports intentionally exclude commands, prompts,
+raw logs, output token IDs, credentials, private paths, endpoints, and provider output.
+This passes local single-machine qualification; CPU-only Fly separate-machine recovery
+remains Gate 7.
+
+Gate 5-A and Gate 5-B cleanup proved every run-scoped instance, disk, firewall,
+router, subnet, address, and network absent. L4 usage returned to zero and the protected
+`communityai-bootstrap-1` remained running. Windows CPU used a bounded N1 host; Linux
+CPU used a lower-cost E2 high-memory fallback after N1 capacity failed in every regional
+zone. Both retry hosts retained one-hour provider deletion deadlines. The exact
+CI-listed offline suite passed 548 tests with 8 expected skips, and the focused
+qualification suite passed 80 tests. Provider billing remains delayed. The explicit owner reset moved the cleanup-proved
+Gate 5 maxima into historical `CLEANED-RELEASED` rows. The later cleaned Gate 6
+run retains a USD 79 maximum while billing is delayed, leaving USD 21 in the current
+USD 100 accounting epoch.
+
+## Gate V public Qwen vertical slice
+
+On 2026-08-27, [run `gatev-20260827-a`](evidence/gate-v-20260827-a-public-vertical-slice.json)
+passed the screen-visible public inference path at clean source
+`8200afcd0cc8b69816b73e2453601c9a6dd4afb6`. A Linux G2/L4 worker used the
+immutable Gate 4 Qwen image and exact Qwen3.5 2B manifest. The signed test catalog
+selected Qwen at priority one only after discovery reported a complete authenticated
+24/24-block route from one verified peer. The
+[desktop capture](evidence/gate-v-20260827-a-desktop-models.png) displayed the same
+selection, reason, coverage, peer count, availability state, and prompt-visibility
+disclosure.
+
+A clean local node then accepted `model: "auto"` through its authenticated localhost
+OpenAI-compatible endpoint, resolved Qwen3.5 2B, loaded the fully content-verified
+snapshot, generated through the remote route, and returned one completion token in
+15.231 seconds. The real run exposed four narrow runtime failures: non-root ownership
+of the baked snapshot, a PID-1 container false orphan check, eager failure of an
+unused optional bitsandbytes runtime, and a transient Windows sharing violation while
+atomically promoting a fully verified resumable artifact. The fixes passed 28 focused
+worker tests and 33 manifest tests plus Black, isort, whitespace checks, and two
+independent tester reviews.
+
+The single VM had a six-hour provider deletion deadline and remained inside the
+reserved USD 17 maximum. After the passing request, the exact instance, auto-delete
+disk, two firewalls, subnet, network, addresses, routers, and resource policies were
+proved absent; global GPU usage returned to zero and the protected discovery bootstrap
+remained running. Billing was still delayed, so the ledger retains the full USD 17
+maximum. The report retains no prompt, credential, raw provider output, private path,
+or network endpoint. This passes Gate V only; it is not candidate qualification and
+does not replace the four-profile Gate 5 matrix.
 
 ## Default-branch integration and Windows/Linux package CI
 
@@ -57,6 +177,40 @@ USD 0. Native `flyctl` authentication is active, but the current environment has
 no stored `gcloud` account, so live project, image, accelerator, quota, and absence
 checks were not attempted. That GCP login is required before any ledger reservation
 or provisioning; deterministic preparation evidence is not hardware qualification.
+
+On 2026-08-27, the first paid Gate 5 preflight exposed that the flat plan attempted two
+CUDA hosts under a one-L4 global quota, used auto-assigned NAT addresses that could not
+be named in cleanup evidence, and did not bootstrap Windows SSH or either bare-image
+G2 driver. The run stopped before any VM was created. Its temporary firewall, two NATs,
+two routers/subnets, and VPC were deleted; all run-scoped instance, disk, firewall,
+router, subnet, network, address, and resource-policy queries were empty, while
+`communityai-bootstrap-1` remained running.
+
+The replacement no-provider-call plan has ordered one-host phases for `windows-cpu`,
+`linux-cpu`, `windows-cuda`, and `linux-cuda`. Every phase carries a distinct opaque
+machine ID, exact image verification, provider hard-delete deadline, mandatory
+qualification boundary, exact VM/disk deletion, and empty-output absence proof before
+the next host. Each region now has a run-named reserved NAT address and an interleaved
+NAT absence check before router deletion. Windows hosts receive the documented GCE SSH
+bootstrap; CUDA hosts use checksum-verified, generation- or commit-pinned Google driver
+installers and require `nvidia-smi`/Torch CUDA proof. The cost model charges both named
+NAT addresses for the full 54-hour serialized network window; the reviewed G2/L4 maximum
+still rounds to USD 69. Twenty-nine focused cost/plan and bootstrap-contract tests pass with Black, isort, Bash syntax, PowerShell parsing, and
+whitespace checks. This is execution safety evidence only; Gate 5 still requires the
+four real host reports and aggregate.
+
+The live serialized retry then reached the first real `windows-cpu` profile. The exact
+Qwen snapshot preflight passed eight artifacts totaling 4,571,197,320 bytes at manifest
+digest `sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`.
+The worker loaded and announced all 24 blocks, proving the patched Windows p2pd runtime.
+The client failed offline before inference because the smoke did not pass its verified
+runtime cache to `AutoDistributedModelForCausalLM`; the same attempt also proved that
+installing the Windows Hivemind wheel with `--no-deps` omitted its dependency closure.
+The bounded fixes thread `cache_dir` into the distributed client and install the local
+wheel's declared dependencies in both Windows workflow jobs. Eighteen focused tests plus
+Black, isort, and whitespace checks pass. This is failure/fix evidence, not a Gate 5
+profile pass; the exact fixed commit must still rerun on the live host and cleanup must
+be proven.
 
 ## Public-alpha exact qualification image inputs
 
@@ -1220,8 +1374,8 @@ produce immutable evidence.
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts
-   and collect both exact public-alpha candidate matrices. Build each immutable Fly
-   qualification image and execute the strict adapter/controller gate for both candidates.
+   and collect both exact public-alpha candidate matrices. Build each immutable CPU-only
+   Fly qualification image and execute the strict adapter/controller gate for both candidates.
    macOS CPU/MPS capacity and qualification remain a separate deferred gate.
 2. Exercise the changed-boundary replacement route in the controlled separate-machine
    interruption gate; beam-search recovery needs a reorder-aware activation history before

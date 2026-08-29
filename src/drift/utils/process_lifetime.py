@@ -24,6 +24,7 @@ import ctypes
 import os
 import signal
 import sys
+from functools import partial
 
 from hivemind.utils.logging import get_logger
 
@@ -32,7 +33,7 @@ logger = get_logger(__name__)
 # Held for the life of the process: closing the last handle to the job is what kills its members.
 _windows_job_handle = None
 
-# libc handle resolved before any fork so that the preexec hook does not need to dlopen after fork.
+# libc handle resolved before any fork so that the preexec hook stays minimal.
 _libc = None
 
 
@@ -137,13 +138,14 @@ def _ensure_libc():
     return _libc
 
 
-def _set_pdeathsig():
+def _set_pdeathsig(expected_parent_pid: int):
     """Runs in the child between fork and exec (subprocess preexec_fn): die when the parent dies."""
     PR_SET_PDEATHSIG = 1
     _ensure_libc().prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
-    # If the parent already died in the window before prctl took effect, the signal never fires:
-    # we have been reparented (to init or a subreaper), so bail out instead of lingering forever.
-    if os.getppid() == 1:
+    # If the spawning process already died before prctl took effect, the signal never fires. Compare
+    # against the captured spawning PID instead of assuming PID 1 means orphaned: a healthy container
+    # entrypoint is PID 1, so its p2pd children legitimately report getppid() == 1.
+    if os.getppid() != expected_parent_pid:
         os._exit(1)
 
 
@@ -157,7 +159,10 @@ class _SubprocessWithPdeathsig:
         return getattr(self._real, name)
 
     def create_subprocess_exec(self, *args, **kwargs):
-        kwargs.setdefault("preexec_fn", _set_pdeathsig)
+        if "preexec_fn" not in kwargs:
+            # Capture the process that is actually spawning p2pd. The wrapper may have been inherited
+            # by a Hivemind DHT background process, so the process that armed it is not always the parent.
+            kwargs["preexec_fn"] = partial(_set_pdeathsig, os.getpid())
         return self._real.create_subprocess_exec(*args, **kwargs)
 
 

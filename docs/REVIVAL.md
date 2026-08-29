@@ -50,35 +50,107 @@ agent:
   Apple devices pass.
 - Qwen3.5 2B is the first-rung primary candidate and Gemma 4 E2B is its standby.
 - GCP and Fly Machines are authorized for bounded qualification and public-alpha
-  infrastructure. Use whichever provider fits the test: GCP/local hosts for platform
-  qualification and Fly for the existing separate-machine recovery adapter.
+  infrastructure. GCP/local hosts cover the Windows/Linux CPU/CUDA platform matrix.
+  As of 2026-08-27, Fly is authorized only for the existing **CPU-only** Linux
+  separate-machine recovery adapter; Fly supplies no GPU qualification capacity, and a
+  Fly recovery result must never be presented as CUDA or GPU-performance evidence.
+- After the first-rung alpha is stable, do not climb every intermediate model size merely
+  to prove that block sharding scales. Use the accumulated Petals and
+  TinyLlama/Qwen/Gemma implementation evidence to attempt a real 27-32B split route
+  directly, then attempt roughly 70B if that passes. This is permission to test those
+  sizes, not permission to claim that an exact larger checkpoint works before its own
+  model-specific evidence passes.
 - New temporary GCP and Fly test resources share one combined **USD 100 maximum**.
   Track conservative estimates and observed cost in
   [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that could exceed
   the remaining balance.
 - Use the existing `gcloud`, `flyctl`, and `gh` logins. Do not require the owner to copy
   provider tokens into environment variables when native CLI authentication works.
+- On Windows, every registry token, remote credential, and Linux script must follow the
+  fail-closed [Windows registry-token and remote-script boundary](QUALIFICATION_RUNNER_OPERATIONS.md#windows-registry-token-and-remote-script-boundary).
+  Revalidate native auth immediately before paid creation; reject UTF-8 BOM/CRLF drift,
+  recover Fly token IDs by exact unique name, revoke them in unconditional cleanup, and
+  preserve Buildx state explicitly when isolating `DOCKER_CONFIG`.
+
+### Public-alpha scope boundary
+
+The alpha is an intentionally limited, best-effort public service for learning from real
+users. It must be usable and honest, but it does not need to satisfy every stable-service
+availability, governance, release-engineering, and adversarial-testing goal first.
+
+The public alpha still requires:
+
+- a non-expert Windows or Linux user can install or unpack one application, start it,
+  discover public capacity, use the localhost OpenAI-compatible API, and understand when
+  no route is available;
+- the client automatically selects an eligible catalog model, while an opted-in
+  contributor automatically selects a model and block range within the user's VRAM,
+  storage, bandwidth, power, schedule, and model-policy limits;
+- Qwen3.5 2B and Gemma 4 E2B pass the declared Windows/Linux CPU/CUDA qualification and
+  real CPU-only separate-machine recovery gates before they are advertised as qualified;
+- an alpha catalog is authenticated by at least one pinned CommunityAI release key,
+  manifests and artifacts are content-verified, peer announcements are authenticated,
+  public requests have finite admission/time limits, and operators can disable a bad
+  route or catalog entry;
+- at least one complete public candidate route plus a small standby/fallback route is
+  observable from a clean packaged install; the alpha makes no production availability
+  or independent-operator redundancy promise; and
+- manual upgrade/reinstall and uninstall instructions work, published artifacts have
+  checksums/provenance, contribution is opt-in, and prompt visibility is disclosed.
+
+The following are post-alpha hardening, not reasons to delay first public use:
+
+- production-SLO route redundancy, largest-worker-loss guarantees, multiple independent
+  seed/mirror operators, and multi-provider outage survival;
+- independent threshold catalog key holders, key-compromise/rotation drills, and
+  interchangeable-mirror governance beyond the alpha's pinned signed catalog;
+- operating-system publisher signing/notarization, an authenticated automatic updater,
+  automatic rollback, and polished retained-data migration beyond the alpha's manual path;
+- exhaustive malicious-load, Sybil/collusion, partition, herd-switching, long-soak, and
+  production-style evidence-retention programs; and
+- macOS, credits/payments, the compute marketplace, and larger model-ladder rungs.
+
+This boundary does not mean "no security until later." Exact model identity, artifact
+integrity, authenticated peers, bounded public request handling, authoritative local
+resource limits, and a tested disable path are the minimum safety floor for an alpha that
+accepts strangers.
 
 ### Non-negotiable launch sequence
 
-The immediate release critical path is **Gate 4 → Gates 5 and 6 → Gates 7 and 8** in
-[`RELEASE_READINESS.md`](RELEASE_READINESS.md). Until all five gates pass, do not start,
-extend, or polish Gates 9–16 unless the work is strictly necessary to execute one of
-Gates 4–8. Preserve already completed later-gate work, but leave it paused.
+Gate 4 has passed. The immediate critical path is now outcome-first:
+
+1. pass the live public vertical slice in [`RELEASE_READINESS.md`](RELEASE_READINESS.md):
+   use TinyLlama to make desktop/catalog/discovery plumbing cheap to debug, then bring a
+   real Qwen3.5 2B worker online on the available GCP L4, let the app observe and select
+   it, and generate through it;
+2. qualify Qwen3.5 2B and Gemma 4 E2B on the required Windows/Linux CPU/CUDA profiles and
+   run their real CPU-only Fly separate-machine recovery drills;
+3. complete automatic contributor model/block placement and prove the user's contribution
+   limits on real hardware;
+4. publish the minimal signed alpha catalog/bootstrap and initial public routes, then pass
+   clean packaged install, inference, contribution, manual upgrade/uninstall, and the
+   bounded public canary on Windows and Linux; and
+5. publish and observe the explicitly best-effort public alpha.
+
+Do not resume post-alpha redundancy, publisher-signing/updater, independent-governance, or
+exhaustive hostile-network programs while an earlier alpha outcome is unfinished. Preserve
+completed foundations for those programs, but do not polish them ahead of the usable path.
 
 Missing local tooling is work to solve, not permission to skip the critical path. In
 particular, an unavailable local Docker daemon, absent model snapshots, absent local
 CUDA hardware, or missing local multi-machine capacity is **not** an external blocker.
-Use the authorized GCP/Fly infrastructure, start an available local service, download
-the exact verified artifacts, or build a bounded temporary host. Native `gcloud`,
+Use the authorized infrastructure for its declared role: GCP/local hosts for platform
+and CUDA work, and Fly only for the CPU separate-machine recovery topology. Start an
+available local service, download the exact verified artifacts, or build a bounded
+temporary host. Native `gcloud`,
 `flyctl`, and `gh` authentication is currently available; re-check it immediately before
 use rather than relying on an older evidence note.
 
-The next required external deliverable is not another harness or unit-test expansion.
-It is two published immutable qualification images with retained Gate 4 publication
-reports. After that, run the real Windows/Linux CPU/CUDA matrices and real Fly recovery
-drills. Supporting code is justified only when a concrete attempt at the current gate
-exposes a specific failure that the code fixes.
+The next external deliverable is not another harness or unit-test expansion. It is a
+screen-visible public route: the local app observes a real remote worker, explains the
+model selected by `auto`, and generates through it. TinyLlama is a bring-up tool, not a
+substitute for immediately repeating the path with the real Qwen3.5 2B candidate. Supporting
+code is justified when it closes a concrete gap in that path or in the next real gate.
 
 ### Execution loop
 
@@ -86,9 +158,8 @@ On every implementation run:
 
 1. Inspect the worktree and recent commits. Preserve unfinished and unrelated work; do
    not reset or discard it.
-2. Read the live tracker and select the earliest unfinished mandatory gate. During the
-   launch sequence above, do not select a later gate merely because it has easier local
-   software work available.
+2. Read the live tracker and select the earliest unfinished mandatory alpha outcome. Do
+   not select post-alpha hardening merely because it has easier local software work.
 3. Attempt the gate's real deliverable first. Implement the smallest code fix required
    by a concrete failure, then return to the real attempt in the same run. Do not spend a
    run adding speculative validation layers, expanding test infrastructure, rewriting
@@ -114,6 +185,10 @@ On every implementation run:
 
 - Before provisioning, record a conservative maximum estimate in the spend ledger and
   confirm it fits under the combined USD 100 ceiling.
+- An explicit owner budget reset starts a new USD 100 accounting epoch only after every
+  prior run is cleanup-proved. Preserve those historical rows as `CLEANED-RELEASED` rather
+  than pretending their actual cost was zero; their maxima no longer consume the new epoch,
+  and delayed observed charges remain informational.
 - Tag every temporary resource with a unique run ID. Provision only exact resolved
   targets; never delete by a broad name, glob, project, application, or account scope.
 - Always execute cleanup. A run is failed—not passed—unless it proves that every
@@ -141,10 +216,14 @@ input is on the critical path:
 
 The alpha is ready only when every required gate in `RELEASE_READINESS.md` is passed.
 At minimum that means exact Windows/Linux qualification for both first-rung candidates,
-real separate-machine interruption recovery, redundant public routes and discovery,
-a published signed catalog/bootstrap, packaged clean-install inference, enforced local
-contribution limits, explicit volunteer-worker privacy disclosure, and a documented
-rollback/disable procedure. Credits and macOS are not alpha gates.
+real separate-machine interruption recovery, an initial complete public candidate route
+and fallback, automatic client model selection, automatic contributor model/block
+placement, a pinned signed catalog/bootstrap, packaged clean-install inference, enforced
+local contribution limits, explicit volunteer-worker privacy disclosure, bounded public
+admission, and documented manual upgrade/uninstall and route-disable procedures. The alpha
+is best-effort and does not claim stable-service redundancy. Credits, macOS, publisher-signed
+installers, automatic updates, independent threshold governance, and exhaustive malicious-
+network qualification are not alpha gates.
 
 ## Implementation evidence snapshot (2026-08-26)
 
@@ -281,8 +360,9 @@ The public community network is the product destination and, once its release ga
 pass, the intended default experience. Private and VPN swarms remain supported as a
 secondary mode for organizations or groups where every participant is trusted; they
 are not the end goal inherited from DRIFT-LLM. Using private swarms as the current
-validation and rollout baseline is a safety measure while the public-network identity,
-discovery, abuse-resistance, redundancy, and usability gates are completed.
+validation baseline is a safety measure while the minimum public-network identity,
+discovery, abuse-resistance, and usability gates are completed. Full independent
+redundancy remains stable-service hardening.
 
 ## Architectural baseline and gaps
 
@@ -377,11 +457,11 @@ The major security outcomes are:
 | Network interception or an untrusted relay | Manifested client-to-worker RPC uses libp2p TLS 1.3 and connects to an authenticated PeerID. Relays may forward the encrypted connection but do not receive its plaintext. | Implemented for manifested swarms. Public qualification must continue to reject plaintext or unauthenticated transport profiles and test direct plus relayed paths. |
 | Forged, copied, or stale DHT records | The DHT is only an untrusted carrier. Worker announcements and intent leases bind the public key, PeerID, exact manifest, execution profile, block range, lifetime, and monotonic sequence in a signed envelope. Clients reject bad signatures, copied block records, expiry, replay, equivocation, and revoked identities before routing. | Worker announcements, rotation, successor revocation, replay guards, and RPC identity comparison are implemented in [`Public swarm security v1`](PUBLIC_SWARM_SECURITY_V1.md). Catalog-authority revocation and public key-compromise drills remain release work. |
 | Model substitution or poisoned artifacts | A content-derived `ModelManifest` pins the full upstream revision, tokenizer, chat template, execution profile, and complete weight inventory. Configuration and every required weight shard are checked by size and SHA-256 before parsing or deserialization; partial downloads remain unusable until atomically verified. | Implemented and validated against tampered metadata, poisoned weights, interrupted downloads, and exact stock-model parity. Public catalogs still need qualified production manifests and interchangeable artifact origins. |
-| Compromise of one catalog key or mirror | Model approval is separate from worker identity. Catalogs use independent Ed25519 keys, configurable signature thresholds, expiry, sequence-based rollback protection, exact manifest digests, and interchangeable HTTPS mirrors. Installations retain their own trust root and may select a different compatible catalog. | The format, verifier, selector, first-install consumer, and last-known-good recovery are implemented. Production roots and catalogs, key rotation/compromise exercises, and alternative-catalog interoperability remain release gates. |
-| Tampered application or unsafe update | Release artifacts must use platform-verifiable signing, authenticate update metadata, refuse unauthorized or older builds, and support tested rollback to the last known-good application without preserving stale secrets. | Current desktop bundles are unsigned engineering evidence, not release candidates. Signed installers, update-key governance, clean install, upgrade, rollback, uninstall, and compromised-update recovery must pass on Windows, Linux, and macOS before release. |
-| Local credential theft or privilege confusion | The node binds to loopback by default. Revocable OpenAI client keys authorize inference only; a separate privileged control credential manages workers and keys but cannot perform inference. Desktop-owned control credentials live in the native OS credential store and are not passed in commands, environment variables, logs, or ordinary configuration. | Authority separation, 256-bit client keys, immediate revocation, one-time secret display, native credential ownership, and authenticated node lifecycle are implemented. Signed installers and packaged credential-store validation on every supported OS remain open. |
+| Compromise of one catalog key or mirror | Model approval is separate from worker identity. Catalogs use independent Ed25519 keys, configurable signature thresholds, expiry, sequence-based rollback protection, exact manifest digests, and interchangeable HTTPS mirrors. Installations retain their own trust root and may select a different compatible catalog. | The format, verifier, selector, first-install consumer, and last-known-good recovery are implemented. Alpha requires one pinned release signer plus expiry/rollback checks; independent threshold holders, compromise/rotation drills, and alternative-catalog interoperability are stable-service gates. |
+| Tampered application or unsafe update | Release artifacts must publish checksums/provenance and the application must never install an untrusted update silently. Stable releases additionally use platform-verifiable publisher signing, authenticated update metadata, downgrade protection, and tested automatic rollback. | Current desktop bundles are unsigned engineering evidence. Alpha requires clean install, manual upgrade/reinstall, uninstall, checksums/provenance, and recovery instructions on Windows/Linux. Publisher signing, an automatic updater, update-key governance, and automatic rollback are post-alpha hardening. |
+| Local credential theft or privilege confusion | The node binds to loopback by default. Revocable OpenAI client keys authorize inference only; a separate privileged control credential manages workers and keys but cannot perform inference. Desktop-owned control credentials live in the native OS credential store and are not passed in commands, environment variables, logs, or ordinary configuration. | Authority separation, 256-bit client keys, immediate revocation, one-time secret display, native credential ownership, and authenticated node lifecycle are implemented. Packaged credential-store validation on Windows/Linux remains an alpha gate; publisher-signed installers and macOS validation follow the alpha. |
 | Discovery, telemetry, or accounting leaking request content | DHT records contain routing and capacity data, not prompts. Demand signals must be coarse, short-lived aggregates, and future receipts must exclude prompts, generated text, hidden states, logits, API keys, and per-user request histories. | This is a protocol and data-minimization requirement. Signed demand aggregation, privacy review, retention limits, receipt implementation, and tests proving that content cannot enter observability or accounting records are still required. |
-| Worker loss, compromised infrastructure, or denial of service | Clients route directly, use finite timeouts, exclude failed identities, replay bounded activation history through redundant workers, and do not require an operator gateway. Multiple independent seeds, mirrors, and routes prevent one service from controlling availability. | In-generation worker-loss recovery is implemented and has passed real multi-machine parity tests. Independent public seeds, admission and rate limits, regional redundancy, partition drills, and malicious-load testing remain public-release gates. |
+| Worker loss, compromised infrastructure, or denial of service | Clients route directly, use finite timeouts, exclude failed identities, replay bounded activation history when a replacement exists, and do not require an operator gateway. Multiple independent seeds, mirrors, and routes are the stable-service availability target. | In-generation worker-loss recovery is implemented and has passed real multi-machine parity tests. Alpha still requires finite admission/rate limits, a route-disable drill, honest unavailable status, and a bounded canary; regional redundancy, partitions, hostile-load campaigns, and independent-provider outage survival are post-alpha. |
 | A public signal coercing or exhausting a contributor | Contribution is opt-in and local policy is authoritative. The network must not override model allow/deny rules, force an unapproved download, exceed storage/VRAM/bandwidth/power limits, or keep resources after the user pauses sharing. Worker processes remain supervised separately from the desktop and local API. | Worker supervision exists. Hard budget enforcement, download authorization, sandbox/containment review, pause-time guarantees, and adversarial resource-exhaustion tests remain milestone work. |
 
 Signatures, hashes, and TLS address different threats. Signatures authenticate who
@@ -456,9 +536,11 @@ sources and the live inventory are in [`deploy/gcp/`](../deploy/gcp/README.md).
 
 This node is a bootstrap dependency, not a centralized inference service. Its DNS A
 record is published; the next deployment gate is automatic desktop seed configuration.
-Before a public release, at least one independently operated seed must be added and the fresh-
-install, cached-peer, seed-loss, partition, and recovery paths must pass without this
-Google VM being a single point of failure.
+Before a stable-service release, at least one independently operated seed must be added and
+the fresh-install, cached-peer, seed-loss, partition, and recovery paths must pass without
+this Google VM being a single point of failure. The alpha may use the published seed as a
+declared availability dependency, but must fail clearly when it or all remembered peers are
+unavailable.
 
 ## Autonomous community model placement
 
@@ -473,6 +555,21 @@ ceiling. Community `auto` selection should move monotonically toward larger qual
 models as measured capacity grows: approximately 1-2B, 3-4B, 8B, 27-32B, 70B, and
 400B-plus. Each rung approves exactly one primary and at least one standby so the
 catalog can replace a model without requiring both alternatives to fragment live VRAM.
+
+These are catalog capacity classes, not a mandatory sequential qualification staircase.
+The original Petals demonstrations and successful TinyLlama, Qwen, and Gemma bring-up
+make larger block-sharded inference plausible enough to test directly. They do **not**
+prove that an exact 30B or 70B checkpoint is compatible, fits the intended worker/client
+memory envelopes, recovers correctly, or performs well enough to use.
+
+The first post-alpha scaling experiment should therefore use an exact 27-32B candidate
+split across independent workers, with no worker required to hold the full model. If one
+complete block fits the target worker envelope and that run passes manifest/artifact
+checks, stock parity, two complete routes, selected-worker interruption, client and
+worker memory limits, TTFT, and decode throughput, proceed directly to an exact roughly
+70B candidate. Test a smaller intermediate rung only when it is a useful product fallback
+or helps diagnose a concrete failure; do not spend milestones on 4B -> 8B -> 12B merely
+as confidence-building prerequisites.
 
 At INT8, two complete weight replicas require roughly two bytes of aggregate usable
 VRAM per parameter: 10 GB for a 5B model, 60 GB for a 30B model, 140 GB for 70B, and
@@ -551,7 +648,7 @@ own policies. It is not a global poll, a maintainer command, or token-weighted
 governance. Different catalogs or communities may legitimately support different
 model sets on the same protocol.
 
-Before public deployment, build a deterministic simulator for thousands of nodes,
+Before stable-service deployment, build a deterministic simulator for thousands of nodes,
 hardware profiles, model preferences, demand shifts, network partitions and churn.
 Promotion requires convergence without synchronized switching, sustained end-to-end
 coverage, and recovery when a popular model or region suddenly loses capacity.
@@ -789,11 +886,13 @@ implementation.
    cold cache growth; this model fits the current local-logits edge design, while
    larger selectable models still require their own published measurements.
 5. **Desktop application and contribution controls — in progress.** Build the selected
-   PySide desktop and ship signed installers for Windows, Linux, and macOS; complete
+   PySide desktop and ship alpha packages for Windows and Linux; complete
    first-run onboarding; manage keys in native credential stores; show endpoint, model,
    route and contribution health; enforce VRAM/storage/bandwidth/power/schedule budgets;
-   implement model allow/prefer/deny policy; pause safely; integrate background startup
-   and updates; and clearly disclose prompt visibility. The completed implementation
+   implement model allow/prefer/deny policy and automatic model/block allocation; pause
+   safely; support manual upgrade/reinstall and uninstall; and clearly disclose prompt
+   visibility. Publisher-signed installers, automatic updates/rollback, macOS, and stable-
+   service accessibility/release polish follow the alpha. The completed implementation
    spike compared a Python-native Qt/PySide shell with a webview shell and considered
    process isolation, installer/update signing, tray and service integration,
    accessibility, bundle size, and cross-platform CI.
@@ -955,8 +1054,8 @@ implementation.
    stock token-ID equality, a separate clean request that excludes the victim, a stopped and
    joined client DHT, and cleanup of every declared bootstrap/worker resource after cleanup
    preflight. JSON, prompts, argv entries, and adapter output are bounded; diagnostic evidence
-   redacts paths, endpoints, and secret-like values. The opt-in Fly Machines adapter now
-   provisions the five run-tagged resources, derives the two routes for either candidate's
+   redacts paths, endpoints, and secret-like values. The opt-in CPU-only Fly Machines
+   adapter now provisions the five run-tagged resources, derives the two routes for either candidate's
    manifested block count, discovers stable public PeerIDs without reading private identity
    bytes, and supplies exact SIGKILL/cleanup acknowledgements while retaining an outer cleanup
    trap. Generated control argv names the private state journal only relative to the private
@@ -970,7 +1069,7 @@ implementation.
    a first replacement to disconnect after partial chunked replay, proves that complete
    activation and per-layer history plus prompts remain available to a second replacement,
    and reaches reference-equivalent output through bounded route retry. Sixteen
-   controller tests plus thirty-three adapter tests cover the fail-closed contracts; the local
+   controller tests plus thirty-four adapter tests cover the fail-closed contracts; the local
    regression is not external evidence, and no real Qwen3.5 or Gemma separate-host run has
    been claimed.
 
@@ -978,8 +1077,9 @@ implementation.
    not generally blocked on unavailable hardware. The available local machine, Fly Machines,
    and GCP can cover the Windows and Linux work: the local machine can supply an appropriate
    Windows profile, GCP can provision Windows/Linux CPU and CUDA profiles subject to GPU
-   quota and compatible images, and the existing Fly adapter can provision the isolated
-   Linux bootstrap/workers needed for controlled separate-machine recovery. The only genuine
+   quota and compatible images, and the existing Fly adapter can provision only the
+   CPU-only Linux bootstrap/workers needed for controlled separate-machine recovery. Fly
+   is not part of the CUDA matrix. The only genuine
    hardware-profile gap is macOS, especially Apple Silicon/MPS, because neither Fly nor GCP
    supplies that platform. Credentials visible to the qualification run, GPU quota, image
    selection, snapshot placement, runner registration/labels, workflow dispatch, and report
@@ -1008,23 +1108,21 @@ implementation.
    dispatch, evidence-review, and teardown boundaries. No external host was provisioned or
    registered and no hardware result is claimed.
 
-   **Next implementation sequence.** The exact four-profile public-alpha matrix and strict
-   recovery authorization are implemented, with macOS isolated as a deferred gate. Next
-   provision and register the uniquely labelled Windows and Linux qualification runners using
-   the local machine and GCP, and collect Qwen3.5 2B and Gemma 4 E2B evidence on those
-   profiles. Use Fly to execute the controlled separate-machine interruption/recovery
-   exercise for both exact candidates and preserve its bounded evidence. Only after every
-   public-alpha profile and both separate-machine recovery gates pass may
-   the roadmap proceed to operating redundant public model workers, publishing the initial
-   signed catalog through interchangeable HTTPS mirrors, and building the release bootstrap
-   with the published DNS peer plus at least one independent seed. Then pass real packaged
-   clean-install inference and prove the native credential and owned-process path against real
-   packaged Windows and Linux credential backends. After that, validate the
-   source-complete single-instance and login-startup behavior on each supported packaged OS,
-   feed privacy-safe peer-region observations into the region view, validate VRAM, bandwidth,
-   and power enforcement against real packaged hardware and its unavailable-telemetry paths,
-   and complete resource, accessibility, signed installer, upgrade, rollback,
-   uninstall, and retained-data gates on both public-alpha operating systems.
+   **Next implementation sequence.** First complete the screen-visible public vertical
+   slice: make TinyLlama a cheap fallback, bring Qwen3.5 2B online on the available GCP
+   L4, wire live DHT observations into `auto`, show the choice in the desktop, and generate
+   through the remote worker. Then collect the exact Windows/Linux CPU/CUDA evidence for
+   Qwen3.5 2B and Gemma 4 E2B and run both CPU-only Fly controlled separate-machine
+   recovery exercises.
+   Next complete automatic contributor model/block placement within the user's limits and
+   validate VRAM, storage, bandwidth, power, pause, and restart behavior on real hardware.
+   Publish the minimal pinned signed alpha catalog/bootstrap and initial public candidate
+   plus fallback routes, then pass clean packaged Windows/Linux install, inference,
+   contribution, manual upgrade/reinstall, uninstall, and bounded-canary checks. Publish the
+   explicitly best-effort alpha after those outcomes pass. Independent-provider redundancy,
+   threshold-key governance, publisher-signed installers, automatic updates/rollback, and
+   exhaustive hostile-network qualification remain the next hardening phase; they must not
+   delay this sequence.
 6. **Decentralized discovery and autonomous allocation.** Operate multiple
    independent bootstrap and relay peers; add peer caching, user-supplied seeds and
    LAN discovery; define threshold-signed, forkable catalogs; publish privacy-safe

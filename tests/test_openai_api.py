@@ -150,6 +150,34 @@ def test_multi_model_requests_require_and_select_a_registered_model():
     assert second.last_gen_kwargs is not None
 
 
+def test_auto_request_uses_the_live_catalog_route_and_reports_unavailability():
+    route = {
+        "status": "complete",
+        "source": "discovery",
+        "covered_blocks": 24,
+        "total_blocks": 24,
+        "peer_count": 1,
+    }
+    selected_model = FakeModel()
+    manager = ModelManager()
+    manager.register(
+        ModelDescriptor("Qwen candidate", manifest_digest="sha256:" + "a" * 64),
+        lambda: ModelRuntime(selected_model, FakeTokenizer()),
+        route_health=lambda: route,
+    )
+    manager.configure_auto_selection(("Qwen candidate",))
+    client = TestClient(create_app(model_manager=manager))
+
+    selected = client.post("/v1/completions", json={"model": "auto", "prompt": "hi"})
+    assert selected.status_code == 200
+    assert selected.json()["model"] == "Qwen candidate"
+
+    route.update({"status": "incomplete", "covered_blocks": 23})
+    unavailable = client.post("/v1/completions", json={"model": "auto", "prompt": "hi"})
+    assert unavailable.status_code == 503
+    assert "complete live route" in unavailable.json()["detail"]
+
+
 def test_chat_completion_finish_reason_length(api):
     response = api.client.post(
         "/v1/chat/completions",

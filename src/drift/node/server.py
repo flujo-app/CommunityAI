@@ -206,6 +206,7 @@ def create_node_app(
             "started_at": started_at,
             "openai_base_url": f"http://{'[' + host + ']' if ':' in host else host}:{port}/v1",
             "runtime_budget": model_manager.residency(),
+            "auto_selection": model_manager.auto_selection_snapshot(),
             "models": [snapshot.to_dict() for snapshot in model_manager.snapshots()],
             "workers": [
                 {key: worker[key] for key in ("id", "model", "state", "desired_running")}

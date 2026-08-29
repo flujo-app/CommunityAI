@@ -263,6 +263,12 @@ Machine, verifies the run/resource metadata, requests `SIGKILL`, waits for the s
 state, and emits the exact nonce-bound acknowledgement. Cleanup destroys every
 run-tagged Machine and reports success only after no tagged resource remains.
 
+This provider topology is **CPU-only**. As of 2026-08-27, Fly supplies no GPU Machines
+for this project. The adapter accepts only `--device cpu`, requests CPU and memory guest
+resources without a GPU field, and fails before creating a Machine for any other device.
+The Fly result qualifies separate-machine routing, interruption recovery, and cleanup;
+it does not satisfy a CUDA profile or establish GPU performance.
+
 [`scripts/fly_qualification_node.py`](../scripts/fly_qualification_node.py) is the
 image-side bootstrap/worker entrypoint. Provisioning accepts no free-form image reference:
 it requires the Gate 4 publication report, binds its candidate/repository/revision and
@@ -293,6 +299,7 @@ python scripts/fly_qualification_adapter.py provision \
   --app <existing-isolated-fly-app> \
   --image-evidence qualification-image-inputs/qwen3.5-2b-<source-commit>-publication-evidence.json \
   --region iad \
+  --device cpu \
   --remote-manifest /workspace/qwen3.5-2b-bfloat16-eager.json \
   --state-output private-run/fly-state.json \
   --topology-output private-run/topology.json \

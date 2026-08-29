@@ -197,6 +197,21 @@ class RepeatedIdentityReader:
         return _peer("R")
 
 
+class ProvisionAndCleanupFailureAPI(FakeFlyAPI):
+    def __init__(self):
+        super().__init__()
+        self.list_calls = 0
+
+    def list_run_machines(self, run_id):
+        self.list_calls += 1
+        if self.list_calls > 1:
+            raise adapter.AdapterError("simulated cleanup list failure")
+        return []
+
+    def create_machine(self, payload):
+        raise adapter.AdapterError("simulated create failure")
+
+
 def _publication_evidence(tmp_path, manifest):
     if manifest.source.repository == "Qwen/Qwen3.5-2B":
         candidate = "qwen3.5-2b"
@@ -360,6 +375,14 @@ def test_provision_builds_controller_accepted_disjoint_split_topology(tmp_path, 
     split = manifest.model.num_blocks // 2
     assert topology.expected_peers(0) == frozenset({_peer("B"), _peer("D")})
     assert topology.expected_peers(split) == frozenset({_peer("C"), _peer("E")})
+    for machine in api.machines.values():
+        assert machine["config"]["guest"] == {
+            "cpu_kind": "performance",
+            "cpus": 4,
+            "memory_mb": 16384,
+        }
+        assert machine["config"]["rootfs"] == {"size_gb": 10}
+        assert machine["config"]["env"]["COMMUNITYAI_QUALIFICATION_DEVICE"] == "cpu"
 
     plan = multi.load_control_plan(options.control_output, topology)
     assert set(plan.interrupt_commands) == set(topology.worker_by_peer)
@@ -382,6 +405,17 @@ def test_provision_rejects_separate_state_and_control_directories_before_create(
     api = FakeFlyAPI()
 
     with pytest.raises(adapter.AdapterError, match="must share one directory"):
+        adapter.provision(manifest, options, api=api, identity_reader=FakeIdentityReader())
+
+    assert api.created == 0
+
+
+def test_provision_rejects_non_cpu_device_before_create(tmp_path):
+    manifest = ModelManifest.load(CANDIDATES[0])
+    options = replace(_options(tmp_path), device="cuda")
+    api = FakeFlyAPI()
+
+    with pytest.raises(adapter.AdapterError, match="CPU-only; --device must be cpu"):
         adapter.provision(manifest, options, api=api, identity_reader=FakeIdentityReader())
 
     assert api.created == 0
@@ -414,6 +448,18 @@ def test_provision_outer_trap_cleans_ambiguous_partial_create(tmp_path):
     assert all(machine["state"] == "destroyed" for machine in api.machines.values())
     state = adapter.load_state(options.state_output, require_ready=False)
     assert state.status == "cleaned_after_failure"
+
+
+def test_provision_reports_sanitized_primary_error_when_cleanup_also_fails(tmp_path):
+    manifest = ModelManifest.load(CANDIDATES[0])
+    options = _options(tmp_path)
+    api = ProvisionAndCleanupFailureAPI()
+
+    with pytest.raises(
+        adapter.AdapterError,
+        match="simulated create failure.*outer cleanup trap could not prove cleanup",
+    ):
+        adapter.provision(manifest, options, api=api, identity_reader=FakeIdentityReader())
 
 
 def test_provision_outer_trap_reconciles_delayed_partial_create(tmp_path):
@@ -587,6 +633,8 @@ def test_machine_exec_uses_shell_free_argv_and_bounded_identity_marker():
 
     def runner(command, **kwargs):
         calls.append((command, kwargs))
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(
             returncode=0,
             stdout=adapter._IDENTITY_MARKER + json.dumps({"schema_version": 1, "peer_id": _peer("P")}) + "\n",
@@ -596,13 +644,14 @@ def test_machine_exec_uses_shell_free_argv_and_bounded_identity_marker():
     reader = adapter.FlyMachineExec(
         executable="flyctl",
         remote_node_script="/workspace/scripts/fly_qualification_node.py",
-        timeout=2,
+        timeout=120,
         runner=runner,
         poll_interval=0,
     )
 
     assert reader.read_peer_id("qualification-app", "machine123") == _peer("P")
-    command, kwargs = calls[0]
+    assert len(calls) == 2
+    command, kwargs = calls[-1]
     assert command == [
         "flyctl",
         "machine",
@@ -612,10 +661,12 @@ def test_machine_exec_uses_shell_free_argv_and_bounded_identity_marker():
         "--app",
         "qualification-app",
         "--timeout",
-        "15",
+        "60",
     ]
     assert kwargs["shell"] is False
-    with pytest.raises(adapter.AdapterError, match="exactly one"):
+    duplicate = adapter._IDENTITY_MARKER + json.dumps({"schema_version": 1, "peer_id": _peer("P")})
+    assert reader.parse_peer_output(duplicate, duplicate) == _peer("P")
+    with pytest.raises(adapter.AdapterError, match="conflicting"):
         reader.parse_peer_output(
             adapter._IDENTITY_MARKER + json.dumps({"schema_version": 1, "peer_id": _peer("P")}),
             adapter._IDENTITY_MARKER + json.dumps({"schema_version": 1, "peer_id": _peer("Q")}),
@@ -748,6 +799,51 @@ def test_worker_entrypoint_rejects_full_range(monkeypatch):
         node.build_worker_args()
 
 
+def test_fly_api_accepts_current_deploy_token_shape():
+    token = "FlyV1 fm2_" + "a" * 128
+
+    api = adapter.FlyAPI(app="qualification-app", token=token)
+
+    assert api._token == token
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "",
+        " FlyV1 fm2_payload",
+        "FlyV1 ",
+        "FlyV1  fm2_payload",
+        "FlyV1\tfm2_payload",
+        "opaque token",
+        "opaque\ntoken",
+        "opaque\x7ftoken",
+    ],
+)
+def test_fly_api_rejects_missing_or_malformed_auth_tokens(token):
+    with pytest.raises(adapter.AdapterError, match="authentication token"):
+        adapter.FlyAPI(app="qualification-app", token=token)
+
+
+def test_machine_wait_repeats_provider_bounded_timeouts_under_outer_deadline(monkeypatch):
+    api = adapter.FlyAPI(app="qualification-app", token="test-token")
+    calls = []
+
+    def request(method, suffix, *, payload=None, allow_not_found=False):
+        calls.append((method, suffix, allow_not_found))
+        if len(calls) == 1:
+            raise adapter.ProviderRequestTimeout("simulated HTTP 408")
+        return {}
+
+    monkeypatch.setattr(api, "_request", request)
+
+    api.wait_state("machine123", "started", timeout=600)
+
+    assert len(calls) == 2
+    assert all("timeout=600" not in suffix for _, suffix, _ in calls)
+    assert all("state=started" in suffix for _, suffix, _ in calls)
+
+
 def test_hard_kill_wait_is_bound_to_the_selected_machine_instance(monkeypatch):
     api = adapter.FlyAPI(app="qualification-app", token="test-token")
     calls = []
@@ -788,6 +884,28 @@ def test_hard_kill_wait_is_bound_to_the_selected_machine_instance(monkeypatch):
     wait_call = next(call for call in calls if "/wait?" in call[1])
     assert "state=stopped" in wait_call[1]
     assert "instance_id=instanceABC123" in wait_call[1]
+
+
+def test_api_classifies_provider_wait_timeout_without_exposing_body():
+    def opener(request, timeout):
+        raise adapter.urllib.error.HTTPError(
+            request.full_url,
+            408,
+            "provider wait body",
+            {},
+            None,
+        )
+
+    api = adapter.FlyAPI(
+        app="qualification-app",
+        token="test-token",
+        opener=opener,
+    )
+
+    with pytest.raises(adapter.ProviderRequestTimeout, match="HTTP 408") as captured:
+        api._request("GET", "/bounded-wait")
+
+    assert "provider wait body" not in str(captured.value)
 
 
 def test_api_errors_do_not_expose_token_endpoint_or_provider_body():

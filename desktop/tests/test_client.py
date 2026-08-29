@@ -11,6 +11,7 @@ from communityai_desktop.client import (
     NodeApiError,
     NodeClient,
     NodeClientError,
+    _normalize_auto_selection,
     _normalize_contribution_status,
     normalize_loopback_url,
 )
@@ -51,6 +52,32 @@ class NodeClientTests(unittest.TestCase):
         self.assertEqual(result["key_lifecycle"], "passed")
         self.assertEqual(result["contribution_policy"], "passed")
         self.assertEqual(result["policy_update"], "passed")
+        self.assertEqual(result["auto_selection"], "passed")
+
+    def test_rejects_malformed_auto_selection(self):
+        selected = {
+            "selector": "auto",
+            "status": "selected",
+            "model": "Qwen 3.5 2B",
+            "manifest_digest": "sha256:" + "a" * 64,
+            "reason": "A complete live route is available.",
+            "covered_blocks": 24,
+            "total_blocks": 24,
+            "peer_count": 1,
+            "source": "discovery",
+        }
+        self.assertEqual(_normalize_auto_selection(selected)["model"], "Qwen 3.5 2B")
+
+        for mutation in (
+            lambda value: value.update({"covered_blocks": 23}),
+            lambda value: value.update({"peer_count": 0}),
+            lambda value: value.update({"manifest_digest": "sha256:invalid"}),
+            lambda value: value.update({"status": "selected", "model": None}),
+        ):
+            malformed = copy.deepcopy(selected)
+            mutation(malformed)
+            with self.subTest(value=malformed), self.assertRaises(NodeClientError):
+                _normalize_auto_selection(malformed)
 
     def test_rejects_incomplete_fail_open_contribution_status(self):
         with fake_node() as (url, token):
@@ -224,6 +251,11 @@ class NodeClientTests(unittest.TestCase):
             snapshot = DesktopController(NodeClient(url, token)).snapshot()
         self.assertEqual(snapshot["openai_base_url"].rsplit("/", 1)[-1], "v1")
         self.assertEqual(snapshot["models"][0]["coverage"], "32/32")
+        self.assertTrue(snapshot["models"][0]["route_complete"])
+        self.assertEqual(snapshot["auto_selection"]["model"], "Qwen 3 8B")
+        self.assertIn("complete 36/36-block route", snapshot["auto_selection"]["reason"])
+        selected = next(model for model in snapshot["models"] if model["auto_selected"])
+        self.assertEqual(selected["id"], "Qwen 3 8B")
         self.assertEqual(snapshot["network"]["peer_count"], 96)
         self.assertEqual(len(snapshot["network"]["regions"]), 5)
         self.assertEqual(snapshot["contribution"]["active_models"], ["Qwen 3 8B"])

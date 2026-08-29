@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import faulthandler
 import gc
+import math
 import shutil
 import tempfile
 import time
@@ -49,10 +50,29 @@ from drift.utils.reference_model import load_reference_model_for_causal_lm
 
 DEFAULT_MODEL = "Maykeye/TinyLLama-v0"
 DEFAULT_DHT_PREFIX = "_windows_xpu_tinyllama_v0_smoke"
+DEFAULT_FAILOVER_REQUEST_TIMEOUT_SECONDS = 10.0
 
 
 def log(message: str) -> None:
     print(message, flush=True)
+
+
+def configure_qualification_threads(device: torch.device) -> int | None:
+    if device.type != "cpu":
+        return None
+    previous_num_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    return previous_num_threads
+
+
+def restore_qualification_threads(previous_num_threads: int | None) -> None:
+    if previous_num_threads is not None:
+        torch.set_num_threads(previous_num_threads)
+
+
+def qualification_lm_head_chunking(model) -> bool | str | None:
+    """Describe the real client LM-head projection path without changing it."""
+    return getattr(model.get_output_embeddings(), "use_chunked_forward", None)
 
 
 def parse_block_indices(value: str) -> list[int]:
@@ -92,16 +112,58 @@ def close_distributed_client(model) -> None:
 
 
 def stop_workers(containers: list, worker_dhts: list) -> None:
+    cleanup_errors: list[BaseException] = []
     for container in reversed(containers):
-        if container.is_alive():
-            container.shutdown()
-            container.join(timeout=10)
+        try:
+            if container.is_alive():
+                container.shutdown()
+                container.join(timeout=10)
+        except BaseException as exc:
+            cleanup_errors.append(exc)
     containers.clear()
     for worker_dht in reversed(worker_dhts):
-        if worker_dht.is_alive():
-            worker_dht.shutdown()
-            worker_dht.join()
+        try:
+            if worker_dht.is_alive():
+                worker_dht.shutdown()
+                worker_dht.join()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
     worker_dhts.clear()
+    if cleanup_errors:
+        raise cleanup_errors[0]
+
+
+def cleanup_qualification_runtime(
+    *,
+    model,
+    containers: list,
+    worker_dhts: list,
+    dht: DHT | None,
+    identity_dir: Path | None,
+    previous_torch_num_threads: int | None,
+    traceback_timer_started: bool,
+) -> None:
+    cleanup_errors: list[BaseException] = []
+
+    def attempt(operation) -> None:
+        try:
+            operation()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+
+    attempt(lambda: log("shutting down"))
+    attempt(lambda: close_distributed_client(model))
+    attempt(lambda: stop_workers(containers, worker_dhts))
+    if dht is not None:
+        attempt(dht.shutdown)
+        attempt(dht.join)
+    if identity_dir is not None:
+        attempt(lambda: shutil.rmtree(identity_dir, ignore_errors=True))
+    if traceback_timer_started:
+        attempt(faulthandler.cancel_dump_traceback_later)
+    attempt(lambda: restore_qualification_threads(previous_torch_num_threads))
+    if cleanup_errors:
+        raise cleanup_errors[0]
 
 
 def wait_for_dht_announcement(
@@ -163,6 +225,12 @@ def main(argv=None) -> None:
     )
     parser.add_argument("--failover-tokens", type=int, default=8)
     parser.add_argument(
+        "--failover-request-timeout",
+        type=float,
+        default=DEFAULT_FAILOVER_REQUEST_TIMEOUT_SECONDS,
+        help="per-RPC timeout during failover smoke; must cover a slow CPU first token",
+    )
+    parser.add_argument(
         "--skip-reference",
         action="store_true",
         help="skip the stock-model token parity check (faster, but does not verify numerical correctness)",
@@ -208,37 +276,47 @@ def main(argv=None) -> None:
         raise ValueError("--prompt must be non-empty")
     if args.new_tokens < 1:
         raise ValueError("--new-tokens must be at least 1")
-
-    faulthandler.dump_traceback_later(args.timeout, exit=True)
-
-    device = normalize_device(torch.device(args.device))
-    if device.type == "xpu":
-        assert torch.xpu.is_available(), "XPU is not available"
-        log(f"torch={torch.__version__}, xpu={torch.xpu.get_device_name(0)}")
-    else:
-        log(f"torch={torch.__version__}, device={device}")
+    if not math.isfinite(args.failover_request_timeout) or args.failover_request_timeout <= 0:
+        raise ValueError("--failover-request-timeout must be finite and positive")
 
     requested_block_indices = parse_block_indices(args.block_indices) if args.block_indices is not None else None
     expected_block_count = manifest.model.num_blocks if manifest is not None else 8
     dht_worker_count = len(requested_block_indices) if requested_block_indices is not None else expected_block_count
-    identity_dir = Path(tempfile.mkdtemp(prefix="drift-qualification-identities-")) if manifest is not None else None
-    bootstrap_identity_path = identity_dir / "bootstrap.key" if identity_dir is not None else None
-    dht = DHT(
-        initial_peers=[],
-        start=True,
-        num_workers=dht_worker_count,
-        use_relay=False,
-        use_auto_relay=False,
-        client_mode=False,
-        host_maddrs=["/ip4/127.0.0.1/tcp/0"],
-        identity_path=str(bootstrap_identity_path) if bootstrap_identity_path is not None else None,
-        tls=True,
-    )
+    device = normalize_device(torch.device(args.device))
+    identity_dir = None
+    previous_torch_num_threads = None
+    traceback_timer_started = False
+    dht = None
     containers = []
     worker_dhts = []
     model = None
 
     try:
+        if manifest is not None:
+            identity_dir = Path(tempfile.mkdtemp(prefix="drift-qualification-identities-"))
+        bootstrap_identity_path = identity_dir / "bootstrap.key" if identity_dir is not None else None
+        faulthandler.dump_traceback_later(args.timeout, exit=True)
+        traceback_timer_started = True
+
+        previous_torch_num_threads = configure_qualification_threads(device)
+        if device.type == "xpu":
+            assert torch.xpu.is_available(), "XPU is not available"
+            log(f"torch={torch.__version__}, xpu={torch.xpu.get_device_name(0)}")
+        else:
+            log(f"torch={torch.__version__}, device={device}")
+        log(f"torch_num_threads={torch.get_num_threads()}")
+
+        dht = DHT(
+            initial_peers=[],
+            start=True,
+            num_workers=dht_worker_count,
+            use_relay=False,
+            use_auto_relay=False,
+            client_mode=False,
+            host_maddrs=["/ip4/127.0.0.1/tcp/0"],
+            identity_path=str(bootstrap_identity_path) if bootstrap_identity_path is not None else None,
+            tls=True,
+        )
         peers = [str(addr) for addr in dht.get_visible_maddrs()]
         log(f"initial_peers={peers}")
 
@@ -336,7 +414,7 @@ def main(argv=None) -> None:
                 stats_report_interval=None,
                 update_period=2 if args.test_failover else 5,
                 expiration=max(10, MAX_DHT_TIME_DISCREPANCY_SECONDS),
-                request_timeout=3 if args.test_failover else 60,
+                request_timeout=args.failover_request_timeout if args.test_failover else 60,
                 session_timeout=60,
                 step_timeout=30,
                 prefetch_batches=1,
@@ -377,7 +455,8 @@ def main(argv=None) -> None:
             manifest_digest=manifest.digest if manifest is not None else None,
             manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
             torch_dtype=torch_dtype,
-            request_timeout=3 if args.test_failover else 60,
+            cache_dir=args.cache_dir,
+            request_timeout=args.failover_request_timeout if args.test_failover else 60,
             max_retries=3,
             min_backoff=0.1 if args.test_failover else 1,
             max_backoff=1 if args.test_failover else 60,
@@ -386,10 +465,14 @@ def main(argv=None) -> None:
         if artifact_verifier is not None:
             model_kwargs["artifact_verifier"] = artifact_verifier
         model = AutoDistributedModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+        lm_head_chunking = qualification_lm_head_chunking(model)
+        log(f"client_lm_head_use_chunked_forward={lm_head_chunking}")
         log_local_component_placement("client_input_embeddings", model.get_input_embeddings(), torch_dtype)
         log_local_component_placement("client_lm_head", model.get_output_embeddings(), torch_dtype)
 
         log("generating")
+        if args.test_failover:
+            log(f"failover_request_timeout_seconds={args.failover_request_timeout}")
         inputs = tokenizer(args.prompt, return_tensors="pt")["input_ids"]
         generated_tokens = args.failover_tokens if args.test_failover else args.new_tokens
         if args.test_failover:
@@ -479,13 +562,15 @@ def main(argv=None) -> None:
 
         log(f"manifested local swarm qualification ok model={model_name}")
     finally:
-        log("shutting down")
-        close_distributed_client(model)
-        stop_workers(containers, worker_dhts)
-        dht.shutdown()
-        dht.join()
-        if identity_dir is not None:
-            shutil.rmtree(identity_dir, ignore_errors=True)
+        cleanup_qualification_runtime(
+            model=model,
+            containers=containers,
+            worker_dhts=worker_dhts,
+            dht=dht,
+            identity_dir=identity_dir,
+            previous_torch_num_threads=previous_torch_num_threads,
+            traceback_timer_started=traceback_timer_started,
+        )
 
 
 if __name__ == "__main__":

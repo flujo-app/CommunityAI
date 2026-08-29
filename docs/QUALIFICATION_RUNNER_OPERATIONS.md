@@ -26,14 +26,17 @@ observed cost above an estimate counts at the higher amount. It never
 contacts a provider or prints provider responses.
 
 For the four-host GCP fleet, the 2026-08-26 on-demand price snapshot supports two
-reviewed CUDA shapes. The original uses four `n1-highmem-8` VMs, two attached T4s,
-and standard persistent disks: approximately USD 3.36/hour and USD 69 maximum for 14
-hours. The capacity fallback retains two N1 CPU hosts but uses two `g2-standard-8`
-hosts with included L4s and required balanced persistent disks: approximately USD
-3.45/hour and USD 69 maximum for 13.5 hours. Both include two 8-vCPU Windows licenses,
-25 percent headroom, USD 10 network/setup contingency, and one additional split-region
-NAT address-hour at USD 0.005. Fourteen hours of the G2/L4 shape rounds to USD 71 and
-cannot use the existing reservation. The pinned inputs come from Google's
+reviewed CUDA shapes. The original single-region plan uses four `n1-highmem-8` VMs,
+two attached T4s, and standard persistent disks: approximately USD 3.38 equivalent
+fleet-hour and USD 70 maximum for 14 hours; a split-region N1/T4 plan is approximately
+USD 3.40 equivalent fleet-hour and also rounds to USD 70. The capacity fallback retains
+two N1 CPU hosts but uses two `g2-standard-8` hosts with included L4s and required
+balanced persistent disks: approximately USD 3.49 equivalent fleet-hour and USD 69
+maximum for 13.5 hours. Both include two 8-vCPU Windows licenses, 25 percent headroom,
+USD 10 network/setup contingency, and one exact named NAT address per selected region
+at USD 0.005/address-hour. Because the addresses can span four serialized host windows,
+the guard charges up to 54 address-hours per IP for the 13.5-hour plan. Fourteen hours
+of the G2/L4 shape rounds to USD 72 and cannot use the existing reservation. The pinned inputs come from Google's
 [current N1 resource rates](https://cloud.google.com/products/compute/resources/pricing),
 [T4 rates](https://cloud.google.com/products/compute/gpus-pricing),
 [G2/L4 rates](https://cloud.google.com/products/compute/pricing/accelerator-optimized),
@@ -66,9 +69,10 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
 ```
 
 The image-family lookups above are provider preflight only: review their returned exact
-names before passing them into the provider-neutral guard. The emitted create commands
-use `--image`, never a mutable family, and the plan records post-create boot-disk source
-checks for all four instances.
+names before passing them into the provider-neutral guard. The emitted infrastructure
+and profile-phase commands use `--image`, never a mutable family. Each ordered profile
+phase records its own post-create boot-disk source check, qualification boundary, exact
+delete, and empty-output instance/disk absence checks.
 
 The first plan reports `provisioning_authorized=false` and supplies one exact
 `required_ledger_row`. Add that row to the ledger, commit it, and rerun the same
@@ -79,6 +83,12 @@ availability, quota, and absence checks remain mandatory even after cost authori
 For Fly, calculate a conservative maximum from current Fly pricing for the exact
 image, five-Machine topology, regions, CPU, memory, and maximum lifetime, then pass
 it explicitly:
+
+The Fly topology is **CPU-only**. As of 2026-08-27, Fly supplies no GPU Machines for
+this project, so Gate 7 must use one CPU bootstrap and four CPU workers with
+`--device cpu`. The adapter rejects every other device value and sends only CPU and
+memory guest fields. This gate proves cross-machine routing, interruption recovery,
+and cleanup; it is not CUDA qualification or a GPU performance result.
 
 ```powershell
 uv run --no-sync python scripts/qualification_cost_guard.py `
@@ -183,11 +193,73 @@ Do not edit the generated `source` or contract directories. Review the generated
 command array before executing it, and regenerate it if any input changes. Execute it
 only on a Docker-enabled builder after native registry authentication and any applicable
 cost reservation. Authenticate without copying a token into the working tree or command
-arguments, then execute the generated Buildx argument array:
+arguments, then execute the generated Buildx argument array. On Windows PowerShell
+5.1, do **not** pipe a PowerShell string or a redirected
+`System.Diagnostics.Process.StandardInput` stream into `docker login`, `plink`,
+or another native credential consumer. PowerShell can transcode the pipe or prepend
+the UTF-8 BOM bytes `EF BB BF`, which changes an otherwise valid token. Keep the
+entire credential pipe native instead:
 
 ```powershell
-gh auth token | docker login ghcr.io --username flujo-app --password-stdin
+cmd.exe /d /s /c "gh auth token|docker login ghcr.io --username flujo-app --password-stdin"
 ```
+
+Immediately verify the exact source with a fresh registry request. A cached
+`docker buildx imagetools inspect` result does not prove that a new builder can fetch
+the manifest or blobs. If the immutable source is public, repeat the request with an
+empty isolated `DOCKER_CONFIG`; do not attach a stale GHCR credential that can shadow
+valid anonymous access. If the source actually requires authentication and either
+`gh auth status`, `gh auth token`, or the fresh authenticated registry request fails,
+stop before creating a paid builder.
+
+### Windows registry-token and remote-script boundary
+
+Use this checklist for every Fly private-registry stage or remote builder. These are
+protocol requirements, not optional troubleshooting:
+
+1. Give every temporary Fly token a unique name and bounded expiry that exceeds the
+   measured image bytes divided by the slowest observed upload rate, plus inspection and
+   cleanup headroom. The reviewed 4 GB Gate 7 push uses four hours; a one-hour token is
+   not sufficient when the observed upload is near 1 MB/s. In flyctl 0.4.87,
+   `flyctl tokens deploy --json` returns only a `token` property; it does not return
+   the token ID. After creation, run
+   `flyctl tokens list --app <app> --scope app`, match the **exact unique name**, retain
+   the first-column ID privately, and revoke that ID in a `finally` block. If the ID
+   cannot be resolved, stop and revoke it manually before proceeding.
+2. Put the deploy token only in the child process environment as
+   `FLY_ACCESS_TOKEN`, call `flyctl auth docker`, immediately clear the environment
+   variable and in-memory token, and use the derived registry credential. Always run
+   `docker logout registry.fly.io` and revoke the deploy token, including after build,
+   copy, or inspection failure. Neither token may enter logs or evidence.
+3. A temporary `DOCKER_CONFIG` intentionally isolates credentials, but it also hides
+   Buildx builders stored below the original Docker configuration. When reusing a
+   reviewed builder/cache, set `BUILDX_CONFIG` explicitly to the original
+   `<docker-config>/buildx`; do not change or repurpose `HOME` or `USERPROFILE`.
+   Prove `docker buildx inspect <builder>` under the exact environment before starting
+   a large push.
+4. Never pass a PowerShell-generated credential through redirected native stdin without
+   a byte check. Prefer a same-shell native pipe. When an SSH transfer is unavoidable,
+   serialize only a base64 credential payload with
+   `[IO.File]::WriteAllText(..., [Text.UTF8Encoding]::new($false))`, restrict the
+   temporary file to the current user, transfer it over SSH, decode it only into the
+   remote registry login, and delete both copies in unconditional cleanup. Verify the
+   first three bytes are not `EF BB BF`; do not compensate later by guessing that
+   bytes should be stripped.
+5. Generate Linux shell scripts as UTF-8 without BOM and LF-only. Before transfer,
+   reject any carriage-return byte and any BOM; after transfer, repeat the byte check
+   and run `bash -n`. Do not silently run `dos2unix` or `sed` on a source-bound
+   script, because that changes the reviewed bytes.
+
+A never-deployed Fly app may not yet have a registry repository even though app lookup
+and authentication succeed. Initialize it once through Fly's supported
+`fly deploy --build-only --push --local-only` path using a zero-byte sentinel and a
+minimal explicit `fly.toml`; prove that no Machine was created. Only then push or
+mirror the qualification image. For a remote mirror, install its auth-removal trap
+before the first registry request. When the exact source passed anonymous preflight,
+force anonymous source access (for example, Skopeo `copy --src-no-creds` and `inspect
+--no-creds`) while keeping authentication destination-only. Validate source and
+destination digests independently, and delete the exact builder/disk whether the copy
+succeeds or fails.
 
 Preserve the Buildx metadata and collect evidence immediately after the push:
 
@@ -211,12 +283,16 @@ The reviewed fail-closed limits are:
 
 | Candidate | Maximum compressed total | Maximum uncompressed size | Maximum Fly rootfs plan |
 | --- | ---: | ---: | ---: |
-| Qwen3.5 2B | 8,000,000,000 bytes | 16 GiB | 20 GB |
-| Gemma 4 E2B | 16,000,000,000 bytes | 24 GiB | 28 GB |
+| Qwen3.5 2B | 8,000,000,000 bytes | 16 GiB | 8 GB |
+| Gemma 4 E2B | 16,000,000,000 bytes | 24 GiB | 8 GB |
 
-Every individual GHCR layer is additionally capped at 10,000,000,000 bytes. The required
-Fly rootfs is the greater of its 8 GB default or the measured uncompressed GiB rounded
-up plus 2 GB headroom; reject an image above the candidate ceiling. The evidence report
+Every individual GHCR layer is additionally capped at 10,000,000,000 bytes. Fly Machines
+currently enforce an 8 GB rootfs hard limit. The required rootfs remains the greater of
+8 GB or the measured uncompressed GiB rounded up plus 2 GB headroom, so a Fly-specific
+qualification image must omit CUDA-only runtime payloads and fail closed when that result
+exceeds 8 GB. The previously published general Qwen and Gemma images measured 9 GB and
+13 GB rootfs plans and therefore are publication evidence only, not deployable Fly inputs.
+The evidence report
 records the exact immutable index/runtime references, descriptors, layer inventory,
 totals, limit sources, and required rootfs size. It sets `qualification_evidence=true`
 for the image-publication contract while keeping `complete_release_qualification=false`;
@@ -234,45 +310,95 @@ cleanup-verification command. Its resolved resources are isolated from the exist
 bootstrap:
 
 - one run-labelled custom VPC and IAP-only firewall rule;
-- one subnet/router/Cloud NAT stack per selected region, with disjoint exact CIDRs;
+- one subnet/router/Cloud NAT stack and one exact run-named reserved NAT address per
+  selected region, with disjoint exact CIDRs;
 - four uniquely named hosts for `windows-cpu`, `windows-cuda`, `linux-cpu`, and
   `linux-cuda`; CPU hosts remain `n1-highmem-8`, while CUDA hosts are either N1 plus
   T4 or `g2-standard-8` with included L4; the optional fallback places only
   `linux-cuda` in its second region so each region needs one matching GPU quota slot;
 - exact immutable OS images, private 150 GiB auto-delete disks (`pd-balanced` for G2,
   otherwise `pd-standard`), no external VM address, and no VM service account/scopes;
+- run-scoped Windows SSH bootstrap metadata; CUDA profiles additionally use repository
+  startup scripts that verify generation- or commit-pinned Google driver installers
+  before execution;
 - a provider-enforced `DELETE` action at the plan's reviewed hard deadline; and
 - only IAP-source TCP 22/3389 ingress. No inference or DHT port is opened.
 
 Before create, use native `gcloud` authentication and the plan's explicit project and
 zones to prove the account, project, exact images, selected N1/T4 or G2/L4 machine
-shape, required disk type, regional GPU/CPU/address quota, and all planned names. After create, compare every boot
-disk `sourceImage` returned by `verify_create_commands` with the corresponding exact
-`expected_source_images` value before installing anything. Prove separately that
+shape, required disk type, regional GPU/CPU/address quota, and all planned names. After
+creating a profile host, compare its boot disk `sourceImage` from that phase's
+`verify_create_commands` with the corresponding exact `expected_source_images` value
+before installing anything. Prove separately that
 `communityai-bootstrap-1` is present and healthy; do not pass its name to any create,
 update, stop, or delete command. Provider responses and account details stay out of
 committed reports.
 
-Execute the plan's `create_commands` in order and stop at the first failure. The
-plan creates the two scarce CUDA hosts before either CPU-only host, so provider stock
-failures are discovered before avoidable CPU runtime accrues. Quota and accelerator-type
-preflight do not guarantee zonal stock. If any create command was attempted, immediately
-run every `cleanup_commands` entry in order even when capacity, setup, snapshot transfer,
-runner registration, preflight, or a workflow fails. Preserve a bounded attempt report,
-then choose a newly preflighted placement and regenerate the exact plan before retrying.
-The plan's 14-hour T4 or 13.5-hour L4 maximum is a destruction deadline, not permission to leave idle hosts running.
+Execute the infrastructure `create_commands` and their verification first. Then execute
+`profile_phases` strictly in order: `windows-cpu`, `linux-cpu`, `windows-cuda`, and
+`linux-cuda`. Each phase creates exactly one physical VM identity. It must verify the
+exact boot image, finish that profile's qualification, delete the VM and disk, and
+require both absence checks to return empty stdout before the next phase begins. This
+serialization ensures a one-GPU global quota can never encounter both CUDA hosts at
+once. Windows CUDA must replace the locked CPU-only Windows wheel with exact
+`torch==2.6.0+cu124` and prove `torch.cuda.is_available()` before qualification; every
+CUDA phase must also prove `nvidia-smi` after any installer-required reboot.
 
-Prepare and register each host using the profile-specific procedure below, dispatch
-both exact public-alpha candidate matrices from the same source commit, and retain
-the bounded GitHub reports. Host readiness output is not qualification evidence.
+Quota and accelerator-type preflight do not guarantee zonal stock. On any failure, run
+the active profile's cleanup and absence checks, then execute every infrastructure
+`cleanup_phase` in order, including the NAT absence check while its router still exists.
+Preserve a bounded attempt report, choose a newly preflighted placement, and regenerate
+the exact plan before retrying. The 14-hour T4 or 13.5-hour L4 per-host maximum is a
+destruction deadline, not permission to leave an idle host running.
 
-Cleanup succeeds only when every `verify_cleanup_commands` entry returns empty
-stdout after all four VMs/disks, the firewall, every regional NAT/router/subnet stack,
-and the VPC are deleted. If any output remains, mark the run failed, record the
-surviving exact
-resource names privately, stop new provisioning, and recover them before proceeding.
+Under a one-GPU quota, run the qualification entrypoint directly on each phase host and
+retrieve its bounded report before deleting that host. Do not dispatch the current
+four-runner workflow for this plan: it schedules all profiles in parallel. The runner
+procedure below remains available for a future simultaneous fleet or a workflow that
+explicitly orchestrates the same phases. Host readiness output is not qualification
+evidence.
+
+Cleanup succeeds only after every profile-phase absence check, every ordered
+infrastructure cleanup phase, and every final `verify_cleanup_commands` entry passes.
+Final verification must return empty stdout for all four VM/disk names, the firewall,
+every regional router/subnet and run-named NAT address, and the VPC; each NAT is proven
+absent immediately before its router is removed. If any output remains, mark the run
+failed, record the surviving exact resource names privately, stop new provisioning,
+and recover them before proceeding.
 After proven cleanup, replace the unresolved ledger maximum with observed cost when
 billing is available; otherwise keep the USD 69 maximum reserved.
+
+## Direct phased qualification under one GPU quota
+
+On every fresh phase host, check out the exact source commit recorded in the plan and
+install the frozen development environment. Windows must also build/install the patched
+Hivemind wheel using the same pinned steps as `qualify-model-matrix.yaml`; `windows-cuda`
+must then replace the CPU-only Windows wheel and verify the exact CUDA build:
+
+```powershell
+uv sync --extra dev --frozen --python 3.12
+uv pip install --index-url https://download.pytorch.org/whl/cu124 `
+  --reinstall-package torch "torch==2.6.0+cu124"
+uv run --no-sync python -c "import torch; assert torch.cuda.is_available(); print(torch.__version__)"
+```
+
+Materialize only the eight manifest-declared Qwen files from repository
+`Qwen/Qwen3.5-2B` at revision
+`15852e8c16360a2fea060d615a32b45270f8a8fc`. Set the selected phase's unique
+`COMMUNITYAI_QUALIFICATION_MACHINE_ID`,
+`COMMUNITYAI_QWEN35_2B_ARTIFACT_ROOT`, and
+`COMMUNITYAI_QWEN35_2B_CACHE_DIR`; no Gemma input is required for this direct Qwen
+run. Keep Hub/Transformers offline during qualification. Then execute:
+
+```text
+uv run --no-sync python scripts/run_external_model_qualification.py --candidate qwen3.5-2b --profile <profile> --source-commit <exact-commit> --preflight-only
+uv run --no-sync python scripts/run_external_model_qualification.py --candidate qwen3.5-2b --profile <profile> --source-commit <exact-commit> --timeout 7200 --output <profile-report.json>
+```
+
+Retrieve the bounded report before that phase's cleanup. After all four reports exist,
+run `scripts/aggregate_model_qualification.py` with required profiles `windows:cpu`,
+`windows:cuda`, `linux:cpu`, and `linux:cuda`, the exact source commit, and exact DRIFT
+version. The aggregate—not host preparation or preflight—determines Gate 5.
 
 ## Security boundary
 
@@ -392,6 +518,11 @@ identities fail the final aggregate.
 
 ## Dispatch
 
+The current workflow dispatch is parallel and is not authorized for the serialized
+one-L4 plan. Use the direct phased procedure above unless four simultaneous, distinct
+profile runners and two GPU quota slots exist or the workflow is changed to orchestrate
+profile phases explicitly.
+
 No persistent repository administration token or custom Actions secret is required.
 An operator may inspect runner readiness before dispatch with an existing local `gh`
 login and the optional inventory validator, but that check is not qualification evidence.
@@ -414,10 +545,12 @@ multi-machine controller. Neither a passed preparation report nor a deferred mac
 matrix authorizes catalog publication or a release claim.
 
 After both public-alpha matrices exist, build credential-free immutable Fly images
-bound to the same source and candidate manifests, then follow the controlled
+bound to the same source and candidate manifests, then follow the CPU-only controlled
 multi-machine procedure in
 [MODEL_QUALIFICATION_V1.md](MODEL_QUALIFICATION_V1.md#opt-in-fly-machines-adapter).
-Preserve the bounded controller reports and destroy every temporary Fly Machine.
+Pass `--device cpu`, preserve the bounded controller reports, and destroy every
+temporary Fly Machine. Never treat this run as a substitute for the GCP/local CUDA
+profiles in the candidate matrix.
 
 ## Teardown
 

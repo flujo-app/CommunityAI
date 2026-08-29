@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "run_id": "gate7-20260827-a",
+  "gate": 7,
+  "scope": "qwen3.5-2b-real-separate-machine-recovery",
+  "result": "failed",
+  "complete_release_qualification": false,
+  "qualification_evidence": false,
+  "source_commit": "23a4078e17ed9d5ae6f31e7497bae69b83aecef6",
+  "drift_version": "2.3.0.dev2",
+  "candidate": "qwen3.5-2b",
+  "model_repository": "Qwen/Qwen3.5-2B",
+  "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+  "matrix_evidence": "gate5-20260827-qwen3.5-2b-matrix.json",
+  "device": "cpu",
+  "topology": {
+    "bootstrap_machines": 1,
+    "worker_machines": 4,
+    "region": "gru",
+    "cpu_kind": "performance",
+    "cpus_per_machine": 4,
+    "memory_mb_per_machine": 16384,
+    "gpu_requested": false
+  },
+  "image": {
+    "index_digest": "sha256:ce6f32a905040aa9069632abfe93d025746077790bde1c9c24bcc4f8d25a583b",
+    "runtime_manifest_digest": "sha256:c141dcf3e9284b6358b6a2bf3f42de8de44b1c3755060561813dca301bb4f3d2",
+    "artifact_hashes_verified": true,
+    "provenance": "slsa",
+    "sbom": "spdx",
+    "compressed_layer_bytes": 6913784806,
+    "uncompressed_image_bytes": 6913802218,
+    "required_rootfs_gb": 9,
+    "provider_hard_rootfs_limit_gb": 8
+  },
+  "attempt": {
+    "image_published": true,
+    "gcp_builder_created": true,
+    "fly_machines_created": 0,
+    "selected_worker_interrupted": false,
+    "recovery_proven": false,
+    "failure_class": "published image exceeded the provider hard rootfs limit"
+  },
+  "cleanup": {
+    "verified_at": "2026-08-28T01:24:30Z",
+    "gcp_builder_absent": true,
+    "gcp_boot_disk_absent": true,
+    "fly_run_machines_absent": true,
+    "isolated_fly_app_empty": true,
+    "protected_bootstrap_running": true
+  },
+  "next_action": "Publish an exact CPU-only image that fits the 8 GB rootfs ceiling, then repeat the five-Machine interruption and cleanup gate.",
+  "privacy": {
+    "credentials_included": false,
+    "prompts_included": false,
+    "provider_responses_included": false,
+    "private_endpoints_included": false,
+    "provider_resource_ids_included": false
+  }
+}

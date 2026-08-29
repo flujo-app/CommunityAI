@@ -1,0 +1,110 @@
+{
+  "complete_release_qualification": false,
+  "environment": {
+    "device_profile": "cuda",
+    "drift": "2.3.0.dev2",
+    "machine_id": "gate6-20260827-a-windows-cuda",
+    "platform": "Windows-2022Server-10.0.20348-SP0",
+    "python": "3.12.13",
+    "source_commit": "a45025a3262a88df65217b630392488e8548aaaf",
+    "system": "windows"
+  },
+  "generated_at": "2026-08-27T18:08:49.365672+00:00",
+  "model": {
+    "aliases": [
+      "gemma-4-e2b-it"
+    ],
+    "architecture": "Gemma4ForConditionalGeneration",
+    "gated": false,
+    "license": "apache-2.0",
+    "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+    "name": "Gemma 4 E2B IT",
+    "num_blocks": 35,
+    "repository": "google/gemma-4-E2B-it",
+    "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+    "runtime": {
+      "adapter_profile": "none",
+      "attention_implementation": "eager",
+      "dtype": "bfloat16",
+      "implementation": "drift",
+      "maximum_version_exclusive": "2.4.0",
+      "minimum_version": "2.3.0.dev0",
+      "protocol_version": 1,
+      "quantization": "none",
+      "tensor_schema": "hidden-states-v1"
+    }
+  },
+  "not_covered": [
+    "multi-machine routing and interruption recovery",
+    "cross-platform CPU/CUDA/MPS matrix",
+    "cold-client resource envelope",
+    "public-worker route redundancy and soak"
+  ],
+  "requested": {
+    "artifact_root": "<artifact-root>",
+    "artifact_verification": true,
+    "cache": "contiguous",
+    "device": "cuda",
+    "failover_request_timeout_seconds": 10,
+    "local_failover": true,
+    "local_parity": true,
+    "runtime_cache_dir": "<runtime-cache-dir>",
+    "runtime_cache_dir_source": "argument"
+  },
+  "result": "passed",
+  "schema_version": 1,
+  "scope": "single-machine-local",
+  "stages": [
+    {
+      "duration_seconds": 53.86427,
+      "evidence": {
+        "artifact_count": 5,
+        "artifacts_verified": true,
+        "declared_artifact_bytes": 10278818149,
+        "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd"
+      },
+      "name": "manifest_and_artifacts",
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 142.141303,
+      "evidence": {
+        "attention_implementation": "eager",
+        "client_input_embeddings_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_use_chunked_forward": true,
+        "manifested_route_completed": true,
+        "stock_token_parity": true,
+        "torch_num_threads": 6,
+        "torch_version": "2.6.0+cu124",
+        "worker_device": "cuda:0",
+        "worker_torch_dtype": "bfloat16"
+      },
+      "name": "local_distributed_stock_parity",
+      "return_code": 0,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 161.32273,
+      "evidence": {
+        "attention_implementation": "eager",
+        "client_input_embeddings_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_placement": "devices=['cpu'],dtypes=['bfloat16']",
+        "client_lm_head_use_chunked_forward": true,
+        "manifested_route_completed": true,
+        "stock_token_parity": true,
+        "torch_num_threads": 6,
+        "torch_version": "2.6.0+cu124",
+        "worker_device": "cuda:0",
+        "worker_torch_dtype": "bfloat16",
+        "failover_recovery_seconds": 13.906,
+        "failover_request_timeout_seconds": 10,
+        "recovery_observed": true,
+        "selected_worker_interrupted": true
+      },
+      "name": "local_in_generation_failover",
+      "return_code": 0,
+      "status": "passed"
+    }
+  ]
+}

@@ -228,6 +228,12 @@ def run(
             self._controller = controller
             self._snapshot: Dict[str, Any] = {
                 "models": [],
+                "auto_selection": {
+                    "status": "not_configured",
+                    "model": None,
+                    "title": "auto is not configured",
+                    "reason": "Automatic model selection is not configured.",
+                },
                 "workers": [],
                 "keys": [],
                 "network": {"peer_count": 0, "regions": []},
@@ -444,6 +450,13 @@ def run(
             info_layout.addWidget(
                 label("Models appear here when enough community computers are online to run them.", "sectionSubtitle")
             )
+            info_layout.addSpacing(8)
+            self.auto_selection_title = label("auto is waiting for a complete route", "bodyStrong")
+            self.auto_selection_title.setAccessibleName("Automatic model selection")
+            self.auto_selection_detail = label("CommunityAI checks live route coverage before choosing.", "bodyMuted")
+            self.auto_selection_detail.setWordWrap(True)
+            info_layout.addWidget(self.auto_selection_title)
+            info_layout.addWidget(self.auto_selection_detail)
             layout.addWidget(info)
             self.models_list_layout = QVBoxLayout()
             self.models_list_layout.setSpacing(10)
@@ -709,7 +722,10 @@ def run(
             self.endpoint.setText(endpoint)
             self.api_endpoint.setText(endpoint)
 
-            ready_models = [model for model in snapshot["models"] if model["state"] in ("ready", "known")]
+            auto_selection = snapshot["auto_selection"]
+            self.auto_selection_title.setText(auto_selection["title"])
+            self.auto_selection_detail.setText(auto_selection["reason"])
+            ready_models = [model for model in snapshot["models"] if model["route_complete"]]
             self.models_metric.setText(str(len(ready_models)))
             network = snapshot["network"]
             self.peers_metric.setText(str(network["peer_count"]))
@@ -733,15 +749,18 @@ def run(
             copy.setSpacing(2)
             copy.addWidget(label(model["id"], "bodyStrong"))
             peers = model.get("peer_count")
-            detail = model["coverage"]
+            detail = f"{model['coverage']} blocks"
+            availability = "Available now" if model["route_complete"] else "Incomplete route"
             if isinstance(peers, int):
-                availability = "Available now" if model["state"] in ("ready", "known") else "Less available"
-                detail = f"{peers} peers  •  {availability}"
+                peer_label = "peer" if peers == 1 else "peers"
+                detail = f"{detail}  •  {peers} {peer_label}  •  {availability}"
+            else:
+                detail = f"{detail}  •  {availability}"
             copy.addWidget(label(detail, "bodyMuted"))
             layout.addLayout(copy, 1)
-            state = model["state"]
-            tone = "good" if state in ("ready", "known") else "warn"
-            layout.addWidget(pill("Ready" if tone == "good" else "Limited", tone))
+            tone = "good" if model["route_complete"] else "warn"
+            badge = "Auto choice" if model.get("auto_selected") else "Ready" if tone == "good" else "Limited"
+            layout.addWidget(pill(badge, tone))
             return row
 
         def _render_home_models(self, models: list[Dict[str, Any]]) -> None:

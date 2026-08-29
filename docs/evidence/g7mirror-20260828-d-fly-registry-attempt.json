@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "scope": "gate7-fly-registry-mirror-attempt",
+  "run_id": "g7mirror-20260828-d",
+  "source_commit": "7570d94a4bacefb80ec7aa2135d6d85c0c24275d",
+  "source_index_digest": "sha256:1969b62ff7c5543d03677aa4a174dd2b0e453ea6b6ff0edcd0f1968b44b67b5f",
+  "runtime_manifest_digest": "sha256:cbdbb37657429223bc38695a78f6f80b81746a5aa0807b6b6ada495e7a5e2e62",
+  "attempt": {
+    "builder_created": true,
+    "copy_started": false,
+    "copy_completed": false,
+    "destination_index_verified": false,
+    "failure_at": "2026-08-28T03:09:10Z",
+    "failure_class": "ghcr_auth_rejected",
+    "qualification_evidence": false,
+    "remote_registry_config_removal_proved": false
+  },
+  "source_authentication_follow_up": {
+    "empty_docker_config": true,
+    "anonymous_exact_manifest_access": true,
+    "destination_only_authentication_required_for_retry": true,
+    "result": "passed"
+  },
+  "fly_cleanup": {
+    "active_machines": 0,
+    "active_app_tokens": 0,
+    "verified_at": "2026-08-28T19:47:54Z",
+    "result": "passed"
+  },
+  "gcp_cleanup": {
+    "instance_absence_proved": true,
+    "disk_absence_proved": true,
+    "protected_bootstrap_status_proved": true,
+    "protected_bootstrap_status": "RUNNING",
+    "native_authentication": "passed",
+    "last_read_only_recheck_at": "2026-08-28T20:29:14Z",
+    "last_read_only_recheck_result": "interactive_reauthentication_required",
+    "verified_at": "2026-08-28T20:57:38Z",
+    "result": "passed"
+  },
+  "local_verification": {
+    "anonymous_exact_manifest_preflight": "passed",
+    "mirror_script_bash_syntax": "passed",
+    "mirror_script_utf8_no_bom_lf_only": "passed",
+    "focused_contract_tests": 98,
+    "verified_at": "2026-08-28T19:52:58Z",
+    "result": "passed"
+  },
+  "complete_release_qualification": false,
+  "next_action": "Use the recorded bounded retry-e reservation to mirror with anonymous source access plus destination-only authentication, then validate the immutable destination index before provisioning.",
+  "result": "continued"
+}

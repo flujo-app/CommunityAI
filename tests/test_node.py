@@ -505,17 +505,28 @@ def test_manifest_loader_pins_identity_and_closes_client_dht(monkeypatch, tmp_pa
             return FakeTokenizer()
 
     class FakeDHT:
+        alive = True
+
         def is_alive(self):
-            return True
+            return self.alive
 
         def shutdown(self):
             calls.dht_shutdown += 1
+            self.alive = False
+
+    class FakeUpdateThread:
+        alive = True
+
+        def is_alive(self):
+            return self.alive
 
     class FakeSequenceManager:
         dht = FakeDHT()
+        _thread = FakeUpdateThread()
 
         def shutdown(self):
             calls.shutdown += 1
+            self._thread.alive = False
 
     fake_model = FakeModel()
     fake_model.transformer = SimpleNamespace(h=SimpleNamespace(sequence_manager=FakeSequenceManager()))
@@ -554,3 +565,9 @@ def test_manifest_loader_pins_identity_and_closes_client_dht(monkeypatch, tmp_pa
     runtime.close()
     assert calls.shutdown == 1
     assert calls.dht_shutdown == 1
+    assert runtime.cleanup_health() == {
+        "observed": True,
+        "sequence_manager_update_thread_alive": False,
+        "dht_process_alive": False,
+        "clean": True,
+    }

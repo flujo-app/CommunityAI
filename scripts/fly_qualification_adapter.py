@@ -40,7 +40,9 @@ DEFAULT_API_BASE = "https://api.machines.dev"
 DEFAULT_PORT = 31337
 MAX_PROVIDER_RESPONSE_BYTES = 1_000_000
 MAX_EXEC_OUTPUT_BYTES = 65_536
+MAX_MACHINE_EXEC_ATTEMPT_SECONDS = 60
 CLEANUP_RECONCILIATION_CONFIRMATIONS = 3
+MAX_PROVIDER_WAIT_SECONDS = 60
 _LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _APP_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _REGION_RE = re.compile(r"^[a-z0-9]{3,12}$")
@@ -134,6 +136,10 @@ class AdapterError(ValueError):
 
 class ProviderNotFound(AdapterError):
     """A provider resource no longer exists."""
+
+
+class ProviderRequestTimeout(AdapterError):
+    """A bounded provider wait expired before the outer operation deadline."""
 
 
 @dataclass(frozen=True)
@@ -380,7 +386,11 @@ class FlyAPI:
         opener: Callable[..., Any] = urllib.request.urlopen,
     ) -> None:
         self.app = _require_app(app)
-        if not token or len(token) > 8192 or any(character.isspace() or ord(character) < 32 for character in token):
+        opaque_token = bool(token) and not any(character.isspace() for character in token)
+        fly_v1_payload = token.removeprefix("FlyV1 ") if token.startswith("FlyV1 ") else ""
+        fly_v1_token = bool(fly_v1_payload) and not any(character.isspace() for character in fly_v1_payload)
+        has_control_character = any(ord(character) < 32 or ord(character) == 127 for character in token)
+        if len(token) > 8192 or has_control_character or not (opaque_token or fly_v1_token):
             raise AdapterError("Fly API authentication token is missing or invalid")
         if base_url != DEFAULT_API_BASE and not base_url.startswith("https://"):
             raise AdapterError("Fly Machines API base URL must use HTTPS")
@@ -434,7 +444,8 @@ class FlyAPI:
         except urllib.error.HTTPError as exc:
             if allow_not_found and exc.code == 404:
                 return None
-            raise AdapterError(f"Fly Machines API {method} request returned HTTP {exc.code}") from exc
+            error_type = ProviderRequestTimeout if exc.code == 408 else AdapterError
+            raise error_type(f"Fly Machines API {method} request returned HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise AdapterError(f"Fly Machines API {method} request failed") from exc
         if len(body) > MAX_PROVIDER_RESPONSE_BYTES:
@@ -478,17 +489,29 @@ class FlyAPI:
     ) -> None:
         if state not in {"started", "stopped", "destroyed"}:
             raise AdapterError("unsupported Fly Machine wait state")
-        query_fields: dict[str, Any] = {"state": state, "timeout": timeout}
+        query_fields: dict[str, Any] = {"state": state}
         if state == "stopped":
             if instance_id is None:
                 raise AdapterError("Fly stopped-state wait requires the selected Machine instance ID")
             query_fields["instance_id"] = _require_provider_id(instance_id, "provider instance ID")
-        query = urllib.parse.urlencode(query_fields)
-        self._request(
-            "GET",
-            f"{self._machines_path(machine_id)}/wait?{query}",
-            allow_not_found=allow_not_found,
-        )
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AdapterError(f"Fly Machine did not reach the requested {state} state")
+            request_fields = dict(query_fields)
+            if remaining < MAX_PROVIDER_WAIT_SECONDS:
+                request_fields["timeout"] = max(1, int(remaining))
+            query = urllib.parse.urlencode(request_fields)
+            try:
+                self._request(
+                    "GET",
+                    f"{self._machines_path(machine_id)}/wait?{query}",
+                    allow_not_found=allow_not_found,
+                )
+                return
+            except ProviderRequestTimeout:
+                continue
 
     def get_machine(self, machine_id: str, *, allow_not_found: bool = False) -> Mapping[str, Any] | None:
         value = self._request("GET", self._machines_path(machine_id), allow_not_found=allow_not_found)
@@ -654,6 +677,7 @@ class FlyMachineExec:
         self.executable = executable
         self.remote_node_script = _require_remote_path(remote_node_script, "remote node script")
         self.timeout = timeout
+        self.attempt_timeout = min(MAX_MACHINE_EXEC_ATTEMPT_SECONDS, timeout)
         self.runner = runner
         self.poll_interval = poll_interval
 
@@ -668,7 +692,7 @@ class FlyMachineExec:
             "--app",
             _require_app(app),
             "--timeout",
-            "15",
+            str(self.attempt_timeout),
         ]
 
     @staticmethod
@@ -680,8 +704,10 @@ class FlyMachineExec:
         for line in combined.splitlines():
             if _IDENTITY_MARKER in line:
                 payloads.append(line.split(_IDENTITY_MARKER, 1)[1].strip())
-        if len(payloads) != 1:
-            raise AdapterError("Fly worker identity probe did not emit exactly one public identity marker")
+        if not payloads:
+            raise AdapterError("Fly worker identity probe did not emit a public identity marker")
+        if len(set(payloads)) != 1:
+            raise AdapterError("Fly worker identity probe emitted conflicting public identity markers")
         try:
             value = json.loads(payloads[0])
         except json.JSONDecodeError as exc:
@@ -696,7 +722,10 @@ class FlyMachineExec:
         while time.monotonic() < deadline:
             try:
                 if self.runner is None:
-                    completed = _run_bounded_argv(self.command(app, machine_id), timeout=20)
+                    completed = _run_bounded_argv(
+                        self.command(app, machine_id),
+                        timeout=self.attempt_timeout + 5,
+                    )
                 else:
                     completed = self.runner(
                         self.command(app, machine_id),
@@ -710,7 +739,12 @@ class FlyMachineExec:
                 stdout = completed.stdout or ""
                 stderr = completed.stderr or ""
                 if completed.returncode == 0:
-                    return self.parse_peer_output(stdout, stderr)
+                    try:
+                        return self.parse_peer_output(stdout, stderr)
+                    except AdapterError as exc:
+                        last_error = exc
+                        time.sleep(self.poll_interval)
+                        continue
                 last_error = AdapterError("flyctl Machine Exec identity probe exited nonzero")
             except (OSError, subprocess.SubprocessError) as exc:
                 last_error = AdapterError("flyctl Machine Exec identity probe failed")
@@ -985,6 +1019,8 @@ def provision(
     api: FlyAPI,
     identity_reader: FlyMachineExec,
 ) -> ProviderState:
+    if options.device != "cpu":
+        raise AdapterError("Fly qualification topology is CPU-only; --device must be cpu")
     if options.state_output.resolve().parent != options.control_output.resolve().parent:
         raise AdapterError("Fly private state and control outputs must share one directory")
     existing = [machine for machine in api.list_run_machines(options.run_id) if machine.get("state") != "destroyed"]
@@ -1070,7 +1106,7 @@ def provision(
                 private=True,
             )
             return state
-    except BaseException:
+    except BaseException as provisioning_error:
         cleanup_error: BaseException | None = None
         try:
             cleanup_run(
@@ -1083,8 +1119,13 @@ def provision(
         except BaseException as exc:
             cleanup_error = exc
         if cleanup_error is not None:
+            primary_detail = (
+                str(provisioning_error)
+                if isinstance(provisioning_error, AdapterError)
+                else "an internal provisioning operation failed"
+            )
             raise AdapterError(
-                "Fly provisioning failed and the outer cleanup trap could not prove cleanup"
+                f"Fly provisioning failed ({primary_detail}) and the outer cleanup trap could not prove cleanup"
             ) from cleanup_error
         raise
 
@@ -1322,8 +1363,8 @@ def _options_from_args(args: argparse.Namespace, publication: PublicationBinding
         raise AdapterError("Fly guest CPU or memory request is outside the adapter bounds")
     if not 1 <= args.machine_timeout <= 600 or not 1 <= args.identity_timeout <= 600:
         raise AdapterError("Fly machine and identity timeouts must be between 1 and 600 seconds")
-    if not args.device or len(args.device) > 32 or "\x00" in args.device:
-        raise AdapterError("--device is invalid")
+    if args.device != "cpu":
+        raise AdapterError("Fly qualification topology is CPU-only; --device must be cpu")
     return ProvisionOptions(
         run_id=run_id,
         app=app,
@@ -1376,7 +1417,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--identity-path",
         default="/tmp/communityai-qualification.id",
     )
-    provision_parser.add_argument("--device", default="cpu")
+    provision_parser.add_argument(
+        "--device",
+        default="cpu",
+        help="CPU-only provider topology; every other value is rejected",
+    )
     provision_parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     provision_parser.add_argument("--cpu-kind", default="performance")
     provision_parser.add_argument("--cpus", type=int, default=4)

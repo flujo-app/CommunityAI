@@ -149,6 +149,7 @@ def _load_node_config(args: argparse.Namespace, *, persisted_config: NodeConfig 
             schema_version=configured.schema_version,
             max_loaded_models=args.max_loaded_models,
             models=configured.models,
+            auto_model_priority=configured.auto_model_priority,
             workers=configured.workers,
             contribution_policy=configured.contribution_policy,
             discovery_update_period=configured.discovery_update_period,
@@ -241,6 +242,7 @@ def _build_model_manager(
                     route_health=discovery.observer(manifest.digest_id),
                 )
             )
+        manager.configure_auto_selection(config.auto_model_priority)
     except BaseException:
         manager.shutdown()
         raise
