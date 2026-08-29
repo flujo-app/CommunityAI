@@ -26,6 +26,7 @@ from drift.node.config import (
 from drift.node.contribution_planner import PlacementDecision, PlacementPlan, PlacementRegistry
 from drift.node.discovery import PeerCache
 from drift.node.model_manager import ModelRuntime, ModelState
+from drift.node.route_metrics import RouteOutcomeTracker
 from drift.node.worker_supervisor import WorkerPolicyError
 
 
@@ -406,6 +407,13 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         return publish_succeeds
 
     monkeypatch.setattr(discovery, "publish_intent", publish_intent)
+    route_outcomes = RouteOutcomeTracker()
+    route_outcomes.record(
+        manifest_digest=manifest.digest_id,
+        succeeded=True,
+        completion_tokens=8,
+        duration_seconds=2,
+    )
     registry = PlacementRegistry()
     supervisor = _build_worker_supervisor(
         config,
@@ -421,6 +429,7 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         token=None,
         config_path=None,
         peer_cache=PeerCache(tmp_path / "peers.json"),
+        route_outcomes=route_outcomes,
     )
     if pause_while_waiting:
         supervisor.pause_worker("automatic")
@@ -441,6 +450,7 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         assert launch.model_id == manifest.name
         assert launch.block_indices == "1:2"
         assert launch.policy_admitted is True
+        assert "local demand bucket 1" in launch.placement_reason
         assert snapshot["desired_running"] is expected_desired
         assert snapshot["operator_paused"] is pause_while_waiting
         assert registry.snapshot()["automatic"].decision.manifest_digest == manifest.digest_id

@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
+from drift.node.route_metrics import RouteUtilityObservation, validate_route_observation
+
 
 @dataclass(frozen=True)
 class PlacementCandidate:
@@ -21,6 +23,7 @@ class PlacementCandidate:
     artifact_bytes: int
     total_blocks: int
     health: Mapping[str, Any]
+    route_observation: Optional[Mapping[str, Any]] = None
     policy_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -109,6 +112,28 @@ class AutomaticContributionPlanner:
         value = int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
         return value / ((1 << 64) - 1)
 
+    def _route_signal(self, candidate: PlacementCandidate) -> tuple[float, Optional[RouteUtilityObservation]]:
+        if candidate.route_observation is None:
+            return 0.0, None
+        try:
+            observation = validate_route_observation(
+                candidate.route_observation,
+                expected_manifest_digest=candidate.manifest_digest,
+                maximum_age_seconds=self._maximum_observation_age,
+            )
+        except (TypeError, ValueError):
+            # Demand is a hint. Invalid, mismatched, or stale input cannot make a
+            # model eligible and cannot disqualify otherwise valid coverage.
+            return 0.0, None
+        demand = math.log2(1 + observation.attempts_bucket) / math.log2(65)
+        useful_tps = observation.useful_tokens_per_second_milli / 1000
+        useful_throughput = min(1.0, math.log2(1 + useful_tps) / math.log2(65))
+        reliability = observation.reliability_milli / 1000
+        # Only completed-route measurements contribute useful utility. The six-point
+        # cap is below the ten-point switch margin and far below one 100-point
+        # replica-coverage step, so this hint cannot independently force migration.
+        return 6.0 * demand * useful_throughput * reliability, observation
+
     def _evaluate(self, candidate: PlacementCandidate) -> tuple[Optional[PlacementDecision], str]:
         if candidate.policy_reason is not None:
             return None, candidate.policy_reason
@@ -146,8 +171,22 @@ class AutomaticContributionPlanner:
         coverage_pressure = max(0, 2 - minimum_replicas) * 100.0
         preference_bonus = 20.0 if candidate.preferred else 0.0
         priority_bonus = 10.0 / (candidate.priority + 1)
-        score = coverage_pressure + preference_bonus + priority_bonus + self._jitter(candidate.manifest_digest)
+        route_signal, observation = self._route_signal(candidate)
+        score = (
+            coverage_pressure
+            + preference_bonus
+            + priority_bonus
+            + route_signal
+            + self._jitter(candidate.manifest_digest)
+        )
         end = start + self.num_blocks
+        reason = f"selected {start}:{end} from fresh verified coverage; minimum replicas {minimum_replicas}"
+        if observation is not None:
+            reason += (
+                f"; local demand bucket {observation.attempts_bucket}, useful throughput bucket "
+                f"{observation.useful_tokens_per_second_milli} milli-tokens/s, reliability "
+                f"{observation.reliability_milli}/1000"
+            )
         return (
             PlacementDecision(
                 model_id=candidate.model_id,
@@ -156,9 +195,7 @@ class AutomaticContributionPlanner:
                 artifact_bytes=candidate.artifact_bytes,
                 replica_counts=window,
                 score=score,
-                reason=(
-                    f"selected {start}:{end} from fresh verified coverage; " f"minimum replicas {minimum_replicas}"
-                ),
+                reason=reason,
             ),
             "",
         )

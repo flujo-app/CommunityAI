@@ -145,6 +145,7 @@ def create_app(
     api_key_verifier: Optional[Callable[[str], bool]] = None,
     max_concurrent: int = 1,
     default_max_tokens: int = DEFAULT_MAX_TOKENS,
+    route_outcome_observer: Optional[Callable[..., None]] = None,
 ) -> FastAPI:
     """Create the OpenAI-compatible application.
 
@@ -212,6 +213,28 @@ def create_app(
             logger.exception("Model %r failed to load", identifier)
             raise HTTPException(status_code=503, detail="Model is unavailable") from exc
 
+    def record_route_outcome(
+        loaded: LoadedModel,
+        *,
+        succeeded: bool,
+        completion_tokens: int,
+        duration_seconds: float,
+    ) -> None:
+        manifest_digest = loaded.descriptor.manifest_digest
+        if route_outcome_observer is None or manifest_digest is None:
+            return
+        try:
+            route_outcome_observer(
+                manifest_digest=manifest_digest,
+                succeeded=succeeded,
+                completion_tokens=completion_tokens,
+                duration_seconds=max(duration_seconds, 1e-9),
+            )
+        except Exception:
+            # Observability can never change inference success or expose request data
+            # through an error response.
+            logger.exception("Route outcome observer rejected a bounded measurement")
+
     def generate_sync(
         loaded: LoadedModel, input_ids: torch.Tensor, gen_kwargs: Dict[str, Any], streamer=None
     ) -> torch.Tensor:
@@ -221,8 +244,25 @@ def create_app(
         call_kwargs = dict(gen_kwargs)
         if call_kwargs.get("stop_strings"):
             call_kwargs["tokenizer"] = loaded.runtime.tokenizer
-        with torch.inference_mode():
-            return loaded.runtime.model.generate(input_ids, streamer=streamer, **call_kwargs)
+        started_at = time.monotonic()
+        try:
+            with torch.inference_mode():
+                output_ids = loaded.runtime.model.generate(input_ids, streamer=streamer, **call_kwargs)
+        except BaseException:
+            record_route_outcome(
+                loaded,
+                succeeded=False,
+                completion_tokens=0,
+                duration_seconds=time.monotonic() - started_at,
+            )
+            raise
+        record_route_outcome(
+            loaded,
+            succeeded=True,
+            completion_tokens=max(0, output_ids.shape[1] - input_ids.shape[1]),
+            duration_seconds=time.monotonic() - started_at,
+        )
+        return output_ids
 
     def usage(input_ids: torch.Tensor, output_ids: torch.Tensor) -> Dict[str, int]:
         prompt_tokens = input_ids.shape[1]

@@ -10,6 +10,7 @@ def _candidate(
     preferred=False,
     age=0.0,
     policy_reason=None,
+    route_observation=None,
 ):
     return PlacementCandidate(
         model_id=name,
@@ -23,8 +24,22 @@ def _candidate(
             "last_updated_age": age,
             "replica_counts": list(counts),
         },
+        route_observation=route_observation,
         policy_reason=policy_reason,
     )
+
+
+def _observation(digest, *, attempts=64, successes=64, throughput=64_000, reliability=1000, age=0):
+    return {
+        "schema_version": 1,
+        "manifest_digest": digest,
+        "window_seconds": 300,
+        "attempts_bucket": attempts,
+        "successes_bucket": successes,
+        "useful_tokens_per_second_milli": throughput,
+        "reliability_milli": reliability,
+        "age_seconds_bucket": age,
+    }
 
 
 def test_planner_selects_preferred_model_and_least_covered_contiguous_range():
@@ -55,6 +70,96 @@ def test_planner_selects_preferred_model_and_least_covered_contiguous_range():
     assert plan.decision.block_indices == "1:3"
     assert plan.decision.replica_counts == (0, 1)
     assert "fresh verified coverage" in plan.reason
+
+
+def test_completed_route_utility_breaks_only_comparable_coverage_ties():
+    planner = AutomaticContributionPlanner(
+        num_blocks=1,
+        jitter_seed="node-a",
+        minimum_residency_seconds=0,
+        cooldown_seconds=0,
+        switch_margin=0,
+    )
+    first_digest = "sha256:" + "1" * 64
+    second_digest = "sha256:" + "2" * 64
+    unobserved = _candidate("qwen", digest=first_digest, counts=(2,))
+    useful = _candidate(
+        "gemma",
+        digest=second_digest,
+        counts=(2,),
+        route_observation=_observation(second_digest),
+    )
+
+    selected = planner.plan((unobserved, useful), sharing_enabled=True, now=0).decision
+
+    assert selected.model_id == "gemma"
+    assert "local demand bucket 64" in selected.reason
+    assert "reliability 1000/1000" in selected.reason
+
+    scarce = _candidate("scarce", digest="sha256:" + "3" * 64, counts=(1,))
+    selected = (
+        AutomaticContributionPlanner(num_blocks=1, jitter_seed="node-a")
+        .plan((useful, scarce), sharing_enabled=True, now=0)
+        .decision
+    )
+    assert selected.model_id == "scarce"
+
+
+def test_invalid_or_stale_route_utility_is_neutral():
+    first_digest = "sha256:" + "1" * 64
+    second_digest = "sha256:" + "2" * 64
+    baseline = (
+        _candidate("qwen", digest=first_digest, counts=(2,)),
+        _candidate("gemma", digest=second_digest, counts=(2,)),
+    )
+    expected = (
+        AutomaticContributionPlanner(num_blocks=1, jitter_seed="node-a")
+        .plan(baseline, sharing_enabled=True, now=0)
+        .decision.model_id
+    )
+    malformed = _observation(second_digest, age=105)
+    malformed["private_path"] = "forbidden"
+    candidates = (
+        baseline[0],
+        _candidate("gemma", digest=second_digest, counts=(2,), route_observation=malformed),
+    )
+
+    selected = (
+        AutomaticContributionPlanner(num_blocks=1, jitter_seed="node-a")
+        .plan(candidates, sharing_enabled=True, now=0)
+        .decision
+    )
+
+    assert selected.model_id == expected
+    assert "local demand" not in selected.reason
+
+
+def test_local_route_signal_cannot_independently_cross_switch_margin():
+    planner = AutomaticContributionPlanner(
+        num_blocks=1,
+        jitter_seed="node-a",
+        minimum_residency_seconds=0,
+        cooldown_seconds=0,
+        switch_margin=10,
+    )
+    first_digest = "sha256:" + "1" * 64
+    second_digest = "sha256:" + "2" * 64
+    initial = (
+        _candidate("qwen", digest=first_digest, counts=(2,), preferred=True),
+        _candidate("gemma", digest=second_digest, counts=(2,)),
+    )
+    assert planner.plan(initial, sharing_enabled=True, now=0).decision.model_id == "qwen"
+    changed = (
+        _candidate("qwen", digest=first_digest, counts=(2,)),
+        _candidate(
+            "gemma",
+            digest=second_digest,
+            counts=(2,),
+            route_observation=_observation(second_digest),
+        ),
+    )
+
+    assert planner.plan(changed, sharing_enabled=True, now=1).decision.model_id == "qwen"
 
 
 def test_planner_fails_closed_without_fresh_coverage():

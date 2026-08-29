@@ -35,6 +35,7 @@ from drift.node.native_credentials import (
     load_native_control_key,
 )
 from drift.node.policy_store import ContributionPolicyPersistenceError, ContributionPolicyStore
+from drift.node.route_metrics import RouteOutcomeTracker
 from drift.node.worker_supervisor import (
     NvidiaPowerMonitor,
     SystemBandwidthMonitor,
@@ -290,6 +291,7 @@ def _automatic_placement_candidates(
     worker,
     *,
     token: str | None,
+    route_outcomes: RouteOutcomeTracker | None = None,
 ) -> tuple[PlacementCandidate, ...]:
     policy = config.contribution_policy
     allowed = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
@@ -340,6 +342,7 @@ def _automatic_placement_candidates(
                 artifact_bytes=artifact_bytes,
                 total_blocks=manifest.model.num_blocks,
                 health=discovery.snapshot(manifest.digest_id),
+                route_observation=(None if route_outcomes is None else route_outcomes.snapshot(manifest.digest_id)),
                 policy_reason=reason,
             )
         )
@@ -622,6 +625,7 @@ def _build_automatic_placement_service(
     token: str | None,
     config_path: Path | None,
     peer_cache: PeerCache,
+    route_outcomes: RouteOutcomeTracker | None = None,
 ) -> AutomaticPlacementService | None:
     automatic_workers = tuple(worker for worker in config.workers if worker.model.casefold() == "auto")
     if not automatic_workers:
@@ -706,6 +710,7 @@ def _build_automatic_placement_service(
                 discovery,
                 worker,
                 token=token,
+                route_outcomes=route_outcomes,
             )
             proposal = planner.propose(
                 candidates,
@@ -813,6 +818,7 @@ def main() -> None:
             peer_cache_scopes=peer_cache_scopes,
         )
         placement_registry = PlacementRegistry()
+        route_outcomes = RouteOutcomeTracker()
         worker_supervisor = _build_worker_supervisor(
             config,
             manager,
@@ -843,6 +849,7 @@ def main() -> None:
             token=args.token,
             config_path=args.config,
             peer_cache=peer_cache,
+            route_outcomes=route_outcomes,
         )
     except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))
@@ -897,6 +904,7 @@ def main() -> None:
         worker_supervisor=worker_supervisor,
         contribution_policy=config.contribution_policy,
         contribution_policy_store=policy_store,
+        route_outcome_observer=route_outcomes.record,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
     logger.info(

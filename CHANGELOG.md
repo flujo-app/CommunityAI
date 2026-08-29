@@ -45,7 +45,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   can enter the artifact path, it signs an expiring exact-manifest/range intent with a
   fixed privacy-safe claim schema and requires acknowledgement from a remote DHT peer;
   rejected or failed publication leaves a first worker stopped and retains an admitted
-  existing placement without advancing planner hysteresis.
+  existing placement without advancing planner hysteresis. Completed local generations
+  now contribute exact-manifest demand, useful-throughput, and reliability through two
+  bounded five-minute aggregate windows that retain no per-request history. Only strict
+  quantized buckets reach placement; their multiplicative utility is capped below the
+  migration margin and cannot override coverage, policy, signed intent, or operator pause.
 
 ### Changed
 
