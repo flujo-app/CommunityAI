@@ -1589,9 +1589,13 @@ was available. The builder and auto-delete disk therefore remain `CLEANUP PENDIN
 the six-hour provider DELETE backstop, conservatively estimated at
 2026-08-30T00:09:18Z. The USD 10 maximum remains fully committed and leaves USD 6; exact
 builder/disk absence and the protected bootstrap must be revalidated before this run is
-marked cleaned. Gate 11 remains `IN PROGRESS`, and the USD 26 route must not be reserved
-or created without cleanup proof plus billing reconciliation or an explicit cleanup-backed
-owner reset.
+marked cleaned. A [sanitized cleanup verification attempt](evidence/gate11pub-20260829-a-cleanup-verification-attempt.json)
+at 2026-08-29T23:34:03Z found the native account still configured but unable to refresh
+without interactive reauthentication. It observed no provider state, created no resource,
+reserved no additional spend, and therefore leaves every cleanup assertion false rather
+than inferring deletion from the backstop. Gate 11 remains `IN PROGRESS`, and the USD 26
+route must not be reserved or created without cleanup proof plus billing reconciliation
+or an explicit cleanup-backed owner reset.
 
 ## Gate 12 best-effort alpha publication contract
 

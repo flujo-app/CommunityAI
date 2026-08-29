@@ -65,8 +65,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   digest-only carrier purl while still rejecting repository or digest drift. Registry
   credentials were removed after collection. Provider cleanup remains pending under the
   builder's six-hour DELETE backstop because local GCP authentication required interactive
-  reauthentication; no route was created. The USD 26 route plan remains unreserved and
-  cannot fit the current USD 6 ledger balance.
+  reauthentication. A later native-auth verification attempt remained fail-closed without
+  observing provider state, creating resources, or spending more; no route was created. The
+  USD 26 route plan remains unreserved and cannot fit the current USD 6 ledger balance.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
