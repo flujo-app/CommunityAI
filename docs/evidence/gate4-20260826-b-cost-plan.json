@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "scope": "qualification-image-cloud-cost-authorization",
+  "run_id": "gate4-20260826-b",
+  "result": "planned",
+  "provider": "GCP",
+  "project": "community-ai-506321",
+  "region": "us-central1",
+  "zone": "us-central1-a",
+  "source_commit": "7660e33e03326e5b868f81cb95282460ba649d5f",
+  "image_candidates": [
+    "qwen3.5-2b",
+    "gemma-4-e2b"
+  ],
+  "provisioning_authorized": true,
+  "reservation_recorded": true,
+  "complete_release_qualification": false,
+  "cloud_ceiling_usd": "100.00",
+  "ledger_committed_before_run_usd": "10.00",
+  "maximum_estimate_usd": "20.00",
+  "ledger_committed_after_run_usd": "30.00",
+  "remaining_after_run_maximum_usd": "70.00",
+  "pricing_as_of": "2026-08-26",
+  "cost_assumptions": {
+    "builder_count": 2,
+    "machine_type": "e2-standard-4",
+    "machine_hourly_usd_each": "0.14",
+    "maximum_hours": "6",
+    "boot_disk_gib_each": "200",
+    "disk_gib_hourly_usd": "0.000054795",
+    "nat_maximum_processed_gib": "100",
+    "nat_processing_usd_per_gib": "0.045",
+    "nat_gateway_hourly_usd_per_vm": "0.0014",
+    "nat_external_ip_hourly_usd": "0.005",
+    "maximum_internet_egress_gib": "30",
+    "internet_egress_usd_per_gib": "0.19",
+    "calculated_subtotal_usd": "12.06",
+    "headroom_multiplier": "1.50",
+    "calculated_with_headroom_usd": "18.09",
+    "rounded_maximum_usd": "20.00",
+    "pricing_sources": [
+      "https://cloud.google.com/compute/disks-image-pricing",
+      "https://cloud.google.com/nat/pricing",
+      "https://cloud.google.com/vpc/pricing"
+    ]
+  },
+  "provider_preflight": {
+    "checked_at": "2026-08-26",
+    "active_native_account": true,
+    "billing_enabled": true,
+    "region_status": "UP",
+    "available_vcpu_quota": 199,
+    "required_vcpus": 8,
+    "available_instance_quota": 23,
+    "required_instances": 2,
+    "available_disk_gib_quota": 4076,
+    "required_disk_gib": 400,
+    "protected_resource": "communityai-bootstrap-1"
+  },
+  "provider_plan": {
+    "network": "cai-g4b-20260826-net",
+    "subnet": "cai-g4b-20260826-subnet",
+    "subnet_cidr": "10.211.0.0/24",
+    "router": "cai-g4b-20260826-router",
+    "nat": "cai-g4b-20260826-nat",
+    "iap_firewall_rule": "cai-g4b-20260826-iap",
+    "network_tag": "cai-g4b-20260826",
+    "external_instance_addresses": false,
+    "service_accounts": false,
+    "oauth_scopes": false,
+    "instance_scopes": [],
+    "secure_boot": true,
+    "public_nat_for_egress": true,
+    "iap_ssh_source_cidr": "35.235.240.0/20",
+    "max_run_seconds": 21600,
+    "manual_cleanup_margin_seconds": 3600,
+    "builders": [
+      {
+        "candidate": "qwen3.5-2b",
+        "instance": "cai-g4b-qwen-20260826",
+        "boot_disk": "cai-g4b-qwen-20260826",
+        "buildx_builder": "cai-g4b-qwen-20260826-builder",
+        "candidate_label": "qwen3-5-2b",
+        "machine_type": "e2-standard-4",
+        "boot_disk_gib": 200,
+        "image": "ubuntu-2404-noble-amd64-v20260826",
+        "image_project": "ubuntu-os-cloud"
+      },
+      {
+        "candidate": "gemma-4-e2b",
+        "instance": "cai-g4b-gemma-20260826",
+        "boot_disk": "cai-g4b-gemma-20260826",
+        "buildx_builder": "cai-g4b-gemma-20260826-builder",
+        "candidate_label": "gemma-4-e2b",
+        "machine_type": "e2-standard-4",
+        "boot_disk_gib": 200,
+        "image": "ubuntu-2404-noble-amd64-v20260826",
+        "image_project": "ubuntu-os-cloud"
+      }
+    ],
+    "labels": {
+      "communityai_run": "gate4-20260826-b",
+      "communityai_gate": "gate4",
+      "communityai_purpose": "qualification-image",
+      "communityai_source": "7660e33e03326e5b868f81cb95282460ba649d5f",
+      "communityai_temporary": "true"
+    },
+    "cleanup_order": [
+      "cai-g4b-qwen-20260826 instance and auto-delete disk",
+      "cai-g4b-gemma-20260826 instance and auto-delete disk",
+      "cai-g4b-20260826-iap firewall rule",
+      "cai-g4b-20260826-nat Cloud NAT",
+      "cai-g4b-20260826-router router",
+      "cai-g4b-20260826-subnet subnet",
+      "cai-g4b-20260826-net network"
+    ],
+    "cleanup_success_condition": "Every exact run resource is absent and communityai-bootstrap-1 remains present."
+  }
+}

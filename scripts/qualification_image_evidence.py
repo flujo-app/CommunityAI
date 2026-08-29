@@ -392,7 +392,7 @@ def collect_evidence(
             "inspect",
             immutable_index,
             "--format",
-            "{{range .Provenance}}{{if .SLSA}}slsa{{end}}{{end}}",
+            "{{if .Provenance.SLSA}}slsa{{end}}",
         ],
         timeout=120,
         maximum_output=64,
@@ -406,7 +406,7 @@ def collect_evidence(
             "inspect",
             immutable_index,
             "--format",
-            "{{range .SBOM}}{{if .SPDX}}spdx{{end}}{{end}}",
+            "{{if .SBOM.SPDX}}spdx{{end}}",
         ],
         timeout=120,
         maximum_output=64,
@@ -434,7 +434,7 @@ def collect_evidence(
     _docker(
         runner,
         docker_executable,
-        ["pull", "--platform", PLATFORM, immutable_runtime],
+        ["pull", "--quiet", "--platform", PLATFORM, immutable_runtime],
         timeout=1800,
         maximum_output=MAX_DOCKER_OUTPUT_BYTES,
     )

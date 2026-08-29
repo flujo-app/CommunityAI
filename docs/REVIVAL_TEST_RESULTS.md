@@ -111,13 +111,187 @@ hashing, layer media/count/size bounds, local platform/rootfs/size checks, Docke
 failure/output bounds, and atomic non-overwriting reports. The combined focused suite
 passes all 46 collector and preparation tests locally.
 
-This remains implementation evidence only. Native `gh`, `gcloud`, and `flyctl`
-authentication are now active, and registry-direct Buildx inspection works, but this host
-has no available Docker Engine or exact materialized candidate snapshots. No image was
-built or published, no OCI digest or image size is claimed, no provider resource was
-created, no paid run was recorded, and the combined new-resource spend remains USD 0.
-Gate 4 stays `IN PROGRESS` until both exact snapshots are built and pushed on an
-authenticated Docker-enabled builder and both publication reports are retained.
+Before the external run, the qualification Dockerfile was hardened for the locked native
+extension build: `build-essential` is installed only for `uv sync` and purged from the
+runtime layer, source verification is isolated from the installed environment, and the
+runtime version check compares `drift.__version__` with installed package metadata rather
+than a stale literal. The 25-test input-contract suite, Black, isort, and the whitespace
+gate passed at source `7660e33e03326e5b868f81cb95282460ba649d5f`.
+
+The bounded `gate4-20260826-a` GCP attempt then materialized both exact unlinked snapshots
+and retained their input contracts. Qwen verified eight artifacts totalling 4,571,197,320
+bytes plus all 160 tracked source files; Gemma verified five artifacts totalling
+10,278,818,149 bytes plus the same exact source inventory. Both checks matched their
+candidate manifest, source-tree, and Dockerfile digests. Qwen also completed the required
+SBOM scan in 693.3 seconds. The shared builder serialized that scanner, however, and Qwen
+was still exporting layers at the 20:55:56Z manual cleanup cutoff. Gemma's later SBOM and
+both publications were cancelled to preserve cleanup margin. Buildx metadata never
+existed, so no pushed image, immutable OCI digest, layer size, rootfs size, attestation,
+or publication report is claimed.
+
+The non-secret [attempt report](evidence/gate4-20260826-a-qualification-image-build-attempt.json)
+and exact [Qwen](evidence/qwen3.5-2b-qualification-image-contract.json) and
+[Gemma](evidence/gemma-4-e2b-qualification-image-contract.json) contracts are retained.
+GHCR credentials were removed from the builder before deletion. Provider audit later
+confirmed that the instance had an ephemeral external NAT address; it was released with
+the instance deletion. At 2026-08-26T20:58:20Z, both the exact temporary instance and its
+auto-delete boot disk were absent, while the excluded bootstrap remained present. Billing is delayed, so the USD 10
+maximum remains reserved; immediately after attempt A, the combined ceiling had USD 90
+unreserved. The follow-up [parallel-builder plan](evidence/gate4-20260826-b-cost-plan.json)
+now reserves another USD 20, for USD 30 committed maximum and USD 70 currently
+unreserved.
+
+The bounded `gate4-20260826-b` retry used two independent no-address GCP builders behind
+one isolated Cloud NAT. Both builders checked out clean source `7660e33`, materialized
+fresh unlinked revision-pinned snapshots, matched the retained contracts, and passed the
+in-image artifact and 160-file source inventories. The live publication path exposed two
+collector integration mismatches: Docker pull progress could exceed the bounded output,
+and Buildx exposes provenance/SBOM as result objects rather than iterable collections.
+The collector now uses a quiet immutable pull and checks `.Provenance.SLSA` and
+`.SBOM.SPDX` directly; all 46 preparation/publication tests, Black, isort, and the
+whitespace gate pass after those fixes.
+
+Qwen published as
+`ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed`.
+Its sole `linux/amd64` runtime is
+`sha256:5ad01b9ea9fea6adb5e2c60cc804685ba3bfa2a4f09d5ff48b56a762f3df1770`,
+its bound attestation manifest is
+`sha256:084669614eabfff348a1fe5994b3567d4c2a2eaa4a02b799a50bec246c7fb3bf`,
+and the collector found SLSA provenance, SPDX SBOM, 6,913,811,781 compressed bytes,
+6,913,829,173 uncompressed bytes, a 3,572,741,435-byte largest layer, and a required
+9 GB Fly rootfs. The exact [Buildx metadata](evidence/gate4-20260826-b-qwen3.5-2b-build-metadata.json)
+and [publication report](evidence/gate4-20260826-b-qwen3.5-2b-publication-evidence.json)
+are retained.
+
+Gemma published as
+`ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f`.
+Its sole `linux/amd64` runtime is
+`sha256:406f94b7a53bcef847fb4ea04eae0036310a4b5f92e87beade6ec919629530f8`,
+its bound attestation manifest is
+`sha256:7f2e5244457cfe8dab4c2bc57f7cfdb48e05325ef844da600de066fb347c7b29`,
+and the collector found SLSA provenance, SPDX SBOM, 11,011,406,681 compressed bytes,
+11,011,424,083 uncompressed bytes, a 7,670,350,172-byte largest layer, and a required
+13 GB Fly rootfs. The exact [Buildx metadata](evidence/gate4-20260826-b-gemma-4-e2b-build-metadata.json)
+and [publication report](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json)
+are retained.
+
+Both builders removed their GHCR credential files before deletion. At
+2026-08-26T23:34:31Z, both run-labelled instances and boot disks plus the exact retry
+firewall, NAT, router, subnet, and network were absent, while
+`communityai-bootstrap-1` remained present. The non-secret [attempt report](evidence/gate4-20260826-b-qualification-image-build-attempt.json)
+binds the two publications, original artifact hashes, builder identities, and cleanup.
+Billing is delayed, so the USD 20 retry maximum and USD 10 attempt-A maximum remain
+reserved; USD 70 is unreserved under the combined ceiling. Gate 4 is `PASSED`, making
+Gates 5 and 6 ready for their real distinct-host Windows/Linux CPU/CUDA matrices.
+
+## Gate 5/6 split-region provider preflight
+
+The first paid-fleet preflight stopped before reservation or creation because
+`us-central1` had only one of the two T4 quota slots required by the original
+single-region plan. Read-only quota checks found a second existing T4 slot and the
+accelerator type in `us-east1-c`, while both regions retained enough CPU quota.
+The cost guard now supports a bounded split-region topology: Windows CPU/CUDA and
+Linux CPU remain in `us-central1-a`, while only Linux CUDA uses the fallback
+`us-east1-c` subnet/router/NAT stack. One additional NAT address-hour is priced at
+USD 0.005; the conservative 14-hour maximum remains USD 69 and fits the live USD 70
+remainder with USD 1 unreserved.
+
+The provider plan now requires exact resolved Windows Server 2022 and Ubuntu 24.04
+image names and emits `--image` create arguments instead of mutable image families.
+It records one boot-disk `sourceImage` verification per host, groups deletion by
+zone, verifies all four exact disks as well as both regional network stacks, and
+sets a provider-enforced 14-hour `DELETE` deadline on every VM. Twenty-five cost
+guard tests cover the original ledger/ceiling contract plus exact images,
+split-region assignment, disjoint subnets, zone-scoped cleanup, hard deadlines, and
+same-region fallback rejection. No paid resource was created by this
+implementation/preflight slice.
+
+After the plan implementation was committed, the exact `qual-20260826-b` ledger row
+reserved USD 69 at source `7660e33`, bringing the combined unresolved maximum to
+USD 99. A fresh guard run returned `provisioning_authorized=true` and retained the
+shell-free [authorized plan](evidence/qual-20260826-b-cost-plan.json); USD 1 remains
+unreserved. This authorization is cost and cleanup-plan evidence only, not hardware or
+model qualification.
+
+The first real placement attempt created the isolated two-region network stack and the
+Windows CPU VM, then stopped when `us-central1-a` returned
+`ZONE_RESOURCE_POOL_EXHAUSTED` for the Windows T4 host. Linux hosts were not attempted.
+Cleanup deleted the created VM and auto-delete disk plus the exact firewall, both NATs,
+both routers, both subnets, and VPC. Independent verification at
+2026-08-27T00:09:37Z found every run-labelled instance, all four exact boot-disk names,
+and all exact network resources absent while `communityai-bootstrap-1` remained present.
+The bounded [capacity-attempt report](evidence/qual-20260826-b-capacity-attempt-1.json)
+retains this incomplete result without provider/account details. Billing is delayed, the
+attempt remains inside the existing USD 69 umbrella, and no additional reservation was
+created.
+
+The exposed provider-stock failure prompted one critical-path correction: generated
+plans now create Windows CUDA and fallback Linux CUDA before either CPU-only host. This
+preserves the same four resources, exact images, hard deadlines, cleanup surface, and USD
+69 maximum while discovering scarce-capacity failure before avoidable CPU runtime
+accrues. Quota and accelerator-type preflight remain necessary but are not treated as a
+zonal-stock guarantee.
+
+A fresh read-only preflight selected `us-east1-c` as primary and `us-west1-b` as the
+Linux-CUDA fallback. Both zones were up, exposed the T4 type, and had one regional T4
+slot; the primary retained 200 CPU, 24 instance, 4,096 GB disk, and eight in-use-address
+quota units, while the fallback retained 100 CPU with the same instance/disk/address
+headroom. Both exact OS images were ready, all exact run names were absent, and the
+bootstrap was present. The generated [attempt-2 plan](evidence/qual-20260826-b-cost-plan-attempt-2.json)
+is provider-authorized, has SHA-256
+`4d5f9ec67b39a9c6a0009c3b56d9bcf2e30a1d83e9311cffd83f2983dc3ae86b`, retains the
+USD 69 maximum, and orders Windows CUDA, Linux CUDA, Windows CPU, then Linux CPU after
+its isolated network setup.
+
+Attempt 2 created that exact isolated network stack, then the first CUDA command failed
+in `us-east1-c` with `ZONE_RESOURCE_POOL_EXHAUSTED`; no VM was created and no Linux or
+CPU host was attempted. All planned cleanup commands ran immediately. At
+2026-08-27T00:25:28Z, all eleven exact absence verifiers returned empty and the protected
+bootstrap remained present. The bounded [attempt-2 report](evidence/qual-20260826-b-capacity-attempt-2.json)
+retains the failure and cleanup under the same USD 69 delayed-billing umbrella.
+
+A project-wide read-only quota/type audit found additional unused T4 quota and exact
+`n1-highmem-8`/T4 support in US regions. `us-west4-a` and `us-east4-a` were both up,
+retained one T4 slot, exposed the exact machine/accelerator types, and had no run
+instances; the immutable OS images remained ready. The [attempt-3 plan](evidence/qual-20260826-b-cost-plan-attempt-3.json)
+has SHA-256 `b1501e07da67ffdf21403bbcb826124f7ad2e66cdac87e96f1958e556cf04416`,
+remains provider-authorized at USD 69, and preserves CUDA-first creation plus complete
+cleanup without a new reservation.
+
+Attempt 3 then failed its first Windows N1/T4 create in `us-west4-a` with the same
+provider-stock error; again no VM or later host was created. The complete cleanup set ran,
+and all eleven absence verifiers passed again at 2026-08-27T00:39:07Z with the bootstrap
+retained. The bounded [attempt-3 report](evidence/qual-20260826-b-capacity-attempt-3.json)
+closes that third T4 placement honestly.
+
+The repeated shape-specific failure exposed a bounded alternative rather than a reason
+to bypass Gate 5. The guard now supports two CUDA shapes: the original N1 plus attached
+T4, and G2 with its included L4. The G2 variant uses `g2-standard-8` plus
+`pd-balanced` only for the two CUDA hosts, retains `n1-highmem-8`/`pd-standard` for CPU
+hosts, and emits no separate accelerator attachment because L4 is intrinsic to G2.
+Official 2026-08-26 US rates price the mixed fleet at approximately USD 3.45/hour. A
+13.5-hour provider deletion deadline, 25 percent headroom, and USD 10 contingency round
+to the existing USD 69 maximum; fourteen hours would be USD 71 and is rejected by the
+existing reservation. Twenty-eight focused tests cover both exact variants.
+
+Read-only preflight found `us-central1-b` and `us-east1-b` up with one unused L4 slot,
+exact `g2-standard-8`, supported `pd-balanced`, ready immutable OS images, and no run
+instances. The [attempt-4 plan](evidence/qual-20260826-b-cost-plan-attempt-4.json) is
+provider-authorized under the same reservation and has SHA-256
+`74015a88259b071951e7db9f3120465ef12a3eaafc928b59efbf921e4be7ecef`.
+
+Attempt 4 created only its isolated network stack. The first Windows G2/L4 create was
+rejected with `QUOTA_EXCEEDED`: regional L4 quota was present, but the provider's global
+`GPUS_ALL_REGIONS` limit for the project is zero. No VM or later host was created. All
+planned cleanup commands ran immediately, and every exact absence verifier passed at
+2026-08-27T00:51:28Z while the bootstrap remained. The bounded
+[attempt-4 report](evidence/qual-20260826-b-capacity-attempt-4.json) records that result.
+
+After three independent N1/T4 stock failures and the global L4 quota rejection, Gate 5
+is `BLOCKED` on external Windows CUDA capacity. No quota request or credit action was
+made. No Windows/Linux qualification profile passed, Gate 6–8 remain waiting, and no
+Fly recovery or public inference route ran. Billing is delayed, so the full USD 69 Gate
+5 maximum remains in the ledger even though observed cost is unknown and likely lower.
 
 ## Cached-peer discovery recovery
 

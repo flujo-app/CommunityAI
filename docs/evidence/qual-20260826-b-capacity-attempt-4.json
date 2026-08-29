@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "scope": "qualification-fleet-capacity-attempt",
+  "run_id": "qual-20260826-b",
+  "attempt_id": "us-central1-b-l4-quota-4",
+  "result": "incomplete",
+  "complete_release_qualification": false,
+  "source_commit": "7660e33e03326e5b868f81cb95282460ba649d5f",
+  "authorized_plan": "qual-20260826-b-cost-plan-attempt-4.json",
+  "authorized_plan_sha256": "74015a88259b071951e7db9f3120465ef12a3eaafc928b59efbf921e4be7ecef",
+  "network_started_at": "2026-08-27T00:46:41Z",
+  "capacity_probe_started_at": "2026-08-27T00:48:33Z",
+  "cleanup_verified_at": "2026-08-27T00:51:28Z",
+  "cost": {
+    "provider": "gcp",
+    "umbrella_maximum_estimate_usd": 69,
+    "additional_reservation_usd": 0,
+    "observed_cost_usd": null,
+    "billing_state": "delayed"
+  },
+  "create_result": {
+    "windows_cuda": {
+      "zone": "us-central1-b",
+      "machine_type": "g2-standard-8",
+      "accelerator": "nvidia-l4",
+      "result": "failed",
+      "reason": "QUOTA_EXCEEDED",
+      "quota_metric": "GPUS_ALL_REGIONS",
+      "quota_limit": 0,
+      "instance_created": false
+    },
+    "linux_cuda": {
+      "result": "not_attempted"
+    },
+    "windows_cpu": {
+      "result": "not_attempted"
+    },
+    "linux_cpu": {
+      "result": "not_attempted"
+    }
+  },
+  "cleanup": {
+    "run_instances_absent": true,
+    "exact_boot_disks_absent": true,
+    "firewall_absent": true,
+    "regional_nats_absent": true,
+    "regional_routers_absent": true,
+    "regional_subnets_absent": true,
+    "network_absent": true,
+    "excluded_bootstrap_present": true
+  },
+  "next_action": "Stop paid attempts. Gate 5 requires provider T4 stock or nonzero global L4 quota; do not request quota, touch credits, or continue without explicit owner direction."
+}
