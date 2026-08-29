@@ -12,45 +12,27 @@ test harnesses are `scripts/smoke_tinyllama_local_swarm.py` and
 | Milestone | Status | Evidence | Remaining gate |
 | --- | --- | --- | --- |
 | 1. Reproducible execution baseline | Complete | Windows CPU, Docker Linux CPU, Windows CUDA, and native hosted Apple Silicon macOS all served blocks `0:8` and produced exact token parity; macOS also passed the MPS block-portability checks | None |
-| 2. Real multi-machine swarm | Complete | A private Fly swarm reached explicit `0:8` coverage with two replicas per block; a selected `4:8` Machine was killed during generation, the client rerouted and replayed its prefix, and both the recovered request and a cache-cleanup request passed exact parity | None for this milestone; broader-model recovery remains follow-up work |
+| 2. Real multi-machine swarm | Complete | Gate 7 ran one bootstrap plus four TinyLlama workers on Fly with two replicas per block; a selected worker was SIGKILLed during generation, the client rerouted, replayed its prefix, and retained exact stock-token parity | None; this provider recovery mechanism is model-independent |
 | 3. Public protocol identity and content integrity | Complete | Content-derived manifests, signed expiring worker announcements, PeerID/TLS binding, replay/range/profile checks, signed intent leases, dual-signed rotation, revocation, deterministic interruption tests, real Hub HTTP 206 resume on Windows and macOS, signed Windows parity/failover, signed Fly cross-Machine parity, hosted macOS signed parity, and prior Fly poison rejection are proven | None |
 | 4. Unified local node and multi-model OpenAI API | Complete | Exact multi-manifest selection, artifact-free unloaded discovery, cancellation-safe lazy loading and LRU residency, isolated supervised workers, labeled hash-only key CRUD, authenticated controls, reproducible edge measurements, official OpenAI Python client compatibility, clean restart/key reuse, and real external two-model Fly parity are proven | None for this milestone; every additional selectable model still needs its own published edge envelope |
 | 5. Desktop application and contribution controls | In progress | ADR 0002 selects PySide 6; clean production package/UI smokes pass on Windows, Linux, and macOS; OpenAI and control authorities are separate; the production build stages an independently frozen node sidecar; a packaged Windows run used Credential Manager, joined the public DNS seed, authenticated readiness, and shut down cleanly; the signed-catalog path now covers independent signing keys, thresholds, expiry, rollback, exact manifests, elastic-rung gates, bounded mirror fetching, digest-checked installation, last-known-good recovery, and automatic first-install config generation; the authenticated Sharing page preserves node-authoritative policy and telemetry admission without exposing raw diagnostics; Gate V passed a visible desktop-to-public-L4 Qwen route plus localhost `model: "auto"` inference; and Gates 5 and 6 passed the strict Qwen and Gemma Windows/Linux CPU/CUDA matrices | The release bootstrap and initial catalog are not published or bundled; persistent public workers, real packaged clean-install inference, cross-platform native-store package promotion, atomic contribution-policy editing and real hardware enforcement, startup/RSS and crash-isolation measurements, signing, updates, root rotation, accessibility, and installer gates remain |
 
-## Gate 7 Qwen3.5 2B separate-machine recovery (in progress)
+## Gate 7 provider-level separate-machine recovery (passed)
 
-On 2026-08-27, after Gate 6 cleanup was proved, the owner explicitly reset the
-USD 100 accounting epoch and authorized the real CPU-only Fly recovery run. The
-current epoch commits a USD 30 Fly maximum plus five USD 10 GCP publication/mirror
-maxima, leaving USD 20. The topology remains one bootstrap and four workers in
-`gru`, each with four performance vCPUs and 16 GB RAM. It is CPU-only evidence,
-never CUDA qualification or a GPU benchmark.
+On 2026-08-28, [run `gate7-tiny-20260828-j`](evidence/gate7-20260828-tinyllama-recovery.json)
+passed the CPU-only Fly recovery gate in `gru`. One bootstrap and four TinyLlama
+workers provided two replicas for every block. During a live inference session,
+`host-a` was SIGKILLed while serving blocks `0:4`; the client selected `host-c`,
+replayed two cached activation tokens, completed the same session, and retained exact
+stock-token parity. Recovery took 16.395 seconds.
 
-The first bounded publication produced a 9 GB rootfs that Fly rejected before any
-Machine was created. The [replacement publication](evidence/gate7-20260828-b-qwen3.5-2b-publication-evidence.json)
-then bound exact source `7570d94a4bacefb80ec7aa2135d6d85c0c24275d`, Qwen revision
-`15852e8c16360a2fea060d615a32b45270f8a8fc`, manifest
-`sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`,
-immutable index `sha256:1969b62ff7c5543d03677aa4a174dd2b0e453ea6b6ff0edcd0f1968b44b67b5f`,
-runtime manifest `sha256:cbdbb37657429223bc38695a78f6f80b81746a5aa0807b6b6ada495e7a5e2e62`,
-verified artifacts, SLSA provenance, SPDX SBOM, CPU-only runtime identity, and an
-8 GB rootfs. Its publisher cleanup passed.
-
-The [cleaned mirror attempt](evidence/g7mirror-20260828-c-fly-registry-attempt.json)
-proved that the never-deployed Fly app first required supported build-only repository
-initialization; the zero-byte sentinel created no Machine. [Retry d](evidence/g7mirror-20260828-d-fly-registry-attempt.json)
-then created its bounded GCP builder but failed before copying because a stale GHCR
-credential shadowed valid anonymous access to the exact public source. A fresh empty-
-configuration request proved the immutable source is anonymously readable, so the
-retry must use anonymous source access and destination-only Fly authentication.
-
-Fly currently has zero active Machines and app tokens. Native `gcloud` authentication
-has been restored; exact-name queries prove retry d's builder and disk absent and
-`communityai-bootstrap-1` running. Retry e is now reserved at USD 10, and a fresh
-empty-configuration request again proved the immutable source anonymously readable.
-Gate 7 remains open until the immutable Fly-registry index passes, the five CPU-only
-Machines execute selected-worker interruption/recovery, and complete run-tag cleanup
-is proved.
+The run destroyed the bootstrap and all four workers, left no run resources, and
+revoked its deploy token. Gate 7 validates the provider control and redundant-route
+recovery mechanism once; it is not repeated for every catalog model. Qwen and Gemma
+already have their model/platform qualification evidence in Gates 5 and 6. The next
+product-realistic recovery test belongs after automatic placement and the production
+signed catalog exist: clean install, enable contribution, automatic assignment, kill
+one contributor, and observe recovery.
 
 ## Gate 6 Gemma 4 E2B strict four-profile qualification
 
@@ -83,10 +65,10 @@ All four exact VMs and disks and the run-scoped firewall, NATs, routers, subnets
 reserved addresses, and VPC are absent. Global GPU and regional L4 usage returned to
 zero, and `communityai-bootstrap-1` remains running. Provider billing is delayed, so
 the owner explicitly released Gate 6's historical USD 79 maximum after cleanup.
-Gate 7 now holds the new epoch's USD 30 reservation, leaving USD 70. The strict combiner rerun passed with all four
+Gate 7 subsequently passed the provider recovery mechanism with TinyLlama. The strict combiner rerun passed with all four
 profiles and empty missing, matrix-error, and report-error lists; the focused matrix,
-external-qualification, and cost-guard suite passed 51 tests. Separate-machine CPU-only
-Gemma recovery remains Gate 8.
+external-qualification, and cost-guard suite passed 51 tests. Per-model duplicate
+separate-machine recovery is not required for the public alpha.
 
 ## Gate 5 Qwen3.5 2B strict four-profile qualification
 

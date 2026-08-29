@@ -544,6 +544,8 @@ def test_machine_exec_uses_shell_free_argv_and_bounded_identity_marker():
 
     def runner(command, **kwargs):
         calls.append((command, kwargs))
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(
             returncode=0,
             stdout=adapter._IDENTITY_MARKER + json.dumps({"schema_version": 1, "peer_id": _peer("P")}) + "\n",
@@ -553,13 +555,14 @@ def test_machine_exec_uses_shell_free_argv_and_bounded_identity_marker():
     reader = adapter.FlyMachineExec(
         executable="flyctl",
         remote_node_script="/workspace/scripts/fly_qualification_node.py",
-        timeout=2,
+        timeout=120,
         runner=runner,
         poll_interval=0,
     )
 
     assert reader.read_peer_id("qualification-app", "machine123") == _peer("P")
-    command, kwargs = calls[0]
+    assert len(calls) == 2
+    command, kwargs = calls[-1]
     assert command == [
         "flyctl",
         "machine",
@@ -569,10 +572,12 @@ def test_machine_exec_uses_shell_free_argv_and_bounded_identity_marker():
         "--app",
         "qualification-app",
         "--timeout",
-        "15",
+        "60",
     ]
     assert kwargs["shell"] is False
-    with pytest.raises(adapter.AdapterError, match="exactly one"):
+    duplicate = adapter._IDENTITY_MARKER + json.dumps({"schema_version": 1, "peer_id": _peer("P")})
+    assert reader.parse_peer_output(duplicate, duplicate) == _peer("P")
+    with pytest.raises(adapter.AdapterError, match="conflicting"):
         reader.parse_peer_output(
             adapter._IDENTITY_MARKER + json.dumps({"schema_version": 1, "peer_id": _peer("P")}),
             adapter._IDENTITY_MARKER + json.dumps({"schema_version": 1, "peer_id": _peer("Q")}),

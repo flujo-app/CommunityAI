@@ -40,6 +40,7 @@ DEFAULT_API_BASE = "https://api.machines.dev"
 DEFAULT_PORT = 31337
 MAX_PROVIDER_RESPONSE_BYTES = 1_000_000
 MAX_EXEC_OUTPUT_BYTES = 65_536
+MAX_MACHINE_EXEC_ATTEMPT_SECONDS = 60
 CLEANUP_RECONCILIATION_CONFIRMATIONS = 3
 MAX_PROVIDER_WAIT_SECONDS = 60
 _LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -601,6 +602,7 @@ class FlyMachineExec:
         self.executable = executable
         self.remote_node_script = _require_remote_path(remote_node_script, "remote node script")
         self.timeout = timeout
+        self.attempt_timeout = min(MAX_MACHINE_EXEC_ATTEMPT_SECONDS, timeout)
         self.runner = runner
         self.poll_interval = poll_interval
 
@@ -615,7 +617,7 @@ class FlyMachineExec:
             "--app",
             _require_app(app),
             "--timeout",
-            "15",
+            str(self.attempt_timeout),
         ]
 
     @staticmethod
@@ -627,8 +629,10 @@ class FlyMachineExec:
         for line in combined.splitlines():
             if _IDENTITY_MARKER in line:
                 payloads.append(line.split(_IDENTITY_MARKER, 1)[1].strip())
-        if len(payloads) != 1:
-            raise AdapterError("Fly worker identity probe did not emit exactly one public identity marker")
+        if not payloads:
+            raise AdapterError("Fly worker identity probe did not emit a public identity marker")
+        if len(set(payloads)) != 1:
+            raise AdapterError("Fly worker identity probe emitted conflicting public identity markers")
         try:
             value = json.loads(payloads[0])
         except json.JSONDecodeError as exc:
@@ -643,7 +647,10 @@ class FlyMachineExec:
         while time.monotonic() < deadline:
             try:
                 if self.runner is None:
-                    completed = _run_bounded_argv(self.command(app, machine_id), timeout=20)
+                    completed = _run_bounded_argv(
+                        self.command(app, machine_id),
+                        timeout=self.attempt_timeout + 5,
+                    )
                 else:
                     completed = self.runner(
                         self.command(app, machine_id),
@@ -657,7 +664,12 @@ class FlyMachineExec:
                 stdout = completed.stdout or ""
                 stderr = completed.stderr or ""
                 if completed.returncode == 0:
-                    return self.parse_peer_output(stdout, stderr)
+                    try:
+                        return self.parse_peer_output(stdout, stderr)
+                    except AdapterError as exc:
+                        last_error = exc
+                        time.sleep(self.poll_interval)
+                        continue
                 last_error = AdapterError("flyctl Machine Exec identity probe exited nonzero")
             except (OSError, subprocess.SubprocessError) as exc:
                 last_error = AdapterError("flyctl Machine Exec identity probe failed")

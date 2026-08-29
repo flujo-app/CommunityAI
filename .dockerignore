@@ -4,6 +4,7 @@
 .tools
 .venv
 .venv-cuda
+.gatev-runtime
 dist
 docs
 benchmarks

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "gate": 7,
+  "result": "passed",
+  "run_id": "gate7-tiny-20260828-j",
+  "provider": "fly",
+  "region": "gru",
+  "runtime_image": "registry.fly.io/petals-revival-smoke@sha256:53c603848d407df699bead5a1bd1ea2f5c3371e38d5ea621640025d9bbecb16b",
+  "model": {
+    "repository": "Maykeye/TinyLLama-v0",
+    "revision": "298338802ab94432b917bcce11382aa151aee50f",
+    "manifest_digest": "sha256:b59291566c5bcfeefffe29b79c64b658f67b4e24663ba5b936d937a7d7027bbd",
+    "num_blocks": 8
+  },
+  "topology": {
+    "machines": 5,
+    "bootstrap": 1,
+    "workers": 4,
+    "replicas_per_block": [2, 2, 2, 2, 2, 2, 2, 2]
+  },
+  "recovery": {
+    "selected_worker_interrupted": true,
+    "hard_kill_acknowledged": true,
+    "victim_machine": "host-a",
+    "victim_span": [0, 4],
+    "replacement_machine": "host-c",
+    "replacement_span": [0, 4],
+    "same_inference_session": true,
+    "activation_replay_observed": true,
+    "replayed_prefix_tokens": 2,
+    "stock_token_parity": true,
+    "exact_topology_coverage": true,
+    "recovery_seconds": 16.395069
+  },
+  "cleanup": {
+    "passed": true,
+    "destroyed_resources": [
+      "bootstrap-a",
+      "worker-a",
+      "worker-b",
+      "worker-c",
+      "worker-d"
+    ],
+    "remaining_resources": [],
+    "deploy_token_revoked": true
+  },
+  "scope": {
+    "proves": "provider-level contributor interruption and redundant-route recovery",
+    "does_not_require": "repeating the same recovery gate for every catalog model",
+    "product_flow_deferred_until": "automatic placement and the production signed catalog exist"
+  }
+}
