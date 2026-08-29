@@ -137,6 +137,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   the reason and exact route through the control API, and returns an honest unavailable
   response when no eligible route exists. The desktop displays the selected model, reason,
   peer count, and complete block range.
+- The desktop and packaged node now share contribution-status schema 3. The desktop strictly
+  validates bounded automatic-placement block/reason evidence and rejects stale schema 2,
+  missing fields, inconsistent manual placement, and unexpected secret-bearing fields.
 - `drift edge-benchmark` now emits schema-v2 post-close runtime, route-manager,
   process-tree memory/child-process, accelerator, and bounded-stabilization cleanup
   evidence. It releases local model tensors before its final sample, detects replacement
