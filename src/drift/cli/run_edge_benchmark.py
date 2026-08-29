@@ -11,9 +11,25 @@ from pathlib import Path
 
 import drift
 from drift.model_manifest import ManifestError, ModelManifest
+from drift.node.catalog_bootstrap import CatalogBootstrapError, require_public_initial_peer
 from drift.node.edge_benchmark import benchmark_client_runtime, cache_is_empty
 from drift.node.loading import make_manifest_loader
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
+
+
+def _parse_initial_peer(value: str) -> str:
+    normalized = value.replace("\\", "/").lower()
+    if not value.startswith("/") and (
+        "/ip4/" in normalized or "/ip6/" in normalized or "/dns4/" in normalized or "/dns6/" in normalized
+    ):
+        raise argparse.ArgumentTypeError(
+            "bootstrap multiaddr was rewritten as a filesystem path; run from native PowerShell/cmd "
+            "or disable Git Bash/MSYS argument conversion"
+        )
+    try:
+        return require_public_initial_peer(value, field="bootstrap multiaddr")
+    except CatalogBootstrapError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,7 +39,13 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("model_manifest", type=Path, help="Path to one exact ModelManifest v1")
-    parser.add_argument("--initial_peers", nargs="+", required=True, help="Manifested swarm bootstrap multiaddrs")
+    parser.add_argument(
+        "--initial_peers",
+        nargs="+",
+        required=True,
+        type=_parse_initial_peer,
+        help="Manifested swarm bootstrap multiaddrs",
+    )
     parser.add_argument("--cache_dir", type=Path, required=True, help="Dedicated Hugging Face cache to measure")
     parser.add_argument("--allow_warm_cache", action="store_true", help="Allow a non-empty cache (reported as warm)")
     parser.add_argument("--token", default=None, help="Hugging Face token for a gated repository")

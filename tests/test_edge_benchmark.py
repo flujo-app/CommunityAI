@@ -1,7 +1,10 @@
+import argparse
 import time
 
+import pytest
 import torch
 
+from drift.cli.run_edge_benchmark import _parse_initial_peer
 from drift.model_manifest import ModelManifest
 from drift.node.edge_benchmark import (
     POST_CLOSE_RSS_TOLERANCE_BYTES,
@@ -11,6 +14,31 @@ from drift.node.edge_benchmark import (
     client_component_memory,
 )
 from drift.node.model_manager import ModelRuntime
+
+
+def test_edge_benchmark_rejects_msys_rewritten_initial_peer_before_loading():
+    with pytest.raises(argparse.ArgumentTypeError, match="rewritten as a filesystem path"):
+        _parse_initial_peer("C:/Program Files/Git/ip4/8.8.8.8/tcp/31337/p2p/example")
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "/",
+        "/not-a-multiaddr",
+        "/ip4/999.999.999.999/tcp/31337/p2p/" + "Qm" + "A" * 44,
+        "/ip4/8.8.8.8/tcp/0/p2p/" + "Qm" + "A" * 44,
+        "/ip4/8.8.8.8/tcp/31337/p2p/example",
+    ),
+)
+def test_edge_benchmark_rejects_noncanonical_initial_peer_before_loading(value):
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_initial_peer(value)
+
+
+def test_edge_benchmark_accepts_canonical_public_initial_peer():
+    peer = "/ip4/8.8.8.8/tcp/31337/p2p/" + "Qm" + "A" * 44
+    assert _parse_initial_peer(peer) == peer
 
 
 class _Tokenizer:

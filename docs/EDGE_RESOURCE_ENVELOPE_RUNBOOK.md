@@ -116,6 +116,12 @@ drift edge-benchmark <exact-manifest.json> \
   --output <resource-envelope.json>
 ```
 
+Run the Windows measurement from native PowerShell or `cmd.exe`. Git Bash/MSYS rewrites
+an unprotected leading-slash multiaddr as a Windows filesystem path; if that shell is
+unavoidable, disable argument conversion for the benchmark process with
+`MSYS2_ARG_CONV_EXCL='*'`. The CLI rejects a converted/non-multiaddr value during argument
+parsing, before it checks or populates the cold cache.
+
 An outer controller, rather than repeated CLI invocations, enforces the five-minute
 no-progress limit and 60-minute model deadline. Provider resources are created by exact
 ID, cleaned by exact ID in a `finally` path, and independently covered by the 90-minute

@@ -61,6 +61,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   evidence. It releases local model tensors before its final sample, detects replacement
   child PIDs, permits only 16 MiB of RSS allocator jitter, and fails closed when cleanup
   is not proved.
+- Edge benchmarking now requires a canonical public TCP/libp2p bootstrap multiaddr and
+  rejects malformed or Git Bash/MSYS path-converted values during argument parsing, before
+  cold-cache acquisition. The Gate 9 Windows procedure requires native PowerShell/cmd or
+  an explicit MSYS argument-conversion exclusion.
 - Linux routes now default Hivemind/Torch tensor transport to file-descriptor-backed shared
   memory, preventing a named shared-memory unlink race from aborting model startup. Explicit
   operator overrides remain honored.
