@@ -43,7 +43,8 @@ Do not start a paid recovery run unless all of these are already true:
 
 - The generic runtime image already exists at an immutable provider-readable digest.
 - The selected model already has a signed manifest, exact artifact digests, and a
-  published resource envelope from Gate 9.
+  published resource envelope produced under the
+  [Gate 9 edge-envelope runbook](EDGE_RESOURCE_ENVELOPE_RUNBOOK.md).
 - Artifact acquisition uses the same path the product will use. No ad hoc registry
   mirror or qualification-only model image may be introduced during the run.
 - Automatic placement and the production signed catalog exist before the final
