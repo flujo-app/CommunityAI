@@ -211,6 +211,7 @@ def test_collects_immutable_attested_bounded_publication_evidence(tmp_path):
     assert report["result"] == "passed"
     assert report["candidate"] == "qwen3.5-2b"
     assert report["image_reference"] == fixture.immutable_index
+    assert report["runtime_image_reference"] == fixture.immutable_runtime
     assert report["runtime_manifest_digest"] == fixture.runtime_digest
     assert report["attestation_manifest_digest"] == fixture.attestation_digest
     assert report["compressed_layer_bytes"] == 4_500_000_000
