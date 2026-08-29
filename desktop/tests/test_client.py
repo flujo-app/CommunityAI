@@ -79,6 +79,42 @@ class NodeClientTests(unittest.TestCase):
             with self.subTest(value=malformed), self.assertRaises(NodeClientError):
                 _normalize_auto_selection(malformed)
 
+    def test_accepts_schema_3_placement_and_rejects_stale_or_malformed_evidence(self):
+        with fake_node() as (url, token):
+            contribution = NodeClient(url, token).status()["contribution"]
+
+        self.assertEqual(contribution["schema_version"], 3)
+        automatic = next(worker for worker in contribution["workers"] if worker["id"] == "worker-b")
+        self.assertEqual(
+            automatic["placement"],
+            {
+                "automatic": True,
+                "block_indices": "0:36",
+                "reason": "Selected a complete catalog route",
+            },
+        )
+
+        invalid_values = []
+        stale = copy.deepcopy(contribution)
+        stale["schema_version"] = 2
+        invalid_values.append(stale)
+
+        missing = copy.deepcopy(contribution)
+        del missing["workers"][0]["placement"]
+        invalid_values.append(missing)
+
+        secret_field = copy.deepcopy(contribution)
+        secret_field["workers"][0]["placement"]["credential"] = "must-not-be-accepted"
+        invalid_values.append(secret_field)
+
+        inconsistent = copy.deepcopy(contribution)
+        inconsistent["workers"][0]["placement"]["block_indices"] = "0:1"
+        invalid_values.append(inconsistent)
+
+        for value in invalid_values:
+            with self.subTest(value=value), self.assertRaises(NodeClientError):
+                _normalize_contribution_status(value)
+
     def test_rejects_incomplete_fail_open_contribution_status(self):
         with fake_node() as (url, token):
             contribution = NodeClient(url, token).status()["contribution"]

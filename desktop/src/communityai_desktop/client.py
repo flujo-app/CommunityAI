@@ -14,7 +14,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SUPPORTED_CONTROL_API_VERSION = 1
-CONTRIBUTION_STATUS_SCHEMA_VERSION = 2
+CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
 CONTRIBUTION_POLICY_SCHEMA_VERSION = 1
 
 
@@ -283,6 +283,22 @@ def _normalize_policy_snapshot(value: Any, *, require_revision: bool) -> Dict[st
     }
 
 
+def _normalize_placement(value: Any) -> Dict[str, Any]:
+    fields = {"automatic", "block_indices", "reason"}
+    if not isinstance(value, dict) or set(value) != fields or not isinstance(value["automatic"], bool):
+        raise NodeClientError("Local node contribution status has invalid placement")
+    automatic = value["automatic"]
+    if automatic:
+        block_indices = _bounded_status_text(value["block_indices"], "placement blocks", limit=64)
+        reason = _bounded_status_text(value["reason"], "placement reason", limit=300)
+    else:
+        block_indices = value["block_indices"]
+        reason = value["reason"]
+        if block_indices is not None or reason is not None:
+            raise NodeClientError("Local node contribution status has inconsistent placement")
+    return {"automatic": automatic, "block_indices": block_indices, "reason": reason}
+
+
 def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema_version") != CONTRIBUTION_STATUS_SCHEMA_VERSION:
         raise NodeClientError("Local node status has an unsupported contribution schema")
@@ -303,6 +319,7 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
             worker.get("desired_running"), bool
         ):
             raise NodeClientError("Local node contribution status has invalid worker identity or state")
+        placement = _normalize_placement(worker.get("placement"))
         policy = _normalize_gate(worker.get("policy"), "policy")
         if not isinstance(worker["policy"].get("preferred"), bool):
             raise NodeClientError("Local node contribution status has invalid model preference")
@@ -345,6 +362,7 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
                 "model": model,
                 "state": state,
                 "desired_running": worker["desired_running"],
+                "placement": placement,
                 "policy": policy,
                 "schedule": schedule,
                 "resources": resources,

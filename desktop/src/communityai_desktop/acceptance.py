@@ -74,6 +74,11 @@ class _FakeNodeState:
             "model": worker["model"],
             "state": worker["state"],
             "desired_running": worker["desired_running"],
+            "placement": {
+                "automatic": worker_id == "worker-b",
+                "block_indices": "0:36" if worker_id == "worker-b" else None,
+                "reason": "Selected a complete catalog route" if worker_id == "worker-b" else None,
+            },
             "policy": {
                 "admitted": not denied,
                 "reason": "Model is denied by node policy" if denied else None,
@@ -207,7 +212,7 @@ def _handler(state: _FakeNodeState):
                             ],
                         },
                         "contribution": {
-                            "schema_version": 2,
+                            "schema_version": 3,
                             "configured": True,
                             "editable": True,
                             "policy": state.policy_response(),
@@ -308,7 +313,7 @@ def run_contract(client: NodeClient) -> Dict[str, Any]:
     """Exercise every privileged protocol operation used by this desktop slice."""
     status = client.status()
     contribution = status["contribution"]
-    if contribution["schema_version"] != 2 or not contribution["configured"] or not contribution["editable"]:
+    if contribution["schema_version"] != 3 or not contribution["configured"] or not contribution["editable"]:
         raise AssertionError("acceptance node omitted the authoritative contribution contract")
     from communityai_desktop.controller import DesktopController
 
