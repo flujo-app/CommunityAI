@@ -81,13 +81,15 @@ provider-plan digest, and maximum changes the cost authorization to true. Provid
 availability, quota, and absence checks remain mandatory even after cost authorization.
 
 Gate 11's initial routes use the separate `gcp-public-route` workload. It fixes one
-run-bound G2/L4 host, the Qwen primary and Gemma standby immutable image/manifests,
+run-bound G2/L4 host, the Qwen primary and Gemma standby immutable snapshot images/manifests,
 their publication-evidence digests, public ports, isolated network resources, health
 and fallback evidence, a 14-hour maximum, automatic instance deletion, and exact
 failure/success cleanup. Co-location is explicit fallback coverage, not independent
 redundancy.
 
-Generate the provider-call-free plan first. At the pinned 2026-08-26 GCP rate snapshot,
+The following provider-call-free command reproduces the finite infrastructure/snapshot
+plan for review only. The pinned images are CPU snapshot carriers, not CUDA workers; do
+not add its ledger row or use its create commands. At the pinned 2026-08-26 GCP rate snapshot,
 14 hours rounds conservatively to USD 26 including 25% headroom and the fixed USD 10
 network/setup contingency:
 
@@ -111,14 +113,13 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
   --output gcp-route-cost-plan.json
 ```
 
-The first output must say `provisioning_authorized=false`. Review its exact ledger row
-and plan, record that row only while the current ledger can absorb USD 26, then rerun
-the identical command and require `provisioning_authorized=true`. Even then, do not
-create until native authentication, global/zonal L4 quota and availability, immutable
-OS image state, both evidence files and both GHCR digests, exact run-resource absence,
-and protected-bootstrap presence pass. The lifecycle runner must also enforce the
-startup, health, primary-disable/standby-fallback, restoration, stop, and cleanup
-contracts in the plan.
+The output must say `provisioning_authorized=false`. Do not record its ledger row.
+Before Gate 11 can reserve USD 26, the cost guard must additionally bind immutable CUDA
+route-image publication evidence and a fresh-VM container-runtime bootstrap. The
+reviewed lifecycle runner must attest those inputs before authentication, consume fresh
+`--health_state_path` state, verify quota/capacity and initial absence, and enforce
+startup, primary-disable/standby-fallback, restoration, stop, and cleanup. Only a later
+plan containing those exact controls may be recorded and rerun to true.
 
 For Fly, calculate a conservative maximum from current Fly pricing for the exact
 image, five-Machine topology, regions, CPU, memory, and maximum lifetime, then pass

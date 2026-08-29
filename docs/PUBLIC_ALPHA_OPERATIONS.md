@@ -1,6 +1,6 @@
 # Public alpha operations runbook
 
-Status: finite Gate 11 operating contract implemented; real monitored rollout has not run.
+Status: finite Gate 11 plan and machine-readable health boundary implemented; CUDA runtime image and lifecycle work remain before any reservation or rollout.
 
 This runbook is for the Windows/Linux public inference alpha. It does not authorize
 a deployment by itself and it does not replace the release gates in
@@ -41,8 +41,8 @@ Generate a `gcp-public-route` authorization with
 - one `g2-standard-8`/L4 host, a 200 GiB balanced disk, an instance-lifetime ephemeral public IPv4,
   isolated network/subnet/firewalls, public TCP 31337-31338, and a maximum 14-hour
   `DELETE` deadline;
-- immutable qualified Qwen3.5 2B primary and Gemma 4 E2B standby image and manifest
-  digests, plus the digests of their publication evidence;
+- immutable qualified Qwen3.5 2B primary and Gemma 4 E2B standby snapshot images and
+  manifest digests, plus the digests of their publication evidence;
 - a 60-minute startup boundary, five-minute privacy-safe health sampling, exact
   primary and standby inference, Qwen-disable/Gemma-fallback/restoration evidence,
   and explicit stop conditions; and
@@ -56,8 +56,29 @@ Before the first provider call, re-run the cost guard against the ledger row and
 one unused global/zonal L4 slot, exact machine availability, OS image state, both
 publication-evidence files and GHCR digests, and protected-bootstrap presence. The cost
 guard is intentionally provider-call-free and does not itself attest the evidence files.
-Do not run its emitted create commands until a lifecycle runner enforces those preflight,
-startup, health, fallback, stop, and cleanup phases.
+The currently qualified images are CPU-only qualification runtimes: they are immutable
+snapshot carriers, not L4 public workers, and their entrypoint rejects a full manifested
+range. Do not reserve the USD 26 plan or run its emitted create commands until the cost
+plan additionally binds separately published CUDA route images, a fresh-VM container
+runtime bootstrap, and a lifecycle runner that enforces the preflight, startup, health,
+fallback, stop, and cleanup phases.
+
+## Machine-readable worker health
+
+A manifested worker may receive `--health_state_path` pointing to an absolute regular
+file in an existing non-symlink directory. Each internal health cycle atomically replaces
+that file with canonical schema-v1 JSON containing only the exact manifest digest and
+served block range, aggregate admission counts, admission availability, component
+liveness, a UTC observation time, and the overall worker-health bit. The file is
+mode-private where the platform permits it and is capped at 4 KiB.
+
+The worker fails its health check when the admission authority is unavailable or
+unhealthy, any server component is down, or the health file cannot be validated or
+written. Relative, symlinked, non-regular, or unwritable targets and malformed or
+oversized payloads fail closed.
+Legacy workers cannot enable this output and retain their prior health semantics. The
+lifecycle runner must compare the manifest/range exactly and reject a stale sample; it
+must never copy the local path or provider/peer identifiers into public evidence.
 
 ## Manifest-mode admission defaults
 

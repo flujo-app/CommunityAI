@@ -1,6 +1,6 @@
 # Revival baseline results
 
-Test dates: 2026-08-21 through 2026-08-28
+Test dates: 2026-08-21 through 2026-08-29
 
 These tests exercise `Maykeye/TinyLLama-v0` as an eight-block model and compare
 greedy distributed generation with the stock Transformers implementation. The
@@ -1390,12 +1390,35 @@ so it is fallback coverage rather than independent redundancy and host loss remo
 both routes. Exact reverse-order cleanup and six empty-output absence checks cannot
 target the protected bootstrap or unnamed resources.
 
+The next software slice exposed a canonical machine-readable health boundary for
+manifested workers. `--health_state_path` must be absolute, regular, bounded,
+and below an existing non-symlink directory. Every internal health cycle atomically
+writes at most 4 KiB of mode-private JSON containing the exact manifest and block range,
+bounded admission aggregates, admission availability, component liveness, a UTC
+observation time, and the overall health bit. Missing/unhealthy admission state, a dead
+component, or an unsafe/unwritable target fails the worker health check. Legacy workers
+cannot enable the file and retain their previous health semantics. The focused health,
+admission, and manifest matrix passes 104 tests; the broader node/configuration/API
+matrix passes 174 tests with 2 skips. Independent review passed a 104-test focus and
+an expanded 231-test matrix with 2 skips, including native-Windows atomic replacement,
+unsafe-target, stop/cleanup-order, legacy-compatibility, and privacy probes. Formatting,
+import-order, import-smoke, and diff checks pass.
+
+Review then found a deployment-blocking distinction before any provider call: both
+pinned qualification images are CPU-only immutable snapshot carriers. Their Dockerfile
+explicitly excludes CUDA packages and installs `torch==2.6.0+cpu`, while their
+entrypoint rejects the complete manifested range needed by either route. The Ubuntu
+startup script installs a driver but no container runtime. The USD 26 plan therefore
+must remain unreserved until separately published CUDA public-route images and a
+fresh-VM container bootstrap are digest-bound and verified.
+
 At the pinned pricing snapshot, 14 hours of the single host, disk, and address with
 25% headroom and the fixed USD 10 contingency round to a conservative USD 26. That
 fits the current USD 44 balance but was not reserved. All 56 focused cost-contract
 tests pass. This slice made no provider call, created no resource, changed no cloud
-state, and spent USD 0. Gate 11 remains `IN PROGRESS`: a reviewed lifecycle runner
-must attest both publication evidence files before authentication, enforce the
+state, and spent USD 0. Gate 11 remains `IN PROGRESS`: immutable CUDA route images and their
+publication evidence must be created first. A reviewed lifecycle runner must then attest
+the snapshot and runtime evidence before authentication, enforce the
 preflight/startup/health/fallback/stop/cleanup phases, and emit bounded evidence before
 an exact pushed-source plan may be reserved and operated.
 

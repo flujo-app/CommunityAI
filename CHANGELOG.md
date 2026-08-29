@@ -27,12 +27,17 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   G2/L4 four-profile plan, one-host-at-a-time CUDA-safe phases, checksum-pinned GPU and
   Windows SSH bootstrap, named NAT addresses, and exact isolated cleanup verification.
 - A finite Gate 11 public-route plan now binds one isolated G2/L4 host to the
-  immutable qualified Qwen primary and Gemma standby image/manifests, their publication
+  immutable qualified Qwen primary and Gemma standby snapshots/manifests, their publication
   evidence, public ports, aggregate health, primary-disable/standby-fallback/restoration
   checks, honest co-location/unavailable behavior, a 14-hour automatic deletion boundary,
   and exact run-scoped cleanup. Its conservative USD 26 maximum is computed against the
-  combined ledger; plan generation never calls a provider and cannot authorize creation
-  until an exact ledger row is recorded and revalidated.
+  combined ledger. The qualified images are CPU snapshot carriers rather than CUDA route
+  runtimes, so the plan remains non-reservable until separately published CUDA worker
+  images and their lifecycle are digest-bound.
+- Manifested workers may emit one canonical, atomic, mode-private health file containing
+  only their exact manifest/range, bounded aggregate admission counters, component
+  liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
+  targets and malformed or oversized payloads fail closed; legacy workers remain unchanged.
 - Exact-snapshot qualification image preparation with commit-derived tracked-only source
   contexts, exact candidate-manifest binding, digest-pinned base images, bounded
   source-bound tags, credential-free offline runtime inputs, provenance/SBOM push plans,
