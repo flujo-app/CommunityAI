@@ -1609,9 +1609,29 @@ public-route redundancy/soak, real qualification, and packaged inference unprove
 The focused publication suite passes 32 tests, and the catalog/bootstrap/model/desktop
 publication superset passes 92. Coverage includes a one-mirror/one-seed/one-route alpha
 vector plus the existing duplicate-endpoint, unsafe transport, altered manifest,
-noncanonical bundle, symlink, overwrite, signature, and expiry boundaries. No private
-release key or production bundle was created: Gate 12 still waits for the real Gate 11
-route before offline signing and publication.
+noncanonical bundle, symlink, overwrite, signature, and expiry boundaries.
+
+Run [`gate12-20260829-a`](evidence/gate12-20260829-alpha-catalog-publication.json)
+then generated a separate ignored Ed25519 release key and published the threshold-one
+[`communityai-public-alpha-v1` bundle](../public-alpha/catalog-v1/bundle.json) from
+source `26be579d27135424f495cfa56bb5e0e27ec6fbf8`. Sequence 1 binds exact
+Qwen primary manifest `sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`
+and Gemma standby manifest
+`sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd`,
+one pinned public HTTPS mirror, one public seed, and no route-demand roots. The canonical
+five-member bundle index is
+`sha256:d1d67591607f3f98bb3359cc9f6591d4fccf0469b52499e9b28b3929fb608537`
+and explicitly retains `complete_release_qualification=false`.
+
+After the bundle commit was pushed, the catalog and both digest-addressed manifests each
+returned HTTP 200 with their exact bundled sizes. A fresh consumer with no node
+configuration fetched the public catalog and manifests, verified the threshold signature,
+expiry, exact digests, and rollback sequence, then generated the two-model `auto`
+configuration with one bounded automatic worker and remote demand disabled. The private
+key remained ignored and uncommitted; the evidence retains no credential, private path,
+or endpoint. No cloud resource was created and the run spent USD 0. Gate 12 passes
+without claiming Gate 11 route operation, redundancy/soak, independent operators, or
+packaged clean-install inference.
 
 ## Follow-up issues
 

@@ -7,11 +7,12 @@ consumption are implemented. The model-agnostic qualification runner and an exac
 bootstrap evidence pin are also implemented; Qwen3 1.7B passed full-artifact audit,
 local Windows CPU parity, and selected-worker recovery. That 2025-generation checkpoint
 proves the harness but is not a production-ladder candidate. The production backlog was
-refreshed against official publisher releases on 2026-08-23. The dense Qwen3.5 text adapter now
-has exact synthetic block, cached-decode, nested-wrapper loading, and real local Hivemind RPC
-parity. Exact current-model manifests, trust-root rotation, periodic catalog refresh, automatic worker
-migration, publication of the release bootstrap, and the primary/standby qualification
-gates remain open.
+refreshed against official publisher releases on 2026-08-23. The dense Qwen3.5 text
+adapter now has exact synthetic block, cached-decode, nested-wrapper loading, and real
+local Hivemind RPC parity. The exact Qwen3.5 2B and Gemma 4 E2B manifests and the first
+threshold-one alpha catalog/bootstrap are published. Trust-root rotation, periodic
+catalog refresh, larger-rung migration, edge envelopes, route operation, and packaged
+inference remain open.
 
 `ModelManifest v1` identifies one exact checkpoint and execution profile. A model
 catalog answers a separate question: which immutable manifests does one community
@@ -202,9 +203,10 @@ the required number of distinct signatures is present.
    cross-platform, edge-envelope, and public-route qualification. The evidence contract
    and earlier harness proof are defined in
    [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
-2. Publish the signed alpha catalog through at least one pinned HTTPS mirror and build
-   the release bootstrap containing its independent trust root and public seed. Multiple
-   interchangeable mirrors and independently operated seeds are post-alpha hardening.
+2. Preserve the published threshold-one alpha catalog/bootstrap and migrate its
+   branch-scoped HTTPS mirror only through a newly signed sequence and packaged bootstrap
+   before deleting the branch. Multiple interchangeable mirrors and independently
+   operated seeds are post-alpha hardening.
 3. Bundle that bootstrap and pass the clean-install packaged inference gate. The
    implemented sidecar consumer fetches manifests, verifies their digest against the
    catalog, and registers them without trusting catalog display metadata.

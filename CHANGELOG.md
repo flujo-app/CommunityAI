@@ -19,6 +19,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   formats.
 - Qwen3.5 2B and Gemma 4 E2B first-rung candidate manifests with Windows CPU parity and
   local selected-worker recovery evidence.
+- The first threshold-one signed public-alpha catalog/bootstrap bundle, containing those
+  exact Qwen primary and Gemma standby manifests, a pinned public HTTPS mirror and seed,
+  and a best-effort one-route policy. A fresh consumer verified and installed the remotely
+  published inputs; the private release key is excluded, remote-demand roots are disabled,
+  and the bundle does not claim route, packaging, redundancy, or release qualification.
 - Authoritative opt-in contribution policies for model admission, storage, scheduling,
   VRAM, bandwidth, power, and bounded pause behavior.
 - Provider-neutral separate-machine qualification controller and a Fly Machines adapter

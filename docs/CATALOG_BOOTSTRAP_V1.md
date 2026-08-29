@@ -2,9 +2,9 @@
 
 Status: the strict sidecar consumer, desktop lifecycle integration, last-known-good
 cache, best-effort-alpha publication-bundle contract, and fail-closed packaging handoff
-are implemented. A production bundle is deliberately not checked in until the first model
-manifests have completed qualification and the corresponding catalog has been signed and
-published.
+are implemented. The threshold-one `public-alpha/catalog-v1` bundle publishes the
+exact qualified first-rung manifests, pinned public mirror and seed, and self-verifying
+first-install input. Route operation and packaged inference remain separate gates.
 
 `CatalogBootstrap v1` is the small, trusted release input that lets a clean desktop
 installation find a model catalog and the public discovery network. It is application
@@ -126,9 +126,11 @@ catalog cannot do so.
 ## Release gate
 
 Do not bundle a placeholder root, an unsigned catalog, test-vector manifests, or a
-private signing key. The first production bootstrap becomes eligible only after both
-options in its first rung have exact qualified manifests, the signed envelope is
-available through HTTPS mirrors, and real workers provide the catalog's claimed usable
-routes. Catalog mirrors and seeds can be replaced in a later signed application build;
-user-supplied seeds and independently updateable discovery configuration remain
-milestone-6 work.
+private signing key. The published alpha bundle contains both exact qualified first-rung
+manifests and a signed envelope that a fresh consumer fetched through its pinned HTTPS
+mirror before recreating the two-model node configuration. The catalog declares
+eligibility policy, not live capacity: `auto` still fails honestly when authenticated
+coverage does not satisfy that policy. Gate 11 route operation and Gate 13 packaged
+inference therefore remain separate real-world gates. Catalog mirrors and seeds can be
+replaced in a later signed application build; user-supplied seeds and independently
+updateable discovery configuration remain milestone-6 work.
