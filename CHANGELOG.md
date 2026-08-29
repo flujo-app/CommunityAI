@@ -37,6 +37,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - A public-alpha operations runbook with privacy-safe aggregate health reconstruction,
   finite admission defaults, rollout stop conditions, and reversible disable/rollback
   steps.
+- Automatic contribution placement for signed-bootstrap installs: one bounded worker waits
+  for fresh authenticated coverage, filters exact manifests through local policy and
+  resource ceilings, targets a least-covered contiguous range with per-node jitter and
+  migration hysteresis, launches under existing artifact-verifying supervision, reports
+  its decision, and preserves an explicit operator pause.
 
 ### Changed
 

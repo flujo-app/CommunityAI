@@ -133,6 +133,9 @@ class WorkerLaunch:
     policy_admitted: bool = True
     policy_reason: Optional[str] = None
     preferred: bool = False
+    automatic: bool = False
+    block_indices: Optional[str] = None
+    placement_reason: Optional[str] = None
     max_disk_bytes: Optional[int] = None
     max_vram_bytes: Optional[int] = None
     vram_device: Optional[str] = None
@@ -150,6 +153,10 @@ class WorkerLaunch:
             raise ValueError("an admitted worker must not have a policy reason")
         if not self.policy_admitted and (not isinstance(self.policy_reason, str) or not self.policy_reason):
             raise ValueError("a policy-blocked worker must have a reason")
+        if self.automatic and (self.block_indices is None or self.placement_reason is None):
+            raise ValueError("automatic workers require a block range and placement reason")
+        if not self.automatic and (self.block_indices is not None or self.placement_reason is not None):
+            raise ValueError("manual workers must not carry automatic placement metadata")
         if self.max_disk_bytes is not None and (
             isinstance(self.max_disk_bytes, bool) or not isinstance(self.max_disk_bytes, int) or self.max_disk_bytes < 1
         ):
@@ -204,6 +211,7 @@ class _WorkerRecord:
     launch: WorkerLaunch
     state: WorkerState = WorkerState.PAUSED
     desired_running: bool = False
+    operator_paused: bool = False
     process: Optional[subprocess.Popen] = None
     last_exit_code: Optional[int] = None
     last_error: Optional[str] = None
@@ -572,6 +580,7 @@ class WorkerSupervisor:
             if not record.launch.policy_admitted:
                 record.desired_running = False
                 raise WorkerPolicyError(record.launch.policy_reason)
+            record.operator_paused = False
             record.desired_running = True
             return self._spawn_locked(record)
 
@@ -585,8 +594,20 @@ class WorkerSupervisor:
         return process.wait(timeout=self._stop_timeout)
 
     def pause_worker(self, worker_id: str) -> bool:
+        """Pause a worker and persist the operator's explicit stopped intent."""
+
+        return self._pause_worker(worker_id, operator_action=True)
+
+    def pause_worker_for_reconfiguration(self, worker_id: str) -> bool:
+        """Quiesce a worker without manufacturing an operator pause."""
+
+        return self._pause_worker(worker_id, operator_action=False)
+
+    def _pause_worker(self, worker_id: str, *, operator_action: bool) -> bool:
         record = self._record(worker_id)
         with self._lock:
+            if operator_action:
+                record.operator_paused = True
             record.desired_running = False
             record.schedule_suspended = False
             record.resource_suspended = False
@@ -640,6 +661,7 @@ class WorkerSupervisor:
                         "model": record.launch.model_id,
                         "state": record.state.value,
                         "desired_running": record.desired_running,
+                        "operator_paused": record.operator_paused,
                         "auto_restart": record.launch.auto_restart,
                         "policy_admitted": record.launch.policy_admitted,
                         "policy_reason": record.launch.policy_reason,
@@ -650,6 +672,9 @@ class WorkerSupervisor:
                         "resource_reason": resource_reason,
                         "resource_suspended": record.resource_suspended,
                         "preferred": record.launch.preferred,
+                        "automatic": record.launch.automatic,
+                        "block_indices": record.launch.block_indices,
+                        "placement_reason": record.launch.placement_reason,
                         "max_disk_bytes": record.launch.max_disk_bytes,
                         "max_vram_bytes": record.launch.max_vram_bytes,
                         "vram_pool_bytes": record.launch.vram_pool_bytes,
@@ -681,6 +706,41 @@ class WorkerSupervisor:
     def launches(self) -> Tuple[WorkerLaunch, ...]:
         with self._lock:
             return tuple(record.launch for record in self._records.values())
+
+    def replace_launch(self, launch: WorkerLaunch, *, start: Optional[bool] = None) -> bool:
+        """Replace one paused worker assignment without overriding an explicit pause."""
+        record = self._record(launch.worker_id)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("worker supervisor is closed")
+            self._refresh_locked(record)
+            if (
+                record.desired_running
+                or record.process is not None
+                or record.suspension_stop_thread is not None
+                or record.state in (WorkerState.STARTING, WorkerState.STOPPING)
+            ):
+                raise WorkerReconfigurationBusyError(
+                    f"pause contribution worker {record.launch.worker_id!r} before replacing its placement"
+                )
+            changed = record.launch != launch
+            record.launch = launch
+            record.schedule_suspended = False
+            record.resource_suspended = False
+            record.last_power_watts = None
+            requested_start = launch.auto_start if start is None else start
+            # This decision is made while holding the same lock as pause_worker().
+            # An operator pause that lands after a reconciler snapshot therefore
+            # remains authoritative over stale automatic-start intent.
+            should_start = requested_start and not record.operator_paused
+            record.desired_running = should_start and launch.policy_admitted
+            if self._started and record.desired_running:
+                self._spawn_locked(
+                    record,
+                    defer_outside_schedule=True,
+                    defer_unavailable_resources=True,
+                )
+            return changed
 
     def reconfigure(self, settings: WorkerSupervisorSettings, *, persist: Callable[[], None]) -> None:
         """Persist and apply a prevalidated policy while every worker is paused.

@@ -1,11 +1,13 @@
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from drift.cli.run_node import (
+    _build_automatic_placement_service,
     _build_model_manager,
     _build_worker_supervisor,
     _load_persisted_and_runtime_config,
@@ -21,6 +23,7 @@ from drift.node.config import (
     NodeModelConfig,
     WorkerConfig,
 )
+from drift.node.contribution_planner import PlacementDecision, PlacementPlan, PlacementRegistry
 from drift.node.discovery import PeerCache
 from drift.node.model_manager import ModelRuntime, ModelState
 from drift.node.worker_supervisor import WorkerPolicyError
@@ -140,6 +143,29 @@ def test_node_config_parses_strict_worker_controls(tmp_path):
     assert worker.port == 31337
 
 
+def test_node_config_accepts_only_count_based_automatic_workers(tmp_path):
+    source = _config_dict(
+        workers=[
+            {
+                "id": "automatic",
+                "model": "auto",
+                "identity_path": "identities/automatic.key",
+                "num_blocks": 1,
+                "enabled": True,
+            }
+        ]
+    )
+
+    worker = NodeConfig.from_dict(source, base_dir=tmp_path).workers[0]
+
+    assert worker.model == "auto"
+    assert worker.num_blocks == 1
+    source["workers"][0].pop("num_blocks")
+    source["workers"][0]["block_indices"] = "0:1"
+    with pytest.raises(NodeConfigError, match="automatic model placement requires num_blocks"):
+        NodeConfig.from_dict(source, base_dir=tmp_path)
+
+
 @pytest.mark.parametrize(
     "source, message",
     [
@@ -253,6 +279,154 @@ def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch,
     assert frozen_supervisor.launches[0].command[:2] == (sys.executable, "server")
     assert "-m" not in frozen_supervisor.launches[0].command
     frozen_supervisor.shutdown()
+    manager.shutdown()
+
+
+def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    config = NodeConfig.from_dict(
+        _config_dict(
+            models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+            auto_model_priority=[manifest.digest_id],
+            workers=[
+                {
+                    "id": "automatic",
+                    "model": "auto",
+                    "identity_path": "automatic.key",
+                    "num_blocks": 1,
+                    "enabled": True,
+                    "device": "cpu",
+                }
+            ],
+            contribution_policy={
+                "sharing_enabled": True,
+                "max_disk_space": "1GiB",
+            },
+        ),
+        base_dir=tmp_path,
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+
+    waiting = _build_worker_supervisor(config, manager)
+    waiting_launch = waiting.launches[0]
+    assert waiting_launch.model_id == "auto"
+    assert waiting_launch.policy_admitted is False
+    assert waiting_launch.block_indices == "0:1"
+    assert "waiting for fresh eligible coverage" in waiting_launch.policy_reason
+    waiting.shutdown()
+
+    decision = PlacementDecision(
+        model_id=manifest.name,
+        manifest_digest=manifest.digest_id,
+        block_indices="1:2",
+        artifact_bytes=sum(artifact.size for artifact in manifest.artifacts),
+        replica_counts=(0,),
+        score=100,
+        reason="selected 1:2 from fresh verified coverage",
+    )
+    placed = _build_worker_supervisor(
+        config,
+        manager,
+        automatic_placements={
+            "automatic": PlacementPlan(decision, decision.reason, 1),
+        },
+    )
+    launch = placed.launches[0]
+    assert launch.model_id == manifest.name
+    assert launch.policy_admitted is True
+    assert launch.automatic is True
+    assert launch.block_indices == "1:2"
+    assert launch.command[launch.command.index("--block_indices") + 1] == "1:2"
+    assert "--num_blocks" not in launch.command
+    placed.shutdown()
+    manager.shutdown()
+
+
+@pytest.mark.parametrize("pause_while_waiting, expected_desired", [(False, True), (True, False)])
+def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
+    monkeypatch, tmp_path, pause_while_waiting, expected_desired
+):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        "drift.cli.run_node.make_manifest_loader",
+        lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
+    )
+    config = NodeConfig.from_dict(
+        _config_dict(
+            models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+            auto_model_priority=[manifest.digest_id],
+            workers=[
+                {
+                    "id": "automatic",
+                    "model": "auto",
+                    "identity_path": "automatic.key",
+                    "num_blocks": 1,
+                    "enabled": True,
+                    "device": "cpu",
+                }
+            ],
+            contribution_policy={
+                "sharing_enabled": True,
+                "max_disk_space": "1GiB",
+            },
+        ),
+        base_dir=tmp_path,
+    )
+    manager, _, discovery = _build_model_manager(config, token=None)
+    counts = [1] * manifest.model.num_blocks
+    counts[1] = 0
+    state = discovery._states[manifest.digest_id]
+    state.last_health = {
+        "status": "incomplete",
+        "total_blocks": manifest.model.num_blocks,
+        "covered_blocks": manifest.model.num_blocks - 1,
+        "missing_blocks": [1],
+        "minimum_replicas": 0,
+        "replica_counts": counts,
+        "peer_count": 1,
+        "last_updated_age": 0.0,
+    }
+    state.last_updated = time.monotonic()
+
+    registry = PlacementRegistry()
+    supervisor = _build_worker_supervisor(
+        config,
+        manager,
+        automatic_placements=registry.snapshot(),
+    )
+    service = _build_automatic_placement_service(
+        config,
+        manager,
+        discovery,
+        supervisor,
+        registry,
+        token=None,
+        config_path=None,
+        peer_cache=PeerCache(tmp_path / "peers.json"),
+    )
+    if pause_while_waiting:
+        supervisor.pause_worker("automatic")
+
+    service.reconcile_once()
+
+    launch = supervisor.launches[0]
+    assert launch.model_id == manifest.name
+    assert launch.block_indices == "1:2"
+    assert launch.policy_admitted is True
+    snapshot = supervisor.snapshot("automatic")
+    assert snapshot["desired_running"] is expected_desired
+    assert snapshot["operator_paused"] is pause_while_waiting
+    assert registry.snapshot()["automatic"].decision.manifest_digest == manifest.digest_id
+    service.close()
+    supervisor.shutdown()
     manager.shutdown()
 
 

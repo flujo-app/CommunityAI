@@ -416,10 +416,13 @@ class WorkerConfig:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", worker_id):
             raise NodeConfigError(f"{field}.id must match [A-Za-z0-9][A-Za-z0-9._-]{{0,63}}")
 
+        model = _require_string(source["model"], f"{field}.model")
         num_blocks_value = source.get("num_blocks")
         block_indices_value = source.get("block_indices")
         if (num_blocks_value is None) == (block_indices_value is None):
             raise NodeConfigError(f"{field} must provide exactly one of num_blocks or block_indices")
+        if model.casefold() == "auto" and block_indices_value is not None:
+            raise NodeConfigError(f"{field} automatic model placement requires num_blocks")
         num_blocks = (
             None if num_blocks_value is None else _require_positive_int(num_blocks_value, f"{field}.num_blocks")
         )
@@ -463,7 +466,7 @@ class WorkerConfig:
             max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
         return cls(
             worker_id=worker_id,
-            model=_require_string(source["model"], f"{field}.model"),
+            model=model,
             identity_path=_resolve_path(source["identity_path"], f"{field}.identity_path", base_dir),
             num_blocks=num_blocks,
             block_indices=block_indices,

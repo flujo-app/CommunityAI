@@ -126,6 +126,13 @@ def test_bootstrap_installs_verified_manifests_and_atomic_node_config(tmp_path):
     config = NodeConfig.load(config_path)
     assert len(config.models) == 2
     assert config.auto_model_priority == tuple(model.manifest_digest for model in envelope.signed.models)
+    assert len(config.workers) == 1
+    automatic = config.workers[0]
+    assert automatic.worker_id == "automatic"
+    assert automatic.model == "auto"
+    assert automatic.num_blocks == 1
+    assert automatic.enabled is True
+    assert automatic.identity_path == (data_dir / "worker-identities" / "automatic.key").resolve()
     assert all(model.initial_peers == (PEER,) for model in config.models)
     assert all(model.manifest_path.parent == (data_dir / "manifests").resolve() for model in config.models)
     assert (data_dir / "catalogs" / "communityai-test" / "catalog.signed.json").is_file()

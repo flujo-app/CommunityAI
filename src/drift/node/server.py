@@ -35,7 +35,7 @@ from drift.node.worker_supervisor import (
 )
 
 CONTROL_API_VERSION = 1
-CONTRIBUTION_STATUS_SCHEMA_VERSION = 2
+CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
 
 
 def _bounded_text(value, fallback: str, *, limit: int = 300) -> str:
@@ -88,6 +88,19 @@ def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, 
                     else "unknown"
                 ),
                 "desired_running": snapshot.get("desired_running") is True,
+                "placement": {
+                    "automatic": snapshot.get("automatic") is True,
+                    "block_indices": (
+                        _bounded_text(snapshot.get("block_indices"), "unassigned", limit=64)
+                        if snapshot.get("automatic") is True
+                        else None
+                    ),
+                    "reason": (
+                        _bounded_text(snapshot.get("placement_reason"), "placement is pending")
+                        if snapshot.get("automatic") is True
+                        else None
+                    ),
+                },
                 "policy": {
                     **_gate_status(snapshot, "policy"),
                     "preferred": snapshot.get("preferred") is True,

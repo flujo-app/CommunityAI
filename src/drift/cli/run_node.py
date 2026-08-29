@@ -7,6 +7,7 @@ import math
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Mapping
 
 import torch
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
@@ -14,6 +15,13 @@ from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 import drift
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
+from drift.node.contribution_planner import (
+    AutomaticContributionPlanner,
+    AutomaticPlacementService,
+    PlacementCandidate,
+    PlacementPlan,
+    PlacementRegistry,
+)
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery, PeerCache
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
 from drift.node.loading import make_manifest_loader
@@ -249,26 +257,100 @@ def _build_model_manager(
     return manager, tuple(descriptors), discovery
 
 
+def _model_key(descriptor: ModelDescriptor) -> str:
+    return (descriptor.manifest_digest or descriptor.model_id).casefold()
+
+
+def _resolve_policy_models(
+    manager: ModelManager,
+    selectors: tuple[str, ...],
+    field: str,
+) -> set[str]:
+    resolved = set()
+    for selector in selectors:
+        try:
+            resolved.add(_model_key(manager.resolve(selector)))
+        except ModelNotFoundError as exc:
+            raise NodeConfigError(f"contribution_policy.{field} selects {exc}") from exc
+    return resolved
+
+
+def _automatic_placement_candidates(
+    config: NodeConfig,
+    manager: ModelManager,
+    discovery: ModelCoverageDiscovery,
+    worker,
+    *,
+    token: str | None,
+) -> tuple[PlacementCandidate, ...]:
+    policy = config.contribution_policy
+    allowed = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
+    preferred = _resolve_policy_models(manager, policy.preferred_models, "preferred_models")
+    denied = _resolve_policy_models(manager, policy.denied_models, "denied_models")
+
+    ordered_keys = []
+    for selector in config.auto_model_priority:
+        key = _model_key(manager.resolve(selector))
+        if key not in ordered_keys:
+            ordered_keys.append(key)
+    manifested = []
+    for model_config in config.models:
+        manifest = ModelManifest.load(model_config.manifest_path)
+        descriptor = manager.resolve(manifest.digest_id)
+        key = _model_key(descriptor)
+        if key not in ordered_keys:
+            ordered_keys.append(key)
+        manifested.append((manifest, descriptor, key))
+    priority = {key: index for index, key in enumerate(ordered_keys)}
+
+    disk_limits = [value for value in (worker.max_disk_bytes, policy.max_disk_bytes) if value is not None]
+    effective_disk_bytes = min(disk_limits, default=None)
+    candidates = []
+    for manifest, descriptor, key in manifested:
+        artifact_bytes = sum(artifact.size for artifact in manifest.artifacts)
+        if key in denied:
+            reason = f"model {descriptor.model_id!r} is denied by contribution policy"
+        elif allowed and key not in allowed:
+            reason = f"model {descriptor.model_id!r} is not in the contribution allowlist"
+        elif manifest.model.gated and token is None:
+            reason = f"model {descriptor.model_id!r} requires gated artifact authorization"
+        elif effective_disk_bytes is None:
+            reason = "automatic placement requires a finite disk budget"
+        elif artifact_bytes > effective_disk_bytes:
+            reason = (
+                f"manifested artifacts require {artifact_bytes} bytes, above the "
+                f"{effective_disk_bytes}-byte disk budget"
+            )
+        else:
+            reason = None
+        candidates.append(
+            PlacementCandidate(
+                model_id=descriptor.model_id,
+                manifest_digest=descriptor.manifest_digest,
+                priority=priority[key],
+                preferred=key in preferred,
+                artifact_bytes=artifact_bytes,
+                total_blocks=manifest.model.num_blocks,
+                health=discovery.snapshot(manifest.digest_id),
+                policy_reason=reason,
+            )
+        )
+    return tuple(candidates)
+
+
 def _prepare_worker_supervisor_settings(
-    config: NodeConfig, manager: ModelManager, *, token: str | None = None
+    config: NodeConfig,
+    manager: ModelManager,
+    *,
+    token: str | None = None,
+    automatic_placements: Mapping[str, PlacementPlan] | None = None,
 ) -> WorkerSupervisorSettings:
     policy = config.contribution_policy
+    automatic_placements = {} if automatic_placements is None else automatic_placements
 
-    def model_key(descriptor: ModelDescriptor) -> str:
-        return (descriptor.manifest_digest or descriptor.model_id).casefold()
-
-    def resolve_policy_models(selectors: tuple[str, ...], field: str) -> set[str]:
-        resolved = set()
-        for selector in selectors:
-            try:
-                resolved.add(model_key(manager.resolve(selector)))
-            except ModelNotFoundError as exc:
-                raise NodeConfigError(f"contribution_policy.{field} selects {exc}") from exc
-        return resolved
-
-    allowed_models = resolve_policy_models(policy.allowed_models, "allowed_models")
-    preferred_models = resolve_policy_models(policy.preferred_models, "preferred_models")
-    denied_models = resolve_policy_models(policy.denied_models, "denied_models")
+    allowed_models = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
+    preferred_models = _resolve_policy_models(manager, policy.preferred_models, "preferred_models")
+    denied_models = _resolve_policy_models(manager, policy.denied_models, "denied_models")
     if allowed_models.intersection(denied_models):
         raise NodeConfigError("contribution policy resolves the same model as both allowed and denied")
     if preferred_models.intersection(denied_models):
@@ -299,26 +381,52 @@ def _prepare_worker_supervisor_settings(
 
     launches = []
     for worker in config.workers:
+        automatic = worker.model.casefold() == "auto"
+        if automatic and worker.num_blocks is None:
+            raise NodeConfigError(f"automatic worker {worker.worker_id!r} requires a positive num_blocks value")
+        placement = automatic_placements.get(worker.worker_id.casefold())
+        decision = None if placement is None else placement.decision
+        if automatic:
+            fallback_selector = (
+                config.auto_model_priority[0]
+                if config.auto_model_priority
+                else ModelManifest.load(config.models[0].manifest_path).digest_id
+            )
+            selector = fallback_selector if decision is None else decision.manifest_digest
+        else:
+            selector = worker.model
         try:
-            descriptor = manager.resolve(worker.model)
+            descriptor = manager.resolve(selector)
         except ModelNotFoundError as exc:
             raise NodeConfigError(f"worker {worker.worker_id!r} selects {exc}") from exc
         model_config, manifest = manifested_models[descriptor.manifest_digest]
-        if worker.num_blocks is not None and worker.num_blocks > manifest.model.num_blocks:
+        if automatic:
+            selected_num_blocks = None
+            selected_block_indices = f"0:{worker.num_blocks}" if decision is None else decision.block_indices
+            placement_reason = (
+                "automatic placement is waiting for fresh eligible coverage" if placement is None else placement.reason
+            )
+        else:
+            selected_num_blocks = worker.num_blocks
+            selected_block_indices = worker.block_indices
+            placement_reason = None
+        if selected_num_blocks is not None and selected_num_blocks > manifest.model.num_blocks:
             raise NodeConfigError(
-                f"worker {worker.worker_id!r} requests {worker.num_blocks} blocks from a "
+                f"worker {worker.worker_id!r} requests {selected_num_blocks} blocks from a "
                 f"{manifest.model.num_blocks}-block model"
             )
-        if worker.block_indices is not None and int(worker.block_indices.split(":")[1]) > manifest.model.num_blocks:
+        if selected_block_indices is not None and int(selected_block_indices.split(":")[1]) > manifest.model.num_blocks:
             raise NodeConfigError(
                 f"worker {worker.worker_id!r} block range exceeds model size {manifest.model.num_blocks}"
             )
         if worker.public_ip is not None and worker.port is None:
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
 
-        resolved_model = model_key(descriptor)
+        resolved_model = _model_key(descriptor)
         if not policy.sharing_enabled:
             policy_reason = "sharing is disabled by contribution policy"
+        elif automatic and decision is None:
+            policy_reason = placement_reason
         elif resolved_model in denied_models:
             policy_reason = f"model {descriptor.model_id!r} is denied by contribution policy"
         elif allowed_models and resolved_model not in allowed_models:
@@ -407,10 +515,10 @@ def _prepare_worker_supervisor_settings(
             "--throughput",
             str(worker.throughput),
         ]
-        if worker.num_blocks is not None:
-            command.extend(("--num_blocks", str(worker.num_blocks)))
+        if selected_num_blocks is not None:
+            command.extend(("--num_blocks", str(selected_num_blocks)))
         else:
-            command.extend(("--block_indices", worker.block_indices))
+            command.extend(("--block_indices", selected_block_indices))
         if worker.device is not None:
             command.extend(("--device", worker.device))
         cache_dir = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
@@ -430,7 +538,7 @@ def _prepare_worker_supervisor_settings(
         launches.append(
             WorkerLaunch(
                 worker_id=worker.worker_id,
-                model_id=descriptor.model_id,
+                model_id=("auto" if automatic and decision is None else descriptor.model_id),
                 command=tuple(command),
                 auto_start=worker.enabled,
                 auto_restart=worker.auto_restart,
@@ -438,6 +546,9 @@ def _prepare_worker_supervisor_settings(
                 policy_admitted=policy_admitted,
                 policy_reason=policy_reason,
                 preferred=resolved_model in preferred_models,
+                automatic=automatic,
+                block_indices=selected_block_indices if automatic else None,
+                placement_reason=placement_reason,
                 max_disk_bytes=effective_disk_bytes,
                 max_vram_bytes=effective_vram_bytes,
                 vram_device=vram_device,
@@ -472,15 +583,98 @@ def _prepare_worker_supervisor_settings(
 
 
 def _build_worker_supervisor(
-    config: NodeConfig, manager: ModelManager, *, token: str | None = None
+    config: NodeConfig,
+    manager: ModelManager,
+    *,
+    token: str | None = None,
+    automatic_placements: Mapping[str, PlacementPlan] | None = None,
 ) -> WorkerSupervisor:
-    settings = _prepare_worker_supervisor_settings(config, manager, token=token)
+    settings = _prepare_worker_supervisor_settings(
+        config,
+        manager,
+        token=token,
+        automatic_placements=automatic_placements,
+    )
     return WorkerSupervisor(
         settings.launches,
         stop_timeout=settings.stop_timeout,
         schedule_allowed=settings.schedule_allowed,
         bandwidth_mbps=settings.bandwidth_mbps,
         power_watts=settings.power_watts,
+    )
+
+
+def _build_automatic_placement_service(
+    config: NodeConfig,
+    manager: ModelManager,
+    discovery: ModelCoverageDiscovery,
+    supervisor: WorkerSupervisor,
+    registry: PlacementRegistry,
+    *,
+    token: str | None,
+    config_path: Path | None,
+    peer_cache: PeerCache,
+) -> AutomaticPlacementService | None:
+    automatic_workers = tuple(worker for worker in config.workers if worker.model.casefold() == "auto")
+    if not automatic_workers:
+        return None
+    planners = {
+        worker.worker_id.casefold(): AutomaticContributionPlanner(
+            num_blocks=worker.num_blocks,
+            jitter_seed=str(worker.identity_path),
+            maximum_observation_age_seconds=max(90.0, config.discovery_update_period * 3),
+        )
+        for worker in automatic_workers
+    }
+
+    def reconcile() -> None:
+        current = config if config_path is None else NodeConfig.load(config_path)
+        current = _merge_cached_initial_peers(current, peer_cache)
+        current_workers = {
+            worker.worker_id.casefold(): worker for worker in current.workers if worker.model.casefold() == "auto"
+        }
+        plans = {}
+        for worker_id, planner in planners.items():
+            worker = current_workers.get(worker_id)
+            if worker is None:
+                continue
+            candidates = _automatic_placement_candidates(
+                current,
+                manager,
+                discovery,
+                worker,
+                token=token,
+            )
+            plans[worker_id] = planner.plan(
+                candidates,
+                sharing_enabled=current.contribution_policy.sharing_enabled,
+            )
+        registry.replace(plans)
+        settings = _prepare_worker_supervisor_settings(
+            current,
+            manager,
+            token=token,
+            automatic_placements=registry.snapshot(),
+        )
+        desired_launches = {launch.worker_id.casefold(): launch for launch in settings.launches if launch.automatic}
+        current_launches = {launch.worker_id.casefold(): launch for launch in supervisor.launches if launch.automatic}
+        for worker_id, launch in desired_launches.items():
+            previous = current_launches.get(worker_id)
+            if previous is None or previous == launch:
+                continue
+            snapshot = supervisor.snapshot(launch.worker_id)
+            was_desired = snapshot["desired_running"]
+            operator_paused = snapshot["operator_paused"]
+            if was_desired or snapshot["state"] in ("starting", "running", "stopping"):
+                supervisor.pause_worker_for_reconfiguration(launch.worker_id)
+            # A newly eligible placeholder honors auto-start unless the operator
+            # explicitly paused it while coverage or policy kept it ineligible.
+            start = False if operator_paused else (None if not previous.policy_admitted else was_desired)
+            supervisor.replace_launch(launch, start=start)
+
+    return AutomaticPlacementService(
+        reconcile=reconcile,
+        period=min(config.discovery_update_period, 5.0),
     )
 
 
@@ -541,7 +735,13 @@ def main() -> None:
             peer_cache=peer_cache,
             peer_cache_scopes=peer_cache_scopes,
         )
-        worker_supervisor = _build_worker_supervisor(config, manager, token=args.token)
+        placement_registry = PlacementRegistry()
+        worker_supervisor = _build_worker_supervisor(
+            config,
+            manager,
+            token=args.token,
+            automatic_placements=placement_registry.snapshot(),
+        )
         policy_store = (
             None
             if args.config is None
@@ -549,10 +749,23 @@ def main() -> None:
                 args.config,
                 worker_supervisor,
                 lambda candidate: _prepare_worker_supervisor_settings(
-                    _merge_cached_initial_peers(candidate, peer_cache), manager, token=args.token
+                    _merge_cached_initial_peers(candidate, peer_cache),
+                    manager,
+                    token=args.token,
+                    automatic_placements=placement_registry.snapshot(),
                 ),
                 expected_config=persisted_config,
             )
+        )
+        placement_service = _build_automatic_placement_service(
+            config,
+            manager,
+            discovery,
+            worker_supervisor,
+            placement_registry,
+            token=args.token,
+            config_path=args.config,
+            peer_cache=peer_cache,
         )
     except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))
@@ -614,9 +827,13 @@ def main() -> None:
     )
     discovery.start()
     worker_supervisor.start_service()
+    if placement_service is not None:
+        placement_service.start()
     try:
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     finally:
+        if placement_service is not None:
+            placement_service.close()
         worker_supervisor.shutdown()
         manager.shutdown()
 

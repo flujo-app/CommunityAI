@@ -506,7 +506,15 @@ class CatalogBootstrapInstaller:
             "max_loaded_models": self.bootstrap.max_loaded_models,
             "models": models,
             "auto_model_priority": [model.manifest_digest for _, model in ranked_models],
-            "workers": [],
+            "workers": [
+                {
+                    "id": "automatic",
+                    "model": "auto",
+                    "identity_path": str(self.config_path.parent / "worker-identities" / "automatic.key"),
+                    "num_blocks": 1,
+                    "enabled": True,
+                }
+            ],
         }
         try:
             NodeConfig.from_dict(source, base_dir=self.config_path.parent)
