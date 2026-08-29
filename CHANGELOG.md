@@ -48,8 +48,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   existing placement without advancing planner hysteresis. Completed local generations
   now contribute exact-manifest demand, useful-throughput, and reliability through two
   bounded five-minute aggregate windows that retain no per-request history. Only strict
-  quantized buckets reach placement; their multiplicative utility is capped below the
-  migration margin and cannot override coverage, policy, signed intent, or operator pause.
+  quantized buckets reach placement. Closed windows with at least four completed routes may
+  be signed by a dedicated router identity and published to remote DHT peers with a 90-second
+  lifetime; consumers reject local, duplicate, stale, malformed, revoked, replayed, or
+  mismatched records, require two remote signers, and median at most 32 observations. Local
+  utility is capped at six points and signed remote utility at two, so their combined hint
+  stays below the migration margin and cannot override coverage, policy, signed intent, or
+  operator pause.
 
 ### Changed
 

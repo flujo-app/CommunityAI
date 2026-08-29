@@ -12,6 +12,7 @@ from drift.cli.run_node import (
     _build_worker_supervisor,
     _load_persisted_and_runtime_config,
     _merge_cached_initial_peers,
+    _prepare_route_identity,
 )
 from drift.model_manifest import ModelManifest
 from drift.node.config import (
@@ -28,6 +29,7 @@ from drift.node.discovery import PeerCache
 from drift.node.model_manager import ModelRuntime, ModelState
 from drift.node.route_metrics import RouteOutcomeTracker
 from drift.node.worker_supervisor import WorkerPolicyError
+from drift.protocol_identity import NodeIdentity, ProtocolSecurityError
 
 
 def _config_dict(**overrides):
@@ -407,12 +409,32 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         return publish_succeeds
 
     monkeypatch.setattr(discovery, "publish_intent", publish_intent)
+    demand_calls = []
+    monkeypatch.setattr(
+        discovery,
+        "publish_route_demand",
+        lambda digest_id, source: demand_calls.append((digest_id, source)) or True,
+    )
     route_outcomes = RouteOutcomeTracker()
     route_outcomes.record(
         manifest_digest=manifest.digest_id,
         succeeded=True,
         completion_tokens=8,
         duration_seconds=2,
+    )
+    monkeypatch.setattr(
+        route_outcomes,
+        "closed_snapshot",
+        lambda digest_id: {
+            "schema_version": 1,
+            "manifest_digest": digest_id,
+            "window_seconds": 300,
+            "attempts_bucket": 4,
+            "successes_bucket": 2,
+            "useful_tokens_per_second_milli": 2_000,
+            "reliability_milli": 500,
+            "age_seconds_bucket": 15,
+        },
     )
     registry = PlacementRegistry()
     supervisor = _build_worker_supervisor(
@@ -430,7 +452,10 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         config_path=None,
         peer_cache=PeerCache(tmp_path / "peers.json"),
         route_outcomes=route_outcomes,
+        route_identity_path=tmp_path / "route-demand.key",
     )
+    router_key_id = NodeIdentity.load(tmp_path / "route-demand.key").key_id
+    assert router_key_id in discovery._local_route_demand_keys
     if pause_while_waiting:
         supervisor.pause_worker("automatic")
 
@@ -446,6 +471,20 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     assert published["payload"]["start_block"] == 1
     assert published["payload"]["end_block"] == 2
     assert "private_path" not in published["payload"]["resource_claims"]
+    assert len(demand_calls) == 1
+    demand = demand_calls[0][1]
+    assert demand["kind"] == "route_demand"
+    assert demand["key_id"] != published["key_id"]
+    assert set(demand["payload"]["observation"]) == {
+        "schema_version",
+        "manifest_digest",
+        "window_seconds",
+        "attempts_bucket",
+        "successes_bucket",
+        "useful_tokens_per_second_milli",
+        "reliability_milli",
+        "age_seconds_bucket",
+    }
     if publish_succeeds:
         assert launch.model_id == manifest.name
         assert launch.block_indices == "1:2"
@@ -908,3 +947,17 @@ def test_accelerator_worker_requires_node_wide_vram_pool(monkeypatch, tmp_path):
         _build_worker_supervisor(config, manager)
 
     manager.shutdown()
+
+
+@pytest.mark.parametrize("error", [OSError("unwritable"), ProtocolSecurityError("corrupt")])
+def test_router_identity_failure_disables_only_remote_demand(monkeypatch, tmp_path, error):
+    registered = []
+
+    class Discovery:
+        def register_local_route_demand_key(self, key_id):
+            registered.append(key_id)
+
+    monkeypatch.setattr(NodeIdentity, "ensure", lambda path: (_ for _ in ()).throw(error))
+
+    assert _prepare_route_identity(Discovery(), tmp_path / "route-demand.key") is None
+    assert registered == []

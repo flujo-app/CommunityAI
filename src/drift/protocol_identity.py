@@ -630,6 +630,125 @@ def verify_intent_lease(
     return record
 
 
+ROUTE_DEMAND_SCHEMA_VERSION = 1
+ROUTE_DEMAND_MAX_TTL_SECONDS = 90
+_ROUTE_DEMAND_FIELDS = (
+    "schema_version",
+    "manifest_digest",
+    "window_seconds",
+    "attempts_bucket",
+    "successes_bucket",
+    "useful_tokens_per_second_milli",
+    "reliability_milli",
+    "age_seconds_bucket",
+)
+_ROUTE_DEMAND_COUNT_BUCKETS = {0, 1, 2, 4, 8, 16, 32, 64}
+_ROUTE_DEMAND_THROUGHPUT_BUCKETS = {0, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000}
+
+
+def _validate_route_demand_observation(
+    value: Mapping[str, Any], *, expected_manifest_digest: Optional[str] = None
+) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ProtocolSecurityError("route demand observation must be an object")
+    _strict_fields(value, _ROUTE_DEMAND_FIELDS, name="route demand observation")
+    schema_version = _require_int(value["schema_version"], name="route demand schema_version", minimum=1)
+    if schema_version != ROUTE_DEMAND_SCHEMA_VERSION:
+        raise ProtocolSecurityError(f"unsupported route demand schema version {schema_version}")
+    manifest_digest = _require_text(value["manifest_digest"], name="route demand manifest_digest")
+    if not manifest_digest.startswith("sha256:"):
+        raise ProtocolSecurityError("route demand manifest_digest must use the sha256: prefix")
+    digest = _require_digest(manifest_digest.removeprefix("sha256:"), name="route demand manifest_digest")
+    if expected_manifest_digest is not None and digest != expected_manifest_digest:
+        raise ProtocolSecurityError("route demand is bound to a different manifest")
+    window_seconds = _require_int(value["window_seconds"], name="route demand window_seconds", minimum=60)
+    if window_seconds != 5 * 60:
+        raise ProtocolSecurityError("route demand must use a closed five-minute window")
+    attempts = _require_int(value["attempts_bucket"], name="route demand attempts_bucket", minimum=4)
+    successes = _require_int(value["successes_bucket"], name="route demand successes_bucket", minimum=0)
+    if (
+        attempts not in _ROUTE_DEMAND_COUNT_BUCKETS
+        or successes not in _ROUTE_DEMAND_COUNT_BUCKETS
+        or successes > attempts
+    ):
+        raise ProtocolSecurityError("route demand count buckets are invalid")
+    throughput = _require_int(value["useful_tokens_per_second_milli"], name="route demand throughput bucket", minimum=0)
+    if throughput not in _ROUTE_DEMAND_THROUGHPUT_BUCKETS:
+        raise ProtocolSecurityError("route demand throughput bucket is invalid")
+    reliability = _require_int(value["reliability_milli"], name="route demand reliability bucket", minimum=0)
+    if reliability > 1000 or reliability % 100:
+        raise ProtocolSecurityError("route demand reliability must use 10-percent buckets")
+    age = _require_int(value["age_seconds_bucket"], name="route demand age bucket", minimum=0)
+    if age > window_seconds or age % 15:
+        raise ProtocolSecurityError("route demand age must use bounded 15-second buckets")
+    return {
+        "schema_version": schema_version,
+        "manifest_digest": f"sha256:{digest}",
+        "window_seconds": window_seconds,
+        "attempts_bucket": attempts,
+        "successes_bucket": successes,
+        "useful_tokens_per_second_milli": throughput,
+        "reliability_milli": reliability,
+        "age_seconds_bucket": age,
+    }
+
+
+def _validate_route_demand_lifetime(payload: Mapping[str, Any], *, now: Optional[float]) -> Tuple[int, int]:
+    issued_at_ms, expires_at_ms = _validate_lifetime(payload, now=now)
+    if expires_at_ms - issued_at_ms > ROUTE_DEMAND_MAX_TTL_SECONDS * 1000:
+        raise ProtocolSecurityError("route demand lifetime exceeds 90 seconds")
+    return issued_at_ms, expires_at_ms
+
+
+def create_route_demand(
+    identity: NodeIdentity,
+    *,
+    manifest_digest: str,
+    observation: Mapping[str, Any],
+    issued_at: float,
+    expires_at: float,
+    sequence: int,
+) -> SignedRecord:
+    digest = _require_digest(manifest_digest, name="manifest_digest")
+    payload = {
+        "manifest_digest": digest,
+        "observation": _validate_route_demand_observation(observation, expected_manifest_digest=digest),
+        "issued_at_ms": int(issued_at * 1000),
+        "expires_at_ms": int(expires_at * 1000),
+        "sequence": _require_int(sequence, name="sequence", minimum=0),
+    }
+    _validate_route_demand_lifetime(payload, now=issued_at)
+    return SignedRecord.create("route_demand", payload, identity)
+
+
+def verify_route_demand(
+    source: Mapping[str, Any],
+    *,
+    expected_manifest_digest: Optional[str] = None,
+    now: Optional[float] = None,
+    revocations: Optional[RevocationStore] = None,
+    replay_guard: Optional[ReplayGuard] = None,
+) -> SignedRecord:
+    record = SignedRecord.from_dict(source)
+    record.verify(expected_kind="route_demand")
+    _strict_fields(
+        record.payload,
+        ("manifest_digest", "observation", "issued_at_ms", "expires_at_ms", "sequence"),
+        name="route demand payload",
+    )
+    digest = _require_digest(record.payload["manifest_digest"], name="manifest_digest")
+    if expected_manifest_digest is not None and digest != expected_manifest_digest:
+        raise ProtocolSecurityError("route demand is bound to a different manifest")
+    _validate_route_demand_observation(record.payload["observation"], expected_manifest_digest=digest)
+    _validate_route_demand_lifetime(record.payload, now=now)
+    _require_int(record.payload["sequence"], name="sequence", minimum=0)
+    if revocations is not None:
+        revocations.require_active(record.key_id)
+    if replay_guard is not None:
+        replay_guard.check(record)
+    return record
+
+
 def create_rotation_record(
     old_identity: NodeIdentity, new_identity: NodeIdentity, *, issued_at: Optional[float] = None, sequence: int = 0
 ) -> Dict[str, Any]:

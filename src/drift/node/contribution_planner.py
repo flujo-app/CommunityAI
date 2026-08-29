@@ -24,6 +24,7 @@ class PlacementCandidate:
     total_blocks: int
     health: Mapping[str, Any]
     route_observation: Optional[Mapping[str, Any]] = None
+    remote_route_observation: Optional[Mapping[str, Any]] = None
     policy_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -112,12 +113,14 @@ class AutomaticContributionPlanner:
         value = int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
         return value / ((1 << 64) - 1)
 
-    def _route_signal(self, candidate: PlacementCandidate) -> tuple[float, Optional[RouteUtilityObservation]]:
-        if candidate.route_observation is None:
+    def _route_signal(
+        self, source: Optional[Mapping[str, Any]], candidate: PlacementCandidate, *, cap: float
+    ) -> tuple[float, Optional[RouteUtilityObservation]]:
+        if source is None:
             return 0.0, None
         try:
             observation = validate_route_observation(
-                candidate.route_observation,
+                source,
                 expected_manifest_digest=candidate.manifest_digest,
                 maximum_age_seconds=self._maximum_observation_age,
             )
@@ -129,10 +132,7 @@ class AutomaticContributionPlanner:
         useful_tps = observation.useful_tokens_per_second_milli / 1000
         useful_throughput = min(1.0, math.log2(1 + useful_tps) / math.log2(65))
         reliability = observation.reliability_milli / 1000
-        # Only completed-route measurements contribute useful utility. The six-point
-        # cap is below the ten-point switch margin and far below one 100-point
-        # replica-coverage step, so this hint cannot independently force migration.
-        return 6.0 * demand * useful_throughput * reliability, observation
+        return cap * demand * useful_throughput * reliability, observation
 
     def _evaluate(self, candidate: PlacementCandidate) -> tuple[Optional[PlacementDecision], str]:
         if candidate.policy_reason is not None:
@@ -171,21 +171,31 @@ class AutomaticContributionPlanner:
         coverage_pressure = max(0, 2 - minimum_replicas) * 100.0
         preference_bonus = 20.0 if candidate.preferred else 0.0
         priority_bonus = 10.0 / (candidate.priority + 1)
-        route_signal, observation = self._route_signal(candidate)
+        local_signal, local_observation = self._route_signal(candidate.route_observation, candidate, cap=6.0)
+        remote_signal, remote_observation = self._route_signal(candidate.remote_route_observation, candidate, cap=2.0)
+        # The combined eight-point demand cap stays below the ten-point switch
+        # margin and far below one 100-point coverage step.
         score = (
             coverage_pressure
             + preference_bonus
             + priority_bonus
-            + route_signal
+            + local_signal
+            + remote_signal
             + self._jitter(candidate.manifest_digest)
         )
         end = start + self.num_blocks
         reason = f"selected {start}:{end} from fresh verified coverage; minimum replicas {minimum_replicas}"
-        if observation is not None:
+        if local_observation is not None:
             reason += (
-                f"; local demand bucket {observation.attempts_bucket}, useful throughput bucket "
-                f"{observation.useful_tokens_per_second_milli} milli-tokens/s, reliability "
-                f"{observation.reliability_milli}/1000"
+                f"; local demand bucket {local_observation.attempts_bucket}, useful throughput bucket "
+                f"{local_observation.useful_tokens_per_second_milli} milli-tokens/s, reliability "
+                f"{local_observation.reliability_milli}/1000"
+            )
+        if remote_observation is not None:
+            reason += (
+                f"; signed remote demand bucket {remote_observation.attempts_bucket}, useful throughput bucket "
+                f"{remote_observation.useful_tokens_per_second_milli} milli-tokens/s, reliability "
+                f"{remote_observation.reliability_milli}/1000"
             )
         return (
             PlacementDecision(

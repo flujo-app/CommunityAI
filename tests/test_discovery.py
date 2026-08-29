@@ -16,7 +16,7 @@ from drift.node.discovery import (
     PeerCache,
     _connected_peer_addresses,
 )
-from drift.protocol_identity import NodeIdentity, create_intent_lease
+from drift.protocol_identity import NodeIdentity, create_intent_lease, create_route_demand
 
 PUBLIC_PEER = "/ip4/8.8.8.8/tcp/31337/p2p/Qm" + "A" * 44
 SECOND_PUBLIC_PEER = "/ip6/2606:4700:4700::1111/tcp/31337/p2p/Qm" + "B" * 44
@@ -345,3 +345,100 @@ def test_discovery_shutdown_calls_each_dht_only_once_across_thread_race():
     discovery.close()
 
     assert dht.shutdown_calls == 1
+
+
+def _route_demand_record(identity, manifest, *, now, attempts, successes, sequence):
+    return create_route_demand(
+        identity,
+        manifest_digest=manifest.digest,
+        observation={
+            "schema_version": 1,
+            "manifest_digest": manifest.digest_id,
+            "window_seconds": 300,
+            "attempts_bucket": attempts,
+            "successes_bucket": successes,
+            "useful_tokens_per_second_milli": attempts * 500,
+            "reliability_milli": 500,
+            "age_seconds_bucket": 15,
+        },
+        issued_at=now,
+        expires_at=now + 90,
+        sequence=sequence,
+    )
+
+
+def test_route_demand_publication_is_remote_only_and_uses_a_router_subkey(tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    initial_peers = ("peer-one",)
+    dht = IntentFakeDHT()
+    discovery = ModelCoverageDiscovery([CoverageTarget(manifest, initial_peers)])
+    discovery._dhts[initial_peers] = dht
+    identity = NodeIdentity.create(tmp_path / "router.key")
+    now = time.time()
+    record = _route_demand_record(identity, manifest, now=now, attempts=4, successes=2, sequence=1)
+
+    assert discovery.publish_route_demand(manifest.digest_id, record.to_dict()) is True
+    call = dht.store_calls[0]
+    assert call["key"] == f"{manifest.dht_prefix}.demand-v1"
+    assert call["subkey"] == identity.key_id
+    assert call["exclude_self"] is True
+    assert identity.key_id in discovery._local_route_demand_keys
+
+
+def test_remote_route_demand_is_verified_deduplicated_and_thresholded(tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    discovery = ModelCoverageDiscovery([CoverageTarget(manifest, ("peer-one",))])
+    state = discovery._states[manifest.digest_id]
+    now = time.time()
+    first_identity = NodeIdentity.create(tmp_path / "router-one.key")
+    second_identity = NodeIdentity.create(tmp_path / "router-two.key")
+    first = _route_demand_record(first_identity, manifest, now=now, attempts=4, successes=2, sequence=1)
+    second = _route_demand_record(second_identity, manifest, now=now, attempts=16, successes=8, sequence=1)
+
+    class RemoteDemandDHT:
+        def __init__(self, values):
+            self.values = values
+
+        def get(self, key, latest):
+            assert key == f"{manifest.dht_prefix}.demand-v1"
+            assert latest is True
+            return SimpleNamespace(value={name: SimpleNamespace(value=value) for name, value in self.values.items()})
+
+    crowded = {f"wrong-subkey-{index}": first.to_dict() for index in range(32)}
+    crowded[first.key_id] = first.to_dict()
+    crowded[second.key_id] = second.to_dict()
+    aggregate = discovery._read_remote_route_observations(state, RemoteDemandDHT(crowded))
+    assert aggregate["attempts_bucket"] == 4
+    assert aggregate["successes_bucket"] == 2
+
+    deeply_nested = {}
+    cursor = deeply_nested
+    for _ in range(32):
+        cursor["nested"] = {}
+        cursor = cursor["nested"]
+    isolated = discovery._read_remote_route_observations(
+        state,
+        RemoteDemandDHT(
+            {
+                "malformed": deeply_nested,
+                first.key_id: first.to_dict(),
+                second.key_id: second.to_dict(),
+            }
+        ),
+    )
+    assert isolated["attempts_bucket"] == 4
+    overloaded = {f"wrong-{index}": first.to_dict() for index in range(257)}
+    assert discovery._read_remote_route_observations(state, RemoteDemandDHT(overloaded)) is None
+
+    discovery._set_remote_route_observation(state, aggregate)
+    state.remote_route_updated = time.monotonic() - 16
+    assert discovery.route_demand_snapshot(manifest.digest_id)["age_seconds_bucket"] == 45
+
+    discovery.register_local_route_demand_key(first_identity.key_id)
+    assert (
+        discovery._read_remote_route_observations(
+            state,
+            RemoteDemandDHT({first.key_id: first.to_dict(), second.key_id: second.to_dict()}),
+        )
+        is None
+    )

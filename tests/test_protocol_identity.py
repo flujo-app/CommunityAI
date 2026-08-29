@@ -16,9 +16,11 @@ from drift.protocol_identity import (
     create_intent_lease,
     create_revocation_record,
     create_rotation_record,
+    create_route_demand,
     create_worker_announcement,
     verify_intent_lease,
     verify_rotation_record,
+    verify_route_demand,
     verify_worker_announcement,
 )
 from drift.utils.dht import _get_remote_module_infos, get_remote_module_infos
@@ -415,3 +417,89 @@ def test_identity_cli_never_overwrites_private_keys_with_trust_records(tmp_path,
         run_identity.main()
     assert not new_identity_path.exists()
     assert occupied_output.read_text(encoding="utf-8") == "keep"
+
+
+def test_route_demand_is_signed_thresholded_and_privacy_bounded(tmp_path):
+    identity = make_identity(tmp_path, "router.key")
+    now = time.time()
+    observation = {
+        "schema_version": 1,
+        "manifest_digest": "sha256:" + MANIFEST_DIGEST,
+        "window_seconds": 300,
+        "attempts_bucket": 4,
+        "successes_bucket": 2,
+        "useful_tokens_per_second_milli": 2_000,
+        "reliability_milli": 500,
+        "age_seconds_bucket": 15,
+    }
+    record = create_route_demand(
+        identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=now,
+        expires_at=now + 90,
+        sequence=1,
+    )
+
+    verified = verify_route_demand(
+        record.to_dict(),
+        expected_manifest_digest=MANIFEST_DIGEST,
+        now=now,
+    )
+    assert verified.key_id == identity.key_id
+    assert set(verified.payload) == {
+        "manifest_digest",
+        "observation",
+        "issued_at_ms",
+        "expires_at_ms",
+        "sequence",
+    }
+    assert set(verified.payload["observation"]) == set(observation)
+
+    with pytest.raises(ProtocolSecurityError, match="lifetime exceeds 90 seconds"):
+        create_route_demand(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            observation=observation,
+            issued_at=now,
+            expires_at=now + 91,
+            sequence=2,
+        )
+
+    long_lived = SignedRecord.create(
+        "route_demand",
+        {
+            "manifest_digest": MANIFEST_DIGEST,
+            "observation": observation,
+            "issued_at_ms": int(now * 1000),
+            "expires_at_ms": int((now + 600) * 1000),
+            "sequence": 2,
+        },
+        identity,
+    )
+    with pytest.raises(ProtocolSecurityError, match="lifetime exceeds 90 seconds"):
+        verify_route_demand(long_lived.to_dict(), now=now)
+
+    with pytest.raises(ProtocolSecurityError, match="at least 4"):
+        create_route_demand(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            observation=dict(observation, attempts_bucket=2, successes_bucket=1),
+            issued_at=now,
+            expires_at=now + 90,
+            sequence=2,
+        )
+    with pytest.raises(ProtocolSecurityError, match="unknown fields"):
+        create_route_demand(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            observation=dict(observation, request_id="forbidden"),
+            issued_at=now,
+            expires_at=now + 90,
+            sequence=3,
+        )
+
+    tampered = record.to_dict()
+    tampered["payload"]["observation"]["attempts_bucket"] = 8
+    with pytest.raises(ProtocolSecurityError, match="invalid signature"):
+        verify_route_demand(tampered, now=now)

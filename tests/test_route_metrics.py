@@ -1,6 +1,6 @@
 import pytest
 
-from drift.node.route_metrics import RouteOutcomeTracker, validate_route_observation
+from drift.node.route_metrics import RouteOutcomeTracker, aggregate_route_observations, validate_route_observation
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -167,3 +167,65 @@ def test_route_observation_validation_is_exact_digest_bound_and_fresh():
 def test_tracker_rejects_unbounded_or_invalid_inputs(kwargs):
     with pytest.raises(ValueError):
         RouteOutcomeTracker().record(**kwargs)
+
+
+def test_only_closed_thresholded_windows_are_publishable():
+    now = [299.0]
+    tracker = RouteOutcomeTracker(clock=lambda: now[0])
+    for _ in range(4):
+        tracker.record(
+            manifest_digest=DIGEST,
+            succeeded=True,
+            completion_tokens=2,
+            duration_seconds=1,
+        )
+
+    assert tracker.closed_snapshot(DIGEST) is None
+    now[0] = 301.0
+    closed = tracker.closed_snapshot(DIGEST)
+    assert closed["attempts_bucket"] == 4
+    assert closed["successes_bucket"] == 4
+
+    sparse = RouteOutcomeTracker(clock=lambda: now[0])
+    now[0] = 599.0
+    for _ in range(3):
+        sparse.record(manifest_digest=DIGEST, succeeded=True, completion_tokens=1, duration_seconds=1)
+    now[0] = 601.0
+    assert sparse.closed_snapshot(DIGEST) is None
+
+
+def test_remote_aggregate_requires_two_valid_signers_and_uses_bounded_medians():
+    first = {
+        "schema_version": 1,
+        "manifest_digest": DIGEST,
+        "window_seconds": 300,
+        "attempts_bucket": 4,
+        "successes_bucket": 2,
+        "useful_tokens_per_second_milli": 2_000,
+        "reliability_milli": 500,
+        "age_seconds_bucket": 15,
+    }
+    second = dict(
+        first,
+        attempts_bucket=16,
+        successes_bucket=8,
+        useful_tokens_per_second_milli=8_000,
+        reliability_milli=800,
+        age_seconds_bucket=30,
+    )
+    malformed = dict(first, private_request_id="forbidden")
+
+    assert (
+        aggregate_route_observations(
+            (first,),
+            expected_manifest_digest=DIGEST,
+            maximum_age_seconds=90,
+        )
+        is None
+    )
+    aggregate = aggregate_route_observations(
+        (malformed, first, second),
+        expected_manifest_digest=DIGEST,
+        maximum_age_seconds=90,
+    )
+    assert aggregate == dict(first, age_seconds_bucket=30)

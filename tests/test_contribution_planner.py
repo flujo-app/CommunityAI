@@ -11,6 +11,7 @@ def _candidate(
     age=0.0,
     policy_reason=None,
     route_observation=None,
+    remote_route_observation=None,
 ):
     return PlacementCandidate(
         model_id=name,
@@ -25,6 +26,7 @@ def _candidate(
             "replica_counts": list(counts),
         },
         route_observation=route_observation,
+        remote_route_observation=remote_route_observation,
         policy_reason=policy_reason,
     )
 
@@ -290,3 +292,51 @@ def test_disabled_sharing_preserves_fail_closed_status_and_registry_is_copying()
 
     assert registry.snapshot()["automatic"].decision is None
     assert registry.snapshot()["automatic"].reason == "sharing is disabled by contribution policy"
+
+
+def test_signed_remote_route_hint_is_bounded_below_the_switch_margin():
+    planner = AutomaticContributionPlanner(
+        num_blocks=1,
+        jitter_seed="node-a",
+        minimum_residency_seconds=0,
+        cooldown_seconds=0,
+        switch_margin=10,
+    )
+    first_digest = "sha256:" + "1" * 64
+    second_digest = "sha256:" + "2" * 64
+    assert (
+        planner.plan(
+            (
+                _candidate("qwen", digest=first_digest, counts=(2,), preferred=True),
+                _candidate("gemma", digest=second_digest, counts=(2,)),
+            ),
+            sharing_enabled=True,
+            now=0,
+        ).decision.model_id
+        == "qwen"
+    )
+
+    plan = planner.plan(
+        (
+            _candidate("qwen", digest=first_digest, counts=(2,)),
+            _candidate(
+                "gemma",
+                digest=second_digest,
+                counts=(2,),
+                remote_route_observation=_observation(second_digest),
+            ),
+        ),
+        sharing_enabled=True,
+        now=1,
+    )
+    assert plan.decision.model_id == "qwen"
+
+    candidate = _candidate(
+        "gemma",
+        digest=second_digest,
+        counts=(2,),
+        remote_route_observation=_observation(second_digest),
+    )
+    signal, observation = planner._route_signal(candidate.remote_route_observation, candidate, cap=2.0)
+    assert signal == 2.0
+    assert observation.manifest_digest == second_digest

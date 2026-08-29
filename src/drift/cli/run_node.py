@@ -48,6 +48,7 @@ from drift.protocol_identity import (
     NodeIdentity,
     ProtocolSecurityError,
     create_intent_lease,
+    create_route_demand,
 )
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
@@ -292,6 +293,7 @@ def _automatic_placement_candidates(
     *,
     token: str | None,
     route_outcomes: RouteOutcomeTracker | None = None,
+    allow_remote_route_demand: bool = False,
 ) -> tuple[PlacementCandidate, ...]:
     policy = config.contribution_policy
     allowed = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
@@ -343,6 +345,9 @@ def _automatic_placement_candidates(
                 total_blocks=manifest.model.num_blocks,
                 health=discovery.snapshot(manifest.digest_id),
                 route_observation=(None if route_outcomes is None else route_outcomes.snapshot(manifest.digest_id)),
+                remote_route_observation=(
+                    discovery.route_demand_snapshot(manifest.digest_id) if allow_remote_route_demand else None
+                ),
                 policy_reason=reason,
             )
         )
@@ -615,6 +620,18 @@ def _build_worker_supervisor(
     )
 
 
+def _prepare_route_identity(discovery: ModelCoverageDiscovery, route_identity_path: Path | None) -> NodeIdentity | None:
+    if route_identity_path is None:
+        return None
+    try:
+        identity = NodeIdentity.ensure(route_identity_path)
+        discovery.register_local_route_demand_key(identity.key_id)
+        return identity
+    except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError) as exc:
+        logger.warning("Signed remote demand is disabled because the router identity is unavailable: %s", exc)
+        return None
+
+
 def _build_automatic_placement_service(
     config: NodeConfig,
     manager: ModelManager,
@@ -626,6 +643,7 @@ def _build_automatic_placement_service(
     config_path: Path | None,
     peer_cache: PeerCache,
     route_outcomes: RouteOutcomeTracker | None = None,
+    route_identity_path: Path | None = None,
 ) -> AutomaticPlacementService | None:
     automatic_workers = tuple(worker for worker in config.workers if worker.model.casefold() == "auto")
     if not automatic_workers:
@@ -643,6 +661,46 @@ def _build_automatic_placement_service(
     intent_identities = {}
     intent_sequences = {}
     intent_leases = {}
+    route_identity = _prepare_route_identity(discovery, route_identity_path)
+    route_sequences = {}
+    route_leases = {}
+
+    def publish_route_demand(manifest: ModelManifest) -> None:
+        if route_outcomes is None or route_identity_path is None:
+            return
+        observation = route_outcomes.closed_snapshot(manifest.digest_id)
+        if observation is None or observation["age_seconds_bucket"] > 90:
+            return
+        now = get_dht_time()
+        observation_key = tuple(sorted(observation.items()))
+        current_lease = route_leases.get(manifest.digest_id)
+        if (
+            current_lease is not None
+            and current_lease["observation_key"] == observation_key
+            and current_lease["expires_at"] - now > 30
+        ):
+            return
+        try:
+            if route_identity is None:
+                return
+            sequence = max(route_sequences.get(manifest.digest_id, 0) + 1, time.time_ns())
+            route_sequences[manifest.digest_id] = sequence
+            expires_at = now + 90
+            record = create_route_demand(
+                route_identity,
+                manifest_digest=manifest.digest,
+                observation=observation,
+                issued_at=now,
+                expires_at=expires_at,
+                sequence=sequence,
+            )
+        except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
+            return
+        if discovery.publish_route_demand(manifest.digest_id, record.to_dict()):
+            route_leases[manifest.digest_id] = {
+                "observation_key": observation_key,
+                "expires_at": expires_at,
+            }
 
     def publish_intent(worker_id, worker, decision) -> bool:
         identity_path = str(worker.identity_path)
@@ -700,6 +758,9 @@ def _build_automatic_placement_service(
         }
         previous_plans = registry.snapshot()
         plans = {}
+        if current.contribution_policy.sharing_enabled:
+            for model_config in current.models:
+                publish_route_demand(ModelManifest.load(model_config.manifest_path))
         for worker_id, planner in planners.items():
             worker = current_workers.get(worker_id)
             if worker is None:
@@ -711,6 +772,7 @@ def _build_automatic_placement_service(
                 worker,
                 token=token,
                 route_outcomes=route_outcomes,
+                allow_remote_route_demand=route_identity is not None,
             )
             proposal = planner.propose(
                 candidates,
@@ -850,6 +912,7 @@ def main() -> None:
             config_path=args.config,
             peer_cache=peer_cache,
             route_outcomes=route_outcomes,
+            route_identity_path=args.data_dir / "route-demand.key",
         )
     except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))
