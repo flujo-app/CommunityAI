@@ -25,7 +25,13 @@ from drift.node.config import (
     NodeModelConfig,
     WorkerConfig,
 )
-from drift.node.contribution_planner import PlacementDecision, PlacementPlan, PlacementRegistry
+from drift.node.contribution_planner import (
+    MAX_AUTOMATIC_PLACEMENT_BLOCKS,
+    MAX_AUTOMATIC_PLACEMENT_CANDIDATES,
+    PlacementDecision,
+    PlacementPlan,
+    PlacementRegistry,
+)
 from drift.node.discovery import PeerCache
 from drift.node.model_manager import ModelRuntime, ModelState
 from drift.node.route_metrics import RouteOutcomeTracker
@@ -1027,3 +1033,79 @@ def test_router_identity_failure_disables_only_publication(monkeypatch, tmp_path
     roots = ("sha256:" + "a" * 64, "sha256:" + "b" * 64)
     assert _prepare_route_identity(Discovery(), path, roots) is None
     assert registered == []
+
+
+def _automatic_worker(index=0, *, num_blocks=1):
+    return {
+        "id": f"automatic-{index}",
+        "model": "auto",
+        "identity_path": f"automatic-{index}.key",
+        "num_blocks": num_blocks,
+    }
+
+
+def _placement_model(index):
+    return {
+        "manifest": f"manifests/model-{index}.json",
+        "initial_peers": [f"peer-{index}"],
+    }
+
+
+def test_node_config_bounds_the_public_alpha_automatic_placement_surface(tmp_path):
+    models = [_placement_model(index) for index in range(MAX_AUTOMATIC_PLACEMENT_CANDIDATES)]
+    source = _config_dict(models=models, workers=[_automatic_worker()])
+    accepted = NodeConfig.from_dict(source, base_dir=tmp_path)
+    assert len(accepted.models) == MAX_AUTOMATIC_PLACEMENT_CANDIDATES
+
+    source["models"] = models + [_placement_model(MAX_AUTOMATIC_PLACEMENT_CANDIDATES)]
+    with pytest.raises(NodeConfigError, match="at most 32 configured models"):
+        NodeConfig.from_dict(source, base_dir=tmp_path)
+
+    source = _config_dict(
+        models=models + [_placement_model(MAX_AUTOMATIC_PLACEMENT_CANDIDATES)],
+        workers=[],
+    )
+    assert len(NodeConfig.from_dict(source, base_dir=tmp_path).models) == 33
+
+    source = _config_dict(
+        workers=[
+            _automatic_worker(),
+            _automatic_worker(1),
+        ]
+    )
+    with pytest.raises(NodeConfigError, match="at most one auto worker"):
+        NodeConfig.from_dict(source, base_dir=tmp_path)
+
+    source = _config_dict(
+        workers=[
+            _automatic_worker(num_blocks=MAX_AUTOMATIC_PLACEMENT_BLOCKS),
+        ]
+    )
+    assert NodeConfig.from_dict(source, base_dir=tmp_path).workers[0].num_blocks == 512
+    source["workers"][0]["num_blocks"] = MAX_AUTOMATIC_PLACEMENT_BLOCKS + 1
+    with pytest.raises(NodeConfigError, match="at most 512 blocks"):
+        NodeConfig.from_dict(source, base_dir=tmp_path)
+
+
+def test_automatic_placement_reconciliation_has_a_one_second_floor(tmp_path):
+    config = NodeConfig.from_dict(
+        _config_dict(
+            discovery_update_period=0.001,
+            workers=[_automatic_worker()],
+        ),
+        base_dir=tmp_path,
+    )
+
+    service = _build_automatic_placement_service(
+        config,
+        object(),
+        object(),
+        object(),
+        PlacementRegistry(),
+        token=None,
+        config_path=None,
+        peer_cache=PeerCache(tmp_path / "peers.json"),
+    )
+
+    assert service._period == 1.0
+    service.close()

@@ -343,12 +343,31 @@ class ReplayGuard:
         if self.path is None:
             return
         self.path = Path(os.path.abspath(os.fspath(Path(self.path).expanduser())))
+        self._reload()
+
+    def _reload(self) -> None:
         try:
             self._latest = self._load()
         except ProtocolSecurityError:
             raise
         except (OSError, UnicodeError, TypeError, ValueError) as exc:
             raise ProtocolSecurityError("replay history could not be loaded safely") from exc
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Serialize state across Hivemind's DHT process boundary without the thread lock."""
+
+        with self._lock:
+            state = dict(self.__dict__)
+        state.pop("_lock", None)
+        return state
+
+    def __setstate__(self, state: Mapping[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+        # The DHT subprocess may receive an older parent snapshot after another
+        # call advanced the on-disk watermark, so persistent guards reload it.
+        if self.path is not None:
+            self._reload()
 
     @staticmethod
     def _strict_json(source: str) -> Mapping[str, Any]:

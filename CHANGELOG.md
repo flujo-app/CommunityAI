@@ -66,7 +66,18 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   now inventories every in-memory, DHT, journal, catalog, API, and log field and its retention,
   linkability, exclusions, and residual risk. Its executable contract fixes the aggregate and
   public-record schemas and prevents observer credential errors from logging exception details
-  or private filesystem paths.
+  or private filesystem paths. Cold automatic-placement cohorts now use a 32-point
+  node-specific model-dispersion band plus rendezvous-ranked equal-coverage ranges instead
+  of all selecting the first catalog model and range zero. Fixed 4,096-node fresh-arrival
+  cohorts also remain below an 85% concentration under maximum local plus remote demand.
+  Preference, priority, bounded demand, and dispersion remain below one 100-point
+  replica-deficit step; 15-minute
+  residency, five-minute cooldown, and the 10-point switch margin still bound migrations.
+  The public-alpha surface now admits at most 32 automatic-placement candidates, 512 blocks,
+  and one automatic worker, with a one-second reconciliation floor and a single-pass
+  contiguous-window scan. Durable replay guards can cross the real Hivemind DHT process
+  boundary without serializing their thread lock and reload a newer persistent watermark
+  after deserialization.
 
 ### Changed
 

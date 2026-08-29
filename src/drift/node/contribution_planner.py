@@ -6,10 +6,15 @@ import hashlib
 import math
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 from drift.node.route_metrics import RouteUtilityObservation, validate_route_observation
+
+MAX_AUTOMATIC_PLACEMENT_CANDIDATES = 32
+MAX_AUTOMATIC_PLACEMENT_BLOCKS = 512
+MODEL_DISPERSION_POINTS = 32.0
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,8 @@ class PlacementCandidate:
             raise ValueError("placement candidate identity must not be empty")
         if self.priority < 0 or self.artifact_bytes < 0 or self.total_blocks < 1:
             raise ValueError("placement candidate sizes and priority must be non-negative")
+        if self.total_blocks > MAX_AUTOMATIC_PLACEMENT_BLOCKS:
+            raise ValueError("placement candidate exceeds the automatic placement block limit")
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,8 @@ class AutomaticContributionPlanner:
     ) -> None:
         if num_blocks < 1:
             raise ValueError("automatic placement num_blocks must be positive")
+        if num_blocks > MAX_AUTOMATIC_PLACEMENT_BLOCKS:
+            raise ValueError("automatic placement num_blocks exceeds the block limit")
         if not jitter_seed:
             raise ValueError("automatic placement jitter seed must not be empty")
         if (
@@ -109,9 +118,17 @@ class AutomaticContributionPlanner:
         self._last_switch_at: Optional[float] = None
 
     def _jitter(self, digest: str) -> float:
+        """Return the bounded node-specific model dispersion score."""
+
         payload = f"{self._jitter_seed}\0{digest}".encode("utf-8")
         value = int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
-        return value / ((1 << 64) - 1)
+        return MODEL_DISPERSION_POINTS * value / (1 << 64)
+
+    def _range_jitter(self, digest: str, start: int, end: int) -> int:
+        """Return a stable rendezvous rank for one node/model/range."""
+
+        payload = f"{self._jitter_seed}\0{digest}\0{start}:{end}".encode("utf-8")
+        return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
 
     def _route_signal(
         self, source: Optional[Mapping[str, Any]], candidate: PlacementCandidate, *, cap: float
@@ -159,14 +176,38 @@ class AutomaticContributionPlanner:
         ):
             return None, "coverage observation has invalid replica counts"
 
-        options = []
-        for start in range(candidate.total_blocks - self.num_blocks + 1):
-            window = tuple(counts[start : start + self.num_blocks])
-            # Lexicographically minimize the worst and aggregate coverage. This is
-            # the coverage-only equivalent of the server's throughput-aware range
-            # chooser and deliberately targets scarce contiguous blocks.
-            options.append(((max(window), sum(window), start), window))
-        (_, _, start), window = min(options, key=lambda item: item[0])
+        # Find the least-covered contiguous window in one bounded pass. Equal
+        # windows use a node-specific rendezvous rank instead of numeric start, so
+        # a cohort sharing one snapshot does not all announce range zero.
+        maxima: deque[int] = deque()
+        window_sum = 0
+        best_key = None
+        best_start = 0
+        for index, count in enumerate(counts):
+            window_sum += count
+            while maxima and counts[maxima[-1]] <= count:
+                maxima.pop()
+            maxima.append(index)
+            if index >= self.num_blocks:
+                outgoing = index - self.num_blocks
+                window_sum -= counts[outgoing]
+                if maxima[0] == outgoing:
+                    maxima.popleft()
+            if index + 1 < self.num_blocks:
+                continue
+            start = index - self.num_blocks + 1
+            end = start + self.num_blocks
+            key = (
+                counts[maxima[0]],
+                window_sum,
+                self._range_jitter(candidate.manifest_digest, start, end),
+                start,
+            )
+            if best_key is None or key < best_key:
+                best_key = key
+                best_start = start
+        start = best_start
+        window = tuple(counts[start : start + self.num_blocks])
         minimum_replicas = min(window)
         coverage_pressure = max(0, 2 - minimum_replicas) * 100.0
         preference_bonus = 20.0 if candidate.preferred else 0.0
@@ -174,7 +215,8 @@ class AutomaticContributionPlanner:
         local_signal, local_observation = self._route_signal(candidate.route_observation, candidate, cap=6.0)
         remote_signal, remote_observation = self._route_signal(candidate.remote_route_observation, candidate, cap=2.0)
         # The combined eight-point demand cap stays below the ten-point switch
-        # margin and far below one 100-point coverage step.
+        # margin. Preference (20), priority (10), demand (8), and node-specific
+        # dispersion (<32) total less than one 100-point coverage step.
         score = (
             coverage_pressure
             + preference_bonus
@@ -220,6 +262,12 @@ class AutomaticContributionPlanner:
         now = self._clock() if now is None else now
         if not sharing_enabled:
             return PlacementPlan(None, "sharing is disabled by contribution policy", len(candidates))
+        if len(candidates) > MAX_AUTOMATIC_PLACEMENT_CANDIDATES:
+            return PlacementPlan(
+                None,
+                f"automatic placement candidate limit is {MAX_AUTOMATIC_PLACEMENT_CANDIDATES}",
+                len(candidates),
+            )
 
         eligible: list[PlacementDecision] = []
         rejected = []

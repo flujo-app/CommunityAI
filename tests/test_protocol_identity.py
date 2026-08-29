@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import pickle
 import time
 from types import SimpleNamespace
 
@@ -154,6 +155,10 @@ def test_worker_announcement_rejects_wrong_peer_expiry_and_replay(tmp_path):
     sign_server_info(identity, equivocation, now=now, sequence=10)
     with pytest.raises(ProtocolSecurityError, match="equivocated"):
         verify_server_info(identity, equivocation, replay_guard=guard, now=now)
+
+    serialized_guard = pickle.loads(pickle.dumps(guard))
+    with pytest.raises(ProtocolSecurityError, match="older"):
+        verify_server_info(identity, older_info, replay_guard=serialized_guard, now=now)
 
     server_info.signed_announcement = first.to_dict()
     wrong_profile = {**EXECUTION_PROFILE, "dtype": "float16"}
@@ -537,6 +542,7 @@ def test_replay_guard_persists_ordering_prunes_expiry_and_rejects_corrupt_state(
     )
 
     restarted = ReplayGuard(history_path, clock=lambda: now)
+    serialized_before_newer = pickle.dumps(ReplayGuard(history_path))
     older = create_route_demand(
         identity,
         manifest_digest=MANIFEST_DIGEST,
@@ -586,6 +592,9 @@ def test_replay_guard_persists_ordering_prunes_expiry_and_rejects_corrupt_state(
         sequence=11,
     )
     verify_route_demand(short_lived_newer.to_dict(), replay_guard=restarted, now=now + 1)
+    restored_after_disk_advance = pickle.loads(serialized_before_newer)
+    with pytest.raises(ProtocolSecurityError, match="older"):
+        verify_route_demand(current.to_dict(), replay_guard=restored_after_disk_advance, now=now + 1)
     after_newer_expiry = ReplayGuard(history_path, clock=lambda: now + 3)
     with pytest.raises(ProtocolSecurityError, match="older"):
         verify_route_demand(current.to_dict(), replay_guard=after_newer_expiry, now=now + 3)

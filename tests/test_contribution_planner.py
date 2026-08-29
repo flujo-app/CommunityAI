@@ -77,7 +77,7 @@ def test_planner_selects_preferred_model_and_least_covered_contiguous_range():
 def test_completed_route_utility_breaks_only_comparable_coverage_ties():
     planner = AutomaticContributionPlanner(
         num_blocks=1,
-        jitter_seed="node-a",
+        jitter_seed="node-1",
         minimum_residency_seconds=0,
         cooldown_seconds=0,
         switch_margin=0,
@@ -92,8 +92,14 @@ def test_completed_route_utility_breaks_only_comparable_coverage_ties():
         route_observation=_observation(second_digest),
     )
 
+    baseline = planner.propose(
+        (unobserved, _candidate("gemma", digest=second_digest, counts=(2,))),
+        sharing_enabled=True,
+        now=0,
+    ).decision
     selected = planner.plan((unobserved, useful), sharing_enabled=True, now=0).decision
 
+    assert baseline.model_id == "qwen"
     assert selected.model_id == "gemma"
     assert "local demand bucket 64" in selected.reason
     assert "reliability 1000/1000" in selected.reason

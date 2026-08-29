@@ -836,7 +836,7 @@ def _build_automatic_placement_service(
 
     return AutomaticPlacementService(
         reconcile=reconcile,
-        period=min(config.discovery_update_period, 5.0),
+        period=max(1.0, min(config.discovery_update_period, 5.0)),
     )
 
 

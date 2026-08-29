@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from humanfriendly import parse_size
 
+from drift.node.contribution_planner import MAX_AUTOMATIC_PLACEMENT_BLOCKS, MAX_AUTOMATIC_PLACEMENT_CANDIDATES
+
 NODE_CONFIG_SCHEMA_VERSION = 1
 MAX_ROUTE_DEMAND_AUTHORITY_ROOTS = 32
 _ROUTE_DEMAND_KEY_ID_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -561,6 +563,17 @@ class NodeConfig:
         worker_ids = [worker.worker_id.casefold() for worker in workers]
         if len(set(worker_ids)) != len(worker_ids):
             raise NodeConfigError("worker ids must be unique case-insensitively")
+        automatic_workers = tuple(worker for worker in workers if worker.model.casefold() == "auto")
+        if len(automatic_workers) > 1:
+            raise NodeConfigError("public-alpha automatic placement supports at most one auto worker")
+        if automatic_workers and len(models) > MAX_AUTOMATIC_PLACEMENT_CANDIDATES:
+            raise NodeConfigError(
+                f"automatic placement supports at most {MAX_AUTOMATIC_PLACEMENT_CANDIDATES} configured models"
+            )
+        if automatic_workers and automatic_workers[0].num_blocks > MAX_AUTOMATIC_PLACEMENT_BLOCKS:
+            raise NodeConfigError(
+                f"automatic placement supports at most {MAX_AUTOMATIC_PLACEMENT_BLOCKS} blocks per worker"
+            )
         policy_value = source.get("contribution_policy")
         contribution_policy = (
             ContributionPolicyConfig() if policy_value is None else ContributionPolicyConfig.from_dict(policy_value)
