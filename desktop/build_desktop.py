@@ -32,6 +32,7 @@ UNSIGNED_ALPHA_WARNING = (
 )
 _SOURCE_COMMIT_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _RELEASE_SOURCE_PATHS = (
+    ".gitattributes",
     ".github/workflows/desktop.yaml",
     "desktop/build_desktop.py",
     "desktop/launch_desktop.py",
@@ -132,8 +133,36 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _internal_file_symlink_artifact(bundle_root: Path, link: Path, artifact_path: str) -> dict[str, object]:
+    try:
+        raw_target = os.readlink(link)
+    except OSError as exc:
+        raise RuntimeError(f"release bundle contains an unreadable file symlink: {link}") from exc
+    if not raw_target or any(ord(character) < 32 for character in raw_target):
+        raise RuntimeError(f"release bundle contains an unsafe file symlink: {link}")
+    if Path(raw_target).is_absolute():
+        raise RuntimeError(f"release bundle contains an absolute file symlink: {link}")
+    try:
+        resolved_root = bundle_root.resolve(strict=True)
+        resolved_target = link.resolve(strict=True)
+        target_relative = resolved_target.relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(f"release bundle contains an external, broken, or cyclic file symlink: {link}") from exc
+    target_mode = resolved_target.lstat().st_mode
+    if _is_link_or_junction(resolved_target) or not stat.S_ISREG(target_mode):
+        raise RuntimeError(f"release bundle file symlink does not resolve to a regular file: {link}")
+    canonical_target = _validate_artifact_path(f"{APP_NAME}/{target_relative.as_posix()}")
+    return {
+        "path": artifact_path,
+        "kind": "symlink",
+        "link_target": canonical_target,
+        "sha256": _sha256_file(resolved_target),
+        "size_bytes": resolved_target.stat().st_size,
+    }
+
+
 def _bundle_artifacts(bundle_root: Path) -> list[dict[str, object]]:
-    """Inventory exact regular files without crossing a symlink or special file."""
+    """Inventory regular files and safe internal file symlinks without leaving the bundle."""
 
     if not bundle_root.is_dir() or _is_link_or_junction(bundle_root):
         raise RuntimeError(f"desktop bundle is missing or unsafe: {bundle_root}")
@@ -151,21 +180,24 @@ def _bundle_artifacts(bundle_root: Path) -> list[dict[str, object]]:
         for name in file_names:
             child = directory_path / name
             mode = child.lstat().st_mode
-            if stat.S_ISLNK(mode) or _is_link_or_junction(child) or not stat.S_ISREG(mode):
-                raise RuntimeError(f"release bundle contains a non-regular file: {child}")
             relative_path = child.relative_to(bundle_root).as_posix()
             artifact_path = _validate_artifact_path(f"{APP_NAME}/{relative_path}")
             comparison_key = artifact_path.casefold()
             if comparison_key in seen_paths:
                 raise RuntimeError(f"duplicate normalized release artifact path: {artifact_path}")
             seen_paths.add(comparison_key)
-            artifacts.append(
-                {
+            if stat.S_ISLNK(mode):
+                artifact = _internal_file_symlink_artifact(bundle_root, child, artifact_path)
+            elif _is_link_or_junction(child) or not stat.S_ISREG(mode):
+                raise RuntimeError(f"release bundle contains a non-regular file: {child}")
+            else:
+                artifact = {
                     "path": artifact_path,
+                    "kind": "file",
                     "sha256": _sha256_file(child),
                     "size_bytes": child.stat().st_size,
                 }
-            )
+            artifacts.append(artifact)
     return sorted(artifacts, key=lambda artifact: str(artifact["path"]))
 
 
@@ -200,6 +232,7 @@ def _release_metadata() -> dict[str, object]:
         "credits_enabled": False,
         "complete_release_qualification": False,
         "artifact_root": APP_NAME,
+        "artifact_inventory": "regular-files-and-relative-internal-file-symlinks",
         "checksum_manifest": CHECKSUMS_NAME,
         "provenance": PROVENANCE_NAME,
     }

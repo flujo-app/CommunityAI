@@ -113,9 +113,12 @@ manifests, and publication preflight before PyInstaller starts. It then reloads 
 actual packaged copy and requires its complete evidence to match the pre-copy evidence
 before recording catalog/bootstrap identity, the bundle-index digest, member count, and
 member digests in `desktop-metrics.json`. After every packaged smoke passes, it
-also writes a sorted `SHA256SUMS` inventory for exact regular files under
-`CommunityAI/`, source/build/catalog-bound `provenance.json`, and
-`release-metadata.json` with an explicit unsigned public-alpha warning. Verify a
+also writes a sorted `SHA256SUMS` inventory for exact regular-file bytes and safe
+relative in-bundle file symlinks under `CommunityAI/`, source/build/catalog-bound
+`provenance.json`, and `release-metadata.json` with an explicit unsigned public-alpha
+warning. Each safe symlink records its canonical in-bundle target and the target's exact
+digest and size; absolute, external, broken, cyclic, directory, junction, and special-file
+entries fail closed. Verify a
 completed output in a fresh process with:
 
 ```shell

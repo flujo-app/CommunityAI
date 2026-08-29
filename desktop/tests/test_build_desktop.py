@@ -259,6 +259,10 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         self.assertIs(metadata["macos_supported"], False)
         self.assertIs(metadata["credits_enabled"], False)
         self.assertIs(metadata["complete_release_qualification"], False)
+        self.assertEqual(
+            metadata["artifact_inventory"],
+            "regular-files-and-relative-internal-file-symlinks",
+        )
         self.assertIn("Unsigned public-alpha", metadata["warning"])
 
         provenance = json.loads((first_root / build_desktop.PROVENANCE_NAME).read_text(encoding="utf-8"))
@@ -356,6 +360,8 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         source_file = repository / "desktop" / "build_desktop.py"
         source_file.parent.mkdir(parents=True)
         source_file.write_text("print('clean')\n", encoding="utf-8")
+        attributes_file = repository / ".gitattributes"
+        attributes_file.write_text("public-alpha/** text eol=lf\n", encoding="utf-8")
 
         def git(*arguments: str) -> str:
             return subprocess.run(
@@ -368,13 +374,18 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         git("init")
         git("config", "user.email", "release-test@example.invalid")
         git("config", "user.name", "Release Test")
-        git("add", "desktop/build_desktop.py")
+        git("add", ".gitattributes", "desktop/build_desktop.py")
         git("commit", "-m", "test source")
         head = git("rev-parse", "HEAD")
         source_tree = git("rev-parse", "HEAD^{tree}")
 
         self.assertEqual(build_desktop._source_identity(repository, head), (head, source_tree))
         source_file.write_text("print('dirty')\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "differ from the checked-out Git HEAD"):
+            build_desktop._source_identity(repository, head)
+
+        source_file.write_text("print('clean')\n", encoding="utf-8")
+        attributes_file.write_text("public-alpha/** text eol=crlf\n", encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "differ from the checked-out Git HEAD"):
             build_desktop._source_identity(repository, head)
 
@@ -411,20 +422,53 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unsupported alpha claims"):
             build_desktop._verify_release_attestations(output_root)
 
-    def test_symlink_and_non_regular_files_are_rejected(self):
-        output_root, bundle_root = self._bundle("unsafe-entries", {"payload.txt": b"payload"})
-        target = output_root / "outside.txt"
-        target.write_bytes(b"outside")
+    def test_safe_internal_file_symlinks_are_bound_and_unsafe_entries_are_rejected(self):
+        output_root, bundle_root = self._bundle("symlink-entries", {"payload.txt": b"payload"})
         link = bundle_root / "linked.txt"
         try:
-            link.symlink_to(target)
+            link.symlink_to("payload.txt")
         except OSError as exc:
             self.skipTest(f"symlink creation is unavailable: {exc}")
-        with self.assertRaisesRegex(RuntimeError, "non-regular file"):
+
+        artifacts = build_desktop._bundle_artifacts(bundle_root)
+        linked_artifact = next(artifact for artifact in artifacts if artifact["path"] == "CommunityAI/linked.txt")
+        payload_artifact = next(artifact for artifact in artifacts if artifact["path"] == "CommunityAI/payload.txt")
+        self.assertEqual(linked_artifact["kind"], "symlink")
+        self.assertEqual(linked_artifact["link_target"], "CommunityAI/payload.txt")
+        self.assertEqual(linked_artifact["sha256"], payload_artifact["sha256"])
+        build_desktop._write_release_attestations(
+            output_root,
+            bundle_root,
+            source_commit=None,
+            source_tree=None,
+            build_workflow="test",
+            build_pyinstaller="6.11.1",
+            publication_evidence=None,
+        )
+        build_desktop._verify_release_attestations(output_root)
+
+        link.unlink()
+        outside = output_root / "outside.txt"
+        outside.write_bytes(b"outside")
+        link.symlink_to(outside)
+        with self.assertRaisesRegex(RuntimeError, "absolute file symlink"):
+            build_desktop._bundle_artifacts(bundle_root)
+
+        link.unlink()
+        link.symlink_to("missing.txt")
+        with self.assertRaisesRegex(RuntimeError, "external, broken, or cyclic"):
+            build_desktop._bundle_artifacts(bundle_root)
+
+        link.unlink()
+        linked_directory = bundle_root / "linked-directory"
+        target_directory = bundle_root / "directory"
+        target_directory.mkdir()
+        linked_directory.symlink_to("directory", target_is_directory=True)
+        with self.assertRaisesRegex(RuntimeError, "unsafe directory entry"):
             build_desktop._bundle_artifacts(bundle_root)
 
         if hasattr(os, "mkfifo"):
-            link.unlink()
+            linked_directory.unlink()
             fifo = bundle_root / "special"
             os.mkfifo(fifo)
             with self.assertRaisesRegex(RuntimeError, "non-regular file"):
