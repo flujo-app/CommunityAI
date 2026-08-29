@@ -7,13 +7,17 @@ manifest implementation already live.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
+
+from hivemind.p2p import PeerID
 
 from drift.model_catalog import (
     CatalogRollbackGuard,
@@ -30,6 +34,21 @@ CATALOG_BOOTSTRAP_SCHEMA_VERSION = 1
 MAX_CATALOG_BYTES = 4 * 1024 * 1024
 MAX_MANIFEST_BYTES = 8 * 1024 * 1024
 DEFAULT_FETCH_TIMEOUT = (5.0, 20.0)
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_PUBLIC_PEER_RE = re.compile(r"^/(ip4|ip6|dns4|dns6)/([^/]+)/tcp/([1-9][0-9]{0,4})/p2p/([^/]{20,128})$")
+_SPECIAL_USE_DNS_SUFFIXES = (
+    ".example",
+    ".home",
+    ".home.arpa",
+    ".internal",
+    ".invalid",
+    ".lan",
+    ".local",
+    ".localdomain",
+    ".localhost",
+    ".onion",
+    ".test",
+)
 
 
 class CatalogBootstrapError(RuntimeError):
@@ -78,31 +97,120 @@ def _require_string_list(value: Any, field: str) -> Tuple[str, ...]:
     return tuple(result)
 
 
+def _require_public_host(
+    host: str,
+    field: str,
+    *,
+    ip_version: int | None = None,
+    require_dns: bool = False,
+) -> str:
+    if (
+        not host
+        or host.endswith(".")
+        or "%" in host
+        or any(ord(character) <= 32 or ord(character) == 127 for character in host)
+    ):
+        raise CatalogBootstrapError(f"{field} must use a canonical public host")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        if ip_version is not None:
+            raise CatalogBootstrapError(
+                f"{field} must use a canonical globally routable IPv{ip_version} address"
+            ) from None
+        normalized = host.casefold()
+        try:
+            ascii_host = normalized.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise CatalogBootstrapError(f"{field} must use an ASCII public DNS host") from exc
+        labels = ascii_host.split(".")
+        if (
+            host != normalized
+            or ascii_host != normalized
+            or len(ascii_host) > 253
+            or len(labels) < 2
+            or not any("a" <= character <= "z" for character in labels[-1])
+            or any(ascii_host == suffix[1:] or ascii_host.endswith(suffix) for suffix in _SPECIAL_USE_DNS_SUFFIXES)
+            or any(_DNS_LABEL_RE.fullmatch(label) is None for label in labels)
+        ):
+            raise CatalogBootstrapError(f"{field} must use a canonical public DNS host")
+        return ascii_host
+    if require_dns:
+        raise CatalogBootstrapError(f"{field} must use a canonical public DNS host")
+    if (
+        not address.is_global
+        or (ip_version is not None and address.version != ip_version)
+        or getattr(address, "scope_id", None) is not None
+        or str(address) != host
+    ):
+        raise CatalogBootstrapError(f"{field} must use a canonical globally routable IP address")
+    return str(address)
+
+
 def _require_https_urls(value: Any, field: str) -> Tuple[str, ...]:
     result = _require_string_list(value, field)
     for index, url in enumerate(result):
+        if any(ord(character) <= 32 or ord(character) == 127 for character in url):
+            raise CatalogBootstrapError(f"{field}[{index}] contains whitespace or a control character")
         parsed = urlsplit(url)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise CatalogBootstrapError(f"{field}[{index}] contains an invalid port") from exc
         if (
             parsed.scheme != "https"
             or not parsed.netloc
+            or parsed.hostname is None
             or parsed.username
             or parsed.password
             or parsed.query
             or parsed.fragment
+            or port not in {None, 443}
         ):
             raise CatalogBootstrapError(
-                f"{field}[{index}] must be an absolute HTTPS URL without credentials, query, or fragment"
+                f"{field}[{index}] must be an absolute public HTTPS URL without credentials, query, or fragment"
             )
+        host = _require_public_host(parsed.hostname, f"{field}[{index}]")
+        canonical_netloc = f"[{host}]" if ":" in host else host
+        if port == 443:
+            canonical_netloc += ":443"
+        canonical_url = urlunsplit(("https", canonical_netloc, parsed.path, "", ""))
+        if url != canonical_url:
+            raise CatalogBootstrapError(f"{field}[{index}] must use a canonical public HTTPS URL")
     return result
 
 
 def _require_initial_peers(value: Any) -> Tuple[str, ...]:
     peers = _require_string_list(value, "initial_peers")
     for index, peer in enumerate(peers):
-        if len(peer) > 2048 or not peer.startswith("/") or "/p2p/" not in peer:
-            raise CatalogBootstrapError(f"initial_peers[{index}] must be a bounded libp2p multiaddress")
-        if any(character in peer for character in "\r\n\x00"):
-            raise CatalogBootstrapError(f"initial_peers[{index}] contains a forbidden control character")
+        if len(peer) > 2048 or any(ord(character) <= 32 or ord(character) == 127 for character in peer):
+            raise CatalogBootstrapError(f"initial_peers[{index}] must be a bounded public libp2p multiaddress")
+        match = _PUBLIC_PEER_RE.fullmatch(peer)
+        if match is None:
+            raise CatalogBootstrapError(
+                f"initial_peers[{index}] must be a canonical public multiaddress ending in /tcp/<port>/p2p/<peer-id>"
+            )
+        protocol, host, port_text, peer_id_text = match.groups()
+        if int(port_text) > 65535:
+            raise CatalogBootstrapError(f"initial_peers[{index}] contains an invalid TCP port")
+        if protocol.startswith("ip"):
+            _require_public_host(
+                host,
+                f"initial_peers[{index}]",
+                ip_version=int(protocol[-1]),
+            )
+        else:
+            _require_public_host(
+                host,
+                f"initial_peers[{index}]",
+                require_dns=True,
+            )
+        try:
+            peer_id = PeerID.from_base58(peer_id_text)
+        except (TypeError, ValueError) as exc:
+            raise CatalogBootstrapError(f"initial_peers[{index}] contains an invalid PeerID") from exc
+        if peer_id.to_base58() != peer_id_text:
+            raise CatalogBootstrapError(f"initial_peers[{index}] contains a noncanonical PeerID")
     return peers
 
 

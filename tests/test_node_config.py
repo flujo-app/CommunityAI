@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from drift.cli.run_node import _build_model_manager, _build_worker_supervisor, _load_persisted_and_runtime_config
+from drift.cli.run_node import (
+    _build_model_manager,
+    _build_worker_supervisor,
+    _load_persisted_and_runtime_config,
+    _merge_cached_initial_peers,
+)
 from drift.model_manifest import ModelManifest
 from drift.node.config import (
     NODE_CONFIG_SCHEMA_VERSION,
@@ -16,6 +21,7 @@ from drift.node.config import (
     NodeModelConfig,
     WorkerConfig,
 )
+from drift.node.discovery import PeerCache
 from drift.node.model_manager import ModelRuntime, ModelState
 from drift.node.worker_supervisor import WorkerPolicyError
 
@@ -74,6 +80,20 @@ def test_node_config_accepts_a_unique_catalog_auto_priority(tmp_path):
     source["auto_model_priority"] = ["Standby Model", "standby model"]
     with pytest.raises(NodeConfigError, match="case-insensitive duplicates"):
         NodeConfig.from_dict(source, base_dir=tmp_path)
+
+
+def test_cached_peers_extend_runtime_config_without_mutating_persisted_config(tmp_path):
+    configured = NodeConfig.from_json(json.dumps(_config_dict()), base_dir=tmp_path)
+    cached = "/ip4/8.8.8.8/tcp/31337/p2p/Qm" + "A" * 44
+    peer_cache = PeerCache(tmp_path / "discovery-peers.json", clock=lambda: 2_000_000_000.0)
+    assert peer_cache.store(configured.models[0].initial_peers, (cached,)) is True
+
+    runtime = _merge_cached_initial_peers(configured, peer_cache)
+
+    assert runtime is not configured
+    assert runtime.models[0].initial_peers == (configured.models[0].initial_peers[0], cached)
+    assert configured.models[0].initial_peers == ("/ip4/127.0.0.1/tcp/31337/p2p/one",)
+    assert _merge_cached_initial_peers(configured, PeerCache(tmp_path / "empty.json")) is configured
 
 
 def test_node_config_is_strict_and_does_not_accept_secrets(tmp_path):
@@ -168,7 +188,12 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
         auto_model_priority=(first.digest_id, second.digest_id),
     )
 
-    manager, descriptors, discovery = _build_model_manager(config, token="provider-token")
+    cache_scopes = {first_path: ("shipped-one",), second_path: ("shipped-two",)}
+    manager, descriptors, discovery = _build_model_manager(
+        config,
+        token="provider-token",
+        peer_cache_scopes=cache_scopes,
+    )
 
     assert [descriptor.model_id for descriptor in descriptors] == [first.name, second.name]
     assert [snapshot.state for snapshot in manager.snapshots()] == [ModelState.KNOWN, ModelState.KNOWN]
@@ -181,6 +206,8 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
     assert loader_calls[1][1]["max_retries"] == 4
     assert all(call[1]["token"] == "provider-token" for call in loader_calls)
     assert discovery.snapshot(first.digest_id)["status"] == "unknown"
+    assert discovery._states[first.digest_id].target.cache_scope == ("shipped-one",)
+    assert discovery._states[second.digest_id].target.cache_scope == ("shipped-two",)
     manager.shutdown()
 
 

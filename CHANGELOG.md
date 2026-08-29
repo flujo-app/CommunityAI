@@ -112,6 +112,20 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   size from exact Gate 4 publication evidence, recomputes the rootfs requirement from the
   measured uncompressed bytes, and rejects altered manifests, references, layers, sizing,
   or ceilings before provider authentication or resource creation.
+- At startup and policy reload, node discovery now reuses a bounded, fresh private cache
+  of Hivemind-valid global-IP TCP routing peers when configured seeds are unavailable.
+  Cached peers are isolated by the exact configured seed set and merged only at runtime,
+  leaving persisted configuration unchanged.
+- Cloud cost authorization now binds the complete canonical provider-plan digest into
+  the ledger identity and emits a separate finite-horizon Fly discovery-seed plan. The
+  plan requires a run-derived app plus the expected reviewed-GHCR image/evidence identity,
+  while explicitly requiring the provider adapter to hash and semantically validate the
+  actual evidence before provider authentication. An unrelated or target-mutated
+  reservation cannot authorize provisioning.
+- Release bootstrap inputs now reject local, private, reserved, special-use, scoped,
+  control-bearing, type-confused, dotted-numeric DNS-lookalike, malformed, or noncanonical
+  mirror and seed endpoints
+  before fetching catalog data.
 - Model qualification dispatch no longer requires a persistent GitHub runner-inventory
   administration token.
 - Production desktop CI now packages the public alpha on Windows and Linux only; macOS

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import torch
@@ -13,7 +14,7 @@ from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 import drift
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
-from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery
+from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery, PeerCache
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
 from drift.node.loading import make_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelNotFoundError
@@ -180,8 +181,22 @@ def _load_persisted_and_runtime_config(
     return persisted, _load_node_config(args, persisted_config=persisted)
 
 
+def _merge_cached_initial_peers(config: NodeConfig, peer_cache: PeerCache) -> NodeConfig:
+    models = []
+    for model in config.models:
+        cached_peers = peer_cache.load(model.initial_peers)
+        initial_peers = tuple(dict.fromkeys((*model.initial_peers, *cached_peers)))
+        models.append(model if initial_peers == model.initial_peers else replace(model, initial_peers=initial_peers))
+    merged = tuple(models)
+    return config if merged == config.models else replace(config, models=merged)
+
+
 def _build_model_manager(
-    config: NodeConfig, *, token: str | None
+    config: NodeConfig,
+    *,
+    token: str | None,
+    peer_cache: PeerCache | None = None,
+    peer_cache_scopes: dict[Path, tuple[str, ...]] | None = None,
 ) -> tuple[ModelManager, tuple[ModelDescriptor, ...], ModelCoverageDiscovery]:
     manager = ModelManager(max_loaded_models=config.max_loaded_models)
     descriptors = []
@@ -200,11 +215,15 @@ def _build_model_manager(
                     manifest=manifest,
                     initial_peers=model_config.initial_peers,
                     revocation_files=model_config.revocation_files,
+                    cache_scope=(
+                        () if peer_cache_scopes is None else peer_cache_scopes.get(model_config.manifest_path, ())
+                    ),
                 )
                 for model_config, manifest in configured_manifests
             ],
             update_period=config.discovery_update_period,
             startup_timeout=config.discovery_startup_timeout,
+            peer_cache=peer_cache,
         )
         manager.add_shutdown_callback(discovery.close)
         for model_config, manifest in configured_manifests:
@@ -512,8 +531,16 @@ def main() -> None:
     _validate_args(parser, args)
 
     try:
-        persisted_config, config = _load_persisted_and_runtime_config(args)
-        manager, descriptors, discovery = _build_model_manager(config, token=args.token)
+        persisted_config, configured = _load_persisted_and_runtime_config(args)
+        peer_cache = PeerCache(args.data_dir / "discovery-peers.json")
+        peer_cache_scopes = {model.manifest_path: model.initial_peers for model in configured.models}
+        config = _merge_cached_initial_peers(configured, peer_cache)
+        manager, descriptors, discovery = _build_model_manager(
+            config,
+            token=args.token,
+            peer_cache=peer_cache,
+            peer_cache_scopes=peer_cache_scopes,
+        )
         worker_supervisor = _build_worker_supervisor(config, manager, token=args.token)
         policy_store = (
             None
@@ -521,7 +548,9 @@ def main() -> None:
             else ContributionPolicyStore(
                 args.config,
                 worker_supervisor,
-                lambda candidate: _prepare_worker_supervisor_settings(candidate, manager, token=args.token),
+                lambda candidate: _prepare_worker_supervisor_settings(
+                    _merge_cached_initial_peers(candidate, peer_cache), manager, token=args.token
+                ),
                 expected_config=persisted_config,
             )
         )
