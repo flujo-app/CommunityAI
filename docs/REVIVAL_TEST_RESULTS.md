@@ -32,7 +32,8 @@ recovery mechanism once; it is not repeated for every catalog model. Qwen and Ge
 already have their model/platform qualification evidence in Gates 5 and 6. The next
 product-realistic recovery test belongs after automatic placement and the production
 signed catalog exist: clean install, enable contribution, automatic assignment, kill
-one contributor, and observe recovery.
+one contributor, and observe recovery. The exact operational lessons and stop
+conditions are retained in the [recovery test runbook](RECOVERY_TEST_RUNBOOK.md).
 
 ## Gate 6 Gemma 4 E2B strict four-profile qualification
 
