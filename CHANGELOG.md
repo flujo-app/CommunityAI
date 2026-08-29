@@ -26,14 +26,23 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - A fail-closed combined GCP/Fly qualification cost guard with a conservative USD 69
   G2/L4 four-profile plan, one-host-at-a-time CUDA-safe phases, checksum-pinned GPU and
   Windows SSH bootstrap, named NAT addresses, and exact isolated cleanup verification.
-- A finite Gate 11 public-route plan now binds one isolated G2/L4 host to the
-  immutable qualified Qwen primary and Gemma standby snapshots/manifests, their publication
-  evidence, public ports, aggregate health, primary-disable/standby-fallback/restoration
-  checks, honest co-location/unavailable behavior, a 14-hour automatic deletion boundary,
-  and exact run-scoped cleanup. Its conservative USD 26 maximum is computed against the
-  combined ledger. The qualified images are CPU snapshot carriers rather than CUDA route
-  runtimes, so the plan remains non-reservable until separately published CUDA worker
-  images and their lifecycle are digest-bound.
+- A finite Gate 11 public-route plan now binds one isolated G2/L4 host to separately
+  published CUDA Qwen primary and Gemma standby images, their exact qualified
+  snapshots/manifests and publication evidence, the source-bound fresh-VM bootstrap,
+  public ports, aggregate health, primary-disable/standby-fallback/restoration checks,
+  explicit 7/15/22 GiB device, 30 GiB host-memory, 160 GiB route-storage, and 1 GiB log
+  ceilings, honest co-location/unavailable behavior, a 14-hour automatic deletion
+  boundary, and exact run-scoped cleanup. The CUDA image contract copies only the
+  content-verified snapshot from each immutable CPU carrier into a fresh pinned
+  Python/Torch CUDA runtime, re-verifies all artifacts and committed source in-image,
+  runs non-root with training disabled, and exposes a fixed complete route plus bounded
+  health. A strict collector requires immutable GHCR indexes, exact Linux runtimes,
+  an exact provenance build-argument schema and structured material pairs, SPDX SBOMs,
+  package/config labels, layer bounds, and measured local size. The fail-closed Ubuntu
+  bootstrap invalidates stale readiness first, then pins and verifies the NVIDIA driver,
+  Docker, containerd, and NVIDIA Container Toolkit before writing a private readiness record.
+  Its conservative USD 26 maximum remains unreserved; publication evidence and the
+  lifecycle runner are still required before a cloud route may be authorized.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

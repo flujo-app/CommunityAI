@@ -1,6 +1,7 @@
 # Public alpha operations runbook
 
-Status: finite Gate 11 plan and machine-readable health boundary implemented; CUDA runtime image and lifecycle work remain before any reservation or rollout.
+Status: finite Gate 11 plan, machine-readable health, CUDA route-image publication
+contract, and fresh-VM bootstrap implemented; publication and lifecycle work remain.
 
 This runbook is for the Windows/Linux public inference alpha. It does not authorize
 a deployment by itself and it does not replace the release gates in
@@ -41,8 +42,10 @@ Generate a `gcp-public-route` authorization with
 - one `g2-standard-8`/L4 host, a 200 GiB balanced disk, an instance-lifetime ephemeral public IPv4,
   isolated network/subnet/firewalls, public TCP 31337-31338, and a maximum 14-hour
   `DELETE` deadline;
-- immutable qualified Qwen3.5 2B primary and Gemma 4 E2B standby snapshot images and
-  manifest digests, plus the digests of their publication evidence;
+- separately published immutable CUDA Qwen3.5 2B primary and Gemma 4 E2B standby
+  route images, their exact qualified snapshot carriers and manifest digests, the
+  digests of their publication evidence, and the committed fresh-VM bootstrap digest
+  and byte count;
 - a 60-minute startup boundary, five-minute privacy-safe health sampling, exact
   primary and standby inference, Qwen-disable/Gemma-fallback/restoration evidence,
   and explicit stop conditions; and
@@ -55,13 +58,88 @@ Before the first provider call, re-run the cost guard against the ledger row and
 `provisioning_authorized=true`; revalidate native `gcloud` and `gh` authentication,
 one unused global/zonal L4 slot, exact machine availability, OS image state, both
 publication-evidence files and GHCR digests, and protected-bootstrap presence. The cost
-guard is intentionally provider-call-free and does not itself attest the evidence files.
-The currently qualified images are CPU-only qualification runtimes: they are immutable
-snapshot carriers, not L4 public workers, and their entrypoint rejects a full manifested
-range. Do not reserve the USD 26 plan or run its emitted create commands until the cost
-plan additionally binds separately published CUDA route images, a fresh-VM container
-runtime bootstrap, and a lifecycle runner that enforces the preflight, startup, health,
-fallback, stop, and cleanup phases.
+guard is intentionally provider-call-free. It rejects the qualification repositories as
+route images and binds the expected evidence digests, but the lifecycle runner must still
+load and attest those files before authentication.
+
+The plan stops when Qwen exceeds 7 GiB device allocation, Gemma exceeds 15 GiB, their
+combined device allocation exceeds 22 GiB or is unobservable, host memory exceeds
+30 GiB, route storage exceeds 160 GiB, or combined logs exceed 1 GiB. These are
+pre-operational ceilings, not qualified envelopes or proof that both models fit
+concurrently. Co-residency remains unproven until the real bounded startup succeeds.
+
+## CUDA route-image publication boundary
+
+The qualified images are immutable CPU-only snapshot carriers. Never run them as public
+routes: their entrypoint rejects the complete manifested range and their runtime has no
+CUDA PyTorch. `Dockerfile.public-route-cuda` instead uses an exact carrier as a
+snapshot-only build stage, copies only `/cache/model`, and creates a fresh pinned
+Python/Torch CUDA runtime from the exact committed source. The final image:
+
+- rehashes the manifest, every snapshot artifact, the tracked source inventory,
+  Dockerfile, lock file, carrier evidence, and build contract before the final image is accepted;
+- requires `torch==2.6.0+cu124`, CUDA 12.4, and the reviewed SM 86/90 kernels;
+- runs as UID 65532, fixes one candidate and complete block span, exposes only that
+  candidate's public port, writes the bounded health file, and disables training RPCs;
+  and
+- retains no Git checkout, build contract, carrier evidence, package-manager state,
+  or writable model snapshot in the final runtime.
+
+Publication is a two-commit boundary. First commit and push the reviewed Dockerfile,
+worker wrapper, contract, collector, bootstrap, tests, and documentation. From that
+exact clean HEAD, prepare each candidate with a source-bound tag:
+
+```text
+python scripts/public_route_image_contract.py prepare \
+  --candidate qwen3.5-2b \
+  --source-commit <40-char-HEAD> \
+  --image-tag ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b:source-<40-char-HEAD> \
+  --output-dir <new-private-output>/qwen3.5-2b
+
+python scripts/public_route_image_contract.py prepare \
+  --candidate gemma-4-e2b \
+  --source-commit <40-char-HEAD> \
+  --image-tag ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b:source-<40-char-HEAD> \
+  --output-dir <new-private-output>/gemma-4-e2b
+```
+
+Preparation reads only the committed tracked archive, exact candidate manifest, and
+already committed bounded carrier evidence. It creates `image-contract.json`,
+`build-plan.json`, the exact source context, and a metadata output path. Inspect the
+plan and execute its `build_command` as an argument vector, without shell
+reconstruction, extra build arguments, a changed context, or a mutable tag. It is the
+only authorized build: Linux amd64, maximum SLSA provenance, SPDX SBOM, push, and
+metadata output are mandatory.
+
+After each push, collect evidence:
+
+```text
+python scripts/public_route_image_evidence.py \
+  --contract <candidate-output>/image-contract.json \
+  --build-metadata <metadata-output-from-build-plan> \
+  --output docs/evidence/<bounded-candidate-publication-evidence>.json
+```
+
+The collector fails closed unless it resolves one immutable index and exact Linux
+runtime, verifies the source and carrier materials in SLSA provenance, accepts an SPDX
+2.3 SBOM with the expected Drift/Torch/NVIDIA packages, matches the non-root
+entrypoint/environment/labels, bounds every layer and the pulled image size, and binds
+those facts to the exact source, Dockerfile, and structured base-material digests whose
+in-image build verifier re-hashed the snapshot. The collector does not execute the
+published GPU entrypoint or independently re-hash runtime files. Commit and push only the
+bounded evidence, image digests, and readiness changes; keep the generated contexts,
+metadata, raw attestations, pulled layers, paths, and registry output out of Git.
+
+`scripts/gcp_public_route_startup.sh` is a separate source-commit input. The cost plan
+binds its exact SHA-256 and byte count. It installs exact reviewed Ubuntu prerequisite,
+Docker, containerd, NVIDIA driver, and NVIDIA Container Toolkit versions through signed
+repositories and verified installer bytes, then writes a mode-0600 bounded readiness
+record only after the exact versions, services, runtime, and GPU are observed. It does
+not pull or start either route and it cannot authorize provider calls.
+
+Do not reserve the USD 26 plan or run any emitted create command until both bounded
+publication-evidence files are committed and the reviewed lifecycle runner enforces
+evidence/bootstrap attestation, preflight, startup, health, fallback, stop, and cleanup.
 
 ## Machine-readable worker health
 

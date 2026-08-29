@@ -1412,15 +1412,70 @@ startup script installs a driver but no container runtime. The USD 26 plan there
 must remain unreserved until separately published CUDA public-route images and a
 fresh-VM container bootstrap are digest-bound and verified.
 
-At the pinned pricing snapshot, 14 hours of the single host, disk, and address with
-25% headroom and the fixed USD 10 contingency round to a conservative USD 26. That
-fits the current USD 44 balance but was not reserved. All 56 focused cost-contract
-tests pass. This slice made no provider call, created no resource, changed no cloud
-state, and spent USD 0. Gate 11 remains `IN PROGRESS`: immutable CUDA route images and their
-publication evidence must be created first. A reviewed lifecycle runner must then attest
-the snapshot and runtime evidence before authentication, enforce the
-preflight/startup/health/fallback/stop/cleanup phases, and emit bounded evidence before
-an exact pushed-source plan may be reserved and operated.
+The next source slice implements the separate CUDA route-image boundary. A strict
+tracked-archive contract accepts only the exact Qwen and Gemma carrier indexes and
+Linux runtime digests from their committed Gate 4 publication evidence, reconstructs
+the exact carrier reference, and verifies the exact candidate manifest and complete
+artifact inventory. The Buildx plan uses distinct
+`communityai-public-route-qwen3.5-2b` and
+`communityai-public-route-gemma-4-e2b` repositories, a source-commit-only tag,
+Linux amd64, maximum provenance, SPDX SBOM, push, and a fixed metadata output. It
+cannot substitute the CPU qualification repositories as route targets.
+
+`Dockerfile.public-route-cuda` copies only `/cache/model` from the immutable carrier
+into a fresh digest-pinned Python base. After the exact frozen environment is installed,
+the build re-verifies the source tree, Dockerfile, lock file, manifest, carrier evidence,
+and every model artifact before accepting the final image. The final image asserts Drift
+`2.3.0.dev2`, Torch `2.6.0+cu124`, CUDA 12.4, and the reviewed SM 86/90
+kernel set, then removes build inputs and runs as UID 65532 with offline model access,
+one exact full-range candidate, bounded admission and health, and training disabled.
+The wrapper builds the server argv without a shell and rejects any missing fixed image
+identity, non-global public address, unauthenticated bootstrap, or mutable path/input.
+
+A separate collector resolves the pushed immutable OCI index and exact Linux runtime,
+checks bounded layers and local uncompressed size, requires an exact build-argument
+schema plus exact structured source/carrier/base materials in SLSA provenance and an
+SPDX 2.3 SBOM with the exact Drift/Torch/NVIDIA runtime packages, and verifies non-root
+config/labels/environment/entrypoint. It binds those facts to the source and Dockerfile
+whose in-image build verifier re-hashed the complete snapshot; it does not execute the
+published GPU entrypoint or independently re-hash runtime files. Qwen and Gemma retain individual
+compressed/uncompressed bounds and a combined 160 GiB route-storage ceiling. This is
+publication machinery only: no image has yet been built or published, and there is no
+claim that the 4.6 GB and 10.3 GB snapshots fit concurrently inside the planned GPU
+allocation.
+
+The source slice also adds a fail-closed Ubuntu fresh-VM bootstrap. It pins the reviewed
+Ubuntu prerequisite versions, verifies the exact Google GPU installer generation and
+SHA-256 before requesting NVIDIA driver `570.211.01`, pins Docker
+`29.1.3`, containerd `2.2.1`, and NVIDIA Container Toolkit `1.20.0-1`,
+and verifies the installed packages, services, default NVIDIA runtime, exact driver,
+and visible GPU before atomically writing a private bounded readiness record. It
+removes any prior readiness record before the first check and traps partial temporary
+state, so a failed rerun cannot leave stale `ready:true` evidence. It neither
+authenticates a provider nor pulls or starts a route.
+
+The cost plan now binds that bootstrap's exact committed SHA-256 and byte count into
+the provider-plan digest and reservation identity, rejects both qualification
+repositories as route images, and fixes explicit 7 GiB Qwen, 15 GiB Gemma, 22 GiB
+combined device, 30 GiB host-memory, 160 GiB route-storage, and 1 GiB combined-log
+stop ceilings. These are operational limits, not qualified envelopes.
+
+The worker, image contract, evidence collector, bootstrap, and cost-guard matrix passes
+120 focused tests; the shared qualification/public-image superset passes 167 and the
+expanded cost contract alone passes 61. Independent verification reproduced all three
+results plus Black, isort, AST/import, Bash syntax, and diff checks. Adversarial
+provenance probes accepted a realistic reordered exact five-material BuildKit shape and
+rejected extra secret arguments, material digests hidden outside structured dependencies,
+correct digests under wrong URIs, extra or malformed materials, and config-source drift.
+Bootstrap probes proved stale readiness is removed before setup and the bounded record is
+published only after NVIDIA is observed as Docker's default runtime. At the pinned pricing
+snapshot, 14 hours of the single host, disk, and address with 25% headroom and the
+fixed USD 10 contingency round to a conservative USD 26. It fits the current USD 44
+balance but remains unreserved. No provider call was made, no image, resource, or route
+was created, no cloud state changed, and this slice spent USD 0. Gate 11 remains
+`IN PROGRESS`: first commit and push this verified source, publish both exact-source
+CUDA images and retain their bounded evidence, then implement and review the lifecycle
+runner before any exact plan may be reserved or operated.
 
 ## Follow-up issues
 

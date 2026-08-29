@@ -1,3 +1,4 @@
+import hashlib
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -17,6 +18,10 @@ PRIMARY_IMAGE = guard.GCP_PRIMARY_IMAGE_REPOSITORY + "@sha256:" + "d" * 64
 STANDBY_IMAGE = guard.GCP_STANDBY_IMAGE_REPOSITORY + "@sha256:" + "e" * 64
 PRIMARY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "f" * 64
 STANDBY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "1" * 64
+RUNTIME_BOOTSTRAP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "gcp_public_route_startup.sh"
+RUNTIME_BOOTSTRAP_PAYLOAD = RUNTIME_BOOTSTRAP_PATH.read_bytes()
+RUNTIME_BOOTSTRAP_DIGEST = "sha256:" + hashlib.sha256(RUNTIME_BOOTSTRAP_PAYLOAD).hexdigest()
+RUNTIME_BOOTSTRAP_BYTES = len(RUNTIME_BOOTSTRAP_PAYLOAD)
 
 
 def _ledger(*rows: str) -> str:
@@ -106,6 +111,8 @@ def _gcp_public_route_authorization(entries=(), **overrides):
         "primary_image_evidence_digest": PRIMARY_IMAGE_EVIDENCE_DIGEST,
         "standby_image": STANDBY_IMAGE,
         "standby_image_evidence_digest": STANDBY_IMAGE_EVIDENCE_DIGEST,
+        "runtime_bootstrap_digest": RUNTIME_BOOTSTRAP_DIGEST,
+        "runtime_bootstrap_bytes": RUNTIME_BOOTSTRAP_BYTES,
         "today": date(2026, 8, 29),
     }
     values.update(overrides)
@@ -679,6 +686,22 @@ def test_gcp_public_route_plan_binds_finite_routes_health_and_cleanup():
     ]
     assert plan["routes"][0]["image"] == PRIMARY_IMAGE
     assert plan["routes"][1]["image"] == STANDBY_IMAGE
+    assert plan["runtime_bootstrap"] == {
+        "relative_path": "scripts/gcp_public_route_startup.sh",
+        "sha256": RUNTIME_BOOTSTRAP_DIGEST,
+        "byte_size": RUNTIME_BOOTSTRAP_BYTES,
+        "source_commit_bound": True,
+        "validated_by_cost_guard": False,
+    }
+    assert plan["operating_contract"]["resource_ceilings"] == {
+        "qwen_device_memory_gib": 7,
+        "gemma_device_memory_gib": 15,
+        "combined_device_memory_gib": 22,
+        "host_memory_gib": 30,
+        "route_storage_gib": 160,
+        "combined_logs_gib": 1,
+        "qualification_claim": False,
+    }
     assert "not independent redundancy" in plan["topology"]
     assert plan["operating_contract"]["health_sample_period_seconds"] == 300
     assert any("auto selects Qwen" in item for item in plan["operating_contract"]["required_ready_evidence"])
@@ -692,6 +715,7 @@ def test_gcp_public_route_plan_binds_finite_routes_health_and_cleanup():
     assert "tcp:22" in iap_firewall
     assert guard.GCP_IAP_SOURCE_RANGE in iap_firewall
     create_instance = plan["create_commands"][-1]
+    assert "startup-script=scripts/gcp_public_route_startup.sh" in create_instance
     assert ["--max-run-duration", "50400s"] == create_instance[
         create_instance.index("--max-run-duration") : create_instance.index("--max-run-duration") + 2
     ]
@@ -727,6 +751,8 @@ def test_gcp_public_route_exact_reservation_binds_every_mutable_input():
         {"primary_image_evidence_digest": "sha256:" + "3" * 64},
         {"standby_image": guard.GCP_STANDBY_IMAGE_REPOSITORY + "@sha256:" + "4" * 64},
         {"standby_image_evidence_digest": "sha256:" + "5" * 64},
+        {"runtime_bootstrap_digest": "sha256:" + "6" * 64},
+        {"runtime_bootstrap_bytes": RUNTIME_BOOTSTRAP_BYTES - 1},
     )
     for mutation in mutations:
         with pytest.raises(guard.CostGuardError, match="purpose/source/plan"):
@@ -742,8 +768,19 @@ def test_gcp_public_route_exact_reservation_binds_every_mutable_input():
         ({"maximum_hours": Decimal("14.01")}, "no more than 14"),
         ({"primary_image": guard.GCP_PRIMARY_IMAGE_REPOSITORY + ":latest"}, "immutable Qwen"),
         ({"standby_image": guard.GCP_STANDBY_IMAGE_REPOSITORY + ":latest"}, "immutable Gemma"),
+        (
+            {"primary_image": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:" + "2" * 64},
+            "immutable Qwen CUDA route",
+        ),
+        (
+            {"standby_image": "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:" + "3" * 64},
+            "immutable Gemma CUDA route",
+        ),
         ({"primary_image_evidence_digest": "SHA256:" + "f" * 64}, "publication-evidence digest"),
-        ({"standby_image_evidence_digest": None}, "both immutable images"),
+        ({"standby_image_evidence_digest": None}, "immutable images, evidence digests"),
+        ({"runtime_bootstrap_digest": "SHA256:" + "4" * 64}, "canonical source digest"),
+        ({"runtime_bootstrap_bytes": 0}, "between 1 and 16384 bytes"),
+        ({"runtime_bootstrap_bytes": 16_385}, "between 1 and 16384 bytes"),
     ],
 )
 def test_gcp_public_route_plan_rejects_unsafe_or_incomplete_targets(overrides, message):

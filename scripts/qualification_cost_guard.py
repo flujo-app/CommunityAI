@@ -59,8 +59,8 @@ _FLY_REGION_RE = re.compile(r"^[a-z]{3}$")
 _SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 FLY_DISCOVERY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-discovery-seed"
 _FLY_DISCOVERY_IMAGE_RE = re.compile(rf"^{re.escape(FLY_DISCOVERY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
-GCP_PRIMARY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b"
-GCP_STANDBY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b"
+GCP_PRIMARY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b"
+GCP_STANDBY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b"
 _GCP_PRIMARY_IMAGE_RE = re.compile(rf"^{re.escape(GCP_PRIMARY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
 _GCP_STANDBY_IMAGE_RE = re.compile(rf"^{re.escape(GCP_STANDBY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
 GCP_PRIMARY_MANIFEST_DIGEST = "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33"
@@ -361,18 +361,28 @@ def _gcp_public_route_plan(
     primary_image_evidence_digest: str,
     standby_image: str,
     standby_image_evidence_digest: str,
+    runtime_bootstrap_digest: str,
+    runtime_bootstrap_bytes: int,
 ) -> Mapping[str, Any]:
     region = _require_gcp_target(project, zone)
     if _IMAGE_RE.fullmatch(linux_image) is None:
         raise CostGuardError("GCP public-route OS image must be an immutable image name")
     if _GCP_PRIMARY_IMAGE_RE.fullmatch(primary_image) is None:
-        raise CostGuardError("GCP public-route primary image must be an immutable Qwen qualification digest")
+        raise CostGuardError("GCP public-route primary image must be an immutable Qwen CUDA route digest")
     if _GCP_STANDBY_IMAGE_RE.fullmatch(standby_image) is None:
-        raise CostGuardError("GCP public-route standby image must be an immutable Gemma qualification digest")
+        raise CostGuardError("GCP public-route standby image must be an immutable Gemma CUDA route digest")
     if _SHA256_DIGEST_RE.fullmatch(primary_image_evidence_digest or "") is None:
         raise CostGuardError("GCP public-route primary image requires a canonical publication-evidence digest")
     if _SHA256_DIGEST_RE.fullmatch(standby_image_evidence_digest or "") is None:
         raise CostGuardError("GCP public-route standby image requires a canonical publication-evidence digest")
+    if _SHA256_DIGEST_RE.fullmatch(runtime_bootstrap_digest or "") is None:
+        raise CostGuardError("GCP public-route runtime bootstrap requires a canonical source digest")
+    if (
+        isinstance(runtime_bootstrap_bytes, bool)
+        or not isinstance(runtime_bootstrap_bytes, int)
+        or not 1 <= runtime_bootstrap_bytes <= 16_384
+    ):
+        raise CostGuardError("GCP public-route runtime bootstrap must be between 1 and 16384 bytes")
 
     instance = f"{run_id}-route"
     network = f"{run_id}-net"
@@ -483,7 +493,7 @@ def _gcp_public_route_plan(
             "--maintenance-policy",
             "TERMINATE",
             "--metadata-from-file",
-            "startup-script=scripts/gcp_linux_cuda_startup.sh",
+            "startup-script=scripts/gcp_public_route_startup.sh",
             "--tags",
             target_tag,
             "--labels",
@@ -645,6 +655,13 @@ def _gcp_public_route_plan(
             "max_run_seconds": max_run_seconds,
             "termination_action": "DELETE",
         },
+        "runtime_bootstrap": {
+            "relative_path": "scripts/gcp_public_route_startup.sh",
+            "sha256": runtime_bootstrap_digest,
+            "byte_size": runtime_bootstrap_bytes,
+            "source_commit_bound": True,
+            "validated_by_cost_guard": False,
+        },
         "routes": [
             {
                 "role": "primary",
@@ -676,6 +693,10 @@ def _gcp_public_route_plan(
             "verify one unused global and zonal L4 slot and exact g2-standard-8 availability",
             "verify IAP SSH authorization and the exact IAP source-range firewall before remote launch",
             (
+                "rehash the committed fresh-VM runtime bootstrap and require its exact relative path, digest, "
+                "byte size, source commit, pinned driver, Docker, containerd, and NVIDIA toolkit versions"
+            ),
+            (
                 "load each bounded publication-evidence file, recompute its digest, and verify its candidate, "
                 "manifest, immutable image, source, provenance, SBOM, and passed result"
             ),
@@ -696,9 +717,19 @@ def _gcp_public_route_plan(
                 "either route loses exact manifest identity or complete block coverage",
                 "aggregate admission health is missing, stale, malformed, or unhealthy",
                 "both routes become unavailable outside the deliberate fallback drill",
-                "resource use escapes a qualified envelope or cannot be observed",
+                "combined GPU allocation exceeds 22 GiB or cannot be observed",
+                "host memory exceeds 30 GiB, route storage exceeds 160 GiB, or combined logs exceed 1 GiB",
                 "worker restarts repeat, logs grow without bound, or a privacy or security incident is suspected",
             ],
+            "resource_ceilings": {
+                "qwen_device_memory_gib": 7,
+                "gemma_device_memory_gib": 15,
+                "combined_device_memory_gib": 22,
+                "host_memory_gib": 30,
+                "route_storage_gib": 160,
+                "combined_logs_gib": 1,
+                "qualification_claim": False,
+            },
             "disable_contract": (
                 "stop the affected worker first; if health or control is unavailable, delete the exact run-bound "
                 "instance and report both routes unavailable until signed announcements expire"
@@ -1359,6 +1390,8 @@ def build_authorization(
     primary_image_evidence_digest: str | None = None,
     standby_image: str | None = None,
     standby_image_evidence_digest: str | None = None,
+    runtime_bootstrap_digest: str | None = None,
+    runtime_bootstrap_bytes: int | None = None,
     today: date | None = None,
 ) -> Mapping[str, Any]:
     _require_run_identity(run_id, source_commit)
@@ -1386,6 +1419,8 @@ def build_authorization(
             primary_image_evidence_digest,
             standby_image,
             standby_image_evidence_digest,
+            runtime_bootstrap_digest,
+            runtime_bootstrap_bytes,
         )
         if workload == GCP_QUALIFICATION_WORKLOAD:
             if windows_image is None:
@@ -1414,7 +1449,9 @@ def build_authorization(
                     "GCP public-route planning requires g2-l4 and does not accept Windows or fallback-zone fields"
                 )
             if any(value is None for value in public_route_fields):
-                raise CostGuardError("GCP public-route planning requires both immutable images and evidence digests")
+                raise CostGuardError(
+                    "GCP public-route planning requires immutable images, evidence digests, and a bound runtime bootstrap"
+                )
             maximum_usd, assumptions = _gcp_public_route_cost(maximum_hours)
             provider_plan = _gcp_public_route_plan(
                 run_id,
@@ -1427,6 +1464,8 @@ def build_authorization(
                 primary_image_evidence_digest=primary_image_evidence_digest,
                 standby_image=standby_image,
                 standby_image_evidence_digest=standby_image_evidence_digest,
+                runtime_bootstrap_digest=runtime_bootstrap_digest,
+                runtime_bootstrap_bytes=runtime_bootstrap_bytes,
             )
     else:
         if (
@@ -1442,6 +1481,8 @@ def build_authorization(
                     primary_image_evidence_digest,
                     standby_image,
                     standby_image_evidence_digest,
+                    runtime_bootstrap_digest,
+                    runtime_bootstrap_bytes,
                 )
             )
             or cuda_shape != "n1-t4"
@@ -1669,6 +1710,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--primary-image-evidence-digest")
     parser.add_argument("--standby-image")
     parser.add_argument("--standby-image-evidence-digest")
+    parser.add_argument("--runtime-bootstrap-digest")
+    parser.add_argument("--runtime-bootstrap-bytes", type=int)
     return parser
 
 
@@ -1698,6 +1741,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             primary_image_evidence_digest=args.primary_image_evidence_digest,
             standby_image=args.standby_image,
             standby_image_evidence_digest=args.standby_image_evidence_digest,
+            runtime_bootstrap_digest=args.runtime_bootstrap_digest,
+            runtime_bootstrap_bytes=args.runtime_bootstrap_bytes,
         )
         _atomic_json(args.output, report)
     except CostGuardError as exc:
