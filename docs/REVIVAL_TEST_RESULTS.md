@@ -1660,3 +1660,24 @@ Hivemind P2P cleanup no longer queries a closed global uvloop; legacy
 Transformers compatibility state while other unconsumed checkpoint keys still warn;
 and the CUDA smoke now asserts and reports the client embeddings/head's actual
 device and dtype.
+
+## Gate 11 framed lifecycle interruption and exact cleanup
+
+On 2026-08-30, the source-bound framed acknowledgement retry used source
+`0ea140f3fe764a6772a3b4217ead4bcd7e93562f` and the existing USD 26 Gate 11
+reservation. At workflow continuation, no lifecycle process or framed-attempt lifecycle
+report remained, while an exact read-only provider query found the run-scoped route host
+`RUNNING`. The retained attempt log contained only the local `uv --no-sync` environment
+warning, so the interrupted attempt makes no bootstrap, inference, fallback, monitoring,
+or Gate 11 pass claim. The older untracked generic lifecycle JSON was source-bound to
+`33d6545` and was excluded as stale evidence for this attempt.
+
+The recovery used only the authorization's five exact cleanup targets. All five delete
+commands succeeded. Fresh native-authenticated queries then returned six ordered absence
+checks—instance, auto-delete disk, network, subnet, public-route firewall, and IAP
+firewall—as `true`, and exactly one protected `communityai-bootstrap-1` remained
+`RUNNING`. The sanitized
+[interruption and cleanup evidence](evidence/gate11route-20260830-a-framed-interrupted-cleanup.json)
+retains no provider output, endpoint, credential, prompt, token, path, peer ID, or command
+argv. Gate 11 remains `IN PROGRESS`; the matching USD 26 reservation remains active for a
+fresh-preflight retry using a detached controller that survives workflow handoff.

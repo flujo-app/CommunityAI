@@ -67,10 +67,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   blocked because local GCP authentication required interactive reauthentication. A later
   sanitized native-auth verification proved the exact builder and auto-delete boot disk
   absent and the protected bootstrap running, without creating or deleting resources or
-  reserving more spend. No route was created. The owner's cleanup-backed reset restored a
+  reserving more spend. No publication route was created. The owner's cleanup-backed reset restored a
   USD 100 authorization epoch and prioritizes the shortest authorized critical path. The
-  USD 26 route plan now fits but remains unreserved pending its exact source-bound
-  authorization and fresh fail-closed preflight.
+  USD 26 route is now source-bound and reserved. Live fail-closed attempts advanced exact
+  instance, SSH, and bootstrap validation; after the latest framed controller was interrupted,
+  five exact deletions and six absence checks proved complete cleanup while preserving the
+  protected bootstrap. The next retry uses a detached controller after fresh preflight.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
