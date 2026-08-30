@@ -33,14 +33,14 @@
     "combined_cloud_ceiling_usd": "100.00",
     "committed_before_run_usd": "26.00",
     "committed_before_run_reason": "separately authorized live-bounded Gate 11 product route",
-    "maximum_estimate_usd": "28.00",
-    "remaining_after_run_maximum_usd": "46.00",
+    "maximum_estimate_usd": "46.00",
+    "remaining_after_run_maximum_usd": "28.00",
     "observed_cost_usd": null,
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:aa0dc9de596ec059f67c20b52d8e208d74c6329af7c1d7d0713422507af8dfaa",
-  "ledger_purpose": "Gate 9 sequential Qwen/Gemma Windows/Linux acquisition records and schema-v3 edge envelopes at pushed source ba410f74f1cf625f1e1c34734b53e4514fa7c5ec, reusing the separately authorized product route and creating at most one bounded native Linux client per model [plan sha256:aa0dc9de596ec059f67c20b52d8e208d74c6329af7c1d7d0713422507af8dfaa]",
+  "provider_plan_digest": "sha256:f5122a47a9762d8fa21500ec0bf3896d417ce888b1a11bfa01c6f3acc9d200e2",
+  "ledger_purpose": "Gate 9 concurrent Qwen/Gemma Windows/Linux acquisition records and schema-v3 edge envelopes at pushed source ba410f74f1cf625f1e1c34734b53e4514fa7c5ec, reusing the separately authorized product route and using bounded isolated clients [plan sha256:f5122a47a9762d8fa21500ec0bf3896d417ce888b1a11bfa01c6f3acc9d200e2]",
   "provider_plan": {
     "provider": "GCP",
     "project": "community-ai-506321",
@@ -59,12 +59,40 @@
       "mutation_authorized_by_this_plan": false,
       "deletion_authorized_by_this_plan": false
     },
-    "windows_client": {
-      "provider": "local-native-windows",
-      "new_cloud_resources": 0,
-      "shell": "native-powershell-or-cmd",
-      "one_empty_persistent_cache_per_model": true
-    },
+    "windows_clients": [
+      {
+        "model": "qwen",
+        "instance": "gate9-20260830-e-qwen-windows",
+        "disk": "gate9-20260830-e-qwen-windows",
+        "zone": "us-central1-a",
+        "machine_type": "e2-standard-4",
+        "os": "windows-server-2022-dc-v20260814",
+        "boot_disk_gib": 100,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "service_account": false,
+        "scopes": [],
+        "max_run_seconds": 5400,
+        "termination_action": "DELETE",
+        "source_install": "public exact-commit archive"
+      },
+      {
+        "model": "gemma",
+        "instance": "gate9-20260830-e-gemma-windows",
+        "disk": "gate9-20260830-e-gemma-windows",
+        "zone": "us-central1-a",
+        "machine_type": "e2-standard-4",
+        "os": "windows-server-2022-dc-v20260814",
+        "boot_disk_gib": 100,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "service_account": false,
+        "scopes": [],
+        "max_run_seconds": 5400,
+        "termination_action": "DELETE",
+        "source_install": "public exact-commit archive"
+      }
+    ],
     "linux_clients": [
       {
         "model": "qwen",
@@ -98,7 +126,7 @@
       }
     ],
     "sequencing": {
-      "concurrent_client_models": 1,
+      "concurrent_client_models": 4,
       "paid_attempts_per_model": 1,
       "max_transfer_resumptions": 3,
       "connect_timeout_seconds": 10,
@@ -106,22 +134,26 @@
       "model_window_seconds": 3600,
       "provider_deletion_backstop_seconds": 5400,
       "order": [
-        "qwen-windows",
         "qwen-linux",
-        "gemma-windows",
-        "gemma-linux"
+        "gemma-linux",
+        "qwen-windows-cloud",
+        "gemma-windows-cloud"
       ],
-      "qwen_pair_required_before_gemma": true
+      "qwen_pair_required_before_gemma": false
     },
     "cleanup": {
-      "delete_only_exact_run_linux_instance_and_auto_delete_disk": true,
+      "delete_only_exact_run_client_instances_and_auto_delete_disks": true,
       "verify_instances_absent": [
         "gate9-20260830-e-qwen-linux",
-        "gate9-20260830-e-gemma-linux"
+        "gate9-20260830-e-gemma-linux",
+        "gate9-20260830-e-qwen-windows",
+        "gate9-20260830-e-gemma-windows"
       ],
       "verify_disks_absent": [
         "gate9-20260830-e-qwen-linux",
-        "gate9-20260830-e-gemma-linux"
+        "gate9-20260830-e-gemma-linux",
+        "gate9-20260830-e-qwen-windows",
+        "gate9-20260830-e-gemma-windows"
       ],
       "protected_resources": [
         "communityai-bootstrap-1",
@@ -155,7 +187,7 @@
   },
   "preflight_required": [
     "native gcloud and gh authentication",
-    "exact runtime wheel and immutable input hashes",
+    "exact runtime wheel or exact-commit source archive and immutable input hashes",
     "current live-route identity, deadline, health, and complete Qwen/Gemma coverage",
     "exact run Linux instances and disks absent",
     "protected bootstrap running",
@@ -167,6 +199,10 @@
     "route_service_account_count_nonblocking": true,
     "route_service_account_scope_count_nonblocking": true,
     "current_l4_usage_nonblocking_within_combined_budget": true,
+    "parallel_models_and_platforms_authorized_for_speed": true,
+    "native_windows_link_below_model_window_replaced_by_isolated_cloud_windows_clients": true,
+    "additional_windows_client_reservation_usd": "18.00",
+    "combined_committed_maximum_usd": "72.00",
     "hard_cloud_ceiling_unchanged_usd": "100.00"
   },
   "provider_calls_authorized_without_preflight": false,
