@@ -1,7 +1,7 @@
 """Fixed-action host controller for one finite Gate 11 GCP public route.
 
 The local lifecycle runner uploads this source-bound helper after the VM bootstrap is
-ready. It accepts no arbitrary command, emits bounded JSON only, and keeps provider
+ready. It accepts no arbitrary command, emits bounded marker-framed JSON, and keeps provider
 identities, paths, endpoints, PeerIDs, and private identity fingerprints in a private
 host state file rather than lifecycle evidence.
 """
@@ -28,6 +28,7 @@ SCHEMA_VERSION = 1
 MAX_OUTPUT_BYTES = 65_536
 MAX_COMMAND_OUTPUT_BYTES = 1_000_000
 MAX_HEALTH_BYTES = 4096
+ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
 STATE_ROOT = Path("/var/lib/communityai-route")
 BOOTSTRAP_READY = Path("/var/lib/communityai-bootstrap/runtime-ready.json")
 ACCEPTANCE_TARGET = Path("/var/lib/communityai-route/public_route_acceptance.py")
@@ -710,6 +711,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _encode_acknowledgement(report: Mapping[str, Any]) -> bytes:
+    payload = (json.dumps(report, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
+    framed = ACK_PREFIX + payload
+    if len(framed) > MAX_OUTPUT_BYTES:
+        raise HostError("host acknowledgement exceeds its bounded size")
+    return framed
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if os.name != "posix" or os.geteuid() != 0:
@@ -726,9 +735,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             acceptance_digest=args.acceptance_digest,
             action_timeout_seconds=args.action_timeout_seconds,
         )
-        payload = (json.dumps(report, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
-        if len(payload) > MAX_OUTPUT_BYTES:
-            raise HostError("host acknowledgement exceeds its bounded size")
+        payload = _encode_acknowledgement(report)
     except HostError as exc:
         print(f"public-route host failed: {exc}", file=sys.stderr)
         return 1

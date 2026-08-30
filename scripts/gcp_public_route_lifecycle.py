@@ -46,6 +46,7 @@ MIN_HOST_ACTION_SECONDS = 120
 HEALTH_PERIOD_SECONDS = 300
 HEALTH_FRESHNESS_SECONDS = 330
 FUTURE_TOLERANCE_SECONDS = 5
+HOST_ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
 _GIB = 1024**3
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -968,8 +969,11 @@ def _remote_command(
     raw = _require_success(result, "fixed host action")
     if len(raw) > 65_536:
         raise ProviderCommandError("fixed host acknowledgement is unbounded")
+    framed = [line[len(HOST_ACK_PREFIX) :] for line in raw.splitlines() if line.startswith(HOST_ACK_PREFIX)]
+    if len(framed) != 1:
+        raise ProviderCommandError("fixed host acknowledgement is invalid")
     try:
-        value = json.loads(raw.decode("utf-8"))
+        value = json.loads(framed[0].decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise ProviderCommandError("fixed host acknowledgement is invalid") from exc
     if (

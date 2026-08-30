@@ -171,6 +171,21 @@ def test_bootstrap_preflight_requires_exact_pinned_readiness(monkeypatch, tmp_pa
         host.execute_action(action="preflight", run_id=RUN_ID, runner=runner)
 
 
+def test_host_acknowledgement_is_bounded_and_marker_framed():
+    report = {
+        "schema_version": 1,
+        "scope": "gcp-public-route-host-action",
+        "result": "passed",
+        "action": "preflight",
+        "details": {"bootstrap_ready": True},
+    }
+
+    framed = host._encode_acknowledgement(report)
+
+    assert framed.startswith(host.ACK_PREFIX)
+    assert json.loads(framed[len(host.ACK_PREFIX) :]) == report
+
+
 def test_log_accounting_rejects_missing_relative_or_nonregular_paths(tmp_path):
     log = tmp_path / "container.log"
     log.write_bytes(b"1234")

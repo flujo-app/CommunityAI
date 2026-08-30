@@ -515,7 +515,9 @@ def test_remote_start_and_probe_propagate_inner_and_outer_time_bounds():
             "action": action,
             "details": {},
         }
-        return lifecycle.CommandResult(0, json.dumps(payload).encode(), b"")
+        return lifecycle.CommandResult(
+            0, b"ssh banner\n" + lifecycle.HOST_ACK_PREFIX + json.dumps(payload).encode(), b""
+        )
 
     lifecycle._host_action(
         _dummy_plan(),
@@ -538,6 +540,21 @@ def test_remote_start_and_probe_propagate_inner_and_outer_time_bounds():
     assert start_argv[start_argv.index("--action-timeout-seconds") + 1] == "3570"
     assert calls[1][1] == lifecycle.MAX_PROBE_REMOTE_SECONDS
     assert probe_argv[probe_argv.index("--action-timeout-seconds") + 1] == "930"
+
+
+def test_remote_action_rejects_missing_or_duplicate_acknowledgement_markers():
+    payload = b'{"schema_version":1,"scope":"gcp-public-route-host-action","result":"passed","details":{}}'
+
+    for raw in (
+        payload,
+        lifecycle.HOST_ACK_PREFIX + payload + b"\n" + lifecycle.HOST_ACK_PREFIX + payload,
+    ):
+        with pytest.raises(lifecycle.ProviderCommandError, match="acknowledgement is invalid"):
+            lifecycle._remote_command(
+                _dummy_plan(),
+                lambda _argv, _timeout, raw=raw: lifecycle.CommandResult(0, raw, b""),
+                ("sudo", "true"),
+            )
 
 
 def test_startup_remaining_time_is_anchored_to_one_sixty_minute_deadline():
