@@ -1814,3 +1814,22 @@ all five identical-digest attempts retains `image_pull`, short deadlines skip un
 backoffs, float rounding cannot exceed the validated timeout, and post-pull failure remains
 `host_command` without retry. The focused host/lifecycle/startup/cost matrix passes 139 tests;
 the expanded image-contract/evidence/node matrix passes 196, with Black and isort checks.
+
+## Gate 11 route-E authorization
+
+The provider-call-free first guard pass generated route E from exact pushed source
+`22b468ad7901edaf85c0ff1c81594c1e90a102bd`, the 30,226-byte host helper, unchanged
+4,994-byte bootstrap and 6,913-byte acceptance probe, both immutable publication records,
+and a new isolated six-resource identity. It emitted plan
+`sha256:d80db65e522e6955b8d1df9853e961e0c8f0ed7e687152a26fb9d62f7dc1b016`
+with a USD 26 maximum, USD 100 available before the run, USD 74 maximum headroom after it,
+and `provisioning_authorized=false`. The exact `PLANNED` ledger row was then committed and
+pushed as `78fba04` before the identical second guard pass emitted the
+[authorized plan](evidence/gate11route-20260830-e-cost-authorization.json) with both
+reservation and provisioning booleans true.
+
+A real `load_bound_plan` rehashed the committed source inputs and accepted Qwen `(0, 24)`
+and Gemma `(0, 35)` complete spans. The lifecycle/cost matrix passes 113 tests. Independent
+provider-free verification reproduced the source, ledger, plan, file-size/digest,
+publication, six-resource, protected-bootstrap exclusion, 14-hour provider-DELETE, budget,
+privacy, and span bindings with no blocker or provider/authentication call.

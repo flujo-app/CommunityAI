@@ -92,7 +92,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   create, and bootstrap, then proved the primary failure was an immutable image-pull failure;
   five deletes, six absences, and protected-bootstrap health passed. Pull-only retries now add
   final 60/120-second backoffs to the existing 0/5/15 schedule inside the original one-hour
-  deadline, while `docker run` and the whole start action remain single-shot.
+  deadline, while `docker run` and the whole start action remain single-shot. The source-bound
+  route-E authorization fixes a new six-resource identity, 14-hour provider deletion, both
+  exact immutable route publications, USD 26 maximum, and USD 74 headroom.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
