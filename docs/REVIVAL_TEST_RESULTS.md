@@ -1753,3 +1753,21 @@ rehashed every bound input and accepted the Qwen `(0, 24)` and Gemma `(0, 35)` c
 spans. This remains cost authorization only: native authentication, quota/capacity, exact
 initial absence, zero competing controllers, and the protected-bootstrap check are mandatory
 immediately before the next provider call.
+
+## Gate 11 route-C primary-start failure
+
+The single detached route-C controller used the exact source-`47dadde` authorization after
+a zero-controller check. Native/provider preflight, exact create and verification, helper
+upload, and the pinned bootstrap passed. The first fixed primary-start action failed after
+584.578 seconds before any health sample or inference, fallback, restoration, or monitoring
+claim. Its sanitized
+[lifecycle evidence](evidence/gate11route-20260830-c-lifecycle.json) records failure stage
+`start_primary`, no retained provider output or command argv, five passed delete commands,
+all six resource classes absent, and the protected bootstrap still `RUNNING`.
+
+The route-C reservation is released after proved cleanup. Because the action boundary
+intentionally discarded raw host/provider output, the next source must expose only a fixed
+allowlisted failure code that distinguishes immutable image pull exhaustion from a later
+host-command failure. It may broaden retries only inside the immutable digest pull and the
+existing one-hour action deadline; it must not retry the whole non-idempotent start action or
+`docker run`.
