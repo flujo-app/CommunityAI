@@ -210,6 +210,24 @@ def _merge_cached_initial_peers(config: NodeConfig, peer_cache: PeerCache) -> No
     return config if merged == config.models else replace(config, models=merged)
 
 
+def _reuse_runtime_initial_peers(config: NodeConfig, runtime_config: NodeConfig) -> NodeConfig:
+    """Keep the process-start peer set stable across hot policy reconciliation.
+
+    Discovery continuously updates the persistent peer cache. Those peers are useful
+    on the next node start, but changing a worker launch solely because the cache was
+    refreshed would bounce an otherwise healthy public route.
+    """
+
+    runtime_peers = {model.manifest_path: model.initial_peers for model in runtime_config.models}
+    models = tuple(
+        model
+        if runtime_peers.get(model.manifest_path, model.initial_peers) == model.initial_peers
+        else replace(model, initial_peers=runtime_peers[model.manifest_path])
+        for model in config.models
+    )
+    return config if models == config.models else replace(config, models=models)
+
+
 def _build_model_manager(
     config: NodeConfig,
     *,
@@ -767,7 +785,7 @@ def _build_automatic_placement_service(
 
     def reconcile() -> None:
         current = config if config_path is None else NodeConfig.load(config_path)
-        current = _merge_cached_initial_peers(current, peer_cache)
+        current = _reuse_runtime_initial_peers(current, config)
         current_workers = {
             worker.worker_id.casefold(): worker for worker in current.workers if worker.model.casefold() == "auto"
         }
@@ -913,7 +931,7 @@ def main() -> None:
                 args.config,
                 worker_supervisor,
                 lambda candidate: _prepare_worker_supervisor_settings(
-                    _merge_cached_initial_peers(candidate, peer_cache),
+                    _reuse_runtime_initial_peers(candidate, config),
                     manager,
                     token=args.token,
                     automatic_placements=placement_registry.snapshot(),

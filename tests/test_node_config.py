@@ -14,6 +14,7 @@ from drift.cli.run_node import (
     _load_persisted_and_runtime_config,
     _merge_cached_initial_peers,
     _prepare_route_identity,
+    _reuse_runtime_initial_peers,
 )
 from drift.model_manifest import ModelManifest
 from drift.node.config import (
@@ -123,6 +124,18 @@ def test_cached_peers_extend_runtime_config_without_mutating_persisted_config(tm
     assert runtime.models[0].initial_peers == (configured.models[0].initial_peers[0], cached)
     assert configured.models[0].initial_peers == ("/ip4/127.0.0.1/tcp/31337/p2p/one",)
     assert _merge_cached_initial_peers(configured, PeerCache(tmp_path / "empty.json")) is configured
+
+
+def test_hot_reconciliation_keeps_the_process_start_peer_set(tmp_path):
+    configured = NodeConfig.from_json(json.dumps(_config_dict()), base_dir=tmp_path)
+    cached = "/ip4/8.8.8.8/tcp/31337/p2p/Qm" + "A" * 44
+    peer_cache = PeerCache(tmp_path / "discovery-peers.json", clock=lambda: 2_000_000_000.0)
+    assert peer_cache.store(configured.models[0].initial_peers, (cached,)) is True
+    runtime = _merge_cached_initial_peers(configured, peer_cache)
+
+    reconciled = _reuse_runtime_initial_peers(configured, runtime)
+
+    assert reconciled.models[0].initial_peers == runtime.models[0].initial_peers
 
 
 def test_node_config_is_strict_and_does_not_accept_secrets(tmp_path):
