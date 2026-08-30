@@ -1095,6 +1095,43 @@ def _remaining_startup_seconds(deadline: float, clock: Clock) -> int:
     return min(MAX_STARTUP_SECONDS, remaining)
 
 
+def _await_host_preflight(
+    plan: BoundPlan,
+    runner: Runner,
+    *,
+    deadline: float,
+    clock: Clock,
+    sleeper: Sleeper,
+) -> Mapping[str, Any]:
+    expected = {
+        "bootstrap_ready": True,
+        "docker_ready": True,
+        "gpu_ready": True,
+    }
+    while True:
+        remaining = math.ceil(deadline - clock())
+        if remaining <= 0:
+            raise LifecycleError("host bootstrap exhausted its 60-minute boundary")
+        try:
+            response = _host_action(
+                plan,
+                runner,
+                "preflight",
+                timeout=max(1, min(MAX_PROVIDER_SECONDS, remaining)),
+            )
+        except ProviderCommandError as exc:
+            if str(exc) != "fixed host action failed":
+                raise
+        else:
+            if response.get("action") != "preflight" or response.get("details") != expected:
+                raise LifecycleError("host bootstrap acknowledgement is invalid")
+            return response
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise LifecycleError("host bootstrap exhausted its 60-minute boundary")
+        sleeper(min(15.0, remaining))
+
+
 def _sample(
     plan: BoundPlan,
     runner: Runner,
@@ -1213,17 +1250,24 @@ def execute_lifecycle(
         )
         stages["create"] = True
         failure_stage = "bootstrap"
-        _install_helpers(plan, runner, host_controller_path, acceptance_probe_path)
-        preflight = _host_action(plan, runner, "preflight")
-        if preflight.get("action") != "preflight" or set(preflight["details"]) != {
-            "bootstrap_ready",
-            "docker_ready",
-            "gpu_ready",
-        }:
-            raise LifecycleError("host bootstrap acknowledgement is invalid")
+        startup_deadline = clock() + MAX_STARTUP_SECONDS
+        _install_helpers(
+            plan,
+            runner,
+            host_controller_path,
+            acceptance_probe_path,
+            clock=clock,
+            sleeper=sleeper,
+        )
+        _await_host_preflight(
+            plan,
+            runner,
+            deadline=startup_deadline,
+            clock=clock,
+            sleeper=sleeper,
+        )
         stages["bootstrap"] = True
 
-        startup_deadline = clock() + MAX_STARTUP_SECONDS
         failure_stage = "startup_health"
         _host_action(
             plan,

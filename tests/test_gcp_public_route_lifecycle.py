@@ -549,6 +549,79 @@ def test_startup_remaining_time_is_anchored_to_one_sixty_minute_deadline():
         lifecycle._remaining_startup_seconds(deadline, lambda: 4451.0)
 
 
+def test_host_preflight_retries_only_fixed_action_failures(monkeypatch):
+    attempts = [False, False, True]
+    now = [0.0]
+
+    def host_action(plan, runner, action, **kwargs):
+        assert action == "preflight"
+        assert 0 < kwargs["timeout"] <= lifecycle.MAX_PROVIDER_SECONDS
+        if not attempts.pop(0):
+            raise lifecycle.ProviderCommandError("fixed host action failed")
+        return {
+            "action": "preflight",
+            "details": {
+                "bootstrap_ready": True,
+                "docker_ready": True,
+                "gpu_ready": True,
+            },
+        }
+
+    monkeypatch.setattr(lifecycle, "_host_action", host_action)
+    response = lifecycle._await_host_preflight(
+        _dummy_plan(),
+        lambda _argv, _timeout: lifecycle.CommandResult(0, b"", b""),
+        deadline=60.0,
+        clock=lambda: now[0],
+        sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+
+    assert response["action"] == "preflight"
+    assert now[0] == 30.0
+
+
+def test_host_preflight_rejects_malformed_success_without_retry(monkeypatch):
+    monkeypatch.setattr(
+        lifecycle,
+        "_host_action",
+        lambda *_args, **_kwargs: {
+            "action": "preflight",
+            "details": {
+                "bootstrap_ready": True,
+                "docker_ready": False,
+                "gpu_ready": True,
+            },
+        },
+    )
+
+    with pytest.raises(lifecycle.LifecycleError, match="acknowledgement"):
+        lifecycle._await_host_preflight(
+            _dummy_plan(),
+            lambda _argv, _timeout: lifecycle.CommandResult(0, b"", b""),
+            deadline=60.0,
+            clock=lambda: 0.0,
+            sleeper=lambda _seconds: None,
+        )
+
+
+def test_host_preflight_times_out_fail_closed(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr(
+        lifecycle,
+        "_host_action",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(lifecycle.ProviderCommandError("fixed host action failed")),
+    )
+
+    with pytest.raises(lifecycle.LifecycleError, match="60-minute"):
+        lifecycle._await_host_preflight(
+            _dummy_plan(),
+            lambda _argv, _timeout: lifecycle.CommandResult(0, b"", b""),
+            deadline=10.0,
+            clock=lambda: now[0],
+            sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
+        )
+
+
 def test_helper_install_command_retries_ssh_readiness_and_python_compiles():
     calls = []
     results = [1, 1, 0, 0]
