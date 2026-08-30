@@ -30,6 +30,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   an empty Windows Job Object or Linux process group as the portable memory-cleanup boundary while
   still requiring route-manager/DHT and accelerator cleanup. Process-tree RSS sampling remains
   diagnostic and cannot certify cleanup on its own.
+- Published the complete Gate 9 Windows/Linux edge matrix for Qwen3.5 2B and Gemma 4 E2B.
+  Empty-cache acquisition verified exact 4,571,197,320-byte and 10,278,818,149-byte selections
+  on both platforms with zero resumptions. All four warm-cache inference envelopes generated
+  eight tokens, retained no prompt or output, and proved route/DHT, accelerator, runtime, and
+  OS-contained process-tree cleanup. Qwen peaked at 1.88 GB RSS on Windows and 2.83 GB on Linux;
+  Gemma peaked at 1.73 GB on Windows and 2.82 GB on Linux. Every temporary client instance and
+  disk was deleted while the bounded public route and protected bootstrap stayed live.
 - Qwen3.5 2B and Gemma 4 E2B first-rung candidate manifests with Windows CPU parity and
   local selected-worker recovery evidence.
 - The first threshold-one signed public-alpha catalog/bootstrap bundle, containing those
