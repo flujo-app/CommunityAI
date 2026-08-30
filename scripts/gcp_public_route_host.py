@@ -111,6 +111,7 @@ def _pull_immutable_image(
     *,
     image: str,
     deadline: float,
+    maximum_command_timeout_seconds: int,
     runner: Runner,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
@@ -128,7 +129,7 @@ def _pull_immutable_image(
         try:
             runner(
                 ("docker", "pull", "--quiet", image),
-                min(3600, max(1, math.ceil(remaining))),
+                min(3600, maximum_command_timeout_seconds, max(1, math.ceil(remaining))),
             )
             return
         except CommandError as exc:
@@ -339,7 +340,12 @@ def _start(
     port = int(profile["port"])
     action_started = time.monotonic()
     action_deadline = action_started + action_timeout_seconds
-    _pull_immutable_image(image=image, deadline=action_deadline, runner=runner)
+    _pull_immutable_image(
+        image=image,
+        deadline=action_deadline,
+        maximum_command_timeout_seconds=action_timeout_seconds,
+        runner=runner,
+    )
     remaining = action_deadline - time.monotonic()
     if remaining < 1:
         raise HostError("route start exhausted its bounded action timeout")

@@ -232,6 +232,7 @@ def test_immutable_pull_retries_transient_command_failures_within_deadline():
     host._pull_immutable_image(
         image=PRIMARY,
         deadline=100.0,
+        maximum_command_timeout_seconds=100,
         runner=runner,
         clock=lambda: now[0],
         sleeper=sleeper,
@@ -240,6 +241,24 @@ def test_immutable_pull_retries_transient_command_failures_within_deadline():
     assert [timeout for _argv, timeout in calls] == [100, 95, 80]
     assert all(argv == ("docker", "pull", "--quiet", PRIMARY) for argv, _timeout in calls)
     assert sleeps == [5.0, 15.0]
+
+
+def test_immutable_pull_clamps_float_rounding_to_action_timeout():
+    calls = []
+
+    def runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        return _completed()
+
+    host._pull_immutable_image(
+        image=PRIMARY,
+        deadline=3570.0000000000005,
+        maximum_command_timeout_seconds=3570,
+        runner=runner,
+        clock=lambda: 0.0,
+    )
+
+    assert calls == [(("docker", "pull", "--quiet", PRIMARY), 3570)]
 
 
 def test_immutable_pull_fails_closed_when_retry_delay_exhausts_deadline():
@@ -254,6 +273,7 @@ def test_immutable_pull_fails_closed_when_retry_delay_exhausts_deadline():
         host._pull_immutable_image(
             image=PRIMARY,
             deadline=10.0,
+            maximum_command_timeout_seconds=10,
             runner=runner,
             clock=lambda: now[0],
             sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
