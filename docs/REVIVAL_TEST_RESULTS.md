@@ -2206,3 +2206,34 @@ Verification:
 The next cache reservation remains blocked until the two GHCR package settings are
 explicitly changed from private to public. GitHub documents that transition as irreversible,
 so no automated visibility mutation was attempted.
+
+## Gate 11 cache G public-upstream run and cleanup
+
+The owner changed both exact GHCR public-route packages to `public`; authenticated metadata
+and anonymous immutable-index retrieval then passed for Qwen and Gemma. The source-bound
+[cache-G authorization](evidence/cache-20260830-g-cost-authorization.json) retained the USD 10
+maximum, USD 90 headroom, exact plan
+`sha256:109d2b6958ac8ced31e7202c8eb230387d29615f964d32d6726564b9366eafd7`, and the
+previously reviewed private keyless-cache contract.
+
+The first invocation [failed before GCP mutation](evidence/cache-20260830-g-preflight-failure.json)
+at `upstream_visibility` because the new native GitHub reads were sent through the lifecycle's
+GCP-only runner. Source `0280dc0` added a separate exact allowlist for native `gh auth status`
+and the two fixed package-visibility reads, using shell-free bounded execution while preserving
+the injected test runner. Independent review passed 16 focused cache tests, 96 cost/cache tests,
+Black, isort, diff, allowlist, executable-resolution, timeout, output-bound, and artifact checks.
+
+The repaired controller's [live lifecycle](evidence/cache-20260830-g-lifecycle.json) passed
+native GitHub/GCP authentication, both public-package checks, exact private repository creation,
+the keyless ephemeral reader identity and binding, and builder creation. During `cache_warm` it
+received the bootstrap's generic credential-clean failure acknowledgement and failed closed
+after 572.531 seconds. It claimed zero cached manifests and no release qualification.
+
+Cleanup passed all six exact delete commands and all six absence checks, removed the ephemeral
+identity and repository, retained no service-account key, public access, registry credential,
+provider output, path, provider identifier, or command argv, and revalidated
+`communityai-bootstrap-1` as `RUNNING`. Cache G is `CLEANED-RELEASED`; the accounting epoch
+again has USD 100 available. The unchanged bootstrap must not be retried because its single
+failure category cannot distinguish setup, metadata, token, registry-authentication, timeout,
+or either immutable pull. The next source must add bounded privacy-safe failure categories and
+deterministic provider-free shell coverage before a new identity, plan, and reservation.

@@ -168,7 +168,17 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   protected-bootstrap verification. Cache bootstrap failures now publish one atomic,
   credential-clean structured failure record, so the controller cleans up on its next poll.
   Before any provider mutation, the lifecycle also revalidates native GitHub authentication
-  and requires both exact GHCR public-route packages to report `public` visibility.
+  and requires both exact GHCR public-route packages to report `public` visibility. After the
+  owner made both packages public, cache attempt G's first invocation exposed that the new
+  visibility check was incorrectly sent through the GCP-only runner and therefore stopped
+  before mutation. The repaired exact native-`gh` allowlist passed independent review. Its
+  live retry reached private repository, keyless identity, reader binding, builder, and cache
+  warm, then emitted the generic credential-clean bootstrap failure after 572.531 seconds.
+  Zero manifests were claimed; the repository and identity were removed, all six deletes and
+  absences passed, no key, public access, credential, or provider detail was retained, and the
+  protected bootstrap remained running. The unchanged bootstrap will not be retried until its
+  acknowledgement distinguishes fixed privacy-safe setup, metadata, token, authentication,
+  and image-pull categories under deterministic provider-free shell tests.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
