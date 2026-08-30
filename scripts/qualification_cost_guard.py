@@ -59,8 +59,23 @@ _FLY_REGION_RE = re.compile(r"^[a-z]{3}$")
 _SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 FLY_DISCOVERY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-discovery-seed"
 _FLY_DISCOVERY_IMAGE_RE = re.compile(rf"^{re.escape(FLY_DISCOVERY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
-GCP_PRIMARY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b"
-GCP_STANDBY_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b"
+GCP_ARTIFACT_REGISTRY_LOCATION = "us-central1"
+GCP_ARTIFACT_REGISTRY_PROJECT = "community-ai-506321"
+GCP_ARTIFACT_REGISTRY_REPOSITORY = "communityai-ghcr-cache"
+GCP_ARTIFACT_REGISTRY_HOST = f"{GCP_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev"
+GCP_ARTIFACT_REGISTRY_PREFIX = (
+    f"{GCP_ARTIFACT_REGISTRY_HOST}/{GCP_ARTIFACT_REGISTRY_PROJECT}/{GCP_ARTIFACT_REGISTRY_REPOSITORY}"
+)
+GCP_PRIMARY_PUBLICATION_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b"
+GCP_STANDBY_PUBLICATION_IMAGE_REPOSITORY = "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b"
+GCP_PRIMARY_IMAGE_REPOSITORY = f"{GCP_ARTIFACT_REGISTRY_PREFIX}/flujo-app/communityai-public-route-qwen3.5-2b"
+GCP_STANDBY_IMAGE_REPOSITORY = f"{GCP_ARTIFACT_REGISTRY_PREFIX}/flujo-app/communityai-public-route-gemma-4-e2b"
+_GCP_PRIMARY_PUBLICATION_IMAGE_RE = re.compile(
+    rf"^{re.escape(GCP_PRIMARY_PUBLICATION_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$"
+)
+_GCP_STANDBY_PUBLICATION_IMAGE_RE = re.compile(
+    rf"^{re.escape(GCP_STANDBY_PUBLICATION_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$"
+)
 _GCP_PRIMARY_IMAGE_RE = re.compile(rf"^{re.escape(GCP_PRIMARY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
 _GCP_STANDBY_IMAGE_RE = re.compile(rf"^{re.escape(GCP_STANDBY_IMAGE_REPOSITORY)}@sha256:[0-9a-f]{{64}}$")
 _PUBLIC_ROUTE_PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
@@ -68,11 +83,12 @@ GCP_PRIMARY_MANIFEST_DIGEST = "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc29894
 GCP_STANDBY_MANIFEST_DIGEST = "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd"
 
 GCP_QUALIFICATION_WORKLOAD = "gcp-qualification-fleet"
+GCP_PUBLIC_ROUTE_CACHE_WORKLOAD = "gcp-public-route-cache"
 GCP_PUBLIC_ROUTE_WORKLOAD = "gcp-public-route"
 FLY_RECOVERY_WORKLOAD = "fly-recovery"
 FLY_DISCOVERY_SEED_WORKLOAD = "fly-discovery-seed"
 _WORKLOADS_BY_PROVIDER = {
-    "GCP": {GCP_QUALIFICATION_WORKLOAD, GCP_PUBLIC_ROUTE_WORKLOAD},
+    "GCP": {GCP_QUALIFICATION_WORKLOAD, GCP_PUBLIC_ROUTE_CACHE_WORKLOAD, GCP_PUBLIC_ROUTE_WORKLOAD},
     "FLY": {FLY_RECOVERY_WORKLOAD, FLY_DISCOVERY_SEED_WORKLOAD},
 }
 
@@ -321,6 +337,379 @@ def _gcp_cost(
         "calculated_hourly_usd": _usd(equivalent_hourly),
     }
     return maximum, assumptions
+
+
+def _gcp_public_route_cache_cost(maximum_hours: Decimal) -> tuple[Decimal, Mapping[str, str]]:
+    if not maximum_hours.is_finite() or maximum_hours <= 0 or maximum_hours > Decimal("6"):
+        raise CostGuardError("GCP public-route cache maximum hours must be greater than zero and no more than 6")
+    return Decimal("10.00"), {
+        "builder_count": "1",
+        "builder_machine_type": "e2-standard-4",
+        "builder_maximum_hours": str(maximum_hours),
+        "builder_disk_type": "pd-balanced",
+        "builder_disk_gib": "200",
+        "artifact_registry_location": GCP_ARTIFACT_REGISTRY_LOCATION,
+        "artifact_registry_storage_gib_maximum": "160",
+        "artifact_registry_storage_retention_days": "30",
+        "same_region_route_transfer": "no charge",
+        "conservative_combined_maximum_usd": "10.00",
+    }
+
+
+def _gcp_public_route_cache_plan(
+    run_id: str,
+    project: str,
+    zone: str,
+    source_commit: str,
+    maximum_hours: Decimal,
+    *,
+    linux_image: str,
+    primary_image: str,
+    primary_image_evidence_digest: str,
+    standby_image: str,
+    standby_image_evidence_digest: str,
+    cache_bootstrap_digest: str,
+    cache_bootstrap_bytes: int,
+) -> Mapping[str, Any]:
+    region = _require_gcp_target(project, zone)
+    if project != GCP_ARTIFACT_REGISTRY_PROJECT or region != GCP_ARTIFACT_REGISTRY_LOCATION:
+        raise CostGuardError("GCP public-route cache must use the reviewed us-central1 project")
+    if _IMAGE_RE.fullmatch(linux_image) is None:
+        raise CostGuardError("GCP public-route cache OS image must be an immutable image name")
+    if _GCP_PRIMARY_PUBLICATION_IMAGE_RE.fullmatch(primary_image) is None:
+        raise CostGuardError("GCP public-route cache primary source must be the immutable published Qwen image")
+    if _GCP_STANDBY_PUBLICATION_IMAGE_RE.fullmatch(standby_image) is None:
+        raise CostGuardError("GCP public-route cache standby source must be the immutable published Gemma image")
+    for digest, field in (
+        (primary_image_evidence_digest, "primary publication evidence"),
+        (standby_image_evidence_digest, "standby publication evidence"),
+        (cache_bootstrap_digest, "cache bootstrap"),
+    ):
+        if _SHA256_DIGEST_RE.fullmatch(digest or "") is None:
+            raise CostGuardError(f"GCP public-route cache {field} requires a canonical digest")
+    if (
+        isinstance(cache_bootstrap_bytes, bool)
+        or not isinstance(cache_bootstrap_bytes, int)
+        or not 1 <= cache_bootstrap_bytes <= 16_384
+    ):
+        raise CostGuardError("GCP public-route cache bootstrap must be between 1 and 16384 bytes")
+
+    primary_digest = primary_image.rsplit("@", 1)[1]
+    standby_digest = standby_image.rsplit("@", 1)[1]
+    primary_cached = f"{GCP_PRIMARY_IMAGE_REPOSITORY}@{primary_digest}"
+    standby_cached = f"{GCP_STANDBY_IMAGE_REPOSITORY}@{standby_digest}"
+    instance = f"{run_id}-cache"
+    network = f"{run_id}-net"
+    subnet = f"{run_id}-subnet"
+    firewall = f"{run_id}-iap"
+    target_tag = f"{run_id}-cache"
+    max_run_seconds = int(maximum_hours * Decimal(3600))
+    common = ["--project", project, "--quiet"]
+    create_commands = [
+        _command(
+            "gcloud",
+            "services",
+            "enable",
+            "artifactregistry.googleapis.com",
+            *common,
+        ),
+        _command(
+            "gcloud",
+            "artifacts",
+            "repositories",
+            "create",
+            GCP_ARTIFACT_REGISTRY_REPOSITORY,
+            "--repository-format",
+            "docker",
+            "--location",
+            region,
+            "--mode",
+            "remote-repository",
+            "--remote-docker-repo",
+            "https://ghcr.io",
+            "--disable-vulnerability-scanning",
+            *common,
+        ),
+        _command(
+            "gcloud",
+            "artifacts",
+            "repositories",
+            "add-iam-policy-binding",
+            GCP_ARTIFACT_REGISTRY_REPOSITORY,
+            "--location",
+            region,
+            "--member",
+            "allUsers",
+            "--role",
+            "roles/artifactregistry.reader",
+            *common,
+        ),
+        _command("gcloud", "compute", "networks", "create", network, "--subnet-mode", "custom", *common),
+        _command(
+            "gcloud",
+            "compute",
+            "networks",
+            "subnets",
+            "create",
+            subnet,
+            "--network",
+            network,
+            "--region",
+            region,
+            "--range",
+            "10.211.0.0/24",
+            *common,
+        ),
+        _command(
+            "gcloud",
+            "compute",
+            "firewall-rules",
+            "create",
+            firewall,
+            "--network",
+            network,
+            "--direction",
+            "INGRESS",
+            "--action",
+            "ALLOW",
+            "--rules",
+            "tcp:22",
+            "--source-ranges",
+            GCP_IAP_SOURCE_RANGE,
+            "--target-tags",
+            target_tag,
+            *common,
+        ),
+        _command(
+            "gcloud",
+            "compute",
+            "instances",
+            "create",
+            instance,
+            "--zone",
+            zone,
+            "--machine-type",
+            "e2-standard-4",
+            "--network",
+            network,
+            "--subnet",
+            subnet,
+            "--image",
+            linux_image,
+            "--image-project",
+            "ubuntu-os-cloud",
+            "--boot-disk-size",
+            "200GB",
+            "--boot-disk-type",
+            "pd-balanced",
+            "--boot-disk-auto-delete",
+            "--no-service-account",
+            "--no-scopes",
+            "--provisioning-model",
+            "STANDARD",
+            "--max-run-duration",
+            f"{max_run_seconds}s",
+            "--instance-termination-action",
+            "DELETE",
+            "--maintenance-policy",
+            "MIGRATE",
+            "--metadata-from-file",
+            "startup-script=scripts/gcp_public_route_cache_startup.sh",
+            "--metadata",
+            f"primary-image={primary_cached},standby-image={standby_cached}",
+            "--tags",
+            target_tag,
+            "--labels",
+            (
+                f"communityai_run={run_id},communityai_gate=gate11,"
+                f"communityai_purpose=route-cache,communityai_source={source_commit}"
+            ),
+            *common,
+        ),
+    ]
+    revoke_public_command = _command(
+        "gcloud",
+        "artifacts",
+        "repositories",
+        "remove-iam-policy-binding",
+        GCP_ARTIFACT_REGISTRY_REPOSITORY,
+        "--location",
+        region,
+        "--member",
+        "allUsers",
+        "--role",
+        "roles/artifactregistry.reader",
+        "--all",
+        *common,
+    )
+    cleanup_commands = [
+        revoke_public_command,
+        _command(
+            "gcloud",
+            "compute",
+            "instances",
+            "delete",
+            instance,
+            "--zone",
+            zone,
+            "--delete-disks",
+            "all",
+            *common,
+        ),
+        _command("gcloud", "compute", "firewall-rules", "delete", firewall, *common),
+        _command(
+            "gcloud",
+            "compute",
+            "networks",
+            "subnets",
+            "delete",
+            subnet,
+            "--region",
+            region,
+            *common,
+        ),
+        _command("gcloud", "compute", "networks", "delete", network, *common),
+    ]
+    verify_cleanup_commands = [
+        _command(
+            "gcloud",
+            "compute",
+            "instances",
+            "list",
+            "--filter",
+            f"name={instance}",
+            "--format",
+            "value(name)",
+            "--project",
+            project,
+        ),
+        _command(
+            "gcloud",
+            "compute",
+            "disks",
+            "list",
+            "--filter",
+            f"name={instance}",
+            "--format",
+            "value(name)",
+            "--project",
+            project,
+        ),
+        _command(
+            "gcloud",
+            "compute",
+            "firewall-rules",
+            "list",
+            "--filter",
+            f"name={firewall}",
+            "--format",
+            "value(name)",
+            "--project",
+            project,
+        ),
+        _command(
+            "gcloud",
+            "compute",
+            "networks",
+            "subnets",
+            "list",
+            "--filter",
+            f"name={subnet}",
+            "--format",
+            "value(name)",
+            "--project",
+            project,
+        ),
+        _command(
+            "gcloud",
+            "compute",
+            "networks",
+            "list",
+            "--filter",
+            f"name={network}",
+            "--format",
+            "value(name)",
+            "--project",
+            project,
+        ),
+    ]
+    return {
+        "project": project,
+        "zone": zone,
+        "region": region,
+        "maximum_runtime_hours": str(maximum_hours),
+        "repository": {
+            "name": GCP_ARTIFACT_REGISTRY_REPOSITORY,
+            "format": "DOCKER",
+            "mode": "REMOTE_REPOSITORY",
+            "upstream": "https://ghcr.io",
+            "host": GCP_ARTIFACT_REGISTRY_HOST,
+            "private_after_prewarm": True,
+            "vulnerability_scanning": False,
+            "retained_after_pass": True,
+        },
+        "builder": {
+            "instance": instance,
+            "boot_disk": instance,
+            "network": network,
+            "subnet": subnet,
+            "firewall": firewall,
+            "machine_type": "e2-standard-4",
+            "boot_disk_gib": 200,
+            "os_image": linux_image,
+            "service_account": False,
+            "scopes": [],
+            "max_run_seconds": max_run_seconds,
+            "termination_action": "DELETE",
+        },
+        "cache_bootstrap": {
+            "relative_path": "scripts/gcp_public_route_cache_startup.sh",
+            "sha256": cache_bootstrap_digest,
+            "byte_size": cache_bootstrap_bytes,
+            "source_commit_bound": True,
+            "validated_by_cost_guard": False,
+        },
+        "images": [
+            {
+                "role": "primary",
+                "candidate": "qwen3.5-2b",
+                "source": primary_image,
+                "cached": primary_cached,
+                "publication_evidence_digest": primary_image_evidence_digest,
+            },
+            {
+                "role": "standby",
+                "candidate": "gemma-4-e2b",
+                "source": standby_image,
+                "cached": standby_cached,
+                "publication_evidence_digest": standby_image_evidence_digest,
+            },
+        ],
+        "preflight_contract": [
+            "revalidate native gcloud authentication before the first provider call",
+            "verify the exact cache repository and all run-scoped builder resources are initially absent",
+            "verify communityai-bootstrap-1 is RUNNING and never include it in mutation commands",
+            "rehash the exact source-bound cache bootstrap before creation",
+        ],
+        "create_commands": create_commands,
+        "revoke_public_command": revoke_public_command,
+        "cleanup_commands": cleanup_commands,
+        "verify_cleanup_commands": verify_cleanup_commands,
+        "delete_repository_command": _command(
+            "gcloud",
+            "artifacts",
+            "repositories",
+            "delete",
+            GCP_ARTIFACT_REGISTRY_REPOSITORY,
+            "--location",
+            region,
+            *common,
+        ),
+        "cleanup_success_condition": (
+            "temporary allUsers access removed, five builder absence checks empty, cache private, "
+            "four exact cached manifests present, protected bootstrap RUNNING"
+        ),
+    }
 
 
 def _gcp_public_route_cost(maximum_hours: Decimal) -> tuple[Decimal, Mapping[str, str]]:
@@ -702,7 +1091,7 @@ def _gcp_public_route_plan(
                 "public_tcp_port": 31337,
                 "publication_evidence": {
                     "expected_digest": primary_image_evidence_digest,
-                    "required_repository": GCP_PRIMARY_IMAGE_REPOSITORY,
+                    "required_repository": GCP_PRIMARY_PUBLICATION_IMAGE_REPOSITORY,
                     "validated_by_cost_guard": False,
                 },
             },
@@ -714,13 +1103,13 @@ def _gcp_public_route_plan(
                 "public_tcp_port": 31338,
                 "publication_evidence": {
                     "expected_digest": standby_image_evidence_digest,
-                    "required_repository": GCP_STANDBY_IMAGE_REPOSITORY,
+                    "required_repository": GCP_STANDBY_PUBLICATION_IMAGE_REPOSITORY,
                     "validated_by_cost_guard": False,
                 },
             },
         ],
         "preflight_contract": [
-            "revalidate native gcloud and gh authentication before the first provider call",
+            "revalidate native gcloud authentication before the first provider call",
             "verify one unused global and zonal L4 slot and exact g2-standard-8 availability",
             "verify IAP SSH authorization and the exact IAP source-range firewall before remote launch",
             (
@@ -734,6 +1123,10 @@ def _gcp_public_route_plan(
             (
                 "load each bounded publication-evidence file, recompute its digest, and verify its candidate, "
                 "manifest, immutable image, source, provenance, SBOM, and passed result"
+            ),
+            (
+                "verify the fixed us-central1 Artifact Registry cache is private, scanning-disabled, bound to "
+                "https://ghcr.io, and contains both index and runtime digests for both routes"
             ),
             "verify the exact ledger reservation and provider-plan digest still match this plan",
         ],
@@ -1432,6 +1825,8 @@ def build_authorization(
     host_controller_bytes: int | None = None,
     acceptance_probe_digest: str | None = None,
     acceptance_probe_bytes: int | None = None,
+    cache_bootstrap_digest: str | None = None,
+    cache_bootstrap_bytes: int | None = None,
     today: date | None = None,
 ) -> Mapping[str, Any]:
     _require_run_identity(run_id, source_commit)
@@ -1470,7 +1865,9 @@ def build_authorization(
         if workload == GCP_QUALIFICATION_WORKLOAD:
             if windows_image is None:
                 raise CostGuardError("GCP qualification planning requires an immutable Windows OS image")
-            if any(value is not None for value in public_route_fields):
+            if any(
+                value is not None for value in public_route_fields + (cache_bootstrap_digest, cache_bootstrap_bytes)
+            ):
                 raise CostGuardError("GCP qualification planning must not contain public-route image fields")
             maximum_usd, assumptions = _gcp_cost(
                 maximum_hours,
@@ -1488,8 +1885,58 @@ def build_authorization(
                 cuda_fallback_zone=cuda_fallback_zone,
                 cuda_shape=cuda_shape,
             )
+        elif workload == GCP_PUBLIC_ROUTE_CACHE_WORKLOAD:
+            route_only_fields = (
+                runtime_bootstrap_digest,
+                runtime_bootstrap_bytes,
+                initial_peer,
+                host_controller_digest,
+                host_controller_bytes,
+                acceptance_probe_digest,
+                acceptance_probe_bytes,
+            )
+            cache_fields = (
+                primary_image,
+                primary_image_evidence_digest,
+                standby_image,
+                standby_image_evidence_digest,
+                cache_bootstrap_digest,
+                cache_bootstrap_bytes,
+            )
+            if (
+                windows_image is not None
+                or cuda_fallback_zone is not None
+                or cuda_shape != "n1-t4"
+                or any(value is not None for value in route_only_fields)
+            ):
+                raise CostGuardError("GCP public-route cache planning accepts only the fixed CPU prewarm target fields")
+            if any(value is None for value in cache_fields):
+                raise CostGuardError(
+                    "GCP public-route cache planning requires published images, evidence digests, and bootstrap binding"
+                )
+            maximum_usd, assumptions = _gcp_public_route_cache_cost(maximum_hours)
+            provider_plan = _gcp_public_route_cache_plan(
+                run_id,
+                project,
+                zone,
+                source_commit,
+                maximum_hours,
+                linux_image=linux_image,
+                primary_image=primary_image,
+                primary_image_evidence_digest=primary_image_evidence_digest,
+                standby_image=standby_image,
+                standby_image_evidence_digest=standby_image_evidence_digest,
+                cache_bootstrap_digest=cache_bootstrap_digest,
+                cache_bootstrap_bytes=cache_bootstrap_bytes,
+            )
         else:
-            if windows_image is not None or cuda_fallback_zone is not None or cuda_shape != "g2-l4":
+            if (
+                windows_image is not None
+                or cuda_fallback_zone is not None
+                or cuda_shape != "g2-l4"
+                or cache_bootstrap_digest is not None
+                or cache_bootstrap_bytes is not None
+            ):
                 raise CostGuardError(
                     "GCP public-route planning requires g2-l4 and does not accept Windows or fallback-zone fields"
                 )
@@ -1538,6 +1985,8 @@ def build_authorization(
                     host_controller_bytes,
                     acceptance_probe_digest,
                     acceptance_probe_bytes,
+                    cache_bootstrap_digest,
+                    cache_bootstrap_bytes,
                 )
             )
             or cuda_shape != "n1-t4"
@@ -1692,9 +2141,11 @@ def build_authorization(
         "pricing_revalidate_by": PRICING_REVALIDATE_BY.isoformat() if normalized_provider == "GCP" else None,
         "cost_assumptions": assumptions,
         "provider_plan": provider_plan,
-        "cleanup_required_for_pass": workload not in {FLY_DISCOVERY_SEED_WORKLOAD, GCP_PUBLIC_ROUTE_WORKLOAD},
+        "cleanup_required_for_pass": workload
+        not in {FLY_DISCOVERY_SEED_WORKLOAD, GCP_PUBLIC_ROUTE_CACHE_WORKLOAD, GCP_PUBLIC_ROUTE_WORKLOAD},
         "failure_cleanup_required": True,
-        "persistent_resources_after_pass": workload in {FLY_DISCOVERY_SEED_WORKLOAD, GCP_PUBLIC_ROUTE_WORKLOAD},
+        "persistent_resources_after_pass": workload
+        in {FLY_DISCOVERY_SEED_WORKLOAD, GCP_PUBLIC_ROUTE_CACHE_WORKLOAD, GCP_PUBLIC_ROUTE_WORKLOAD},
         "qualification_evidence": False,
         "complete_release_qualification": False,
     }
@@ -1740,6 +2191,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=(
             GCP_QUALIFICATION_WORKLOAD,
+            GCP_PUBLIC_ROUTE_CACHE_WORKLOAD,
             GCP_PUBLIC_ROUTE_WORKLOAD,
             FLY_RECOVERY_WORKLOAD,
             FLY_DISCOVERY_SEED_WORKLOAD,
@@ -1772,6 +2224,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host-controller-bytes", type=int)
     parser.add_argument("--acceptance-probe-digest")
     parser.add_argument("--acceptance-probe-bytes", type=int)
+    parser.add_argument("--cache-bootstrap-digest")
+    parser.add_argument("--cache-bootstrap-bytes", type=int)
     return parser
 
 
@@ -1808,6 +2262,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             host_controller_bytes=args.host_controller_bytes,
             acceptance_probe_digest=args.acceptance_probe_digest,
             acceptance_probe_bytes=args.acceptance_probe_bytes,
+            cache_bootstrap_digest=args.cache_bootstrap_digest,
+            cache_bootstrap_bytes=args.cache_bootstrap_bytes,
         )
         _atomic_json(args.output, report)
     except CostGuardError as exc:

@@ -80,46 +80,61 @@ command. Only the matching `PLANNED` run ID, provider, workload, purpose/source 
 provider-plan digest, and maximum changes the cost authorization to true. Provider authentication, target
 availability, quota, and absence checks remain mandatory even after cost authorization.
 
-Gate 11's initial routes use the separate `gcp-public-route` workload. It fixes one
-run-bound G2/L4 host, the Qwen primary and Gemma standby immutable snapshot images/manifests,
-their publication-evidence digests, public ports, isolated network resources, health
-and fallback evidence, a 14-hour maximum, automatic instance deletion, and exact
-failure/success cleanup. Co-location is explicit fallback coverage, not independent
-redundancy.
+Gate 11 uses two separately reserved GCP workloads. First,
+`gcp-public-route-cache` creates and prewarms the fixed private
+`us-central1` Artifact Registry remote repository backed by `https://ghcr.io`.
+It reserves USD 10 for one six-hour, auto-deleting `e2-standard-4` CPU builder,
+a 200 GiB balanced boot disk, and up to 30 days of retained cache storage. The builder
+has no service account or scopes. The lifecycle may grant `allUsers` the reader role
+only while the exact builder pulls both immutable publications; it must revoke that
+binding, prove the repository private, verify scanning disabled and all four
+index/runtime digests, delete and prove the builder perimeter absent, and revalidate
+`communityai-bootstrap-1`. Any failure deletes a repository created by that run and
+proves it absent. The retained private repository keeps the USD 10 reservation active.
 
-The following provider-call-free command reproduces the finite infrastructure/snapshot
-plan for review only. The pinned images are CPU snapshot carriers, not CUDA workers; do
-not add its ledger row or use its create commands. At the pinned 2026-08-26 GCP rate snapshot,
-14 hours rounds conservatively to USD 26 including 25% headroom and the fixed USD 10
-network/setup contingency:
+Generate the provider-call-free cache plan first:
 
 ```powershell
 uv run --no-sync python scripts/qualification_cost_guard.py `
-  --run-id route-20260829-a `
+  --run-id cache-20260830-a `
   --provider gcp `
-  --workload gcp-public-route `
-  --purpose "Gate 11 finite Qwen primary and Gemma standby routes" `
+  --workload gcp-public-route-cache `
+  --purpose "Gate 11 private same-region route image cache" `
   --source-commit $sourceCommit `
-  --maximum-hours 14 `
+  --maximum-hours 6 `
   --project community-ai-506321 `
   --zone us-central1-a `
   --linux-image ubuntu-2404-noble-amd64-v20260826 `
-  --cuda-shape g2-l4 `
-  --primary-image "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed" `
-  --primary-image-evidence-digest "sha256:47c767121a6a01fb69a7b802809701e4ebbd330cf4afb4a469014d543a7e0714" `
-  --standby-image "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f" `
-  --standby-image-evidence-digest "sha256:3d6f2eb8ddf50c4d42af9604017ccfb2cdf4bb99dc605967028692e7a8e5abbf" `
+  --primary-image $qwenGhcrIndexReference `
+  --primary-image-evidence-digest $qwenPublicationDigest `
+  --standby-image $gemmaGhcrIndexReference `
+  --standby-image-evidence-digest $gemmaPublicationDigest `
+  --cache-bootstrap-digest $cacheBootstrapDigest `
+  --cache-bootstrap-bytes $cacheBootstrapBytes `
   --ledger docs/RELEASE_READINESS.md `
-  --output gcp-route-cost-plan.json
+  --output docs/evidence/cache-20260830-a-cost-authorization.json
 ```
 
-The output must say `provisioning_authorized=false`. Do not record its ledger row.
-Before Gate 11 can reserve USD 26, the cost guard must additionally bind immutable CUDA
-route-image publication evidence and a fresh-VM container-runtime bootstrap. The
-reviewed lifecycle runner must attest those inputs before authentication, consume fresh
-`--health_state_path` state, verify quota/capacity and initial absence, and enforce
-startup, primary-disable/standby-fallback, restoration, stop, and cleanup. Only a later
-plan containing those exact controls may be recorded and rerun to true.
+The first pass must report `provisioning_authorized=false`. Record its exact
+`required_ledger_row`, commit and push the reservation, rerun the identical command,
+and require `provisioning_authorized=true` before running
+`scripts/gcp_public_route_cache_lifecycle.py`.
+
+After cache evidence passes, `gcp-public-route` fixes one run-bound G2/L4 host, the
+cached Qwen primary and Gemma standby index digests, the original GHCR
+publication-evidence digests, public ports, isolated network resources, health and
+fallback evidence, a 14-hour maximum, automatic instance deletion, and exact cleanup.
+Its conservative maximum remains USD 26. Co-location is fallback coverage, not
+independent redundancy. The cost guard accepts only the fixed
+`us-central1-docker.pkg.dev/community-ai-506321/communityai-ghcr-cache/flujo-app/...`
+destinations. Before creating a GPU host, the route lifecycle revalidates the private
+remote-repository configuration, scanning-disabled state, absence of public principals,
+and all four exact cached index/runtime digests. It then obtains one native
+`gcloud auth print-access-token` credential, sends it only through the fixed
+`oauth2accesstoken` Docker login for `us-central1-docker.pkg.dev`, and never records
+the credential or provider output. The host logs out from that exact registry after
+pulling. The lifecycle then enforces fresh health, primary-disable/standby-fallback,
+restoration, resource ceilings, and cleanup.
 
 For Fly, calculate a conservative maximum from current Fly pricing for the exact
 image, five-Machine topology, regions, CPU, memory, and maximum lifetime, then pass

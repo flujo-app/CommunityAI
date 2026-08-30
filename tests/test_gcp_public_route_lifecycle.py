@@ -50,9 +50,31 @@ def test_bounded_runner_rejects_missing_or_unreviewed_executables(monkeypatch):
         lifecycle._run_bounded(("python", "--version"), 30)
 
 
+def test_credential_runner_accepts_only_native_gcloud_access_token(monkeypatch):
+    calls = []
+    resolved = r"C:\\tools\\gcloud.CMD"
+    monkeypatch.setattr(lifecycle.shutil, "which", lambda name: resolved if name == "gcloud" else None)
+    monkeypatch.setattr(
+        lifecycle.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs))
+        or lifecycle.subprocess.CompletedProcess(argv, 0, b"access-token\n", b""),
+    )
+
+    token = lifecycle._run_credential_bounded(("gcloud", "auth", "print-access-token"), 30)
+
+    assert bytes(token) == b"access-token\n"
+    assert calls[0][0] == [resolved, "auth", "print-access-token"]
+    assert calls[0][1]["shell"] is False
+    assert calls[0][1]["stderr"] is lifecycle.subprocess.DEVNULL
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="contract"):
+        lifecycle._run_credential_bounded(("gh", "auth", "token"), 30)
+
+
 def _publication(candidate: str, index_character: str, runtime_character: str) -> dict:
     expected = lifecycle._ROUTE_EXPECTATIONS[candidate]
-    repository = expected["repository"]
+    repository = expected["publication_repository"]
     source = "b" * 40
     index_digest = "sha256:" + index_character * 64
     runtime_digest = "sha256:" + runtime_character * 64
@@ -147,9 +169,9 @@ def _bound_fixture(tmp_path: Path, *, mutate_evidence=None):
         cuda_fallback_zone=None,
         cuda_shape="g2-l4",
         manual_maximum_usd=None,
-        primary_image=primary["image_reference"],
+        primary_image=f"{guard.GCP_PRIMARY_IMAGE_REPOSITORY}@{primary['index_digest']}",
         primary_image_evidence_digest=primary_digest,
-        standby_image=standby["image_reference"],
+        standby_image=f"{guard.GCP_STANDBY_IMAGE_REPOSITORY}@{standby['index_digest']}",
         standby_image_evidence_digest=standby_digest,
         runtime_bootstrap_digest=_digest(BOOTSTRAP),
         runtime_bootstrap_bytes=BOOTSTRAP.stat().st_size,
@@ -221,12 +243,32 @@ def test_committed_publication_evidence_uses_the_lifecycle_schema(candidate, evi
         planned_route={
             "role": expected["role"],
             "candidate": candidate,
-            "image": evidence["image_reference"],
+            "image": f"{expected['repository']}@{evidence['index_digest']}",
             "manifest_digest": expected["manifest"],
         },
     )
 
     assert binding.full_span == expected_span
+    assert binding.image_reference == f"{expected['repository']}@{evidence['index_digest']}"
+    assert binding.runtime_image_reference == (f"{expected['repository']}@{evidence['runtime_manifest_digest']}")
+    assert evidence["image_reference"].startswith(expected["publication_repository"] + "@")
+
+
+def test_publication_loader_rejects_noncanonical_cache_destination():
+    evidence = json.loads(QWEN_PUBLICATION.read_text(encoding="utf-8"))
+    expected = lifecycle._ROUTE_EXPECTATIONS["qwen3.5-2b"]
+
+    with pytest.raises(lifecycle.LifecycleError, match="cache references"):
+        lifecycle._load_publication(
+            QWEN_PUBLICATION,
+            expected_digest=_digest(QWEN_PUBLICATION),
+            planned_route={
+                "role": "primary",
+                "candidate": "qwen3.5-2b",
+                "image": "us-east1-docker.pkg.dev/other/repo/image@" + evidence["index_digest"],
+                "manifest_digest": expected["manifest"],
+            },
+        )
 
 
 @pytest.mark.parametrize("span", ([0, 24], "00:24", "0:024", "0:23", "0:24 ", "0-24", None))
@@ -468,6 +510,65 @@ def _dummy_plan():
         acceptance_probe_digest="sha256:" + "3" * 64,
         initial_peer=INITIAL_PEER,
     )
+
+
+def _cache_repository_payload(plan):
+    return json.dumps(
+        {
+            "name": (
+                f"projects/{plan.project}/locations/{plan.region}/"
+                f"repositories/{guard.GCP_ARTIFACT_REGISTRY_REPOSITORY}"
+            ),
+            "format": "DOCKER",
+            "mode": "REMOTE_REPOSITORY",
+            "remoteRepositoryConfig": {"dockerRepository": {"customRepository": {"uri": "https://ghcr.io"}}},
+            "vulnerabilityScanningConfig": {
+                "enablementConfig": "DISABLED",
+                "enablementState": "SCANNING_DISABLED",
+            },
+        }
+    ).encode()
+
+
+def test_route_preflight_requires_private_exact_cache_and_four_digests():
+    plan = _dummy_plan()
+    calls = []
+
+    def runner(argv, _timeout):
+        argv = tuple(argv)
+        calls.append(argv)
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "describe"):
+            return lifecycle.CommandResult(0, _cache_repository_payload(plan), b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "get-iam-policy"):
+            return lifecycle.CommandResult(0, b'{"bindings":[]}', b"")
+        if argv[:5] == ("gcloud", "artifacts", "docker", "images", "describe"):
+            return lifecycle.CommandResult(0, (argv[5].rsplit("@", 1)[1] + "\n").encode(), b"")
+        raise AssertionError(argv)
+
+    lifecycle._verify_private_artifact_cache(plan, runner)
+
+    image_describes = [argv for argv in calls if argv[:5] == ("gcloud", "artifacts", "docker", "images", "describe")]
+    assert len(image_describes) == 4
+    assert all(argv[5].startswith(guard.GCP_ARTIFACT_REGISTRY_PREFIX + "/") for argv in image_describes)
+
+
+def test_route_preflight_rejects_public_cache_before_capacity_checks():
+    plan = _dummy_plan()
+
+    def runner(argv, _timeout):
+        argv = tuple(argv)
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "describe"):
+            return lifecycle.CommandResult(0, _cache_repository_payload(plan), b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "get-iam-policy"):
+            return lifecycle.CommandResult(
+                0,
+                b'{"bindings":[{"members":["allUsers"],"role":"roles/artifactregistry.reader"}]}',
+                b"",
+            )
+        raise AssertionError(argv)
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="must be private"):
+        lifecycle._verify_private_artifact_cache(plan, runner)
 
 
 def _resources(**overrides):
@@ -778,7 +879,7 @@ def test_first_create_failure_still_runs_cleanup_and_rechecks_bootstrap(tmp_path
     plan.provider_plan["verify_create_commands"] = [["verify", "instance"]]
     cleaned = []
 
-    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "octocat")
+    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "oauth2accesstoken")
     monkeypatch.setattr(
         lifecycle,
         "_host_action",
@@ -817,7 +918,7 @@ def test_first_create_failure_still_runs_cleanup_and_rechecks_bootstrap(tmp_path
 
     evidence_text = output.read_text(encoding="utf-8")
     assert "unique-secret-value" not in evidence_text
-    assert "octocat" not in evidence_text
+    assert "oauth2accesstoken" not in evidence_text
     report = json.loads(evidence_text)
     assert cleaned == [plan.run_id]
     assert report["cleanup"]["all_absent"] is True
@@ -831,7 +932,7 @@ def test_host_action_failure_code_is_recorded_before_cleanup(tmp_path, monkeypat
     plan.provider_plan["create_commands"] = []
     plan.provider_plan["verify_create_commands"] = [["verify", "instance"]]
 
-    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "octocat")
+    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "oauth2accesstoken")
     monkeypatch.setattr(
         lifecycle,
         "_await_instance_verification",
@@ -888,7 +989,7 @@ def test_local_credential_cleanup_failure_is_not_masked_by_provider_absence(
     plan.provider_plan["create_commands"] = []
     plan.provider_plan["verify_create_commands"] = [["verify", "instance"]]
 
-    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "octocat")
+    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "oauth2accesstoken")
     monkeypatch.setattr(
         lifecycle,
         "_await_instance_verification",
@@ -1004,18 +1105,18 @@ def test_registry_token_is_bound_to_validated_native_gh_identity():
 
     def credential_runner(argv, timeout):
         calls.append((tuple(argv), timeout))
-        return bytearray(b"native-gh-token\n")
+        return bytearray(b"native-gcloud-token\n")
 
     token = lifecycle._registry_token(
-        "octocat",
+        "oauth2accesstoken",
         lambda _argv, _timeout: lifecycle.CommandResult(0, b"", b""),
         credential_runner,
     )
 
-    assert bytes(token) == b"native-gh-token"
+    assert bytes(token) == b"native-gcloud-token"
     assert calls == [
         (
-            ("gh", "auth", "token", "--hostname", "github.com", "--user", "octocat"),
+            ("gcloud", "auth", "print-access-token"),
             lifecycle.MAX_AUTH_SECONDS,
         )
     ]
@@ -1155,7 +1256,7 @@ def test_secret_file_prefetch_preserves_allowlisted_host_failure_codes(
             upload_runner,
             "prefetch-images-file",
             bytearray(b"bmF0aXZlLWdoLXRva2Vu\n"),
-            registry_user="octocat",
+            registry_user="oauth2accesstoken",
             timeout=3600,
         )
 

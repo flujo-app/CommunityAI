@@ -57,7 +57,6 @@ _GIB = 1024**3
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _RUN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,39}$")
-_GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _UPLOAD_RE = re.compile(r"^[0-9a-f]{32}$")
 _LOCAL_SECRET_PLACEHOLDER = "{communityai-local-secret-file}"
 _DIRECTORY_ACL_SCRIPT = r"""param([Parameter(Mandatory = $true)][string]$path)
@@ -85,7 +84,10 @@ $rules = @($verified.GetAccessRules($true, $true, [System.Security.Principal.Sec
 if (-not $verified.AreAccessRulesProtected -or $rules.Count -ne 1 -or $rules[0].IdentityReference.Value -ne $sid.Value -or $rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or $rules[0].IsInherited -or $rules[0].FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl) { throw 'private file ACL verification failed' }
 """
 _PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
-_IMAGE_RE = re.compile(r"^ghcr\.io/flujo-app/communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$")
+_IMAGE_RE = re.compile(
+    rf"^{re.escape(cost_guard.GCP_ARTIFACT_REGISTRY_PREFIX)}/flujo-app/"
+    r"communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$"
+)
 _AUTHORIZATION_KEYS = {
     "schema_version",
     "scope",
@@ -188,6 +190,7 @@ _ROUTE_EXPECTATIONS: Mapping[str, Mapping[str, object]] = {
         "role": "primary",
         "manifest": cost_guard.GCP_PRIMARY_MANIFEST_DIGEST,
         "repository": cost_guard.GCP_PRIMARY_IMAGE_REPOSITORY,
+        "publication_repository": cost_guard.GCP_PRIMARY_PUBLICATION_IMAGE_REPOSITORY,
         "model_repository": "Qwen/Qwen3.5-2B",
         "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
         "span": (0, 24),
@@ -196,6 +199,7 @@ _ROUTE_EXPECTATIONS: Mapping[str, Mapping[str, object]] = {
         "role": "standby",
         "manifest": cost_guard.GCP_STANDBY_MANIFEST_DIGEST,
         "repository": cost_guard.GCP_STANDBY_IMAGE_REPOSITORY,
+        "publication_repository": cost_guard.GCP_STANDBY_PUBLICATION_IMAGE_REPOSITORY,
         "model_repository": "google/gemma-4-E2B-it",
         "model_revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
         "span": (0, 35),
@@ -287,7 +291,7 @@ def _run_bounded(argv: Sequence[str], timeout: int) -> CommandResult:
             not isinstance(value, str) or not value or "\x00" in value or "\r" in value or "\n" in value
             for value in argv
         )
-        or argv[0] not in {"gcloud", "gh"}
+        or argv[0] != "gcloud"
         or not 1 <= timeout <= 3600
     ):
         raise ProviderCommandError("provider command contract is invalid")
@@ -312,18 +316,11 @@ def _run_bounded(argv: Sequence[str], timeout: int) -> CommandResult:
 
 
 def _run_credential_bounded(argv: Sequence[str], timeout: int) -> bytearray:
-    if (
-        len(argv) != 7
-        or tuple(argv[:4]) != ("gh", "auth", "token", "--hostname")
-        or argv[4] != "github.com"
-        or argv[5] != "--user"
-        or _GITHUB_LOGIN_RE.fullmatch(argv[6]) is None
-        or not 1 <= timeout <= MAX_AUTH_SECONDS
-    ):
+    if tuple(argv) != ("gcloud", "auth", "print-access-token") or not 1 <= timeout <= MAX_AUTH_SECONDS:
         raise ProviderCommandError("registry credential command contract is invalid")
-    executable = shutil.which("gh")
+    executable = shutil.which("gcloud")
     if executable is None:
-        raise ProviderCommandError("native GitHub executable is unavailable")
+        raise ProviderCommandError("native gcloud executable is unavailable")
     try:
         completed = subprocess.run(
             [executable, *argv[1:]],
@@ -744,17 +741,20 @@ def _load_publication(
         or evidence["complete_release_qualification"] is not False
     ):
         raise LifecycleError("public-route publication evidence result is invalid")
-    repository = str(expected["repository"])
+    publication_repository = str(expected["publication_repository"])
+    route_repository = str(expected["repository"])
     index_digest = evidence["index_digest"]
     runtime_digest = evidence["runtime_manifest_digest"]
+    route_index_reference = f"{route_repository}@{index_digest}"
+    route_runtime_reference = f"{route_repository}@{runtime_digest}"
     if (
-        evidence["image_reference"] != f"{repository}@{index_digest}"
-        or evidence["runtime_image_reference"] != f"{repository}@{runtime_digest}"
-        or planned_route.get("image") != evidence["image_reference"]
-        or _IMAGE_RE.fullmatch(evidence["image_reference"]) is None
-        or _IMAGE_RE.fullmatch(evidence["runtime_image_reference"]) is None
+        evidence["image_reference"] != f"{publication_repository}@{index_digest}"
+        or evidence["runtime_image_reference"] != f"{publication_repository}@{runtime_digest}"
+        or planned_route.get("image") != route_index_reference
+        or _IMAGE_RE.fullmatch(route_index_reference) is None
+        or _IMAGE_RE.fullmatch(route_runtime_reference) is None
     ):
-        raise LifecycleError("public-route publication references are not exactly bound")
+        raise LifecycleError("public-route publication and cache references are not exactly bound")
     span = evidence["full_block_span"]
     expected_span = expected["span"]
     if (
@@ -794,8 +794,8 @@ def _load_publication(
         role=str(role),
         candidate=str(candidate),
         manifest_digest=str(expected["manifest"]),
-        image_reference=str(evidence["image_reference"]),
-        runtime_image_reference=str(evidence["runtime_image_reference"]),
+        image_reference=route_index_reference,
+        runtime_image_reference=route_runtime_reference,
         evidence_digest=expected_digest,
         full_span=(expected_span[0], expected_span[1]),
     )
@@ -1139,6 +1139,116 @@ def _protected_bootstrap_running(plan: BoundPlan, runner: Runner) -> bool:
     return protected.strip() == b"RUNNING"
 
 
+def _bounded_json_object(payload: bytes, field: str, maximum: int = 65_536) -> Mapping[str, Any]:
+    if len(payload) > maximum:
+        raise ProviderCommandError(f"{field} output is unbounded")
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProviderCommandError(f"{field} output is invalid") from exc
+    if not isinstance(value, dict):
+        raise ProviderCommandError(f"{field} output is invalid")
+    return value
+
+
+def _verify_private_artifact_cache(plan: BoundPlan, runner: Runner) -> None:
+    repository = _require_success(
+        runner(
+            (
+                "gcloud",
+                "artifacts",
+                "repositories",
+                "describe",
+                cost_guard.GCP_ARTIFACT_REGISTRY_REPOSITORY,
+                "--location",
+                cost_guard.GCP_ARTIFACT_REGISTRY_LOCATION,
+                "--format=json(name,format,mode,remoteRepositoryConfig,vulnerabilityScanningConfig)",
+                "--project",
+                plan.project,
+            ),
+            MAX_PROVIDER_SECONDS,
+        ),
+        "Artifact Registry cache configuration",
+    )
+    value = _bounded_json_object(repository, "Artifact Registry cache configuration")
+    expected_name = (
+        f"projects/{plan.project}/locations/{cost_guard.GCP_ARTIFACT_REGISTRY_LOCATION}/"
+        f"repositories/{cost_guard.GCP_ARTIFACT_REGISTRY_REPOSITORY}"
+    )
+    remote = value.get("remoteRepositoryConfig")
+    scanning = value.get("vulnerabilityScanningConfig")
+    docker = remote.get("dockerRepository") if isinstance(remote, dict) else None
+    custom = docker.get("customRepository") if isinstance(docker, dict) else None
+    if (
+        plan.project != cost_guard.GCP_ARTIFACT_REGISTRY_PROJECT
+        or plan.region != cost_guard.GCP_ARTIFACT_REGISTRY_LOCATION
+        or value.get("name") != expected_name
+        or value.get("format") != "DOCKER"
+        or value.get("mode") != "REMOTE_REPOSITORY"
+        or not isinstance(custom, dict)
+        or custom.get("uri") != "https://ghcr.io"
+        or not isinstance(scanning, dict)
+        or scanning.get("enablementConfig") != "DISABLED"
+        or scanning.get("enablementState") != "SCANNING_DISABLED"
+    ):
+        raise ProviderCommandError("Artifact Registry cache does not match the exact private plan")
+
+    policy = _require_success(
+        runner(
+            (
+                "gcloud",
+                "artifacts",
+                "repositories",
+                "get-iam-policy",
+                cost_guard.GCP_ARTIFACT_REGISTRY_REPOSITORY,
+                "--location",
+                cost_guard.GCP_ARTIFACT_REGISTRY_LOCATION,
+                "--format=json(bindings)",
+                "--project",
+                plan.project,
+            ),
+            MAX_PROVIDER_SECONDS,
+        ),
+        "Artifact Registry cache policy",
+    )
+    bindings = _bounded_json_object(policy, "Artifact Registry cache policy").get("bindings", [])
+    if not isinstance(bindings, list):
+        raise ProviderCommandError("Artifact Registry cache policy is invalid")
+    for binding in bindings:
+        members = binding.get("members") if isinstance(binding, dict) else None
+        if not isinstance(members, list) or any(not isinstance(member, str) for member in members):
+            raise ProviderCommandError("Artifact Registry cache policy is invalid")
+        if {"allUsers", "allAuthenticatedUsers"}.intersection(members):
+            raise ProviderCommandError("Artifact Registry cache must be private")
+
+    for image in (
+        plan.primary.image_reference,
+        plan.primary.runtime_image_reference,
+        plan.standby.image_reference,
+        plan.standby.runtime_image_reference,
+    ):
+        digest = image.rsplit("@", 1)[1]
+        cached = _require_success(
+            runner(
+                (
+                    "gcloud",
+                    "artifacts",
+                    "docker",
+                    "images",
+                    "describe",
+                    image,
+                    "--format=value(image_summary.digest)",
+                    "--project",
+                    plan.project,
+                ),
+                MAX_PROVIDER_SECONDS,
+            ),
+            "Artifact Registry cached image",
+        )
+        if cached.strip() != digest.encode("ascii"):
+            raise ProviderCommandError("Artifact Registry cached image digest is absent")
+
+
 def _native_preflight(plan: BoundPlan, runner: Runner) -> str:
     auth = _require_success(
         runner(("gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"), MAX_AUTH_SECONDS),
@@ -1146,22 +1256,7 @@ def _native_preflight(plan: BoundPlan, runner: Runner) -> str:
     )
     if not auth.strip() or len(auth) > 4096:
         raise ProviderCommandError("gcloud authentication is unavailable")
-    _require_success(
-        runner(("gh", "auth", "status", "--hostname", "github.com"), MAX_AUTH_SECONDS), "GitHub authentication"
-    )
-    raw_login = _require_success(
-        runner(("gh", "api", "--hostname", "github.com", "user", "--jq", ".login"), MAX_AUTH_SECONDS),
-        "GitHub registry identity",
-    )
-    login_bytes = _strict_visible_line(bytearray(raw_login), "GitHub registry identity", 128)
-    try:
-        registry_user = login_bytes.decode("ascii")
-    except UnicodeError as exc:
-        raise ProviderCommandError("GitHub registry identity is invalid") from exc
-    finally:
-        login_bytes[:] = b"\x00" * len(login_bytes)
-    if _GITHUB_LOGIN_RE.fullmatch(registry_user) is None:
-        raise ProviderCommandError("GitHub registry identity is invalid")
+    _verify_private_artifact_cache(plan, runner)
     common = ("--project", plan.project)
     machine = _require_success(
         runner(
@@ -1234,7 +1329,7 @@ def _native_preflight(plan: BoundPlan, runner: Runner) -> str:
         raise ProviderCommandError("protected bootstrap is not running")
     for index, command in enumerate(plan.provider_plan["verify_cleanup_commands"]):
         _require_success(runner(tuple(command), MAX_PROVIDER_SECONDS), f"initial absence check {index}", empty=True)
-    return registry_user
+    return "oauth2accesstoken"
 
 
 def _registry_token(
@@ -1242,17 +1337,19 @@ def _registry_token(
     runner: Runner,
     credential_runner: CredentialRunner | None,
 ) -> bytearray:
-    argv = ("gh", "auth", "token", "--hostname", "github.com", "--user", registry_user)
+    if registry_user != "oauth2accesstoken":
+        raise ProviderCommandError("Artifact Registry identity is invalid")
+    argv = ("gcloud", "auth", "print-access-token")
     if credential_runner is None:
         if runner is _run_bounded:
             raw = _run_credential_bounded(argv, MAX_AUTH_SECONDS)
         else:
-            raw = bytearray(_require_success(runner(argv, MAX_AUTH_SECONDS), "GitHub registry credential"))
+            raw = bytearray(_require_success(runner(argv, MAX_AUTH_SECONDS), "Artifact Registry credential"))
     else:
         raw = credential_runner(argv, MAX_AUTH_SECONDS)
     if not isinstance(raw, bytearray):
         raise ProviderCommandError("registry credential runner returned an invalid value")
-    return _strict_visible_line(raw, "GitHub registry credential", MAX_REGISTRY_TOKEN_BYTES)
+    return _strict_visible_line(raw, "Artifact Registry credential", MAX_REGISTRY_TOKEN_BYTES)
 
 
 def _parse_instance_verification(payload: bytes) -> str | None:
@@ -1474,7 +1571,7 @@ def _host_action(
             raise LifecycleError("registry upload identifier is invalid")
         argv.extend(["--upload-id", upload_id])
     if action == "prefetch-images-file":
-        if registry_user is None or _GITHUB_LOGIN_RE.fullmatch(registry_user) is None:
+        if registry_user != "oauth2accesstoken":
             raise LifecycleError("registry prefetch user is invalid")
         argv.extend(
             [

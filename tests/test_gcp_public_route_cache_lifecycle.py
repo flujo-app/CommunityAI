@@ -1,0 +1,363 @@
+import hashlib
+import json
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from scripts import (
+    gcp_public_route_cache_lifecycle as cache,
+    gcp_public_route_lifecycle as route,
+    qualification_cost_guard as guard,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
+BOOTSTRAP = ROOT / "scripts" / "gcp_public_route_cache_startup.sh"
+QWEN = ROOT / "docs" / "evidence" / "gate11pub-20260829-a-qwen3.5-2b-publication-evidence.json"
+GEMMA = ROOT / "docs" / "evidence" / "gate11pub-20260829-a-gemma-4-e2b-publication-evidence.json"
+SOURCE_COMMIT = "a" * 40
+
+
+def _digest(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_json(path: Path, value: dict) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _fixture(tmp_path: Path):
+    primary = json.loads(QWEN.read_text(encoding="utf-8"))
+    standby = json.loads(GEMMA.read_text(encoding="utf-8"))
+    values = {
+        "entries": (),
+        "run_id": "cache-20260830-a",
+        "provider": "gcp",
+        "workload": guard.GCP_PUBLIC_ROUTE_CACHE_WORKLOAD,
+        "purpose": "Gate 11 private same-region route image cache",
+        "source_commit": SOURCE_COMMIT,
+        "maximum_hours": Decimal("6"),
+        "project": guard.GCP_ARTIFACT_REGISTRY_PROJECT,
+        "zone": "us-central1-a",
+        "windows_image": None,
+        "linux_image": "ubuntu-2404-noble-amd64-v20260826",
+        "cuda_fallback_zone": None,
+        "cuda_shape": "n1-t4",
+        "manual_maximum_usd": None,
+        "primary_image": primary["image_reference"],
+        "primary_image_evidence_digest": _digest(QWEN),
+        "standby_image": standby["image_reference"],
+        "standby_image_evidence_digest": _digest(GEMMA),
+        "cache_bootstrap_digest": _digest(BOOTSTRAP),
+        "cache_bootstrap_bytes": BOOTSTRAP.stat().st_size,
+        "today": date(2026, 8, 29),
+    }
+    planned = guard.build_authorization(**values)
+    reservation = guard.LedgerEntry(
+        run_id=planned["run_id"],
+        provider="GCP",
+        purpose=planned["ledger_purpose"],
+        maximum_usd=Decimal("10"),
+        observed_usd=None,
+        cleanup_proof="Not provisioned",
+        state="PLANNED",
+    )
+    values["entries"] = (reservation,)
+    authorization = guard.build_authorization(**values)
+    authorization_path = tmp_path / "authorization.json"
+    _write_json(authorization_path, authorization)
+    ledger_path = tmp_path / "ledger.md"
+    ledger_path.write_text(
+        "# Readiness\n\n"
+        "## Cloud authorization and spend ledger\n\n"
+        "| Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |\n"
+        "| --- | --- | --- | ---: | ---: | --- | --- |\n"
+        + authorization["required_ledger_row"]
+        + "\n\nRemaining authorized maximum: **USD 90**.\n",
+        encoding="utf-8",
+    )
+    inputs = {
+        "authorization_path": authorization_path,
+        "ledger_path": ledger_path,
+        "primary_evidence_path": QWEN,
+        "standby_evidence_path": GEMMA,
+        "cache_bootstrap_path": BOOTSTRAP,
+        "expected_source_commit": SOURCE_COMMIT,
+    }
+    return cache.load_bound_cache_plan(**inputs), inputs
+
+
+def _repo_json(plan):
+    return json.dumps(
+        {
+            "name": (
+                f"projects/{plan.project}/locations/{plan.region}/"
+                f"repositories/{guard.GCP_ARTIFACT_REGISTRY_REPOSITORY}"
+            ),
+            "format": "DOCKER",
+            "mode": "REMOTE_REPOSITORY",
+            "remoteRepositoryConfig": {"dockerRepository": {"customRepository": {"uri": "https://ghcr.io"}}},
+            "vulnerabilityScanningConfig": {
+                "enablementConfig": "DISABLED",
+                "enablementState": "SCANNING_DISABLED",
+            },
+        }
+    ).encode()
+
+
+def _ready():
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "scope": "communityai-public-route-cache-bootstrap",
+            "result": "passed",
+            "images_prefetched": 2,
+        }
+    ).encode()
+
+
+def test_bound_cache_plan_validates_ledger_publication_and_source(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+
+    assert plan.run_id == "cache-20260830-a"
+    assert plan.primary.image_reference.startswith(guard.GCP_PRIMARY_IMAGE_REPOSITORY + "@")
+    assert plan.standby.runtime_image_reference.startswith(guard.GCP_STANDBY_IMAGE_REPOSITORY + "@")
+    assert plan.provider_plan["repository"]["private_after_prewarm"] is True
+
+
+def test_bound_cache_plan_rejects_authorization_mutation(tmp_path):
+    _plan, inputs = _fixture(tmp_path)
+    value = json.loads(inputs["authorization_path"].read_text(encoding="utf-8"))
+    value["provider_plan"]["repository"]["upstream"] = "https://example.invalid"
+    _write_json(inputs["authorization_path"], value)
+
+    with pytest.raises(cache.CacheLifecycleError, match="digest"):
+        cache.load_bound_cache_plan(**inputs)
+
+
+def test_private_policy_rejects_public_or_malformed_members(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+
+    def public_runner(_argv, _timeout):
+        return route.CommandResult(
+            0,
+            b'{"bindings":[{"role":"roles/artifactregistry.reader","members":["allUsers"]}]}',
+            b"",
+        )
+
+    assert cache._private_policy(plan, public_runner) is False
+
+    def malformed_runner(_argv, _timeout):
+        return route.CommandResult(0, b'{"bindings":[{"members":"allUsers"}]}', b"")
+
+    with pytest.raises(cache.CacheLifecycleError, match="policy"):
+        cache._private_policy(plan, malformed_runner)
+
+
+def test_cache_lifecycle_passes_only_after_private_digest_verification_and_cleanup(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+    calls = []
+
+    def runner(argv, _timeout):
+        argv = tuple(argv)
+        calls.append(argv)
+        if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
+            return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
+            "communityai-bootstrap-1" in part for part in argv
+        ):
+            return route.CommandResult(0, b"RUNNING\n", b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "list"):
+            return route.CommandResult(0, b"", b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "describe"):
+            return route.CommandResult(0, _repo_json(plan), b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "get-iam-policy"):
+            return route.CommandResult(0, b'{"bindings":[]}', b"")
+        if argv[:5] == ("gcloud", "artifacts", "docker", "images", "describe"):
+            return route.CommandResult(0, (argv[5].rsplit("@", 1)[1] + "\n").encode(), b"")
+        if argv[:4] == ("gcloud", "compute", "instances", "describe"):
+            return route.CommandResult(
+                0,
+                json.dumps(
+                    {
+                        "status": "RUNNING",
+                        "machineType": "projects/p/zones/z/machineTypes/e2-standard-4",
+                        "scheduling": {"maxRunDuration": {"seconds": "21600", "nanos": 0}},
+                    }
+                ).encode(),
+                b"",
+            )
+        if argv[:4] == ("gcloud", "compute", "ssh", plan.provider_plan["builder"]["instance"]):
+            return route.CommandResult(0, _ready(), b"")
+        return route.CommandResult(0, b"", b"")
+
+    evidence = cache.execute_cache_lifecycle(
+        plan,
+        output_path=tmp_path / "evidence.json",
+        runner=runner,
+        clock=lambda: 0.0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert evidence["result"] == "passed"
+    assert evidence["cached_manifest_count"] == 4
+    assert evidence["repository"] == {
+        "retained": True,
+        "private": True,
+        "mode": "REMOTE_REPOSITORY",
+        "location": "us-central1",
+        "upstream": "https://ghcr.io",
+        "absent_after_failure": None,
+    }
+    assert evidence["temporary_public_binding_removed"] is True
+    assert evidence["builder_cleanup"]["all_absent"] is True
+    assert not any("delete" in argv and guard.GCP_ARTIFACT_REGISTRY_REPOSITORY in argv for argv in calls)
+
+
+def test_cache_lifecycle_failure_removes_new_repository_and_builder(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+
+    def runner(argv, _timeout):
+        argv = tuple(argv)
+        if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
+            return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
+            "communityai-bootstrap-1" in part for part in argv
+        ):
+            return route.CommandResult(0, b"RUNNING\n", b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "list"):
+            return route.CommandResult(0, b"", b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "describe"):
+            return route.CommandResult(0, _repo_json(plan), b"")
+        if argv[:4] == ("gcloud", "compute", "instances", "describe"):
+            return route.CommandResult(
+                0,
+                json.dumps(
+                    {
+                        "status": "RUNNING",
+                        "machineType": "projects/p/zones/z/machineTypes/e2-standard-4",
+                        "scheduling": {"maxRunDuration": {"seconds": "21600", "nanos": 0}},
+                    }
+                ).encode(),
+                b"",
+            )
+        if argv[:4] == ("gcloud", "compute", "ssh", plan.provider_plan["builder"]["instance"]):
+            return route.CommandResult(0, b'{"result":"wrong"}', b"")
+        return route.CommandResult(0, b"", b"")
+
+    evidence = cache.execute_cache_lifecycle(
+        plan,
+        output_path=tmp_path / "evidence.json",
+        runner=runner,
+        clock=lambda: 0.0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert evidence["result"] == "failed"
+    assert evidence["failure_stage"] == "cache_warm"
+    assert evidence["repository"]["retained"] is False
+    assert evidence["repository"]["absent_after_failure"] is True
+    assert evidence["temporary_public_binding_removed"] is True
+    assert evidence["builder_cleanup"]["all_absent"] is True
+    assert evidence["protected_bootstrap_running"] is True
+
+
+def test_cache_lifecycle_cleans_repository_when_create_applies_but_reports_failure(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+    state = {"repository_exists": False}
+    calls = []
+    delete_repository = tuple(plan.provider_plan["delete_repository_command"])
+
+    def runner(argv, _timeout):
+        argv = tuple(argv)
+        calls.append(argv)
+        if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
+            return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
+            "communityai-bootstrap-1" in part for part in argv
+        ):
+            return route.CommandResult(0, b"RUNNING\n", b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "list"):
+            output = b"communityai-ghcr-cache\n" if state["repository_exists"] else b""
+            return route.CommandResult(0, output, b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "create"):
+            state["repository_exists"] = True
+            return route.CommandResult(1, b"", b"provider response lost")
+        if argv == delete_repository:
+            state["repository_exists"] = False
+            return route.CommandResult(1, b"", b"provider response lost")
+        return route.CommandResult(0, b"", b"")
+
+    evidence = cache.execute_cache_lifecycle(
+        plan,
+        output_path=tmp_path / "evidence.json",
+        runner=runner,
+        clock=lambda: 0.0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert evidence["result"] == "failed"
+    assert evidence["failure_stage"] == "repository_create"
+    assert delete_repository in calls
+    assert state["repository_exists"] is False
+    assert evidence["repository"]["absent_after_failure"] is True
+    assert evidence["temporary_public_binding_removed"] is True
+
+
+def test_cache_lifecycle_revokes_binding_when_add_applies_but_reports_failure(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+    state = {"repository_exists": False, "public_binding": False}
+    calls = []
+    create_repository = tuple(plan.provider_plan["create_commands"][1])
+    add_binding = tuple(plan.provider_plan["create_commands"][2])
+    revoke_binding = tuple(plan.provider_plan["revoke_public_command"])
+    delete_repository = tuple(plan.provider_plan["delete_repository_command"])
+
+    def runner(argv, _timeout):
+        argv = tuple(argv)
+        calls.append(argv)
+        if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
+            return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
+            "communityai-bootstrap-1" in part for part in argv
+        ):
+            return route.CommandResult(0, b"RUNNING\n", b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "list"):
+            output = b"communityai-ghcr-cache\n" if state["repository_exists"] else b""
+            return route.CommandResult(0, output, b"")
+        if argv == create_repository:
+            state["repository_exists"] = True
+            return route.CommandResult(0, b"", b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "describe"):
+            return route.CommandResult(0, _repo_json(plan), b"")
+        if argv == add_binding:
+            state["public_binding"] = True
+            return route.CommandResult(1, b"", b"provider response lost")
+        if argv == revoke_binding:
+            state["public_binding"] = False
+            return route.CommandResult(0, b"", b"")
+        if argv[:4] == ("gcloud", "artifacts", "repositories", "get-iam-policy"):
+            bindings = (
+                [{"role": "roles/artifactregistry.reader", "members": ["allUsers"]}] if state["public_binding"] else []
+            )
+            return route.CommandResult(0, json.dumps({"bindings": bindings}).encode(), b"")
+        if argv == delete_repository:
+            state["repository_exists"] = False
+            return route.CommandResult(0, b"", b"")
+        return route.CommandResult(0, b"", b"")
+
+    evidence = cache.execute_cache_lifecycle(
+        plan,
+        output_path=tmp_path / "evidence.json",
+        runner=runner,
+        clock=lambda: 0.0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert evidence["result"] == "failed"
+    assert evidence["failure_stage"] == "temporary_public_binding"
+    assert revoke_binding in calls
+    assert state == {"repository_exists": False, "public_binding": False}
+    assert evidence["repository"]["absent_after_failure"] is True
+    assert evidence["temporary_public_binding_removed"] is True

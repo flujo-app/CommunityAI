@@ -18,6 +18,12 @@ PRIMARY_IMAGE = guard.GCP_PRIMARY_IMAGE_REPOSITORY + "@sha256:" + "d" * 64
 STANDBY_IMAGE = guard.GCP_STANDBY_IMAGE_REPOSITORY + "@sha256:" + "e" * 64
 PRIMARY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "f" * 64
 STANDBY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "1" * 64
+PRIMARY_PUBLICATION_IMAGE = guard.GCP_PRIMARY_PUBLICATION_IMAGE_REPOSITORY + "@sha256:" + "d" * 64
+STANDBY_PUBLICATION_IMAGE = guard.GCP_STANDBY_PUBLICATION_IMAGE_REPOSITORY + "@sha256:" + "e" * 64
+CACHE_BOOTSTRAP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "gcp_public_route_cache_startup.sh"
+CACHE_BOOTSTRAP_PAYLOAD = CACHE_BOOTSTRAP_PATH.read_bytes()
+CACHE_BOOTSTRAP_DIGEST = "sha256:" + hashlib.sha256(CACHE_BOOTSTRAP_PAYLOAD).hexdigest()
+CACHE_BOOTSTRAP_BYTES = len(CACHE_BOOTSTRAP_PAYLOAD)
 RUNTIME_BOOTSTRAP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "gcp_public_route_startup.sh"
 RUNTIME_BOOTSTRAP_PAYLOAD = RUNTIME_BOOTSTRAP_PATH.read_bytes()
 RUNTIME_BOOTSTRAP_DIGEST = "sha256:" + hashlib.sha256(RUNTIME_BOOTSTRAP_PAYLOAD).hexdigest()
@@ -127,6 +133,34 @@ def _gcp_public_route_authorization(entries=(), **overrides):
         "host_controller_bytes": HOST_CONTROLLER_BYTES,
         "acceptance_probe_digest": ACCEPTANCE_PROBE_DIGEST,
         "acceptance_probe_bytes": ACCEPTANCE_PROBE_BYTES,
+        "today": date(2026, 8, 29),
+    }
+    values.update(overrides)
+    return guard.build_authorization(**values)
+
+
+def _gcp_public_route_cache_authorization(entries=(), **overrides):
+    values = {
+        "entries": entries,
+        "run_id": "cache-20260830-a",
+        "provider": "gcp",
+        "workload": guard.GCP_PUBLIC_ROUTE_CACHE_WORKLOAD,
+        "purpose": "Gate 11 private same-region route image cache",
+        "source_commit": SOURCE_COMMIT,
+        "maximum_hours": Decimal("6"),
+        "project": guard.GCP_ARTIFACT_REGISTRY_PROJECT,
+        "zone": "us-central1-a",
+        "windows_image": None,
+        "linux_image": LINUX_IMAGE,
+        "cuda_fallback_zone": None,
+        "cuda_shape": "n1-t4",
+        "manual_maximum_usd": None,
+        "primary_image": PRIMARY_PUBLICATION_IMAGE,
+        "primary_image_evidence_digest": PRIMARY_IMAGE_EVIDENCE_DIGEST,
+        "standby_image": STANDBY_PUBLICATION_IMAGE,
+        "standby_image_evidence_digest": STANDBY_IMAGE_EVIDENCE_DIGEST,
+        "cache_bootstrap_digest": CACHE_BOOTSTRAP_DIGEST,
+        "cache_bootstrap_bytes": CACHE_BOOTSTRAP_BYTES,
         "today": date(2026, 8, 29),
     }
     values.update(overrides)
@@ -666,6 +700,60 @@ def test_fly_discovery_exact_reservation_binds_every_mutable_plan_input():
 def test_fly_discovery_seed_plan_rejects_unsafe_targets(overrides, message):
     with pytest.raises(guard.CostGuardError, match=message):
         _fly_discovery_authorization(**overrides)
+
+
+def test_gcp_public_route_cache_plan_is_private_bounded_and_exact():
+    report = _gcp_public_route_cache_authorization()
+
+    assert report["workload"] == guard.GCP_PUBLIC_ROUTE_CACHE_WORKLOAD
+    assert report["maximum_estimate_usd"] == "10.00"
+    assert report["remaining_after_run_maximum_usd"] == "90.00"
+    assert report["persistent_resources_after_pass"] is True
+    plan = report["provider_plan"]
+    assert plan["repository"] == {
+        "name": guard.GCP_ARTIFACT_REGISTRY_REPOSITORY,
+        "format": "DOCKER",
+        "mode": "REMOTE_REPOSITORY",
+        "upstream": "https://ghcr.io",
+        "host": guard.GCP_ARTIFACT_REGISTRY_HOST,
+        "private_after_prewarm": True,
+        "vulnerability_scanning": False,
+        "retained_after_pass": True,
+    }
+    assert plan["builder"]["service_account"] is False
+    assert plan["builder"]["scopes"] == []
+    assert plan["builder"]["max_run_seconds"] == 21600
+    assert plan["images"][0]["source"] == PRIMARY_PUBLICATION_IMAGE
+    assert plan["images"][0]["cached"] == PRIMARY_IMAGE
+    assert plan["images"][1]["source"] == STANDBY_PUBLICATION_IMAGE
+    assert plan["images"][1]["cached"] == STANDBY_IMAGE
+    create = plan["create_commands"]
+    assert any("artifactregistry.googleapis.com" in command for command in create)
+    assert any("https://ghcr.io" in command for command in create)
+    assert any("allUsers" in command for command in create)
+    assert "allUsers" in plan["revoke_public_command"]
+    flattened = {part for command in create + plan["cleanup_commands"] for part in command}
+    assert "communityai-bootstrap-1" not in flattened
+    assert len(plan["verify_cleanup_commands"]) == 5
+
+
+@pytest.mark.parametrize(
+    "overrides,message",
+    (
+        ({"maximum_hours": Decimal("6.01")}, "no more than 6"),
+        ({"project": "other-project"}, "reviewed us-central1 project"),
+        ({"zone": "us-east1-b"}, "reviewed us-central1 project"),
+        ({"primary_image": PRIMARY_IMAGE}, "immutable published Qwen"),
+        ({"standby_image": STANDBY_IMAGE}, "immutable published Gemma"),
+        ({"cache_bootstrap_digest": "SHA256:" + "1" * 64}, "canonical digest"),
+        ({"cache_bootstrap_bytes": 0}, "between 1 and 16384"),
+        ({"runtime_bootstrap_digest": RUNTIME_BOOTSTRAP_DIGEST}, "fixed CPU prewarm"),
+        ({"cuda_shape": "g2-l4"}, "fixed CPU prewarm"),
+    ),
+)
+def test_gcp_public_route_cache_rejects_unreviewed_inputs(overrides, message):
+    with pytest.raises(guard.CostGuardError, match=message):
+        _gcp_public_route_cache_authorization(**overrides)
 
 
 def test_gcp_public_route_plan_binds_finite_routes_health_and_cleanup():

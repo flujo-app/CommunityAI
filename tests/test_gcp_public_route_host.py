@@ -9,8 +9,14 @@ from scripts import gcp_public_route_host as host, public_route_acceptance as ac
 
 RUN_ID = "route-20260829-a"
 INITIAL_PEER = "/ip4/34.42.181.232/tcp/31337/p2p/QmYwAPJzv5CZsnAzt8auVZRnGi2Cj8Xn4K6q5V9z8M2w7P"
-PRIMARY = "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b@sha256:" + "a" * 64
-STANDBY = "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b@sha256:" + "b" * 64
+PRIMARY = (
+    "us-central1-docker.pkg.dev/community-ai-506321/communityai-ghcr-cache/flujo-app/communityai-public-route-qwen3.5-2b@sha256:"
+    + "a" * 64
+)
+STANDBY = (
+    "us-central1-docker.pkg.dev/community-ai-506321/communityai-ghcr-cache/flujo-app/communityai-public-route-gemma-4-e2b@sha256:"
+    + "b" * 64
+)
 
 
 def _completed(stdout=b"", returncode=0, stderr=b""):
@@ -57,6 +63,37 @@ def test_registry_upload_rejects_hardlinks_and_removes_staging(monkeypatch, tmp_
         host._read_registry_upload(RUN_ID, upload_id)
 
     assert not root.exists()
+
+
+def test_default_secret_runner_accepts_only_fixed_artifact_registry_login(monkeypatch, tmp_path):
+    monkeypatch.setattr(host, "REGISTRY_CONFIG", tmp_path / "registry")
+    calls = []
+    monkeypatch.setattr(
+        host.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((tuple(argv), kwargs)) or subprocess.CompletedProcess(argv, 0, b"", b""),
+    )
+    argv = (
+        "docker",
+        "--config",
+        str(host.REGISTRY_CONFIG),
+        "login",
+        host.ARTIFACT_REGISTRY_HOST,
+        "--username",
+        host.ARTIFACT_REGISTRY_USER,
+        "--password-stdin",
+    )
+
+    assert host._run_secret_bounded(argv, 60, b"access-token\n") == 0
+    assert calls[0][0] == argv
+    assert calls[0][1]["input"] == b"access-token\n"
+
+    with pytest.raises(host.CommandError, match="contract"):
+        host._run_secret_bounded(
+            (*argv[:4], "ghcr.io", *argv[5:]),
+            60,
+            b"access-token\n",
+        )
 
 
 def test_host_rejects_nonfixed_action_without_running_commands():
@@ -499,8 +536,8 @@ def test_authenticated_prefetch_pulls_both_digests_and_removes_credentials(monke
         run_id=RUN_ID,
         primary_image=PRIMARY,
         standby_image=STANDBY,
-        registry_user="octocat",
-        secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+        registry_user="oauth2accesstoken",
+        secret_payload=base64.b64encode(b"native-gcloud-token") + b"\n",
         action_timeout_seconds=3570,
         runner=runner,
         secret_runner=secret_runner,
@@ -512,13 +549,13 @@ def test_authenticated_prefetch_pulls_both_digests_and_removes_credentials(monke
         "--config",
         str(registry),
         "login",
-        "ghcr.io",
+        host.ARTIFACT_REGISTRY_HOST,
         "--username",
-        "octocat",
+        "oauth2accesstoken",
         "--password-stdin",
     )
-    assert secrets[0][2] == b"native-gh-token\n"
-    assert all("native-gh-token" not in value for value in secrets[0][0])
+    assert secrets[0][2] == b"native-gcloud-token\n"
+    assert all("native-gcloud-token" not in value for value in secrets[0][0])
     pull_argv = [argv for argv, _timeout in calls if "pull" in argv]
     assert set(pull_argv) == {
         ("docker", "--config", str(registry), "pull", "--quiet", PRIMARY),
@@ -550,8 +587,8 @@ def test_authenticated_prefetch_pulls_images_concurrently(monkeypatch, tmp_path)
         run_id=RUN_ID,
         primary_image=PRIMARY,
         standby_image=STANDBY,
-        registry_user="octocat",
-        secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+        registry_user="oauth2accesstoken",
+        secret_payload=base64.b64encode(b"native-gcloud-token") + b"\n",
         action_timeout_seconds=3570,
         runner=runner,
         secret_runner=lambda _argv, _timeout, _secret: 0,
@@ -584,15 +621,15 @@ def test_authenticated_prefetch_cleans_registry_on_pull_exception(monkeypatch, t
             run_id=RUN_ID,
             primary_image=PRIMARY,
             standby_image=STANDBY,
-            registry_user="octocat",
-            secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+            registry_user="oauth2accesstoken",
+            secret_payload=base64.b64encode(b"native-gcloud-token") + b"\n",
             action_timeout_seconds=3570,
             runner=runner,
             secret_runner=lambda _argv, _timeout, _secret: 0,
         )
 
     assert failure.value.failure_code == "image_pull"
-    assert any(argv[-2:] == ("logout", "ghcr.io") for argv in calls)
+    assert any(argv[-2:] == ("logout", host.ARTIFACT_REGISTRY_HOST) for argv in calls)
     assert not registry.exists()
 
 
@@ -607,8 +644,8 @@ def test_registry_prefetch_rejects_and_removes_preexisting_nondirectory(monkeypa
             run_id=RUN_ID,
             primary_image=PRIMARY,
             standby_image=STANDBY,
-            registry_user="octocat",
-            secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+            registry_user="oauth2accesstoken",
+            secret_payload=base64.b64encode(b"native-gcloud-token") + b"\n",
             action_timeout_seconds=3570,
             runner=lambda _argv, _timeout: _completed(),
             secret_runner=lambda _argv, _timeout, _secret: 0,
@@ -628,8 +665,8 @@ def test_registry_prefetch_cleans_registry_on_login_failure(monkeypatch, tmp_pat
             run_id=RUN_ID,
             primary_image=PRIMARY,
             standby_image=STANDBY,
-            registry_user="octocat",
-            secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+            registry_user="oauth2accesstoken",
+            secret_payload=base64.b64encode(b"native-gcloud-token") + b"\n",
             action_timeout_seconds=3570,
             runner=lambda _argv, _timeout: _completed(),
             secret_runner=lambda _argv, _timeout, _secret: 1,
@@ -655,8 +692,8 @@ def test_registry_prefetch_cleans_registry_on_base_exception(monkeypatch, tmp_pa
             run_id=RUN_ID,
             primary_image=PRIMARY,
             standby_image=STANDBY,
-            registry_user="octocat",
-            secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+            registry_user="oauth2accesstoken",
+            secret_payload=base64.b64encode(b"native-gcloud-token") + b"\n",
             action_timeout_seconds=3570,
             runner=lambda _argv, _timeout: _completed(),
             secret_runner=lambda _argv, _timeout, _secret: 0,

@@ -45,10 +45,15 @@ REGISTRY_UPLOAD_PARENT = Path("/var/tmp")
 TRANSPORT_SENTINEL = b"communityai-secret-transport-v1"
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _RUN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,39}$")
-_GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+ARTIFACT_REGISTRY_HOST = "us-central1-docker.pkg.dev"
+ARTIFACT_REGISTRY_PREFIX = f"{ARTIFACT_REGISTRY_HOST}/community-ai-506321/communityai-ghcr-cache"
+ARTIFACT_REGISTRY_USER = "oauth2accesstoken"
 _UPLOAD_RE = re.compile(r"^[0-9a-f]{32}$")
 _PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
-_IMAGE_RE = re.compile(r"^ghcr\.io/flujo-app/communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$")
+_IMAGE_RE = re.compile(
+    rf"^{re.escape(ARTIFACT_REGISTRY_PREFIX)}/flujo-app/"
+    r"communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$"
+)
 _CANDIDATES: Mapping[str, Mapping[str, object]] = {
     "qwen3.5-2b": {
         "role": "primary",
@@ -138,8 +143,9 @@ def _run_bounded(argv: Sequence[str], timeout: int) -> subprocess.CompletedProce
 def _run_secret_bounded(argv: Sequence[str], timeout: int, secret: bytes) -> int:
     if (
         len(argv) != 8
-        or tuple(argv[:6]) != ("docker", "--config", os.fspath(REGISTRY_CONFIG), "login", "ghcr.io", "--username")
-        or _GITHUB_LOGIN_RE.fullmatch(argv[6]) is None
+        or tuple(argv[:6])
+        != ("docker", "--config", os.fspath(REGISTRY_CONFIG), "login", ARTIFACT_REGISTRY_HOST, "--username")
+        or argv[6] != ARTIFACT_REGISTRY_USER
         or argv[7] != "--password-stdin"
         or not 1 <= timeout <= 3600
         or not secret
@@ -225,7 +231,7 @@ def _strict_base64_secret(payload: bytes | bytearray, field: str) -> bytearray:
 
 
 def _registry_user(value: str) -> str:
-    if len(value) > 39 or _GITHUB_LOGIN_RE.fullmatch(value) is None:
+    if value != ARTIFACT_REGISTRY_USER:
         raise HostError("registry user is invalid")
     return value
 
@@ -425,7 +431,10 @@ def _remove_registry_config(runner: Runner) -> bool:
             REGISTRY_CONFIG.unlink()
         elif stat.S_ISDIR(mode):
             try:
-                runner(("docker", "--config", os.fspath(REGISTRY_CONFIG), "logout", "ghcr.io"), 30)
+                runner(
+                    ("docker", "--config", os.fspath(REGISTRY_CONFIG), "logout", ARTIFACT_REGISTRY_HOST),
+                    30,
+                )
             except HostError:
                 pass
             shutil.rmtree(REGISTRY_CONFIG)
@@ -500,7 +509,7 @@ def _prefetch_images(
             "--config",
             os.fspath(REGISTRY_CONFIG),
             "login",
-            "ghcr.io",
+            ARTIFACT_REGISTRY_HOST,
             "--username",
             username,
             "--password-stdin",
