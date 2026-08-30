@@ -1723,6 +1723,33 @@ The pinned startup script now changes only the verified dearmored keyring to mod
 immediately after `gpg --dearmor` and before apt reads the signed NVIDIA repository. The
 source key digest, repository URL, distribution selector, package versions, driver/runtime
 checks, root-only bootstrap state, and fail-closed cleanup remain unchanged. The startup
-test fixes that ordering, and the full 185-test Gate 11 lifecycle/host/startup/node/cost
-focus passes with Black, isort, and diff checks. This startup digest must be included in the
-same refreshed authorization as the host pull-retry digest before another provider call.
+test fixes that ordering, and the full 186-test Gate 11 lifecycle/host/startup/node/cost
+focus passes with Black, isort, and diff checks. The exact startup digest is included with
+the host pull-retry digest in the current route-C authorization.
+
+## Gate 11 corrected route authorization
+
+The startup-hardening code and cleanup evidence were first pushed as source `5ef5c5a`. A
+provider-free route-B plan then bound the exact bootstrap, host controller, acceptance probe,
+publication evidence, and isolated resource identity. Independent verification caught a
+Windows float-rounding edge before any provider call: `ceil(deadline - monotonic())` could
+produce a 3,571-second pull timeout for a validated 3,570-second action. Route B was canceled
+with USD 0 observed and no resource created.
+
+Source `47dadde939cc869f4b56ea1713127674350ece10` clamps every pull subprocess to the
+original validated action timeout and adds an exact infinitesimal-boundary regression. The
+129-test focused host/lifecycle/cost/startup set and expanded 186-test Gate 11 matrix pass;
+independent verification reproduced the clamp, retry schedule, immutable argv, single-action
+contract, formatting, import order, and diff checks. The provider-call-free route-C plan binds
+the exact 4,994-byte bootstrap, 28,920-byte host controller, unchanged acceptance probe,
+both immutable publication-evidence digests, and a new isolated six-resource identity. Its
+exact USD 26 ledger row was committed and pushed as `a870ea1` before reauthorization.
+
+The second identical guard pass emitted the
+[reserved route-C authorization](evidence/gate11route-20260830-c-cost-authorization.json)
+with `reservation_recorded=true`, `provisioning_authorized=true`, USD 100 available before
+the run, and USD 74 maximum headroom afterward. A real provider-free `load_bound_plan`
+rehashed every bound input and accepted the Qwen `(0, 24)` and Gemma `(0, 35)` complete
+spans. This remains cost authorization only: native authentication, quota/capacity, exact
+initial absence, zero competing controllers, and the protected-bootstrap check are mandatory
+immediately before the next provider call.
