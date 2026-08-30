@@ -159,6 +159,16 @@ registry, or qualification cache.
 ## Verify and install the package
 
 Before unpacking, compare the archive's SHA-256 and byte size with the release record.
+For a GitHub Actions artifact, stage the exact
+[gate13_download_artifact.py](../scripts/gate13_download_artifact.py) helper and the
+platform's bound JSON configuration beside one another. Resolve the one-time final
+artifact URL only on the authenticated operator, deliver it to the helper through
+standard input, and never place it in an argument, environment variable, transcript,
+or evidence. The helper disables proxies and redirects, requires the exact HTTPS host
+and outer wrapper bytes, accepts exactly one stored regular-file member, and atomically
+publishes the inner install archive only after its exact release size and SHA-256 pass.
+The clean host receives no GitHub token or persistent GitHub credential.
+
 After unpacking:
 
 1. Verify every SHA256SUMS entry and reject missing, changed, extra, unsafe-link, or
@@ -207,7 +217,7 @@ the intended public catalog selection:
   "schema_version": 1,
   "run_id": "gate13-windows-qwen-a",
   "source_commit": "<40 lowercase hex>",
-  "package_version": "0.4.0",
+  "package_version": "2.3.0.dev2",
   "package_sha256": "<64 lowercase hex>",
   "package_bytes": 1,
   "model_id": "Qwen3.5 2B",
@@ -274,7 +284,7 @@ must be exactly .gate13-linux-<run_id>. The config contains no credential:
   "replacement_release_root": "/qualification/replacement",
   "work_root": "/qualification/.gate13-linux-gate13-linux-qwen-a",
   "model_id": "Qwen3.5 2B",
-  "package_version": "0.4.0",
+  "package_version": "2.3.0.dev2",
   "package_sha256": "<64 lowercase hex>",
   "package_bytes": 1,
   "replacement_kind": "reinstall",

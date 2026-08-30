@@ -13,7 +13,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   API and Models/Sharing UI disclose exact signed-manifest first-use shard bytes before transfer,
   while a privacy-safe 16-phase controller and operations runbook bind clean install, acquisition,
   localhost inference, contribution, pause, cache reuse, manual replacement, recovery, both
-  uninstall choices, native credential cleanup, and process-tree cleanup.
+  uninstall choices, native credential cleanup, and process-tree cleanup. Native Windows
+  Credential Manager/Job Object and Linux Secret Service/systemd-cgroup orchestrators now execute
+  all 16 phases with exact worker/descendant absence and bounded acquisition. Exact-source
+  production run 33338872342 publishes independently audited Windows and Linux CUDA 12.4 archives.
+  A fail-closed, stdin-only qualification downloader now validates the exact Actions wrapper and
+  inner release archive without retaining its signed URL or a host GitHub credential; real
+  clean-host lifecycle and provider-cleanup evidence remain required before Gate 13 passes.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,

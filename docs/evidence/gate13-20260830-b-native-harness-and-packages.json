@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-native-lifecycle-and-production-packages",
+  "run_id": "gate13-20260830-b-native-harness-and-packages",
+  "gate": 13,
+  "result": "prerequisites-passed",
+  "gate_result": "in-progress",
+  "source": {
+    "branch": "codex/gate-v-auto-selection",
+    "native_harness_commit": "ac0cf427c64a32a17b53e0466fdd8df5a429d911",
+    "production_test_discovery_commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "package_source_commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "package_source_tree": "5b5207e6969258fd9ce837924bc89490032238cd",
+    "pushed": true
+  },
+  "native_lifecycle": {
+    "ordered_phase_count": 16,
+    "windows": {
+      "credential_store": "Windows Credential Manager",
+      "containment": "create-suspended kill-on-close Job Object",
+      "exact_worker_pid_absence_required": true,
+      "late_descendant_reaping_required": true,
+      "acquisition_timeout_seconds": 3600,
+      "maximum_resumptions": 3
+    },
+    "linux": {
+      "credential_store": "Secret Service",
+      "containment": "systemd system cgroup-v2 service",
+      "kill_mode": "control-group",
+      "coredumps_disabled": true,
+      "exact_worker_pid_absence_required": true,
+      "extra_active_workers_rejected": true,
+      "acquisition_timeout_seconds": 3600,
+      "maximum_resumptions": 3
+    },
+    "cross_binding": [
+      "package digest and bytes",
+      "source commit and build workflow",
+      "audit and provenance",
+      "packaged runtime version",
+      "signed catalog and bootstrap",
+      "selected model and raw manifest",
+      "native credential counts",
+      "persistent cache bytes",
+      "whole process-tree cleanup"
+    ],
+    "privacy_safe": true
+  },
+  "verification": {
+    "native_focused": {
+      "passed": 134
+    },
+    "broader": {
+      "passed": 113,
+      "expected_platform_skips": 3
+    },
+    "production_discovery": {
+      "unittest_passed": 73,
+      "pytest_passed": 4,
+      "desktop_self_test": "passed"
+    },
+    "black": "passed",
+    "isort": "passed",
+    "git_diff_check": "passed",
+    "independent_review": {
+      "result": "passed",
+      "containment_adversarial_probes": "passed",
+      "package_provenance_catalog_runtime_binding": "passed",
+      "credential_count_and_privacy_contract": "passed",
+      "all_16_phases_present": true
+    }
+  },
+  "production_build": {
+    "workflow_run_id": 33338872342,
+    "workflow_url": "https://github.com/flujo-app/CommunityAI/actions/runs/33338872342",
+    "head_sha": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "result": "passed",
+    "windows_job_id": 99330688676,
+    "linux_job_id": 99330688616,
+    "windows": {
+      "artifact_name": "communityai-desktop-install-windows",
+      "archive": "communityai-desktop-windows.zip",
+      "archive_sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+      "archive_bytes": 2695065068,
+      "audit_artifact": "communityai-desktop-audit-windows",
+      "package_version": "2.3.0.dev2",
+      "torch": "2.6.0+cu124",
+      "build_smoke": "passed",
+      "independent_release_verification": "passed",
+      "packaged_node_native_credential_public_seed_smoke": "passed"
+    },
+    "linux": {
+      "artifact_name": "communityai-desktop-install-linux",
+      "archive": "communityai-desktop-linux.tar.gz",
+      "archive_sha256": "f96d3ca651964380d4684855ab08682e8187b33386327ec3895cda25b43c2a00",
+      "archive_bytes": 3360717934,
+      "audit_artifact": "communityai-desktop-audit-linux",
+      "package_version": "2.3.0.dev2",
+      "torch": "2.6.0+cu124",
+      "executable_modes_preserved": true,
+      "safe_internal_file_symlinks_preserved": true,
+      "build_smoke": "passed",
+      "independent_release_verification": "passed"
+    },
+    "unsigned_public_alpha": true,
+    "publisher_signature": false,
+    "authenticated_automatic_update": false,
+    "model_weights_bundled": false
+  },
+  "cloud": {
+    "provider_calls": 0,
+    "resources_created_changed_or_deleted": 0,
+    "maximum_cost_usd": "0.00",
+    "fly_operations": 0,
+    "macos_work": 0,
+    "credits_or_payments_work": 0
+  },
+  "remaining_before_gate_pass": [
+    "Push an exact-resource USD 18 cost authorization within the combined USD 100 ceiling.",
+    "Revalidate native provider authentication and exact resource absence.",
+    "Run the complete clean-host lifecycle for Qwen on Windows and Gemma on Linux.",
+    "Prove every temporary instance and disk absent and publish privacy-safe lifecycle evidence."
+  ],
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_ids_retained": false,
+    "private_paths_retained": false,
+    "private_endpoints_retained": false,
+    "provider_output_retained": false
+  }
+}
