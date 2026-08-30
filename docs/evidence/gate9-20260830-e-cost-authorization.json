@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "scope": "gate9-edge-envelope-cost-authorization",
+  "run_id": "gate9-20260830-e",
+  "gate": 9,
+  "result": "passed",
+  "cost_authorization_only": true,
+  "source": {
+    "commit": "ba410f74f1cf625f1e1c34734b53e4514fa7c5ec",
+    "branch": "codex/gate-v-auto-selection",
+    "pushed": true,
+    "runtime_version": "2.3.0.dev2",
+    "wheel_name": "drift-2.3.0.dev2-py3-none-any.whl",
+    "wheel_bytes": 387964,
+    "wheel_sha256": "sha256:3087b8a7ec8d401833a8e577b1bd8bc280d98ad2c3ddd1ff2b22cfd17f740b7a"
+  },
+  "immutable_inputs": {
+    "catalog_bundle_sha256": "sha256:d1d67591607f3f98bb3359cc9f6591d4fccf0469b52499e9b28b3929fb608537",
+    "catalog_bootstrap_sha256": "sha256:dc74ca37ac0ffd4ab02d2aac9f470e09172f5db1f86c92bee889cf36f4cf7196",
+    "signed_catalog_sha256": "sha256:54530f6ebdb3e27cab7d25762ad7db3ea0369236230a4f58a96870d83ca767c4",
+    "qwen": {
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "manifest_file_sha256": "sha256:f70dcb7b1a671359d12ba1ad950f7849f14b76117a50116d2ce2cea5ded934b6"
+    },
+    "gemma": {
+      "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "manifest_file_sha256": "sha256:356d039728175899cae8eba526fb4fd3f1f258b5b6715dc0c9b430141152977e"
+    }
+  },
+  "budget": {
+    "combined_cloud_ceiling_usd": "100.00",
+    "committed_before_run_usd": "26.00",
+    "committed_before_run_reason": "separately authorized live-bounded Gate 11 product route",
+    "maximum_estimate_usd": "28.00",
+    "remaining_after_run_maximum_usd": "46.00",
+    "observed_cost_usd": null,
+    "billing_state": "delayed",
+    "fly_credit_counted": false
+  },
+  "provider_plan_digest": "sha256:2f95e5004d5bde12e19ae785e8859b0847b25fd1cc7d074e7bb76b82248fa0ae",
+  "ledger_purpose": "Gate 9 sequential Qwen/Gemma Windows/Linux acquisition records and schema-v3 edge envelopes at pushed source ba410f74f1cf625f1e1c34734b53e4514fa7c5ec, reusing the separately authorized product route and creating at most one bounded native Linux client per model [plan sha256:2f95e5004d5bde12e19ae785e8859b0847b25fd1cc7d074e7bb76b82248fa0ae]",
+  "provider_plan": {
+    "provider": "GCP",
+    "project": "community-ai-506321",
+    "route": {
+      "action": "reuse-separately-authorized-live-bounded-product-route",
+      "run_id": "route-20260830-j",
+      "lifecycle_evidence": "docs/evidence/gate11node-20260830-a-lifecycle.json",
+      "expected_instance": "route-20260830-j-route",
+      "expected_zone": "us-central1-a",
+      "expected_state": "RUNNING",
+      "automatic_delete_deadline": "2026-08-31T05:44:14Z",
+      "complete_routes": [
+        "qwen-primary",
+        "gemma-standby"
+      ],
+      "mutation_authorized_by_this_plan": false,
+      "deletion_authorized_by_this_plan": false
+    },
+    "windows_client": {
+      "provider": "local-native-windows",
+      "new_cloud_resources": 0,
+      "shell": "native-powershell-or-cmd",
+      "one_empty_persistent_cache_per_model": true
+    },
+    "linux_clients": [
+      {
+        "model": "qwen",
+        "instance": "gate9-20260830-e-qwen-linux",
+        "disk": "gate9-20260830-e-qwen-linux",
+        "zone": "us-central1-a",
+        "machine_type": "e2-standard-4",
+        "os": "ubuntu-2404-noble-amd64-v20260826",
+        "boot_disk_gib": 100,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "service_account": false,
+        "scopes": [],
+        "max_run_seconds": 5400,
+        "termination_action": "DELETE"
+      },
+      {
+        "model": "gemma",
+        "instance": "gate9-20260830-e-gemma-linux",
+        "disk": "gate9-20260830-e-gemma-linux",
+        "zone": "us-central1-a",
+        "machine_type": "e2-standard-4",
+        "os": "ubuntu-2404-noble-amd64-v20260826",
+        "boot_disk_gib": 100,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "service_account": false,
+        "scopes": [],
+        "max_run_seconds": 5400,
+        "termination_action": "DELETE"
+      }
+    ],
+    "sequencing": {
+      "concurrent_client_models": 1,
+      "paid_attempts_per_model": 1,
+      "max_transfer_resumptions": 3,
+      "connect_timeout_seconds": 10,
+      "read_timeout_seconds": 60,
+      "model_window_seconds": 3600,
+      "provider_deletion_backstop_seconds": 5400,
+      "order": [
+        "qwen-windows",
+        "qwen-linux",
+        "gemma-windows",
+        "gemma-linux"
+      ],
+      "qwen_pair_required_before_gemma": true
+    },
+    "cleanup": {
+      "delete_only_exact_run_linux_instance_and_auto_delete_disk": true,
+      "verify_instances_absent": [
+        "gate9-20260830-e-qwen-linux",
+        "gate9-20260830-e-gemma-linux"
+      ],
+      "verify_disks_absent": [
+        "gate9-20260830-e-qwen-linux",
+        "gate9-20260830-e-gemma-linux"
+      ],
+      "protected_resources": [
+        "communityai-bootstrap-1",
+        "route-20260830-j-route",
+        "all resources not named by this plan"
+      ],
+      "protected_bootstrap_must_remain_running": true,
+      "route_cleanup_owned_by_separate_authorization": true
+    },
+    "prohibited": {
+      "fly_operations": 0,
+      "model_specific_image_builds_pushes_pulls": 0,
+      "registry_or_cache_mirrors": 0,
+      "qualification_or_recovery_reruns": 0,
+      "macos_work": 0,
+      "credits_or_payments_work": 0
+    },
+    "stop_conditions": [
+      "immutable input mismatch",
+      "selected artifact size or digest mismatch",
+      "transfer resumption budget exhausted",
+      "route incomplete or unhealthy",
+      "acquisition or benchmark unsuccessful",
+      "route or DHT cleanup not proved",
+      "accelerator cleanup not proved",
+      "OS containment not empty",
+      "exact provider cleanup not proved",
+      "model window expired",
+      "route deletion deadline leaves insufficient completion and cleanup margin"
+    ]
+  },
+  "preflight_required": [
+    "native gcloud and gh authentication",
+    "exact runtime wheel and immutable input hashes",
+    "current live-route identity, deadline, health, and complete Qwen/Gemma coverage",
+    "exact run Linux instances and disks absent",
+    "protected bootstrap running",
+    "budget headroom and one unused L4 quota slot",
+    "focused software tests and privacy-safe schema checks"
+  ],
+  "provider_calls_authorized_without_preflight": false,
+  "provisioning_authorized": true,
+  "reservation_recorded": true,
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_ids_retained": false,
+    "private_paths_retained": false,
+    "private_endpoints_retained": false,
+    "provider_output_retained": false,
+    "command_argv_retained": false
+  }
+}
