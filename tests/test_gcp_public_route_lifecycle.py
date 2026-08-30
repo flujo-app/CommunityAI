@@ -880,6 +880,70 @@ def test_host_action_failure_code_is_recorded_before_cleanup(tmp_path, monkeypat
     assert report["protected_bootstrap_running"] is True
 
 
+def test_local_credential_cleanup_failure_is_not_masked_by_provider_absence(
+    tmp_path,
+    monkeypatch,
+):
+    plan = _dummy_plan()
+    plan.provider_plan["create_commands"] = []
+    plan.provider_plan["verify_create_commands"] = [["verify", "instance"]]
+
+    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "octocat")
+    monkeypatch.setattr(
+        lifecycle,
+        "_await_instance_verification",
+        lambda *_args, **_kwargs: "34.42.181.232",
+    )
+    monkeypatch.setattr(lifecycle, "_install_helpers", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(lifecycle, "_await_host_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_cleanup_provider",
+        lambda plan, runner: (5, [True] * 6),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_protected_bootstrap_running",
+        lambda plan, runner: True,
+    )
+
+    def host_action(plan, runner, action, **kwargs):
+        details = {"registry_credentials_removed": True} if action == "cleanup-registry" else {}
+        return {
+            "schema_version": 1,
+            "scope": "gcp-public-route-host-action",
+            "result": "passed",
+            "action": action,
+            "details": details,
+        }
+
+    def failed_local_cleanup(_argv, _timeout, secret):
+        secret[:] = b"\x00" * len(secret)
+        raise lifecycle.LocalCredentialCleanupError("local cleanup failed")
+
+    monkeypatch.setattr(lifecycle, "_host_action", host_action)
+    output = tmp_path / "failed-local-cleanup.json"
+
+    with pytest.raises(lifecycle.LocalCredentialCleanupError):
+        lifecycle.execute_lifecycle(
+            plan,
+            host_controller_path=HOST,
+            acceptance_probe_path=ACCEPTANCE,
+            output_path=output,
+            monitor_seconds=0,
+            runner=lambda _argv, _timeout: lifecycle.CommandResult(0, b"", b""),
+            credential_runner=lambda _argv, _timeout: bytearray(b"token\n"),
+            secret_upload_runner=failed_local_cleanup,
+        )
+
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["cleanup"]["all_absent"] is True
+    assert report["cleanup"]["absence_checks"] == [True] * 6
+    assert report["cleanup"]["registry_credentials_removed"] is False
+    assert report["stages"]["cleanup"] is False
+    assert report["privacy"]["credentials_retained"] is True
+
+
 def test_cleanup_continues_after_delete_failure_and_requires_six_empty_checks():
     calls = []
 
@@ -957,62 +1021,140 @@ def test_registry_token_is_bound_to_validated_native_gh_identity():
     ]
 
 
-def test_secret_remote_sentinel_uses_exact_iap_no_tty_command_without_secret_in_argv():
-    calls = []
-    fake_secret = b"ZmFrZS1zZWNyZXQ=\n"
+def _host_ack(action, *, returncode=0, failure_code=None):
+    result = "failed" if failure_code is not None else "passed"
+    details = {"failure_code": failure_code} if failure_code is not None else {}
+    payload = {
+        "schema_version": 1,
+        "scope": "gcp-public-route-host-action",
+        "result": result,
+        "action": action,
+        "details": details,
+    }
+    framed = lifecycle.HOST_ACK_PREFIX + json.dumps(payload, separators=(",", ":")).encode()
+    return lifecycle.CommandResult(returncode, framed + b"\n", b"")
 
-    def secret_runner(argv, timeout, secret):
-        calls.append((tuple(argv), timeout, bytes(secret)))
+
+def test_secret_file_sentinel_orders_prepare_upload_consume_cleanup_without_secret_argv(monkeypatch):
+    plan = _dummy_plan()
+    upload_id = "a" * 32
+    secret = bytearray(b"ZmFrZS1zZWNyZXQ=\n")
+    host_actions = []
+    uploads = []
+
+    monkeypatch.setattr(lifecycle.secrets, "token_hex", lambda _bytes: upload_id)
+
+    def runner(argv, timeout):
+        assert "--command" in argv
+        remote = shlex.split(argv[argv.index("--command") + 1])
+        assert remote[:4] == [
+            "sudo",
+            "-n",
+            "python3",
+            "/var/lib/communityai-route/gcp_public_route_host.py",
+        ]
+        action = remote[remote.index("--action") + 1]
+        host_actions.append((action, tuple(remote), timeout))
+        return _host_ack(action)
+
+    def upload_runner(argv, timeout, payload):
+        uploads.append((tuple(argv), timeout, bytes(payload)))
+        assert bytes(payload).decode().strip() not in repr(argv)
+        payload[:] = b"\x00" * len(payload)
         return 0
 
-    lifecycle._secret_remote_action(
-        _dummy_plan(),
-        secret_runner,
-        "transport-sentinel",
-        fake_secret,
+    lifecycle._secret_file_remote_action(
+        plan,
+        runner,
+        upload_runner,
+        "transport-sentinel-file",
+        secret,
         timeout=600,
     )
 
-    argv, timeout, secret = calls[0]
-    assert argv[:3] == ("gcloud", "compute", "ssh")
-    assert "--tunnel-through-iap" in argv
-    assert "--ssh-flag=-T" in argv
-    assert argv.count("--command") == 1
-    remote = shlex.split(argv[-1])
-    assert remote[:4] == [
-        "sudo",
-        "-n",
-        "python3",
-        "/var/lib/communityai-route/gcp_public_route_host.py",
+    assert [action for action, _argv, _timeout in host_actions] == [
+        "prepare-registry-upload",
+        "transport-sentinel-file",
+        "cleanup-registry-upload",
     ]
-    assert remote[remote.index("--action") + 1] == "transport-sentinel"
-    assert fake_secret.decode().strip() not in repr(argv)
-    assert secret == fake_secret
-    assert timeout == 600
+    assert uploads[0][0] == (
+        "gcloud",
+        "compute",
+        "scp",
+        lifecycle._LOCAL_SECRET_PLACEHOLDER,
+        (
+            f"{plan.provider_plan['resources']['instance']}:/var/tmp/"
+            f"communityai-registry-{plan.run_id}-{upload_id}/credential.b64"
+        ),
+        "--zone",
+        plan.zone,
+        "--tunnel-through-iap",
+        "--project",
+        plan.project,
+        "--quiet",
+    )
+    assert uploads[0][2] == b"ZmFrZS1zZWNyZXQ=\n"
+    assert set(secret) <= {0}
 
 
-def test_secret_transport_sentinel_failure_blocks_registry_prefetch():
-    with pytest.raises(lifecycle.ProviderCommandError, match="secret host action failed"):
-        lifecycle._secret_remote_action(
-            _dummy_plan(),
-            lambda _argv, _timeout, _secret: 255,
-            "transport-sentinel",
-            lifecycle.TRANSPORT_SENTINEL_PAYLOAD,
+def test_secret_file_upload_failure_blocks_consume_and_runs_remote_cleanup(monkeypatch):
+    plan = _dummy_plan()
+    monkeypatch.setattr(lifecycle.secrets, "token_hex", lambda _bytes: "b" * 32)
+    actions = []
+
+    def runner(argv, _timeout):
+        remote = shlex.split(argv[argv.index("--command") + 1])
+        action = remote[remote.index("--action") + 1]
+        actions.append(action)
+        return _host_ack(action)
+
+    def upload_runner(_argv, _timeout, secret):
+        secret[:] = b"\x00" * len(secret)
+        return 255
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="secret file upload failed"):
+        lifecycle._secret_file_remote_action(
+            plan,
+            runner,
+            upload_runner,
+            "transport-sentinel-file",
+            bytearray(lifecycle.TRANSPORT_SENTINEL_PAYLOAD),
             timeout=600,
         )
+
+    assert actions == ["prepare-registry-upload", "cleanup-registry-upload"]
 
 
 @pytest.mark.parametrize(
     "returncode,failure_code",
     [(41, "registry_auth"), (42, "image_pull"), (43, "host_command")],
 )
-def test_secret_registry_prefetch_maps_only_allowlisted_failure_codes(returncode, failure_code):
+def test_secret_file_prefetch_preserves_allowlisted_host_failure_codes(
+    monkeypatch,
+    returncode,
+    failure_code,
+):
+    plan = _dummy_plan()
+    monkeypatch.setattr(lifecycle.secrets, "token_hex", lambda _bytes: "c" * 32)
+
+    def runner(argv, _timeout):
+        remote = shlex.split(argv[argv.index("--command") + 1])
+        action = remote[remote.index("--action") + 1]
+        if action == "prefetch-images-file":
+            return _host_ack(action, returncode=returncode, failure_code=failure_code)
+        return _host_ack(action)
+
+    def upload_runner(_argv, _timeout, secret):
+        secret[:] = b"\x00" * len(secret)
+        return 0
+
     with pytest.raises(lifecycle.HostActionError) as failure:
-        lifecycle._secret_remote_action(
-            _dummy_plan(),
-            lambda _argv, _timeout, _secret: returncode,
-            "prefetch-images",
-            b"bmF0aXZlLWdoLXRva2Vu\n",
+        lifecycle._secret_file_remote_action(
+            plan,
+            runner,
+            upload_runner,
+            "prefetch-images-file",
+            bytearray(b"bmF0aXZlLWdoLXRva2Vu\n"),
             registry_user="octocat",
             timeout=3600,
         )
@@ -1020,65 +1162,101 @@ def test_secret_registry_prefetch_maps_only_allowlisted_failure_codes(returncode
     assert failure.value.failure_code == failure_code
 
 
-def test_secret_runner_uses_binary_stdin_and_discards_all_output(monkeypatch):
+def test_secret_upload_runner_uses_private_file_scp_and_removes_local_material(
+    monkeypatch,
+    tmp_path,
+):
     plan = _dummy_plan()
+    upload_id = "d" * 32
     remote = (
-        *lifecycle._ssh_prefix(plan),
-        "--ssh-flag=-T",
-        "--command",
-        shlex.join(
-            (
-                "sudo",
-                "-n",
-                "python3",
-                "/var/lib/communityai-route/gcp_public_route_host.py",
-                "--action",
-                "transport-sentinel",
-                "--run-id",
-                plan.run_id,
-            )
-        ),
+        f"{plan.provider_plan['resources']['instance']}:/var/tmp/"
+        f"communityai-registry-{plan.run_id}-{upload_id}/credential.b64"
     )
-    calls = []
-    monkeypatch.setattr(lifecycle.shutil, "which", lambda name: r"C:\tools\gcloud.CMD" if name == "gcloud" else None)
+    argv = (
+        "gcloud",
+        "compute",
+        "scp",
+        lifecycle._LOCAL_SECRET_PLACEHOLDER,
+        remote,
+        "--zone",
+        plan.zone,
+        "--tunnel-through-iap",
+        "--project",
+        plan.project,
+        "--quiet",
+    )
+    acl_calls = []
+    subprocess_calls = []
+    monkeypatch.setattr(lifecycle.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        lifecycle,
+        "_private_acl",
+        lambda path, *, directory: acl_calls.append((path, directory)),
+    )
+    monkeypatch.setattr(
+        lifecycle.shutil,
+        "which",
+        lambda name: r"C:\tools\gcloud.CMD" if name == "gcloud" else None,
+    )
 
-    def run(argv, **kwargs):
-        calls.append((argv, kwargs))
-        return lifecycle.subprocess.CompletedProcess(argv, 0)
+    def run(command, **kwargs):
+        subprocess_calls.append((command, kwargs))
+        local_payload = command[3]
+        assert Path(local_payload).read_bytes() == b"bmF0aXZlLWdoLXRva2Vu\n"
+        return lifecycle.subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(lifecycle.subprocess, "run", run)
-    secret = b"ZmFrZS1zZWNyZXQ=\n"
+    secret = bytearray(b"bmF0aXZlLWdoLXRva2Vu\n")
 
-    assert lifecycle._run_secret_bounded(remote, 600, secret) == 0
-    argv, kwargs = calls[0]
-    assert argv[0] == r"C:\tools\gcloud.CMD"
+    assert lifecycle._run_secret_upload_bounded(argv, 600, secret) == 0
+
+    root, payload = lifecycle._local_secret_paths(plan.run_id, upload_id)
+    assert acl_calls == [(root, True), (payload, False)]
+    command, kwargs = subprocess_calls[0]
+    assert command[0] == r"C:\tools\gcloud.CMD"
+    assert command[3] == str(payload)
+    assert bytes(secret) == b"\x00" * len(secret)
+    assert not root.exists()
+    assert not payload.exists()
     assert kwargs["shell"] is False
-    assert kwargs["input"] == secret
+    assert kwargs["stdin"] is lifecycle.subprocess.DEVNULL
     assert kwargs["stdout"] is lifecycle.subprocess.DEVNULL
     assert kwargs["stderr"] is lifecycle.subprocess.DEVNULL
-    assert secret.decode().strip() not in repr(argv)
 
 
-def test_secret_runner_rejects_extra_remote_arguments_before_subprocess(monkeypatch):
+@pytest.mark.skipif(lifecycle.os.name != "nt", reason="Windows ACL contract")
+def test_private_local_secret_real_windows_acl_and_no_bom(monkeypatch, tmp_path):
+    run_id = "route-20260830-test"
+    upload_id = "e" * 32
+    secret = bytearray(b"bmF0aXZlLWdoLXRva2Vu\n")
+    monkeypatch.setattr(lifecycle.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    payload = lifecycle._create_private_local_secret(run_id, upload_id, secret)
+    try:
+        assert payload.read_bytes() == bytes(secret)
+        assert not payload.read_bytes().startswith(b"\xef\xbb\xbf")
+    finally:
+        lifecycle._remove_local_secret(run_id, upload_id)
+
+    assert not payload.exists()
+
+
+def test_secret_upload_runner_rejects_extra_argv_and_zeros_secret_before_subprocess(monkeypatch):
     plan = _dummy_plan()
-    remote = (
-        *lifecycle._ssh_prefix(plan),
-        "--ssh-flag=-T",
-        "--command",
-        shlex.join(
-            (
-                "sudo",
-                "-n",
-                "python3",
-                "/var/lib/communityai-route/gcp_public_route_host.py",
-                "--action",
-                "transport-sentinel",
-                "--run-id",
-                plan.run_id,
-                "--extra",
-                "command",
-            )
-        ),
+    secret = bytearray(b"bmF0aXZlLWdoLXRva2Vu\n")
+    argv = (
+        "gcloud",
+        "compute",
+        "scp",
+        lifecycle._LOCAL_SECRET_PLACEHOLDER,
+        (f"{plan.run_id}-route:/var/tmp/" f"communityai-registry-{plan.run_id}-{'f' * 32}/credential.b64"),
+        "--zone",
+        plan.zone,
+        "--tunnel-through-iap",
+        "--project",
+        plan.project,
+        "--quiet",
+        "--extra",
     )
     monkeypatch.setattr(
         lifecycle.subprocess,
@@ -1086,42 +1264,7 @@ def test_secret_runner_rejects_extra_remote_arguments_before_subprocess(monkeypa
         lambda *_args, **_kwargs: pytest.fail("subprocess must not run"),
     )
 
-    with pytest.raises(lifecycle.ProviderCommandError, match="remote action"):
-        lifecycle._run_secret_bounded(remote, 600, lifecycle.TRANSPORT_SENTINEL_PAYLOAD)
+    with pytest.raises(lifecycle.ProviderCommandError, match="contract"):
+        lifecycle._run_secret_upload_bounded(argv, 600, secret)
 
-
-def test_secret_runner_rejects_swapped_image_roles_before_subprocess(monkeypatch):
-    plan = _dummy_plan()
-    remote = (
-        *lifecycle._ssh_prefix(plan),
-        "--ssh-flag=-T",
-        "--command",
-        shlex.join(
-            (
-                "sudo",
-                "-n",
-                "python3",
-                "/var/lib/communityai-route/gcp_public_route_host.py",
-                "--action",
-                "prefetch-images",
-                "--run-id",
-                plan.run_id,
-                "--primary-image",
-                plan.standby.runtime_image_reference,
-                "--standby-image",
-                plan.primary.runtime_image_reference,
-                "--registry-user",
-                "octocat",
-                "--action-timeout-seconds",
-                "3600",
-            )
-        ),
-    )
-    monkeypatch.setattr(
-        lifecycle.subprocess,
-        "run",
-        lambda *_args, **_kwargs: pytest.fail("subprocess must not run"),
-    )
-
-    with pytest.raises(lifecycle.ProviderCommandError, match="remote action"):
-        lifecycle._run_secret_bounded(remote, 3600, b"bmF0aXZlLWdoLXRva2Vu\n")
+    assert set(secret) <= {0}

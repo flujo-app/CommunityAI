@@ -105,13 +105,18 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   again failed closed during the primary immutable pull after 727.938 seconds despite the
   serialized Docker download; no health or inference ran. Five deletes, six absence checks,
   and protected-bootstrap health passed, releasing the reservation and ruling out concurrent
-  blob downloads as the cause. Native-`gh` authenticated route delivery now validates one
-  exact login/token before paid creation, proves a canonical-base64 binary IAP path with a
-  non-secret sentinel, and prefetches both immutable digests through one fixed `sudo -n`
-  action and isolated root-owned Docker config. The token never enters argv, environment,
-  logs, evidence, or a local file; same-action and lifecycle-finally cleanup both logout and
-  remove the config. Starts verify the local digest before their unchanged single-shot
-  `docker run`, and lifecycle evidence records exact registry-credential removal.
+  blob downloads as the cause. Native-`gh` authenticated route delivery validates one exact
+  login/token before paid creation and prefetches both immutable digests through one fixed
+  `sudo -n` action and isolated root-owned Docker config. Route G proved exact preflight,
+  create, and bootstrap but failed closed at the Windows native-GCP binary-stdin registry
+  transport; it made no inference claim, passed five deletes and six absence checks, and kept
+  the protected bootstrap running. The repaired transport proves a non-secret sentinel through
+  one random canonical-base64 binary file protected by exact current-user-only Windows DACLs,
+  shell-free IAP SCP, and an owner-only Linux staging directory removed before decode/login.
+  The token never enters argv, environment, logs, or evidence. Same-action and lifecycle-finally
+  cleanup require local removal, remote removal, and in-memory zeroing; provider absence cannot
+  mask a local cleanup failure. Starts verify the local digest before their unchanged single-shot
+  `docker run`.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

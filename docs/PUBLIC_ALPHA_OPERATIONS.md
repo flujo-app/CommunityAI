@@ -144,15 +144,20 @@ Docker. Readiness records that same fixed value, and host preflight re-reads the
 config before live Docker/NVIDIA checks. This serializes multi-gigabyte GHCR blob requests.
 
 Before paid creation, the lifecycle resolves one exactly validated GitHub login and token from
-native `gh` authentication. The token is never placed in argv, environment, logs, evidence, or
-a local file. After bootstrap, a fixed non-secret sentinel must survive the exact binary/base64
-stdin, no-TTY IAP, and `sudo -n` helper path byte-for-byte before the token may cross it. One
-fixed authenticated prefetch action creates an exact root-owned mode-0700 Docker config under
-`/run`, logs into GHCR by `--password-stdin`, pulls Qwen then Gemma by immutable digest, verifies
-both local digest inventories, and unconditionally logs out and removes the config before it
-returns. The lifecycle repeats idempotent credential removal before route/container and provider
-cleanup, and evidence may set `registry_credentials_removed=true` only after exact removal or
-complete instance/disk absence.
+native `gh` authentication. The token is never placed in argv, environment, logs, or evidence.
+It is canonical-base64 encoded only in one random per-upload Windows binary file after both its
+directory and file have verified protected current-user-only DACLs; BOM, CR, NUL, alternate
+links, inherited rules, extra principals, or changed bytes fail closed. After bootstrap, a fixed
+non-secret sentinel must first survive that exact file and shell-free IAP SCP path byte-for-byte.
+The fixed `sudo -n` helper prepares one owner-only mode-0700 Linux staging directory, accepts
+only the exact bounded regular single-link owner-matched file, and removes the staging directory
+before decode/login. One authenticated prefetch action then creates an exact root-owned mode-0700
+Docker config under `/run`, logs into GHCR by `--password-stdin`, pulls Qwen then Gemma by
+immutable digest, verifies both local digest inventories, and unconditionally logs out and removes
+the config before it returns. The lifecycle repeats idempotent credential removal before
+route/container and provider cleanup. Evidence may set `registry_credentials_removed=true`
+only when local protected-file removal, remote staging/config removal or complete instance/disk
+absence, and in-memory zeroing all pass; provider absence never overrides local cleanup failure.
 
 The prefetch may retry only each same immutable digest-qualified pull at 5-, 15-, 60-, and
 120-second backoffs. Every sleep and subprocess timeout is clamped to the original shared

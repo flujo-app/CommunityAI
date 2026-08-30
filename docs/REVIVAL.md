@@ -71,9 +71,11 @@ agent:
   Revalidate native auth immediately before paid creation; reject UTF-8 BOM/CRLF drift,
   recover Fly token IDs by exact unique name, revoke them in unconditional cleanup, and
   preserve Buildx state explicitly when isolating `DOCKER_CONFIG`. A source-bound remote
-  registry action may use the documented sentinel-proved binary/base64 stdin exception only
-  with fixed `sudo -n` IAP transport, no secret argv/environment/output retention, and exact
-  same-action plus lifecycle-finally credential removal.
+  registry action may use only the documented sentinel-proved protected-file transfer: verify
+  a current-user-only protected Windows DACL before writing one canonical-base64 LF-only file,
+  use fixed shell-free IAP SCP into one owner-only Linux staging directory, remove that staging
+  before decode/login, retain no secret argv/environment/output, and require local, remote, and
+  in-memory removal in same-action plus lifecycle-finally cleanup evidence.
 
 ### Public-alpha scope boundary
 

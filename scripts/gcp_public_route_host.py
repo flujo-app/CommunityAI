@@ -40,10 +40,12 @@ BOOTSTRAP_READY = Path("/var/lib/communityai-bootstrap/runtime-ready.json")
 DOCKER_DAEMON_CONFIG = Path("/etc/docker/daemon.json")
 ACCEPTANCE_TARGET = Path("/var/lib/communityai-route/public_route_acceptance.py")
 REGISTRY_CONFIG = Path("/run/communityai-registry")
+REGISTRY_UPLOAD_PARENT = Path("/var/tmp")
 TRANSPORT_SENTINEL = b"communityai-secret-transport-v1"
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _RUN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,39}$")
 _GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+_UPLOAD_RE = re.compile(r"^[0-9a-f]{32}$")
 _PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
 _IMAGE_RE = re.compile(r"^ghcr\.io/flujo-app/communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$")
 _CANDIDATES: Mapping[str, Mapping[str, object]] = {
@@ -64,8 +66,10 @@ _CANDIDATES: Mapping[str, Mapping[str, object]] = {
 }
 _ACTIONS = {
     "preflight",
-    "transport-sentinel",
-    "prefetch-images",
+    "prepare-registry-upload",
+    "transport-sentinel-file",
+    "prefetch-images-file",
+    "cleanup-registry-upload",
     "start-primary",
     "start-standby",
     "health",
@@ -195,7 +199,7 @@ def _pull_immutable_image(
     raise ActionFailure("image_pull") from last_error
 
 
-def _strict_base64_secret(payload: bytes, field: str) -> bytearray:
+def _strict_base64_secret(payload: bytes | bytearray, field: str) -> bytearray:
     if (
         not payload
         or len(payload) > MAX_REGISTRY_PAYLOAD_BYTES
@@ -223,6 +227,182 @@ def _registry_user(value: str) -> str:
     if len(value) > 39 or _GITHUB_LOGIN_RE.fullmatch(value) is None:
         raise HostError("registry user is invalid")
     return value
+
+
+def _upload_id(value: str) -> str:
+    if _UPLOAD_RE.fullmatch(value) is None:
+        raise HostError("registry upload identifier is invalid")
+    return value
+
+
+def _registry_upload_paths(run_id: str, upload_id: str) -> tuple[Path, Path]:
+    run_id = _run_id(run_id)
+    upload_id = _upload_id(upload_id)
+    root = REGISTRY_UPLOAD_PARENT / f"communityai-registry-{run_id}-{upload_id}"
+    payload = root / "credential.b64"
+    if (
+        root.parent != REGISTRY_UPLOAD_PARENT
+        or root.name != f"communityai-registry-{run_id}-{upload_id}"
+        or payload.parent != root
+        or payload.name != "credential.b64"
+    ):
+        raise HostError("registry upload path is unsafe")
+    return root, payload
+
+
+def _sudo_identity() -> tuple[int, int]:
+    raw_uid = os.environ.get("SUDO_UID", "")
+    raw_gid = os.environ.get("SUDO_GID", "")
+    if re.fullmatch(r"[0-9]{1,10}", raw_uid) is None or re.fullmatch(r"[0-9]{1,10}", raw_gid) is None:
+        raise HostError("registry upload identity is unavailable")
+    uid = int(raw_uid)
+    gid = int(raw_gid)
+    if not 1 <= uid <= 2_147_483_647 or not 1 <= gid <= 2_147_483_647:
+        raise HostError("registry upload identity is invalid")
+    return uid, gid
+
+
+def _fsync_upload_parent() -> None:
+    descriptor = -1
+    try:
+        descriptor = os.open(REGISTRY_UPLOAD_PARENT, os.O_RDONLY | os.O_DIRECTORY)
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise HostError("registry upload parent could not be synchronized") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _registry_upload_absent(run_id: str, upload_id: str) -> bool:
+    root, _payload = _registry_upload_paths(run_id, upload_id)
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        raise HostError("registry upload state is unavailable") from exc
+    return False
+
+
+def _remove_registry_upload(run_id: str, upload_id: str) -> bool:
+    root, _payload = _registry_upload_paths(run_id, upload_id)
+    try:
+        status = root.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        raise HostError("registry upload state is unavailable") from exc
+    try:
+        if stat.S_ISDIR(status.st_mode) and not stat.S_ISLNK(status.st_mode):
+            shutil.rmtree(root)
+        else:
+            root.unlink()
+        _fsync_upload_parent()
+    except HostError:
+        raise
+    except OSError as exc:
+        raise HostError("registry upload could not be removed") from exc
+    if not _registry_upload_absent(run_id, upload_id):
+        raise HostError("registry upload remains after cleanup")
+    return True
+
+
+def _prepare_registry_upload(run_id: str, upload_id: str) -> dict[str, Any]:
+    root, _payload = _registry_upload_paths(run_id, upload_id)
+    uid, gid = _sudo_identity()
+    try:
+        parent_status = REGISTRY_UPLOAD_PARENT.lstat()
+    except OSError as exc:
+        raise HostError("registry upload parent is unavailable") from exc
+    if stat.S_ISLNK(parent_status.st_mode) or not stat.S_ISDIR(parent_status.st_mode):
+        raise HostError("registry upload parent is unsafe")
+    if not _registry_upload_absent(run_id, upload_id):
+        raise HostError("registry upload already exists")
+    try:
+        root.mkdir(mode=0o700)
+        os.chown(root, uid, gid)
+        os.chmod(root, 0o700)
+        status = root.lstat()
+    except OSError as exc:
+        _remove_registry_upload(run_id, upload_id)
+        raise HostError("registry upload could not be secured") from exc
+    if (
+        stat.S_ISLNK(status.st_mode)
+        or not stat.S_ISDIR(status.st_mode)
+        or status.st_uid != uid
+        or status.st_gid != gid
+        or stat.S_IMODE(status.st_mode) != 0o700
+        or any(root.iterdir())
+    ):
+        _remove_registry_upload(run_id, upload_id)
+        raise HostError("registry upload is not an empty owner-only directory")
+    return {"registry_upload_ready": True}
+
+
+def _read_registry_upload(run_id: str, upload_id: str) -> bytearray:
+    root, payload_path = _registry_upload_paths(run_id, upload_id)
+    uid, gid = _sudo_identity()
+    descriptor = -1
+    payload = bytearray()
+    payload_ready = False
+    try:
+        root_status = root.lstat()
+        status = payload_path.lstat()
+        if (
+            stat.S_ISLNK(root_status.st_mode)
+            or not stat.S_ISDIR(root_status.st_mode)
+            or root_status.st_uid != uid
+            or root_status.st_gid != gid
+            or stat.S_IMODE(root_status.st_mode) != 0o700
+            or stat.S_ISLNK(status.st_mode)
+            or not stat.S_ISREG(status.st_mode)
+            or status.st_nlink != 1
+            or status.st_uid != uid
+            or status.st_gid != gid
+            or not 1 <= status.st_size <= MAX_REGISTRY_PAYLOAD_BYTES
+        ):
+            raise HostError("registry upload file contract is invalid")
+        descriptor = os.open(payload_path, os.O_RDONLY | os.O_NOFOLLOW)
+        os.fchmod(descriptor, 0o600)
+        opened = os.fstat(descriptor)
+        if (
+            opened.st_dev != status.st_dev
+            or opened.st_ino != status.st_ino
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != uid
+            or opened.st_gid != gid
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_size != status.st_size
+        ):
+            raise HostError("registry upload changed while opening")
+        while len(payload) <= MAX_REGISTRY_PAYLOAD_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(4096, MAX_REGISTRY_PAYLOAD_BYTES + 1 - len(payload)),
+            )
+            if not chunk:
+                break
+            payload.extend(chunk)
+        if not payload or len(payload) > MAX_REGISTRY_PAYLOAD_BYTES:
+            raise HostError("registry upload payload is invalid")
+        payload_ready = True
+    except HostError:
+        raise
+    except OSError as exc:
+        raise HostError("registry upload is unavailable") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            _remove_registry_upload(run_id, upload_id)
+        except BaseException:
+            payload[:] = b"\x00" * len(payload)
+            raise
+        if not payload_ready:
+            payload[:] = b"\x00" * len(payload)
+    return payload
 
 
 def _registry_config_absent() -> bool:
@@ -284,7 +464,7 @@ def _verify_local_image(image: str, runner: Runner) -> None:
         raise HostError("local immutable image digest is absent")
 
 
-def _transport_sentinel(payload: bytes) -> dict[str, Any]:
+def _transport_sentinel(payload: bytes | bytearray) -> dict[str, Any]:
     decoded = _strict_base64_secret(payload, "transport sentinel")
     try:
         if bytes(decoded) != TRANSPORT_SENTINEL:
@@ -299,7 +479,7 @@ def _prefetch_images(
     primary_image: str,
     standby_image: str,
     registry_user: str,
-    secret_payload: bytes,
+    secret_payload: bytes | bytearray,
     action_timeout_seconds: int,
     runner: Runner,
     secret_runner: SecretRunner,
@@ -899,7 +1079,8 @@ def execute_action(
     initial_peer: str | None = None,
     acceptance_digest: str | None = None,
     registry_user: str | None = None,
-    secret_payload: bytes | None = None,
+    upload_id: str | None = None,
+    secret_payload: bytes | bytearray | None = None,
     action_timeout_seconds: int | None = None,
     runner: Runner = _run_bounded,
     secret_runner: SecretRunner = _run_secret_bounded,
@@ -910,11 +1091,15 @@ def execute_action(
     details: dict[str, Any]
     if action == "preflight":
         details = _bootstrap_preflight(runner)
-    elif action == "transport-sentinel":
+    elif action == "prepare-registry-upload":
+        if upload_id is None:
+            raise HostError("registry upload identifier is absent")
+        details = _prepare_registry_upload(run_id, upload_id)
+    elif action == "transport-sentinel-file":
         if secret_payload is None:
             raise HostError("transport sentinel payload is absent")
         details = _transport_sentinel(secret_payload)
-    elif action == "prefetch-images":
+    elif action == "prefetch-images-file":
         if primary_image is None or standby_image is None or registry_user is None or secret_payload is None:
             raise HostError("registry prefetch is missing a fixed input")
         details = _prefetch_images(
@@ -963,6 +1148,10 @@ def execute_action(
         details = _probe(run_id, "auto", _action_timeout(action_timeout_seconds), runner)
     elif action == "stop-all":
         details = _stop_all(run_id, runner)
+    elif action == "cleanup-registry-upload":
+        if upload_id is None:
+            raise HostError("registry upload identifier is absent")
+        details = {"registry_upload_removed": _remove_registry_upload(run_id, upload_id)}
     elif action == "cleanup-registry":
         details = {"registry_credentials_removed": _remove_registry_config(runner)}
     else:
@@ -986,6 +1175,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--initial-peer")
     parser.add_argument("--acceptance-digest")
     parser.add_argument("--registry-user")
+    parser.add_argument("--upload-id")
     parser.add_argument("--action-timeout-seconds", type=int)
     return parser
 
@@ -1017,22 +1207,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     try:
         secret_payload = None
-        if args.action in {"transport-sentinel", "prefetch-images"}:
-            secret_payload = sys.stdin.buffer.read(MAX_REGISTRY_PAYLOAD_BYTES + 1)
-            if len(secret_payload) > MAX_REGISTRY_PAYLOAD_BYTES:
-                raise HostError("secret transport payload exceeds its bound")
-        report = execute_action(
-            action=args.action,
-            run_id=args.run_id,
-            primary_image=args.primary_image,
-            standby_image=args.standby_image,
-            public_ipv4=args.public_ipv4,
-            initial_peer=args.initial_peer,
-            acceptance_digest=args.acceptance_digest,
-            registry_user=args.registry_user,
-            secret_payload=secret_payload,
-            action_timeout_seconds=args.action_timeout_seconds,
-        )
+        if args.action in {"transport-sentinel-file", "prefetch-images-file"}:
+            if args.upload_id is None:
+                raise HostError("registry upload identifier is absent")
+            secret_payload = _read_registry_upload(args.run_id, args.upload_id)
+        try:
+            report = execute_action(
+                action=args.action,
+                run_id=args.run_id,
+                primary_image=args.primary_image,
+                standby_image=args.standby_image,
+                public_ipv4=args.public_ipv4,
+                initial_peer=args.initial_peer,
+                acceptance_digest=args.acceptance_digest,
+                registry_user=args.registry_user,
+                upload_id=args.upload_id,
+                secret_payload=secret_payload,
+                action_timeout_seconds=args.action_timeout_seconds,
+            )
+        finally:
+            if isinstance(secret_payload, bytearray):
+                secret_payload[:] = b"\x00" * len(secret_payload)
         payload = _encode_acknowledgement(report)
     except ActionFailure as exc:
         payload = _encode_acknowledgement(_action_failure_report(args.action, exc.failure_code))

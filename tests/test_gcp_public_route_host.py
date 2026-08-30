@@ -16,6 +16,48 @@ def _completed(stdout=b"", returncode=0, stderr=b""):
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
 
+@pytest.mark.skipif(host.os.name != "posix", reason="Linux upload ownership contract")
+def test_registry_upload_is_owner_only_consumed_once_and_cleanup_is_idempotent(
+    monkeypatch,
+    tmp_path,
+):
+    upload_id = "a" * 32
+    monkeypatch.setattr(host, "REGISTRY_UPLOAD_PARENT", tmp_path)
+    monkeypatch.setattr(host, "_fsync_upload_parent", lambda: None)
+    monkeypatch.setattr(host, "_sudo_identity", lambda: (host.os.getuid(), host.os.getgid()))
+
+    assert host._prepare_registry_upload(RUN_ID, upload_id) == {"registry_upload_ready": True}
+    root, payload = host._registry_upload_paths(RUN_ID, upload_id)
+    payload.write_bytes(b"bmF0aXZlLWdoLXRva2Vu\n")
+    payload.chmod(0o644)
+
+    consumed = host._read_registry_upload(RUN_ID, upload_id)
+
+    assert bytes(consumed) == b"bmF0aXZlLWdoLXRva2Vu\n"
+    assert not root.exists()
+    assert host._remove_registry_upload(RUN_ID, upload_id) is True
+    consumed[:] = b"\x00" * len(consumed)
+    assert set(consumed) <= {0}
+
+
+@pytest.mark.skipif(host.os.name != "posix", reason="Linux upload ownership contract")
+def test_registry_upload_rejects_hardlinks_and_removes_staging(monkeypatch, tmp_path):
+    upload_id = "b" * 32
+    monkeypatch.setattr(host, "REGISTRY_UPLOAD_PARENT", tmp_path)
+    monkeypatch.setattr(host, "_fsync_upload_parent", lambda: None)
+    monkeypatch.setattr(host, "_sudo_identity", lambda: (host.os.getuid(), host.os.getgid()))
+
+    host._prepare_registry_upload(RUN_ID, upload_id)
+    root, payload = host._registry_upload_paths(RUN_ID, upload_id)
+    payload.write_bytes(b"bmF0aXZlLWdoLXRva2Vu\n")
+    host.os.link(payload, root / "credential-link.b64")
+
+    with pytest.raises(host.HostError, match="file contract"):
+        host._read_registry_upload(RUN_ID, upload_id)
+
+    assert not root.exists()
+
+
 def test_host_rejects_nonfixed_action_without_running_commands():
     calls = []
 
@@ -452,7 +494,7 @@ def test_authenticated_prefetch_pulls_both_digests_and_removes_credentials(monke
         return 0
 
     report = host.execute_action(
-        action="prefetch-images",
+        action="prefetch-images-file",
         run_id=RUN_ID,
         primary_image=PRIMARY,
         standby_image=STANDBY,
@@ -502,7 +544,7 @@ def test_authenticated_prefetch_cleans_registry_on_pull_exception(monkeypatch, t
 
     with pytest.raises(host.ActionFailure) as failure:
         host.execute_action(
-            action="prefetch-images",
+            action="prefetch-images-file",
             run_id=RUN_ID,
             primary_image=PRIMARY,
             standby_image=STANDBY,
@@ -525,7 +567,7 @@ def test_registry_prefetch_rejects_and_removes_preexisting_nondirectory(monkeypa
 
     with pytest.raises(host.HostError, match="already exists"):
         host.execute_action(
-            action="prefetch-images",
+            action="prefetch-images-file",
             run_id=RUN_ID,
             primary_image=PRIMARY,
             standby_image=STANDBY,
@@ -546,7 +588,7 @@ def test_registry_prefetch_cleans_registry_on_login_failure(monkeypatch, tmp_pat
 
     with pytest.raises(host.ActionFailure) as failure:
         host.execute_action(
-            action="prefetch-images",
+            action="prefetch-images-file",
             run_id=RUN_ID,
             primary_image=PRIMARY,
             standby_image=STANDBY,
@@ -573,7 +615,7 @@ def test_registry_prefetch_cleans_registry_on_base_exception(monkeypatch, tmp_pa
 
     with pytest.raises(KeyboardInterrupt):
         host.execute_action(
-            action="prefetch-images",
+            action="prefetch-images-file",
             run_id=RUN_ID,
             primary_image=PRIMARY,
             standby_image=STANDBY,

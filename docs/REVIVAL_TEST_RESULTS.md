@@ -1904,28 +1904,51 @@ token IDs. The route-F USD 26 reservation is released.
 Route F rules out both longer registry cooldowns and concurrent blob downloads as the cause
 of the repeated anonymous primary pull failure. The next source uses existing native `gh`
 authentication before paid creation: it resolves one strictly validated GitHub login and
-visible-ASCII token, rejects BOM/CR/NUL/whitespace/multiple-line/oversized payloads, and never
-places the token in argv, environment, logs, evidence, or a local file.
+visible-ASCII token and rejects BOM/CR/NUL/whitespace/multiple-line/oversized payloads. The
+token never enters argv, environment, logs, or evidence.
 
-After pinned bootstrap, a non-secret sentinel must first survive the exact canonical-base64,
-binary-stdin, `gcloud compute ssh --tunnel-through-iap --ssh-flag=-T`, and fixed `sudo -n`
-helper path byte-for-byte. One source-bound prefetch action then creates an exact root-owned
-mode-0700 Docker config under `/run`, authenticates to GHCR with `--password-stdin`, pulls the
-Qwen and Gemma immutable digests sequentially under the existing 0/5/15/60/120 retry and
-shared one-hour deadline, verifies both local digest inventories, and logs out/removes the
-config in its own `finally`. The outer lifecycle repeats idempotent registry cleanup before
-stopping routes or deleting provider resources. Evidence records
-`registry_credentials_removed` only after exact removal or complete instance/disk absence and
-derives credential-retention privacy from that proof.
+After pinned bootstrap, a non-secret sentinel must first survive the exact canonical-base64
+protected-file path. The lifecycle creates a random per-upload Windows directory, verifies an
+exact current-user-only protected DACL before any bytes are written, writes one binary no-BOM
+file, verifies its matching DACL and bytes, and invokes fixed `gcloud compute scp` with
+`shell=False`, IAP, discarded output, and no token argv or environment. The fixed `sudo -n`
+helper prepares an owner-only mode-0700 Linux staging directory, accepts only the exact bounded
+regular single-link owner-matched file, and removes the staging directory before decoding. One
+source-bound prefetch action then creates an exact root-owned mode-0700 Docker config under
+`/run`, authenticates to GHCR with `--password-stdin`, pulls the Qwen and Gemma immutable
+digests sequentially under the existing 0/5/15/60/120 retry and shared one-hour deadline,
+verifies both local digest inventories, and logs out/removes the config in its own `finally`.
+The outer lifecycle repeats idempotent registry cleanup before deleting provider resources.
+Evidence records `registry_credentials_removed` only when local file removal, remote staging
+and config removal or complete instance/disk absence, and in-memory zeroing all pass.
 
 Primary and standby start actions no longer pull; they require the exact local digest before
 their single fixed `docker run`. Registry login failure is allowlisted as `registry_auth`,
 pull exhaustion remains `image_pull`, and post-verification start failure remains
-`host_command`. The focused host/lifecycle suite passes 93 tests, including malformed secret
-bytes, identity binding, sentinel failure, exact no-TTY/sudo transport, discarded secret
-runner output, allowlisted failures, both digest pulls, local digest verification, and
-credential removal on success and pull exceptions. The expanded qualification-cost,
-image-contract/evidence, and route-node matrix passes 220 tests; Black, isort, Python
-compilation, and diff checks pass. A live provider-free invocation of the exact native `gh`
+`host_command`. The focused host/lifecycle suite passes 94 tests with two Linux ownership tests
+skipped on Windows, including malformed secret bytes, identity binding, sentinel failure,
+protected DACL/no-BOM creation, exact SCP/`sudo -n` sequencing, hardlink rejection, discarded
+secret runner output, allowlisted failures, both digest pulls, local digest verification, and
+credential removal on success and failure. A regression proves six provider absences cannot
+mask failed local removal. The expanded qualification-cost, image-contract/evidence, and
+route-node matrix passes 221 tests with the same two platform skips; six additional
+startup-contract tests pass. Black, isort, Python compilation, and diff checks pass. A live provider-free invocation of the exact native `gh`
 identity/token loaders reported only `identity_valid=true`, `token_valid=true`, and
 `token_retained=false`; no token bytes, login, provider call, or cloud mutation were emitted.
+
+## Gate 11 route-G registry-transport result
+
+The [source-bound route-G authorization](evidence/gate11route-20260830-g-cost-authorization.json)
+reserved USD 26 with USD 74 headroom. Its
+[live lifecycle evidence](evidence/gate11route-20260830-g-lifecycle.json) passed local validation,
+native authentication, provider preflight, exact create, and pinned bootstrap, then failed
+closed at `registry_transport` after 494.718 seconds when the native Windows GCP/IAP binary-stdin
+sentinel transfer returned nonzero. No health sample, inference, automatic selection, fallback,
+restoration, or monitoring claim was made.
+
+Finally-based cleanup passed all five exact delete commands and all six resource-absence checks;
+registry cleanup passed and the protected bootstrap remained `RUNNING`. The schema-v2 record
+retains no command argv, credentials, endpoints, outputs, paths, peer/provider IDs, prompts,
+provider output, or token IDs. Route G is `CLEANED-RELEASED`; the binary-stdin transport must not
+be retried. The protected-file repair described above is provider-call-free and requires a new
+source-bound authorization and reservation before another live route.

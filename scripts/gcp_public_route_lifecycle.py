@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import ipaddress
 import json
 import math
 import os
 import re
+import secrets
 import shlex
 import shutil
 import stat
@@ -51,12 +53,37 @@ FUTURE_TOLERANCE_SECONDS = 5
 HOST_ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
 TRANSPORT_SENTINEL_PAYLOAD = base64.b64encode(b"communityai-secret-transport-v1") + b"\n"
 _HOST_ACTION_FAILURE_CODES = frozenset({"registry_auth", "image_pull", "host_command"})
-_HOST_SECRET_FAILURE_CODES = {41: "registry_auth", 42: "image_pull", 43: "host_command"}
 _GIB = 1024**3
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _RUN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,39}$")
 _GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+_UPLOAD_RE = re.compile(r"^[0-9a-f]{32}$")
+_LOCAL_SECRET_PLACEHOLDER = "{communityai-local-secret-file}"
+_DIRECTORY_ACL_SCRIPT = r"""param([Parameter(Mandatory = $true)][string]$path)
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$security = New-Object System.Security.AccessControl.DirectorySecurity
+$security.SetAccessRuleProtection($true, $false)
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+$security.SetAccessRule($rule)
+[System.IO.Directory]::SetAccessControl($path, $security)
+$verified = [System.IO.Directory]::GetAccessControl($path, [System.Security.AccessControl.AccessControlSections]::Access)
+$rules = @($verified.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+if (-not $verified.AreAccessRulesProtected -or $rules.Count -ne 1 -or $rules[0].IdentityReference.Value -ne $sid.Value -or $rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or $rules[0].IsInherited -or $rules[0].FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl) { throw 'private directory ACL verification failed' }
+"""
+_FILE_ACL_SCRIPT = r"""param([Parameter(Mandatory = $true)][string]$path)
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$security = New-Object System.Security.AccessControl.FileSecurity
+$security.SetAccessRuleProtection($true, $false)
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')
+$security.SetAccessRule($rule)
+[System.IO.File]::SetAccessControl($path, $security)
+$verified = [System.IO.File]::GetAccessControl($path, [System.Security.AccessControl.AccessControlSections]::Access)
+$rules = @($verified.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+if (-not $verified.AreAccessRulesProtected -or $rules.Count -ne 1 -or $rules[0].IdentityReference.Value -ne $sid.Value -or $rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or $rules[0].IsInherited -or $rules[0].FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl) { throw 'private file ACL verification failed' }
+"""
 _PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
 _IMAGE_RE = re.compile(r"^ghcr\.io/flujo-app/communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$")
 _AUTHORIZATION_KEYS = {
@@ -196,6 +223,10 @@ class ProviderCommandError(LifecycleError):
     """A bounded native provider command failed."""
 
 
+class LocalCredentialCleanupError(ProviderCommandError):
+    """A local credential file could not be removed and verified absent."""
+
+
 class HostActionError(ProviderCommandError):
     """A fixed host action reported one privacy-safe allowlisted failure code."""
 
@@ -243,7 +274,7 @@ class BoundPlan:
 
 Runner = Callable[[Sequence[str], int], CommandResult]
 CredentialRunner = Callable[[Sequence[str], int], bytearray]
-SecretRunner = Callable[[Sequence[str], int, bytes], int]
+SecretUploadRunner = Callable[[Sequence[str], int, bytearray], int]
 Clock = Callable[[], float]
 WallClock = Callable[[], datetime]
 Sleeper = Callable[[float], None]
@@ -310,17 +341,176 @@ def _run_credential_bounded(argv: Sequence[str], timeout: int) -> bytearray:
     return bytearray(completed.stdout)
 
 
-def _run_secret_bounded(argv: Sequence[str], timeout: int, secret: bytes) -> int:
+def _has_reparse_attribute(status: os.stat_result) -> bool:
+    return bool(getattr(status, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def _private_acl(path: Path, *, directory: bool) -> None:
+    if os.name != "nt":
+        raise ProviderCommandError("private credential ACL requires native Windows")
+    executable = shutil.which("powershell.exe") or shutil.which("powershell")
+    if executable is None:
+        raise ProviderCommandError("native Windows ACL executable is unavailable")
+    script = _DIRECTORY_ACL_SCRIPT if directory else _FILE_ACL_SCRIPT
+    wrapped_script = f"& {{\n{script}\n}}"
+    try:
+        completed = subprocess.run(
+            [
+                executable,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                wrapped_script,
+                os.fspath(path),
+            ],
+            check=False,
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProviderCommandError("private credential ACL could not be applied") from exc
+    if completed.returncode != 0:
+        raise ProviderCommandError("private credential ACL could not be verified")
+
+
+def _local_secret_paths(run_id: str, upload_id: str) -> tuple[Path, Path]:
+    if _RUN_RE.fullmatch(run_id) is None or _UPLOAD_RE.fullmatch(upload_id) is None:
+        raise ProviderCommandError("local credential path binding is invalid")
+    temporary_root = Path(tempfile.gettempdir())
+    root = temporary_root / f"communityai-registry-{run_id}-{upload_id}"
+    payload = root / "credential.b64"
     if (
-        len(argv) != 13
-        or tuple(argv[:3]) != ("gcloud", "compute", "ssh")
-        or _RUN_RE.fullmatch(argv[3]) is None
-        or argv[4] != "--zone"
-        or re.fullmatch(r"[a-z0-9-]{1,63}", argv[5]) is None
-        or argv[6] != "--tunnel-through-iap"
-        or argv[7] != "--project"
-        or re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", argv[8]) is None
-        or tuple(argv[9:12]) != ("--quiet", "--ssh-flag=-T", "--command")
+        root.parent != temporary_root
+        or root.name != f"communityai-registry-{run_id}-{upload_id}"
+        or payload.parent != root
+        or payload.name != "credential.b64"
+    ):
+        raise ProviderCommandError("local credential path is unsafe")
+    return root, payload
+
+
+def _remove_local_secret(run_id: str, upload_id: str) -> bool:
+    root, payload = _local_secret_paths(run_id, upload_id)
+    try:
+        status = payload.lstat()
+    except FileNotFoundError:
+        status = None
+    except OSError as exc:
+        raise LocalCredentialCleanupError("local credential state is unavailable") from exc
+    if status is not None:
+        try:
+            if stat.S_ISREG(status.st_mode) and not _has_reparse_attribute(status):
+                descriptor = os.open(
+                    payload,
+                    os.O_WRONLY | getattr(os, "O_BINARY", 0),
+                )
+                try:
+                    remaining = status.st_size
+                    zeros = b"\x00" * min(4096, max(1, remaining))
+                    while remaining:
+                        written = os.write(descriptor, zeros[: min(len(zeros), remaining)])
+                        if written <= 0:
+                            raise OSError("zero-length credential overwrite")
+                        remaining -= written
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+            payload.unlink()
+        except OSError as exc:
+            raise LocalCredentialCleanupError("local credential file could not be removed") from exc
+    try:
+        root_status = root.lstat()
+    except FileNotFoundError:
+        root_status = None
+    except OSError as exc:
+        raise LocalCredentialCleanupError("local credential directory is unavailable") from exc
+    if root_status is not None:
+        try:
+            if _has_reparse_attribute(root_status):
+                if stat.S_ISDIR(root_status.st_mode):
+                    os.rmdir(root)
+                else:
+                    root.unlink()
+            else:
+                root.rmdir()
+        except OSError as exc:
+            raise LocalCredentialCleanupError("local credential directory could not be removed") from exc
+    if root.exists() or payload.exists():
+        raise LocalCredentialCleanupError("local credential material remains after cleanup")
+    return True
+
+
+def _create_private_local_secret(
+    run_id: str,
+    upload_id: str,
+    secret: bytearray,
+) -> Path:
+    root, payload = _local_secret_paths(run_id, upload_id)
+    if root.exists() or payload.exists():
+        raise ProviderCommandError("local credential path already exists")
+    try:
+        root.mkdir(mode=0o700)
+        root_status = root.lstat()
+        if (
+            stat.S_ISLNK(root_status.st_mode)
+            or not stat.S_ISDIR(root_status.st_mode)
+            or _has_reparse_attribute(root_status)
+        ):
+            raise ProviderCommandError("local credential directory is not a plain directory")
+        _private_acl(root, directory=True)
+        descriptor = os.open(
+            payload,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+            0o600,
+        )
+        try:
+            offset = 0
+            while offset < len(secret):
+                written = os.write(descriptor, secret[offset:])
+                if written <= 0:
+                    raise OSError("zero-length credential write")
+                offset += written
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        payload_status = payload.lstat()
+        if (
+            stat.S_ISLNK(payload_status.st_mode)
+            or not stat.S_ISREG(payload_status.st_mode)
+            or _has_reparse_attribute(payload_status)
+        ):
+            raise ProviderCommandError("local credential file is not a plain file")
+        _private_acl(payload, directory=False)
+        observed = payload.read_bytes()
+        if observed != bytes(secret) or observed.startswith(b"\xef\xbb\xbf"):
+            raise ProviderCommandError("local credential bytes changed on disk")
+        return payload
+    except BaseException:
+        _remove_local_secret(run_id, upload_id)
+        raise
+
+
+def _run_secret_upload_bounded(
+    argv: Sequence[str],
+    timeout: int,
+    secret: bytearray,
+) -> int:
+    if (
+        len(argv) != 11
+        or tuple(argv[:3]) != ("gcloud", "compute", "scp")
+        or argv[3] != _LOCAL_SECRET_PLACEHOLDER
+        or argv[5] != "--zone"
+        or re.fullmatch(r"[a-z0-9-]{1,63}", argv[6]) is None
+        or argv[7] != "--tunnel-through-iap"
+        or argv[8] != "--project"
+        or re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", argv[9]) is None
+        or argv[10] != "--quiet"
         or not 1 <= timeout <= MAX_STARTUP_SECONDS
         or not secret
         or len(secret) > MAX_REGISTRY_TOKEN_BYTES
@@ -331,64 +521,67 @@ def _run_secret_bounded(argv: Sequence[str], timeout: int, secret: bytes) -> int
         or secret.startswith(b"\xef\xbb\xbf")
         or any(value < 0x21 or value > 0x7E for value in secret[:-1])
     ):
-        raise ProviderCommandError("secret transport contract is invalid")
+        secret[:] = b"\x00" * len(secret)
+        raise ProviderCommandError("secret upload contract is invalid")
+    decoded = bytearray()
     try:
-        remote_argv = shlex.split(argv[-1])
+        decoded = bytearray(base64.b64decode(secret[:-1], validate=True))
+        if not decoded or base64.b64encode(decoded) != secret[:-1]:
+            raise ProviderCommandError("secret upload encoding is not canonical")
+    except ProviderCommandError:
+        secret[:] = b"\x00" * len(secret)
+        raise
+    except (ValueError, binascii.Error) as exc:
+        secret[:] = b"\x00" * len(secret)
+        raise ProviderCommandError("secret upload encoding is invalid") from exc
+    finally:
+        decoded[:] = b"\x00" * len(decoded)
+    destination = argv[4]
+    try:
+        instance, remote_path = destination.split(":", 1)
     except ValueError as exc:
-        raise ProviderCommandError("secret transport remote command is invalid") from exc
-    prefix = (
-        "sudo",
-        "-n",
-        "python3",
-        "/var/lib/communityai-route/gcp_public_route_host.py",
-        "--action",
+        secret[:] = b"\x00" * len(secret)
+        raise ProviderCommandError("secret upload destination is invalid") from exc
+    if re.fullmatch(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?", instance) is None:
+        secret[:] = b"\x00" * len(secret)
+        raise ProviderCommandError("secret upload instance is invalid")
+    remote_match = re.fullmatch(
+        r"/var/tmp/communityai-registry-"
+        r"(?P<run_id>[a-z0-9][a-z0-9-]{5,39})-"
+        r"(?P<upload_id>[0-9a-f]{32})/credential\.b64",
+        remote_path,
     )
-    if tuple(remote_argv[:5]) != prefix:
-        raise ProviderCommandError("secret transport remote action is invalid")
-    action = remote_argv[5] if len(remote_argv) > 5 else None
-    primary_image_match = _IMAGE_RE.fullmatch(remote_argv[9]) if len(remote_argv) == 16 else None
-    standby_image_match = _IMAGE_RE.fullmatch(remote_argv[11]) if len(remote_argv) == 16 else None
-    sentinel_valid = (
-        action == "transport-sentinel"
-        and len(remote_argv) == 8
-        and remote_argv[6] == "--run-id"
-        and _RUN_RE.fullmatch(remote_argv[7]) is not None
-    )
-    prefetch_valid = (
-        action == "prefetch-images"
-        and len(remote_argv) == 16
-        and remote_argv[6] == "--run-id"
-        and _RUN_RE.fullmatch(remote_argv[7]) is not None
-        and remote_argv[8] == "--primary-image"
-        and primary_image_match is not None
-        and primary_image_match.group(1) == "qwen3.5-2b"
-        and remote_argv[10] == "--standby-image"
-        and standby_image_match is not None
-        and standby_image_match.group(1) == "gemma-4-e2b"
-        and remote_argv[12] == "--registry-user"
-        and _GITHUB_LOGIN_RE.fullmatch(remote_argv[13]) is not None
-        and remote_argv[14] == "--action-timeout-seconds"
-        and remote_argv[15].isdigit()
-        and MIN_HOST_ACTION_SECONDS <= int(remote_argv[15]) <= MAX_STARTUP_SECONDS
-    )
-    if not sentinel_valid and not prefetch_valid:
-        raise ProviderCommandError("secret transport remote action is invalid")
+    if remote_match is None:
+        secret[:] = b"\x00" * len(secret)
+        raise ProviderCommandError("secret upload destination is invalid")
+    run_id = remote_match.group("run_id")
+    upload_id = remote_match.group("upload_id")
+    if _RUN_RE.fullmatch(run_id) is None or _UPLOAD_RE.fullmatch(upload_id) is None:
+        secret[:] = b"\x00" * len(secret)
+        raise ProviderCommandError("secret upload identifier is invalid")
     executable = shutil.which("gcloud")
     if executable is None:
+        secret[:] = b"\x00" * len(secret)
         raise ProviderCommandError("native GCP executable is unavailable")
+    local_path = None
     try:
-        completed = subprocess.run(
-            [executable, *argv[1:]],
-            check=False,
-            shell=False,
-            input=secret,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ProviderCommandError("secret transport failed or timed out") from exc
-    return completed.returncode
+        local_path = _create_private_local_secret(run_id, upload_id, secret)
+        try:
+            completed = subprocess.run(
+                [executable, *argv[1:3], os.fspath(local_path), *argv[4:]],
+                check=False,
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ProviderCommandError("secret upload failed or timed out") from exc
+        return completed.returncode
+    finally:
+        secret[:] = b"\x00" * len(secret)
+        _remove_local_secret(run_id, upload_id)
 
 
 def _strict_visible_line(payload: bytearray, field: str, maximum: int) -> bytearray:
@@ -1255,12 +1448,15 @@ def _host_action(
     *,
     public_ipv4: str | None = None,
     initial_peer: str | None = None,
+    upload_id: str | None = None,
+    registry_user: str | None = None,
     timeout: int = MAX_PROVIDER_SECONDS,
 ) -> Mapping[str, Any]:
     if not isinstance(timeout, int) or not 1 <= timeout <= MAX_STARTUP_SECONDS:
         raise LifecycleError("fixed host action timeout is invalid")
     argv = [
         "sudo",
+        "-n",
         "python3",
         "/var/lib/communityai-route/gcp_public_route_host.py",
         "--action",
@@ -1268,6 +1464,28 @@ def _host_action(
         "--run-id",
         plan.run_id,
     ]
+    if action in {
+        "prepare-registry-upload",
+        "transport-sentinel-file",
+        "prefetch-images-file",
+        "cleanup-registry-upload",
+    }:
+        if upload_id is None or _UPLOAD_RE.fullmatch(upload_id) is None:
+            raise LifecycleError("registry upload identifier is invalid")
+        argv.extend(["--upload-id", upload_id])
+    if action == "prefetch-images-file":
+        if registry_user is None or _GITHUB_LOGIN_RE.fullmatch(registry_user) is None:
+            raise LifecycleError("registry prefetch user is invalid")
+        argv.extend(
+            [
+                "--primary-image",
+                plan.primary.runtime_image_reference,
+                "--standby-image",
+                plan.standby.runtime_image_reference,
+                "--registry-user",
+                registry_user,
+            ]
+        )
     if action in {"start-primary", "start-standby"}:
         if public_ipv4 is None or initial_peer is None:
             raise LifecycleError("route start is missing its fixed runtime inputs")
@@ -1291,6 +1509,7 @@ def _host_action(
         "probe-primary",
         "probe-standby",
         "probe-auto",
+        "prefetch-images-file",
     }:
         action_timeout = timeout - REMOTE_ACTION_RESERVE_SECONDS
         if action_timeout < MIN_HOST_ACTION_SECONDS:
@@ -1299,52 +1518,86 @@ def _host_action(
     return _remote_command(plan, runner, argv, timeout=timeout, expected_action=action)
 
 
-def _secret_remote_action(
+def _secret_file_remote_action(
     plan: BoundPlan,
-    secret_runner: SecretRunner,
+    runner: Runner,
+    upload_runner: SecretUploadRunner,
     action: str,
-    secret_payload: bytes,
+    secret_payload: bytearray,
     *,
     registry_user: str | None = None,
     timeout: int,
 ) -> None:
-    if action not in {"transport-sentinel", "prefetch-images"} or not 1 <= timeout <= MAX_STARTUP_SECONDS:
-        raise LifecycleError("secret host action contract is invalid")
-    argv = [
-        "sudo",
-        "-n",
-        "python3",
-        "/var/lib/communityai-route/gcp_public_route_host.py",
-        "--action",
-        action,
-        "--run-id",
-        plan.run_id,
-    ]
-    if action == "prefetch-images":
-        if registry_user is None or _GITHUB_LOGIN_RE.fullmatch(registry_user) is None:
-            raise LifecycleError("registry prefetch user is invalid")
-        action_timeout = timeout - REMOTE_ACTION_RESERVE_SECONDS
-        if action_timeout < MIN_HOST_ACTION_SECONDS:
-            raise LifecycleError("registry prefetch has insufficient bounded time remaining")
-        argv.extend(
-            [
-                "--primary-image",
-                plan.primary.runtime_image_reference,
-                "--standby-image",
-                plan.standby.runtime_image_reference,
-                "--registry-user",
-                registry_user,
-                "--action-timeout-seconds",
-                str(action_timeout),
-            ]
+    if action not in {"transport-sentinel-file", "prefetch-images-file"} or not 1 <= timeout <= MAX_STARTUP_SECONDS:
+        secret_payload[:] = b"\x00" * len(secret_payload)
+        raise LifecycleError("secret file host action contract is invalid")
+    upload_id = secrets.token_hex(16)
+    if _UPLOAD_RE.fullmatch(upload_id) is None:
+        secret_payload[:] = b"\x00" * len(secret_payload)
+        raise LifecycleError("generated registry upload identifier is invalid")
+    instance = str(plan.provider_plan["resources"]["instance"])
+    remote_root = f"/var/tmp/communityai-registry-{plan.run_id}-{upload_id}"
+    scp = (
+        "gcloud",
+        "compute",
+        "scp",
+        _LOCAL_SECRET_PLACEHOLDER,
+        f"{instance}:{remote_root}/credential.b64",
+        "--zone",
+        plan.zone,
+        "--tunnel-through-iap",
+        "--project",
+        plan.project,
+        "--quiet",
+    )
+    failure: BaseException | None = None
+    deadline = time.monotonic() + timeout
+    try:
+        prepare_remaining = min(MAX_STARTUP_SECONDS, math.ceil(deadline - time.monotonic()))
+        if prepare_remaining < 1:
+            raise ProviderCommandError("secret file transfer exhausted its boundary")
+        _host_action(
+            plan,
+            runner,
+            "prepare-registry-upload",
+            upload_id=upload_id,
+            timeout=min(MAX_PROVIDER_SECONDS, prepare_remaining),
         )
-    remote = (*_ssh_prefix(plan), "--ssh-flag=-T", "--command", shlex.join(argv))
-    returncode = secret_runner(remote, timeout, secret_payload)
-    if returncode == 0:
-        return
-    if action == "prefetch-images" and returncode in _HOST_SECRET_FAILURE_CODES:
-        raise HostActionError(_HOST_SECRET_FAILURE_CODES[returncode])
-    raise ProviderCommandError("secret host action failed")
+        upload_remaining = min(MAX_STARTUP_SECONDS, math.ceil(deadline - time.monotonic()))
+        if upload_remaining < 1:
+            raise ProviderCommandError("secret file transfer exhausted its boundary")
+        returncode = upload_runner(scp, upload_remaining, secret_payload)
+        if returncode != 0:
+            raise ProviderCommandError("secret file upload failed")
+        consume_remaining = min(MAX_STARTUP_SECONDS, math.ceil(deadline - time.monotonic()))
+        if consume_remaining < 1:
+            raise ProviderCommandError("secret file transfer exhausted its boundary")
+        _host_action(
+            plan,
+            runner,
+            action,
+            upload_id=upload_id,
+            registry_user=registry_user,
+            timeout=consume_remaining,
+        )
+    except BaseException as exc:
+        failure = exc
+    finally:
+        secret_payload[:] = b"\x00" * len(secret_payload)
+        try:
+            _host_action(
+                plan,
+                runner,
+                "cleanup-registry-upload",
+                upload_id=upload_id,
+                timeout=MAX_PROVIDER_SECONDS,
+            )
+        except BaseException as exc:
+            cleanup_failure = ProviderCommandError("secret file remote cleanup failed")
+            cleanup_failure.__cause__ = failure if failure is not None else exc
+            failure = cleanup_failure
+    if failure is not None:
+        raise failure
 
 
 def _remaining_startup_seconds(deadline: float, clock: Clock) -> int:
@@ -1457,7 +1710,7 @@ def execute_lifecycle(
     monitor_seconds: int,
     runner: Runner = _run_bounded,
     credential_runner: CredentialRunner | None = None,
-    secret_runner: SecretRunner | None = None,
+    secret_upload_runner: SecretUploadRunner | None = None,
     clock: Clock = time.monotonic,
     wall_clock: WallClock = lambda: datetime.now(timezone.utc),
     sleeper: Sleeper = time.sleep,
@@ -1493,14 +1746,27 @@ def execute_lifecycle(
     public_ipv4 = None
     protected_bootstrap_running = False
     registry_payload = bytearray()
+    local_registry_material_removed = True
+    remote_registry_material_removed = True
+    in_memory_credentials_zeroed = True
     registry_credentials_removed = True
     previous: dict[str, Mapping[str, Any]] | None = None
-    selected_secret_runner = secret_runner
-    if selected_secret_runner is None:
+    selected_secret_upload_runner = secret_upload_runner
+    if selected_secret_upload_runner is None:
         if runner is _run_bounded:
-            selected_secret_runner = _run_secret_bounded
+            selected_secret_upload_runner = _run_secret_upload_bounded
         else:
-            selected_secret_runner = lambda argv, timeout, _secret: runner(argv, timeout).returncode
+
+            def selected_secret_upload_runner(
+                argv: Sequence[str],
+                timeout: int,
+                secret: bytearray,
+            ) -> int:
+                try:
+                    return runner(argv, timeout).returncode
+                finally:
+                    secret[:] = b"\x00" * len(secret)
+
     try:
         registry_user = _native_preflight(plan, runner)
         token = _registry_token(registry_user, runner, credential_runner)
@@ -1545,25 +1811,28 @@ def execute_lifecycle(
         stages["bootstrap"] = True
 
         failure_stage = "registry_transport"
-        _secret_remote_action(
+        remote_registry_material_removed = False
+        _secret_file_remote_action(
             plan,
-            selected_secret_runner,
-            "transport-sentinel",
-            TRANSPORT_SENTINEL_PAYLOAD,
+            runner,
+            selected_secret_upload_runner,
+            "transport-sentinel-file",
+            bytearray(TRANSPORT_SENTINEL_PAYLOAD),
             timeout=min(MAX_PROVIDER_SECONDS, _remaining_startup_seconds(startup_deadline, clock)),
         )
+        remote_registry_material_removed = True
         failure_stage = "registry_prefetch"
-        registry_credentials_removed = False
-        _secret_remote_action(
+        remote_registry_material_removed = False
+        _secret_file_remote_action(
             plan,
-            selected_secret_runner,
-            "prefetch-images",
-            bytes(registry_payload),
+            runner,
+            selected_secret_upload_runner,
+            "prefetch-images-file",
+            registry_payload,
             registry_user=registry_user,
             timeout=_remaining_startup_seconds(startup_deadline, clock),
         )
-        registry_payload[:] = b"\x00" * len(registry_payload)
-        registry_credentials_removed = True
+        remote_registry_material_removed = True
         stages["registry_prefetch"] = True
 
         failure_stage = "start_primary"
@@ -1687,6 +1956,9 @@ def execute_lifecycle(
         stages["monitor"] = True
         result = "passed"
         failure_stage = ""
+    except LocalCredentialCleanupError:
+        local_registry_material_removed = False
+        raise
     except HostActionError as exc:
         failure_code = exc.failure_code
         raise
@@ -1697,9 +1969,8 @@ def execute_lifecycle(
             if created:
                 try:
                     registry_cleanup = _host_action(plan, runner, "cleanup-registry")
-                    registry_credentials_removed = (
-                        registry_cleanup.get("details", {}).get("registry_credentials_removed") is True
-                    )
+                    if registry_cleanup.get("details", {}).get("registry_credentials_removed") is True:
+                        remote_registry_material_removed = True
                 except Exception:
                     pass
                 try:
@@ -1712,11 +1983,16 @@ def execute_lifecycle(
                     pass
                 cleanup_deleted, absence = _cleanup_provider(plan, runner)
                 if len(absence) == 6 and all(absence):
-                    registry_credentials_removed = True
+                    remote_registry_material_removed = True
                 try:
                     protected_bootstrap_running = _protected_bootstrap_running(plan, runner)
                 except Exception:
                     protected_bootstrap_running = False
+            registry_payload[:] = b"\x00" * len(registry_payload)
+            in_memory_credentials_zeroed = not registry_payload or all(value == 0 for value in registry_payload)
+            registry_credentials_removed = (
+                local_registry_material_removed and remote_registry_material_removed and in_memory_credentials_zeroed
+            )
             stages["cleanup"] = (
                 registry_credentials_removed
                 and len(absence) == 6
