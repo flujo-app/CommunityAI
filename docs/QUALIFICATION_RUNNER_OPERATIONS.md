@@ -86,8 +86,10 @@ Gate 11 uses two separately reserved GCP workloads. First,
 It reserves USD 10 for one six-hour, auto-deleting `e2-standard-4` CPU builder,
 a 200 GiB balanced boot disk, and up to 30 days of retained cache storage. The builder
 has no service account or scopes. The fixed Artifact Registry API enable call is
-followed by an exact enabled-service query; an ambiguous command response is accepted only
-when that query returns exactly `artifactregistry.googleapis.com`, otherwise the lifecycle
+followed by an exact enabled-service query using
+`--filter config.name=artifactregistry.googleapis.com` and
+`--format value(config.name)`; an ambiguous command response is accepted only when that
+query returns exactly one bare `artifactregistry.googleapis.com`, otherwise the lifecycle
 stops before repository creation. The lifecycle may grant `allUsers` the reader role
 only while the exact builder pulls both immutable publications; it must revoke that
 binding, prove the repository private, verify scanning disabled and all four
@@ -99,7 +101,7 @@ Generate the provider-call-free cache plan first:
 
 ```powershell
 uv run --no-sync python scripts/qualification_cost_guard.py `
-  --run-id cache-20260830-b `
+  --run-id cache-20260830-c `
   --provider gcp `
   --workload gcp-public-route-cache `
   --purpose "Gate 11 private same-region route image cache" `
@@ -115,7 +117,7 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
   --cache-bootstrap-digest $cacheBootstrapDigest `
   --cache-bootstrap-bytes $cacheBootstrapBytes `
   --ledger docs/RELEASE_READINESS.md `
-  --output docs/evidence/cache-20260830-b-cost-authorization.json
+  --output docs/evidence/cache-20260830-c-cost-authorization.json
 ```
 
 The first pass must report `provisioning_authorized=false`. Record its exact

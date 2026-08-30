@@ -411,9 +411,9 @@ def _gcp_public_route_cache_plan(
         "list",
         "--enabled",
         "--filter",
-        "name=artifactregistry.googleapis.com",
+        "config.name=artifactregistry.googleapis.com",
         "--format",
-        "value(name)",
+        "value(config.name)",
         "--project",
         project,
     )

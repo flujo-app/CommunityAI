@@ -2042,3 +2042,30 @@ remain clean. Independent verification passed 187 tests with two skips, reproduc
 success and fail-closed service-query cases, and proved the old plan cannot regenerate under
 the corrected provider-plan shape. A new run identity and exact reservation are required
 before retrying the prewarm.
+
+## Gate 11 private route-cache attempt B
+
+Pushed source `4481963` and the source-bound
+[retry-B authorization](evidence/cache-20260830-b-cost-authorization.json) bound plan
+`sha256:861ebeaa2af38e563bdfb736d955b23ea87bd579188636a5512577ee6b35dd52`,
+the exact corrected lifecycle/bootstrap/publication inputs, a USD 10 maximum, and USD 90
+headroom. Its [live lifecycle](evidence/cache-20260830-b-lifecycle.json) passed local
+binding, native authentication, protected-bootstrap health, and all five initial builder
+absences. It then failed closed at `api_enablement` after 38 seconds because the planned
+Service Usage query filtered and projected the generic `name` field, which returned no row
+for the enabled service. No repository or builder was created.
+
+The [sanitized post-failure verification](evidence/cache-20260830-b-post-failure-verification.json)
+uses GCP's actual `config.name` field and proves exactly one enabled Artifact Registry
+service, the exact cache repository absent, all five retry-B builder/perimeter targets absent,
+and the protected bootstrap still `RUNNING`. It made no mutation and retained no provider
+output, identifier, argv, path, or credential. The retry-B reservation is released.
+
+The fixed provider plan now exact-binds
+`--filter config.name=artifactregistry.googleapis.com --format value(config.name)`;
+the lifecycle still accepts only one exact bare `artifactregistry.googleapis.com` result.
+The 250-test Gate 11 matrix passes with two provider/platform skips, formatting/import-order
+and diff checks pass, and the live read-only diagnostic proves the exact command shape.
+Independent verification passes 187 tests with two skips, matches both evidence records, and
+proves retry B cannot regenerate under the corrected plan. A new run identity, source-bound
+plan, and reservation are required before the next prewarm.

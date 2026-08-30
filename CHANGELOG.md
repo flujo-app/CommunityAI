@@ -135,6 +135,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   proved the API enabled, every exact target absent, and the protected bootstrap running. The
   corrected lifecycle now requires an exact enabled-service state after the fixed enable call,
   so ambiguous provider responses remain fail-closed without rejecting a proved applied state.
+  The first retry then exposed that the Service Usage list's generic `name` filter/output
+  fields return no rows even when the API is enabled; it also stopped before repository or
+  builder creation and passed exact absence/protected-bootstrap verification. The source-bound
+  query now uses GCP's `config.name` filter and output field and still accepts only the single
+  exact bare Artifact Registry service name.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

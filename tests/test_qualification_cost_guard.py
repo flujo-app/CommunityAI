@@ -734,9 +734,9 @@ def test_gcp_public_route_cache_plan_is_private_bounded_and_exact():
         "list",
         "--enabled",
         "--filter",
-        "name=artifactregistry.googleapis.com",
+        "config.name=artifactregistry.googleapis.com",
         "--format",
-        "value(name)",
+        "value(config.name)",
         "--project",
         guard.GCP_ARTIFACT_REGISTRY_PROJECT,
     ]
