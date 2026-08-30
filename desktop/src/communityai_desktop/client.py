@@ -16,6 +16,8 @@ MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SUPPORTED_CONTROL_API_VERSION = 1
 CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
 CONTRIBUTION_POLICY_SCHEMA_VERSION = 1
+MODEL_DOWNLOAD_SCHEMA_VERSION = 1
+MAX_SELECTED_WHOLE_SHARD_BYTES = 64 * 1024**4
 
 
 class NodeClientError(RuntimeError):
@@ -72,6 +74,21 @@ def normalize_loopback_url(value: str) -> str:
     except ValueError as exc:
         raise ValueError("node URL has an invalid port") from exc
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _normalize_model_download(value: Any) -> Dict[str, int]:
+    expected_keys = {"schema_version", "selected_whole_shard_bytes"}
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise NodeClientError("Local node model download estimate has an invalid schema")
+    if type(value["schema_version"]) is not int or value["schema_version"] != MODEL_DOWNLOAD_SCHEMA_VERSION:
+        raise NodeClientError("Local node model download estimate has an unsupported schema version")
+    size = value["selected_whole_shard_bytes"]
+    if isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= MAX_SELECTED_WHOLE_SHARD_BYTES:
+        raise NodeClientError("Local node model download estimate has invalid selected whole-shard bytes")
+    return {
+        "schema_version": MODEL_DOWNLOAD_SCHEMA_VERSION,
+        "selected_whole_shard_bytes": size,
+    }
 
 
 def _bounded_status_text(value: Any, field: str, *, limit: int) -> str:
@@ -454,6 +471,9 @@ class NodeClient:
             or any(not isinstance(item, dict) for item in result["workers"])
         ):
             raise NodeClientError("Local node status has invalid model or worker data")
+        result["models"] = [
+            {**item, "download": _normalize_model_download(item.get("download"))} for item in result["models"]
+        ]
         result["auto_selection"] = _normalize_auto_selection(result.get("auto_selection"))
         result["contribution"] = _normalize_contribution_status(result.get("contribution"))
         return result

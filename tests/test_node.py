@@ -77,6 +77,7 @@ def test_node_status_requires_auth_and_reports_lazy_model():
             aliases=("tiny",),
             manifest_digest="sha256:" + "a" * 64,
             repository="org/tiny",
+            selected_whole_shard_bytes=1_234_567,
         ),
         lambda: loads.append(True) or ModelRuntime(FakeModel(), FakeTokenizer()),
     )
@@ -102,6 +103,10 @@ def test_node_status_requires_auth_and_reports_lazy_model():
         assert body["runtime_budget"] == {"max_loaded_models": 1, "resident_models": 0}
         assert body["models"][0]["state"] == "known"
         assert body["models"][0]["aliases"] == ["tiny"]
+        assert body["models"][0]["download"] == {
+            "schema_version": 1,
+            "selected_whole_shard_bytes": 1_234_567,
+        }
         assert body["contribution"] == {
             "schema_version": 3,
             "configured": False,

@@ -13,6 +13,7 @@ from communityai_desktop.client import (
     NodeClientError,
     _normalize_auto_selection,
     _normalize_contribution_status,
+    _normalize_model_download,
     normalize_loopback_url,
 )
 from communityai_desktop.controller import DesktopController
@@ -78,6 +79,28 @@ class NodeClientTests(unittest.TestCase):
             mutation(malformed)
             with self.subTest(value=malformed), self.assertRaises(NodeClientError):
                 _normalize_auto_selection(malformed)
+
+    def test_model_download_estimate_is_bounded_and_fail_closed(self):
+        valid = {
+            "schema_version": 1,
+            "selected_whole_shard_bytes": 4_571_197_320,
+        }
+        self.assertEqual(_normalize_model_download(valid), valid)
+
+        invalid_values = (
+            None,
+            {},
+            {"schema_version": 0, "selected_whole_shard_bytes": 4_571_197_320},
+            {"schema_version": True, "selected_whole_shard_bytes": 4_571_197_320},
+            {"schema_version": 1.0, "selected_whole_shard_bytes": 4_571_197_320},
+            {"schema_version": 1, "selected_whole_shard_bytes": True},
+            {"schema_version": 1, "selected_whole_shard_bytes": 0},
+            {"schema_version": 1, "selected_whole_shard_bytes": 64 * 1024**4 + 1},
+            {**valid, "credential": "must-not-be-accepted"},
+        )
+        for value in invalid_values:
+            with self.subTest(value=value), self.assertRaises(NodeClientError):
+                _normalize_model_download(value)
 
     def test_accepts_schema_3_placement_and_rejects_stale_or_malformed_evidence(self):
         with fake_node() as (url, token):
@@ -292,6 +315,8 @@ class NodeClientTests(unittest.TestCase):
         self.assertIn("complete 36/36-block route", snapshot["auto_selection"]["reason"])
         selected = next(model for model in snapshot["models"] if model["auto_selected"])
         self.assertEqual(selected["id"], "Qwen 3 8B")
+        self.assertEqual(selected["selected_whole_shard_bytes"], 12_000_000_000)
+        self.assertEqual(selected["download_storage_estimate"], "12.0 GB (12,000,000,000 bytes)")
         self.assertEqual(snapshot["network"]["peer_count"], 96)
         self.assertEqual(len(snapshot["network"]["regions"]), 5)
         self.assertEqual(snapshot["contribution"]["active_models"], ["Qwen 3 8B"])

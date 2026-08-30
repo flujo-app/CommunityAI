@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -228,6 +231,71 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         )
         return output_root, bundle_root, summary
 
+    def _finalize_metrics(
+        self,
+        output_root: Path,
+        bundle_root: Path,
+        release_summary: dict[str, object],
+    ) -> dict[str, object]:
+        provenance = json.loads((output_root / build_desktop.PROVENANCE_NAME).read_text(encoding="utf-8"))
+        install_platform = release_summary["install_archive"]["platform"]
+        executable_name = f"{build_desktop.NODE_NAME}{'.exe' if install_platform == 'Windows' else ''}"
+        node_root = bundle_root / build_desktop.NODE_DIRECTORY
+        node_executable = node_root / executable_name
+        self.assertTrue(node_executable.is_file())
+        bundle_bytes, file_count = build_desktop._directory_metrics(bundle_root)
+        node_bytes, node_file_count = build_desktop._directory_metrics(node_root)
+        metrics = {
+            "schema_version": 1,
+            "application": build_desktop.APP_NAME,
+            "package": "communityai-desktop",
+            "platform": provenance["build_platform"],
+            "python": provenance["build_python"],
+            "bundle_bytes": bundle_bytes,
+            "file_count": file_count,
+            "runtime": {"shell": "pyside", "framework": "PySide6", "version": "6.test"},
+            "acceptance": {
+                "api_version": 1,
+                "model_count": 3,
+                "worker_actions": 3,
+                "key_lifecycle": "passed",
+                "contribution_policy": "passed",
+                "policy_update": "passed",
+                "auto_selection": "passed",
+            },
+            "ui_smoke_passed": True,
+            "onboarding_ui_smoke_passed": True,
+            "node_sidecar": {
+                "relative_executable": node_executable.relative_to(bundle_root).as_posix(),
+                "bundle_bytes": node_bytes,
+                "file_count": node_file_count,
+                "runtime": {
+                    "schema_version": 1,
+                    "application": build_desktop.NODE_NAME,
+                    "drift": "1.test",
+                    "torch": "1.test",
+                    "transformers": "1.test",
+                    "hivemind": "1.test",
+                    "fastapi": "1.test",
+                    "uvicorn": "1.test",
+                    "keyring": "1.test",
+                    "p2pd": f"p2pd{'.exe' if install_platform == 'Windows' else ''}",
+                    "catalog_bootstrap_schema": 1,
+                    "frozen": True,
+                },
+                "self_test_passed": True,
+                "node_entrypoint_smoke_passed": True,
+                "worker_entrypoint_smoke_passed": True,
+            },
+            "console_window": install_platform != "Windows",
+            "signed": False,
+            "catalog_bootstrap_bundled": provenance["catalog_publication_bundle"] is not None,
+            "catalog_publication_bundle": provenance["catalog_publication_bundle"],
+            "release_artifacts": release_summary,
+        }
+        build_desktop._write_desktop_metrics(output_root, metrics)
+        return metrics
+
     def test_release_attestations_are_stable_sorted_and_explicitly_unsigned(self):
         publication_evidence = {
             "catalog_digest": "sha256:" + "1" * 64,
@@ -261,8 +329,11 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         self.assertIs(metadata["complete_release_qualification"], False)
         self.assertEqual(
             metadata["artifact_inventory"],
-            "regular-files-and-relative-internal-file-symlinks",
+            "regular-files-and-relative-internal-file-symlinks-with-file-modes",
         )
+        self.assertIs(metadata["install_archive_required"], True)
+        self.assertEqual(metadata["install_archive_provenance"], "provenance.json#install_archive")
+        self.assertEqual(metadata["desktop_metrics"], build_desktop.DESKTOP_METRICS_NAME)
         self.assertIn("Unsigned public-alpha", metadata["warning"])
 
         provenance = json.loads((first_root / build_desktop.PROVENANCE_NAME).read_text(encoding="utf-8"))
@@ -271,11 +342,33 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         self.assertEqual(provenance["build_workflow"], "desktop.yaml@refs/heads/test")
         self.assertEqual(provenance["build_pyinstaller"], "6.11.1")
         self.assertEqual(provenance["catalog_publication_bundle"], publication_evidence)
+        self.assertEqual(provenance["install_archive"], first_summary["install_archive"])
+        self.assertIsNone(provenance["desktop_metrics"])
+        archive_path = first_root / provenance["install_archive"]["path"]
+        self.assertEqual(hashlib.sha256(archive_path.read_bytes()).hexdigest(), provenance["install_archive"]["sha256"])
         self.assertEqual(first_summary, second_summary)
-        self.assertEqual(build_desktop._verify_release_attestations(first_root), first_summary)
+        self.assertEqual(
+            build_desktop._verify_release_attestations(first_root, require_metrics=False),
+            first_summary,
+        )
 
     def test_release_output_verifies_in_a_fresh_process(self):
-        output_root, _, expected = self._write("fresh-process")
+        install_platform = build_desktop.platform.system()
+        executable_name = f"{build_desktop.NODE_NAME}{'.exe' if install_platform == 'Windows' else ''}"
+        output_root, bundle_root = self._bundle(
+            "fresh-process",
+            {"CommunityAI": b"desktop", f"node/{executable_name}": b"node"},
+        )
+        expected = build_desktop._write_release_attestations(
+            output_root,
+            bundle_root,
+            source_commit="A" * 40,
+            source_tree="B" * 40,
+            build_workflow="desktop.yaml@refs/heads/test",
+            build_pyinstaller="6.11.1",
+            publication_evidence=None,
+        )
+        self._finalize_metrics(output_root, bundle_root, expected)
         environment = os.environ.copy()
         environment["PYTHONPATH"] = os.pathsep.join(
             (
@@ -422,6 +515,313 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unsupported alpha claims"):
             build_desktop._verify_release_attestations(output_root)
 
+    def test_final_desktop_metrics_are_canonical_bound_and_tamper_evident(self):
+        output_root, bundle_root = self._bundle(
+            "metrics-audit",
+            {"CommunityAI.exe": b"desktop", "node/CommunityAI-Node.exe": b"node"},
+        )
+        summary = build_desktop._write_release_attestations(
+            output_root,
+            bundle_root,
+            source_commit=None,
+            source_tree=None,
+            build_workflow="test",
+            build_pyinstaller="6.11.1",
+            publication_evidence=None,
+            install_platform="Windows",
+        )
+        metrics = self._finalize_metrics(output_root, bundle_root, summary)
+        provenance_path = output_root / build_desktop.PROVENANCE_NAME
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        metrics_path = output_root / build_desktop.DESKTOP_METRICS_NAME
+        self.assertEqual(
+            provenance["desktop_metrics"]["sha256"],
+            hashlib.sha256(metrics_path.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(build_desktop._verify_release_attestations(output_root), summary)
+
+        metrics["ui_smoke_passed"] = False
+        metrics_path.write_bytes(build_desktop._canonical_json(metrics).encode("utf-8"))
+        with self.assertRaisesRegex(RuntimeError, "metrics size or SHA-256"):
+            build_desktop._verify_release_attestations(output_root)
+
+        metrics_bytes = metrics_path.read_bytes()
+        provenance["desktop_metrics"]["sha256"] = hashlib.sha256(metrics_bytes).hexdigest()
+        provenance["desktop_metrics"]["size_bytes"] = len(metrics_bytes)
+        provenance_path.write_bytes(build_desktop._canonical_json(provenance).encode("utf-8"))
+        with self.assertRaisesRegex(RuntimeError, "metrics contain altered release claims"):
+            build_desktop._verify_release_attestations(output_root)
+
+    def test_numeric_and_boolean_release_claims_are_type_strict(self):
+        document_cases = (
+            ("metadata-schema", build_desktop.RELEASE_METADATA_NAME, ("schema_version",), True),
+            (
+                "metadata-boolean",
+                build_desktop.RELEASE_METADATA_NAME,
+                ("automatic_updates",),
+                0,
+            ),
+            ("provenance-schema", build_desktop.PROVENANCE_NAME, ("schema_version",), True),
+            ("provenance-boolean", build_desktop.PROVENANCE_NAME, ("unsigned",), 1),
+            (
+                "archive-schema",
+                build_desktop.PROVENANCE_NAME,
+                ("install_archive", "schema_version"),
+                True,
+            ),
+            (
+                "archive-preservation",
+                build_desktop.PROVENANCE_NAME,
+                ("install_archive", "preserves_executable_modes"),
+                0,
+            ),
+            (
+                "artifact-size",
+                build_desktop.PROVENANCE_NAME,
+                ("artifacts", 0, "size_bytes"),
+                5.0,
+            ),
+        )
+        for name, filename, path, replacement in document_cases:
+            with self.subTest(document=name):
+                output_root, _, _ = self._write(f"strict-{name}", files={"payload.txt": b"12345"})
+                document_path = output_root / filename
+                payload = json.loads(document_path.read_text(encoding="utf-8"))
+                target = payload
+                for component in path[:-1]:
+                    target = target[component]
+                target[path[-1]] = replacement
+                document_path.write_bytes(build_desktop._canonical_json(payload).encode("utf-8"))
+                with self.assertRaises(RuntimeError):
+                    build_desktop._verify_release_attestations(output_root, require_metrics=False)
+
+        publication_evidence = {
+            "schema_version": 1,
+            "catalog_sequence": 7,
+            "member_count": 2,
+            "complete_release_qualification": False,
+        }
+        for field, replacement in (("schema_version", True), ("catalog_sequence", 7.0), ("member_count", 2.0)):
+            with self.subTest(catalog=field):
+                output_root, _, _ = self._write(
+                    f"strict-catalog-{field}",
+                    publication_evidence=publication_evidence,
+                )
+                provenance_path = output_root / build_desktop.PROVENANCE_NAME
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                provenance["catalog_publication_bundle"][field] = replacement
+                provenance_path.write_bytes(build_desktop._canonical_json(provenance).encode("utf-8"))
+                with self.assertRaises(RuntimeError):
+                    build_desktop._verify_release_attestations(
+                        output_root,
+                        require_metrics=False,
+                    )
+
+        metric_cases = (
+            ("metrics-schema", ("schema_version",), True),
+            ("bundle-bytes", ("bundle_bytes",), 11.0),
+            ("bundle-files", ("file_count",), 2.0),
+            ("acceptance-api", ("acceptance", "api_version"), True),
+            ("acceptance-models", ("acceptance", "model_count"), 3.0),
+            ("node-bytes", ("node_sidecar", "bundle_bytes"), 4.0),
+            ("node-files", ("node_sidecar", "file_count"), 1.0),
+            ("node-runtime-schema", ("node_sidecar", "runtime", "schema_version"), True),
+            (
+                "node-catalog-schema",
+                ("node_sidecar", "runtime", "catalog_bootstrap_schema"),
+                1.0,
+            ),
+            ("release-schema", ("release_artifacts", "schema_version"), True),
+            ("release-count", ("release_artifacts", "artifact_count"), 2.0),
+            (
+                "archive-entry-count",
+                ("release_artifacts", "install_archive", "entry_count"),
+                4.0,
+            ),
+            (
+                "archive-preservation-copy",
+                ("release_artifacts", "install_archive", "preserves_internal_file_symlinks"),
+                0,
+            ),
+        )
+        for name, path, replacement in metric_cases:
+            with self.subTest(metric=name):
+                output_root, bundle_root = self._bundle(
+                    f"strict-{name}",
+                    {"CommunityAI.exe": b"desktop", "node/CommunityAI-Node.exe": b"node"},
+                )
+                summary = build_desktop._write_release_attestations(
+                    output_root,
+                    bundle_root,
+                    source_commit=None,
+                    source_tree=None,
+                    build_workflow="test",
+                    build_pyinstaller="6.11.1",
+                    publication_evidence=None,
+                    install_platform="Windows",
+                )
+                metrics = self._finalize_metrics(output_root, bundle_root, summary)
+                target = metrics
+                for component in path[:-1]:
+                    target = target[component]
+                target[path[-1]] = replacement
+                metrics_path = output_root / build_desktop.DESKTOP_METRICS_NAME
+                metrics_bytes = build_desktop._canonical_json(metrics).encode("utf-8")
+                metrics_path.write_bytes(metrics_bytes)
+                provenance_path = output_root / build_desktop.PROVENANCE_NAME
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                provenance["desktop_metrics"]["sha256"] = hashlib.sha256(metrics_bytes).hexdigest()
+                provenance["desktop_metrics"]["size_bytes"] = len(metrics_bytes)
+                provenance_path.write_bytes(build_desktop._canonical_json(provenance).encode("utf-8"))
+                with self.assertRaises(RuntimeError):
+                    build_desktop._verify_release_attestations(output_root)
+
+        for name, field, replacement in (
+            ("metrics-evidence-schema", "schema_version", True),
+            ("metrics-evidence-size", "size_bytes", 1.0),
+        ):
+            with self.subTest(provenance=name):
+                output_root, bundle_root = self._bundle(
+                    f"strict-{name}",
+                    {"CommunityAI.exe": b"desktop", "node/CommunityAI-Node.exe": b"node"},
+                )
+                summary = build_desktop._write_release_attestations(
+                    output_root,
+                    bundle_root,
+                    source_commit=None,
+                    source_tree=None,
+                    build_workflow="test",
+                    build_pyinstaller="6.11.1",
+                    publication_evidence=None,
+                    install_platform="Windows",
+                )
+                self._finalize_metrics(output_root, bundle_root, summary)
+                provenance_path = output_root / build_desktop.PROVENANCE_NAME
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                provenance["desktop_metrics"][field] = replacement
+                provenance_path.write_bytes(build_desktop._canonical_json(provenance).encode("utf-8"))
+                with self.assertRaises(RuntimeError):
+                    build_desktop._verify_release_attestations(output_root)
+
+    def test_windows_superscript_dos_device_names_are_rejected(self):
+        for reserved_name in ("COM¹", "com².txt", "LPT³.bin"):
+            with self.subTest(name=reserved_name):
+                with self.assertRaisesRegex(RuntimeError, "unsafe on Windows"):
+                    build_desktop._validate_windows_install_path(f"CommunityAI/{reserved_name}")
+
+    def test_windows_install_archive_is_self_contained_and_digest_bound(self):
+        output_root, bundle_root = self._bundle(
+            "windows-archive",
+            {"CommunityAI.exe": b"desktop", "node/CommunityAI-Node.exe": b"node"},
+        )
+        summary = build_desktop._write_release_attestations(
+            output_root,
+            bundle_root,
+            source_commit=None,
+            source_tree=None,
+            build_workflow="test",
+            build_pyinstaller="6.11.1",
+            publication_evidence=None,
+            install_platform="Windows",
+        )
+
+        evidence = summary["install_archive"]
+        self.assertEqual(evidence["path"], "communityai-desktop-windows.zip")
+        self.assertEqual(evidence["format"], "zip")
+        self.assertEqual(evidence["platform"], "Windows")
+        self.assertIs(evidence["preserves_executable_modes"], False)
+        self.assertIs(evidence["preserves_internal_file_symlinks"], False)
+        archive_path = output_root / evidence["path"]
+        self.assertEqual(hashlib.sha256(archive_path.read_bytes()).hexdigest(), evidence["sha256"])
+        with zipfile.ZipFile(archive_path) as archive:
+            member_names = set(archive.namelist())
+        self.assertIn("CommunityAI/", member_names)
+        self.assertIn("CommunityAI/CommunityAI.exe", member_names)
+        self.assertIn("CommunityAI/node/CommunityAI-Node.exe", member_names)
+        self.assertTrue(all(name.startswith("CommunityAI/") for name in member_names))
+        self.assertEqual(
+            build_desktop._verify_release_attestations(output_root, require_metrics=False),
+            summary,
+        )
+
+    def test_linux_install_archive_preserves_modes_and_safe_internal_symlinks(self):
+        output_root, bundle_root = self._bundle(
+            "linux-archive",
+            {"CommunityAI": b"desktop", "lib/payload.so.1": b"payload"},
+        )
+        executable = bundle_root / "CommunityAI"
+        executable.chmod(0o755)
+        link = bundle_root / "lib" / "payload.so"
+        has_symlink = True
+        try:
+            link.symlink_to("payload.so.1")
+        except OSError:
+            has_symlink = False
+
+        summary = build_desktop._write_release_attestations(
+            output_root,
+            bundle_root,
+            source_commit=None,
+            source_tree=None,
+            build_workflow="test",
+            build_pyinstaller="6.11.1",
+            publication_evidence=None,
+            install_platform="Linux",
+        )
+
+        evidence = summary["install_archive"]
+        self.assertEqual(evidence["path"], "communityai-desktop-linux.tar.gz")
+        self.assertEqual(evidence["format"], "tar.gz")
+        self.assertEqual(evidence["platform"], "Linux")
+        self.assertIs(evidence["preserves_executable_modes"], True)
+        self.assertIs(evidence["preserves_internal_file_symlinks"], True)
+        archive_path = output_root / evidence["path"]
+        with tarfile.open(archive_path, "r:gz") as archive:
+            executable_member = archive.getmember("CommunityAI/CommunityAI")
+            self.assertTrue(executable_member.isfile())
+            self.assertEqual(
+                executable_member.mode,
+                executable.stat().st_mode & 0o7777,
+            )
+            if has_symlink:
+                link_member = archive.getmember("CommunityAI/lib/payload.so")
+                self.assertTrue(link_member.issym())
+                self.assertEqual(link_member.linkname, "payload.so.1")
+        self.assertEqual(
+            build_desktop._verify_release_attestations(output_root, require_metrics=False),
+            summary,
+        )
+
+    def test_missing_or_unsafe_install_archive_fails_closed(self):
+        missing_root, _, missing_summary = self._write("missing-install-archive")
+        (missing_root / missing_summary["install_archive"]["path"]).unlink()
+        with self.assertRaisesRegex(RuntimeError, "install archive is missing or unsafe"):
+            build_desktop._verify_release_attestations(missing_root)
+
+        unsafe_root, unsafe_bundle = self._bundle("unsafe-install-archive", {"payload.txt": b"payload"})
+        build_desktop._write_release_attestations(
+            unsafe_root,
+            unsafe_bundle,
+            source_commit=None,
+            source_tree=None,
+            build_workflow="test",
+            build_pyinstaller="6.11.1",
+            publication_evidence=None,
+            install_platform="Windows",
+        )
+        provenance_path = unsafe_root / build_desktop.PROVENANCE_NAME
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        archive_path = unsafe_root / provenance["install_archive"]["path"]
+        archive_path.unlink()
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("../escape.txt", b"escape")
+        provenance["install_archive"]["sha256"] = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+        provenance["install_archive"]["size_bytes"] = archive_path.stat().st_size
+        provenance_path.write_bytes(build_desktop._canonical_json(provenance).encode("utf-8"))
+
+        with self.assertRaisesRegex(RuntimeError, "unsafe install archive member path"):
+            build_desktop._verify_release_attestations(unsafe_root)
+
     def test_safe_internal_file_symlinks_are_bound_and_unsafe_entries_are_rejected(self):
         output_root, bundle_root = self._bundle("symlink-entries", {"payload.txt": b"payload"})
         link = bundle_root / "linked.txt"
@@ -444,8 +844,9 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
             build_workflow="test",
             build_pyinstaller="6.11.1",
             publication_evidence=None,
+            install_platform="Linux",
         )
-        build_desktop._verify_release_attestations(output_root)
+        build_desktop._verify_release_attestations(output_root, require_metrics=False)
 
         link.unlink()
         outside = output_root / "outside.txt"

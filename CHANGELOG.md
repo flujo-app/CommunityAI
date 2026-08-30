@@ -7,6 +7,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Gate 13 packaged-lifecycle prerequisites now emit deterministic self-contained Windows ZIP
+  and Linux tar.gz archives, preserve or reject platform filesystem semantics fail-closed, and
+  bind the archive plus canonical desktop metrics into exact-type release provenance. The local
+  API and Models/Sharing UI disclose exact signed-manifest first-use shard bytes before transfer,
+  while a privacy-safe 16-phase controller and operations runbook bind clean install, acquisition,
+  localhost inference, contribution, pause, cache reuse, manual replacement, recovery, both
+  uninstall choices, native credential cleanup, and process-tree cleanup.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,

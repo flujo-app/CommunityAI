@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-packaged-lifecycle-prerequisites",
+  "run_id": "gate13-20260830-a-prerequisites",
+  "gate": 13,
+  "result": "prerequisites-passed",
+  "gate_result": "in-progress",
+  "source": {
+    "base_commit": "fe51fe5387def066960e63a73601551cf8043381",
+    "branch": "codex/gate-v-auto-selection"
+  },
+  "implementation": {
+    "install_archives": {
+      "windows": "communityai-desktop-windows.zip",
+      "linux": "communityai-desktop-linux.tar.gz",
+      "deterministic": true,
+      "linux_executable_and_safe_internal_symlink_semantics_preserved": true,
+      "windows_symlinks_and_reserved_device_names_rejected": true,
+      "archive_verified_against_exact_bundle": true,
+      "archive_digest_size_member_count_and_semantics_bound": true
+    },
+    "release_attestations": {
+      "desktop_metrics_canonical_and_digest_bound": true,
+      "recursive_exact_json_types_required": true,
+      "bool_int_and_integral_float_coercions_rejected": true,
+      "archive_metadata_provenance_catalog_metrics_acceptance_and_runtime_claims_recomputed": true
+    },
+    "first_use_disclosure": {
+      "api_schema_version": 1,
+      "source": "signed exact model manifest",
+      "qwen_selected_whole_shard_bytes": 4571197320,
+      "gemma_selected_whole_shard_bytes": 10278818149,
+      "models_and_sharing_surfaces_render_exact_bytes": true,
+      "missing_ambiguous_or_untrusted_estimate_fails_closed": true
+    },
+    "lifecycle_controller": {
+      "script": "scripts/gate13_packaged_lifecycle.py",
+      "stdlib_only": true,
+      "ordered_phase_count": 16,
+      "canonical_exact_schemas": true,
+      "secret_material_counts_cross_bound": true,
+      "same_digest_reinstall_size_cross_bound": true,
+      "generic_failure_output_privacy_safe": true
+    },
+    "operations_runbook": "docs/PACKAGED_ALPHA_OPERATIONS.md"
+  },
+  "verification": {
+    "focused": {
+      "command": ".venv-cuda\\Scripts\\python.exe -m pytest -q desktop\\tests\\test_build_desktop.py desktop\\tests\\test_client.py tests\\test_gate13_packaged_lifecycle.py",
+      "passed": 65
+    },
+    "broader": {
+      "command": ".venv-cuda\\Scripts\\python.exe -m pytest -q tests\\test_model_manager.py tests\\test_node.py tests\\test_gate13_packaged_lifecycle.py desktop\\tests",
+      "passed": 130
+    },
+    "black_changed_python_files": "passed",
+    "isort_core_and_desktop_scopes": "passed",
+    "workflow_yaml_matrix_and_upload_paths": "passed",
+    "git_diff_check": "passed",
+    "independent_review": {
+      "result": "passed",
+      "focused_passed": 64,
+      "desktop_passed": 66,
+      "adversarial_archive_and_attestation_matrix": "passed",
+      "lifecycle_cross_binding_repros": "passed",
+      "model_download_type_spoof_repros": "passed"
+    }
+  },
+  "cloud": {
+    "provider_calls": 0,
+    "resources_created_changed_or_deleted": 0,
+    "maximum_cost_usd": "0.00",
+    "fly_operations": 0,
+    "macos_work": 0,
+    "credits_or_payments_work": 0
+  },
+  "remaining_before_paid_clean_host_run": [
+    "Build fresh Windows and Linux production archives from the pushed prerequisite source and bind exact artifact digests.",
+    "Add and verify thin native Windows Credential Manager and Linux Secret Service clean-host phase adapters without placing credentials in arguments, environment variables, ordinary files, output, or evidence.",
+    "Push a conservative exact-resource cost authorization within the combined USD 100 ceiling.",
+    "Run and clean up the full 16-phase lifecycle concurrently on clean Windows and Linux hosts."
+  ],
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_ids_retained": false,
+    "private_paths_retained": false,
+    "private_endpoints_retained": false,
+    "provider_output_retained": false
+  }
+}

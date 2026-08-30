@@ -20,7 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         # Public-alpha packaging is Windows/Linux only; macOS is explicitly deferred.
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            install_archive: communityai-desktop-linux.tar.gz
+          - os: windows-latest
+            platform: windows
+            install_archive: communityai-desktop-windows.zip
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
     defaults:
@@ -79,9 +85,22 @@ jobs:
         run: >-
           python ../scripts/smoke_desktop_managed_node.py
           --node-command dist/desktop/CommunityAI/node/CommunityAI-Node.exe
-      - name: Upload unsigned bundle, checksums, provenance, and metrics
+      - name: Upload self-contained install archive
         uses: actions/upload-artifact@v6
         with:
-          name: communityai-desktop-${{ matrix.os }}
-          path: desktop/dist/desktop
+          name: communityai-desktop-install-${{ matrix.platform }}
+          path: desktop/dist/desktop/${{ matrix.install_archive }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload archive-bound audit evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: communityai-desktop-audit-${{ matrix.platform }}
+          path: |
+            desktop/dist/desktop/SHA256SUMS
+            desktop/dist/desktop/provenance.json
+            desktop/dist/desktop/release-metadata.json
+            desktop/dist/desktop/desktop-metrics.json
+          if-no-files-found: error
           retention-days: 7

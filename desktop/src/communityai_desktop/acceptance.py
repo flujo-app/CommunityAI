@@ -167,6 +167,10 @@ def _handler(state: _FakeNodeState):
                                 "id": "Llama 3.1 8B",
                                 "state": "ready",
                                 "active_requests": 0,
+                                "download": {
+                                    "schema_version": 1,
+                                    "selected_whole_shard_bytes": 16_000_000_000,
+                                },
                                 "route": {
                                     "status": "complete",
                                     "source": "discovery",
@@ -179,6 +183,10 @@ def _handler(state: _FakeNodeState):
                                 "id": "Qwen 3 8B",
                                 "state": "ready",
                                 "active_requests": 2,
+                                "download": {
+                                    "schema_version": 1,
+                                    "selected_whole_shard_bytes": 12_000_000_000,
+                                },
                                 "route": {
                                     "status": "complete",
                                     "source": "discovery",
@@ -191,6 +199,10 @@ def _handler(state: _FakeNodeState):
                                 "id": "Mistral Small",
                                 "state": "degraded",
                                 "active_requests": 0,
+                                "download": {
+                                    "schema_version": 1,
+                                    "selected_whole_shard_bytes": 24_000_000_000,
+                                },
                                 "route": {
                                     "status": "incomplete",
                                     "source": "discovery",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -12,8 +13,10 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
+import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Sequence
+from typing import BinaryIO, Sequence
 
 from communityai_desktop.acceptance import run_self_test
 from communityai_desktop.pyside_shell import check_runtime
@@ -26,6 +29,11 @@ FORBIDDEN_RUNTIME_PACKAGES = ("drift", "torch", "transformers", "hivemind", "acc
 CHECKSUMS_NAME = "SHA256SUMS"
 PROVENANCE_NAME = "provenance.json"
 RELEASE_METADATA_NAME = "release-metadata.json"
+DESKTOP_METRICS_NAME = "desktop-metrics.json"
+INSTALL_ARCHIVE_SPECS = {
+    "Linux": ("communityai-desktop-linux.tar.gz", "tar.gz"),
+    "Windows": ("communityai-desktop-windows.zip", "zip"),
+}
 UNSIGNED_ALPHA_WARNING = (
     "Unsigned public-alpha engineering bundle: verify SHA256SUMS before use. "
     "No publisher signature or authenticated automatic update is provided."
@@ -50,6 +58,22 @@ _EXPECTED_UNSET = object()
 
 def _canonical_json(payload: object) -> str:
     return json.dumps(payload, allow_nan=False, indent=2, sort_keys=True) + "\n"
+
+
+def _strict_equal(actual: object, expected: object) -> bool:
+    """Compare canonical JSON values without Python's bool/int or int/float coercion."""
+
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(actual) == set(expected) and all(
+            _strict_equal(actual[key], value) for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _strict_equal(actual_item, expected_item) for actual_item, expected_item in zip(actual, expected)
+        )
+    return actual == expected
 
 
 def _normalize_source_commit(source_commit: str | None) -> str | None:
@@ -194,6 +218,7 @@ def _bundle_artifacts(bundle_root: Path) -> list[dict[str, object]]:
                 artifact = {
                     "path": artifact_path,
                     "kind": "file",
+                    "mode": stat.S_IMODE(mode),
                     "sha256": _sha256_file(child),
                     "size_bytes": child.stat().st_size,
                 }
@@ -217,6 +242,408 @@ def _render_sha256sums(artifacts: Sequence[dict[str, object]]) -> str:
     return "".join(lines)
 
 
+def _validate_install_member_path(raw_path: str) -> str:
+    if not raw_path or "\\" in raw_path or any(ord(character) < 32 for character in raw_path):
+        raise RuntimeError(f"unsafe install archive member path: {raw_path!r}")
+    normalized = raw_path[:-1] if raw_path.endswith("/") else raw_path
+    path = PurePosixPath(normalized)
+    if (
+        not normalized
+        or path.is_absolute()
+        or normalized != path.as_posix()
+        or any(part in ("", ".", "..") for part in path.parts)
+        or path.parts[0] != APP_NAME
+    ):
+        raise RuntimeError(f"unsafe install archive member path: {raw_path!r}")
+    if len(path.parts) > 1:
+        _validate_artifact_path(normalized)
+    return normalized
+
+
+def _validate_windows_install_path(member_path: str) -> None:
+    reserved_names = {"CON", "PRN", "AUX", "NUL"}
+    reserved_names.update(f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10))
+    reserved_names.update(f"{prefix}{number}" for prefix in ("COM", "LPT") for number in ("¹", "²", "³"))
+    for part in PurePosixPath(member_path).parts:
+        stem = part.split(".", 1)[0].upper()
+        if any(character in '<>:"|?*' for character in part) or part.rstrip(" .") != part or stem in reserved_names:
+            raise RuntimeError(f"install archive member is unsafe on Windows: {member_path!r}")
+
+
+def _canonical_archive_link_target(member_path: str, raw_target: str) -> str:
+    if (
+        not raw_target
+        or raw_target.startswith("/")
+        or "\\" in raw_target
+        or any(ord(character) < 32 for character in raw_target)
+    ):
+        raise RuntimeError(f"install archive contains an unsafe symlink target: {raw_target!r}")
+    parts: list[str] = []
+    for part in (PurePosixPath(member_path).parent / PurePosixPath(raw_target)).parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                raise RuntimeError(f"install archive symlink escapes its root: {member_path!r}")
+            parts.pop()
+        else:
+            parts.append(part)
+    canonical = PurePosixPath(*parts).as_posix()
+    return _validate_artifact_path(canonical)
+
+
+def _install_archive_entries(
+    bundle_root: Path,
+    artifacts: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    seen_paths: set[str] = set()
+
+    directories = [bundle_root]
+    for directory, directory_names, _ in os.walk(bundle_root, topdown=True, followlinks=False):
+        directory_names.sort()
+        directories.extend(Path(directory) / name for name in directory_names)
+    for directory in directories:
+        relative = directory.relative_to(bundle_root)
+        member_path = APP_NAME if not relative.parts else f"{APP_NAME}/{relative.as_posix()}"
+        member_path = _validate_install_member_path(member_path)
+        comparison_key = member_path.casefold()
+        if comparison_key in seen_paths:
+            raise RuntimeError(f"duplicate normalized install archive member: {member_path}")
+        seen_paths.add(comparison_key)
+        mode = directory.lstat().st_mode
+        if _is_link_or_junction(directory) or not stat.S_ISDIR(mode):
+            raise RuntimeError(f"install archive source contains an unsafe directory: {directory}")
+        entries.append(
+            {
+                "path": member_path,
+                "kind": "directory",
+                "mode": stat.S_IMODE(mode),
+                "_source": directory,
+            }
+        )
+
+    for artifact in artifacts:
+        member_path = _validate_install_member_path(str(artifact["path"]))
+        comparison_key = member_path.casefold()
+        if comparison_key in seen_paths:
+            raise RuntimeError(f"duplicate normalized install archive member: {member_path}")
+        seen_paths.add(comparison_key)
+        relative = PurePosixPath(member_path).relative_to(APP_NAME)
+        source = bundle_root.joinpath(*relative.parts)
+        entry = dict(artifact)
+        entry["_source"] = source
+        if artifact["kind"] == "symlink":
+            entry["mode"] = stat.S_IMODE(source.lstat().st_mode)
+            entry["raw_link_target"] = os.readlink(source)
+        entries.append(entry)
+    return sorted(entries, key=lambda entry: str(entry["path"]))
+
+
+def _normalized_tar_info(name: str, *, mode: int) -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.uid = 0
+    info.gid = 0
+    info.uname = ""
+    info.gname = ""
+    info.mtime = 0
+    info.mode = mode
+    return info
+
+
+def _write_tar_install_archive(archive_path: Path, entries: Sequence[dict[str, object]]) -> None:
+    with archive_path.open("wb") as raw_stream:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw_stream, compresslevel=9, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                for entry in entries:
+                    member_path = str(entry["path"])
+                    info = _normalized_tar_info(member_path, mode=int(entry["mode"]))
+                    if entry["kind"] == "directory":
+                        info.type = tarfile.DIRTYPE
+                        archive.addfile(info)
+                    elif entry["kind"] == "symlink":
+                        info.type = tarfile.SYMTYPE
+                        info.linkname = str(entry["raw_link_target"])
+                        archive.addfile(info)
+                    elif entry["kind"] == "file":
+                        source = Path(entry["_source"])
+                        info.type = tarfile.REGTYPE
+                        info.size = int(entry["size_bytes"])
+                        with source.open("rb") as source_stream:
+                            archive.addfile(info, source_stream)
+                    else:
+                        raise RuntimeError(f"unsupported install archive entry kind: {entry['kind']!r}")
+
+
+def _write_zip_install_archive(archive_path: Path, entries: Sequence[dict[str, object]]) -> None:
+    with zipfile.ZipFile(
+        archive_path,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+        strict_timestamps=True,
+    ) as archive:
+        for entry in entries:
+            member_path = str(entry["path"])
+            _validate_windows_install_path(member_path)
+            if entry["kind"] == "symlink":
+                raise RuntimeError("Windows install archives cannot safely preserve symbolic links")
+            is_directory = entry["kind"] == "directory"
+            info = zipfile.ZipInfo(f"{member_path}/" if is_directory else member_path)
+            info.date_time = (1980, 1, 1, 0, 0, 0)
+            info.create_system = 3
+            info.compress_type = zipfile.ZIP_STORED if is_directory else zipfile.ZIP_DEFLATED
+            file_type = stat.S_IFDIR if is_directory else stat.S_IFREG
+            info.external_attr = (file_type | int(entry["mode"])) << 16
+            if is_directory:
+                info.external_attr |= 0x10
+                archive.writestr(info, b"")
+            elif entry["kind"] == "file":
+                with archive.open(info, mode="w", force_zip64=True) as destination:
+                    with Path(entry["_source"]).open("rb") as source:
+                        shutil.copyfileobj(source, destination, length=1024 * 1024)
+            else:
+                raise RuntimeError(f"unsupported install archive entry kind: {entry['kind']!r}")
+
+
+def _install_archive_evidence(
+    archive_path: Path,
+    *,
+    install_platform: str,
+    archive_format: str,
+    entry_count: int,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "path": archive_path.name,
+        "format": archive_format,
+        "platform": install_platform,
+        "artifact_root": APP_NAME,
+        "sha256": _sha256_file(archive_path),
+        "size_bytes": archive_path.stat().st_size,
+        "entry_count": entry_count,
+        "preserves_executable_modes": install_platform == "Linux",
+        "preserves_internal_file_symlinks": install_platform == "Linux",
+    }
+
+
+def _sha256_archive_stream(stream: BinaryIO) -> str:
+    digest = hashlib.sha256()
+    while True:
+        chunk = stream.read(1024 * 1024)
+        if not chunk:
+            return digest.hexdigest()
+        digest.update(chunk)
+
+
+def _verify_tar_install_archive(
+    archive_path: Path,
+    expected_entries: Sequence[dict[str, object]],
+) -> None:
+    expected = {str(entry["path"]): entry for entry in expected_entries}
+    actual: dict[str, tarfile.TarInfo] = {}
+    try:
+        with tarfile.open(archive_path, mode="r:gz") as archive:
+            seen_paths: set[str] = set()
+            for member in archive.getmembers():
+                member_path = _validate_install_member_path(member.name)
+                comparison_key = member_path.casefold()
+                if comparison_key in seen_paths:
+                    raise RuntimeError(f"duplicate normalized install archive member: {member_path}")
+                seen_paths.add(comparison_key)
+                actual[member_path] = member
+            if set(actual) != set(expected):
+                raise RuntimeError("install archive members do not match the release bundle")
+            for member_path, entry in expected.items():
+                member = actual[member_path]
+                if entry["kind"] == "directory":
+                    if not member.isdir() or stat.S_IMODE(member.mode) != int(entry["mode"]):
+                        raise RuntimeError(f"install archive directory mode or type mismatch: {member_path}")
+                elif entry["kind"] == "symlink":
+                    if not member.issym():
+                        raise RuntimeError(f"install archive symlink type mismatch: {member_path}")
+                    canonical_target = _canonical_archive_link_target(member_path, member.linkname)
+                    if canonical_target != entry["link_target"]:
+                        raise RuntimeError(f"install archive symlink target mismatch: {member_path}")
+                elif entry["kind"] == "file":
+                    if (
+                        not member.isfile()
+                        or member.issparse()
+                        or member.size != int(entry["size_bytes"])
+                        or stat.S_IMODE(member.mode) != int(entry["mode"])
+                    ):
+                        raise RuntimeError(f"install archive file size, mode, or type mismatch: {member_path}")
+                    stream = archive.extractfile(member)
+                    if stream is None or _sha256_archive_stream(stream) != entry["sha256"]:
+                        raise RuntimeError(f"install archive file digest mismatch: {member_path}")
+                else:
+                    raise RuntimeError(f"unsupported install archive entry kind: {entry['kind']!r}")
+    except (OSError, tarfile.TarError) as exc:
+        raise RuntimeError("Linux install archive is unreadable or malformed") from exc
+
+
+def _verify_zip_install_archive(
+    archive_path: Path,
+    expected_entries: Sequence[dict[str, object]],
+) -> None:
+    expected = {str(entry["path"]): entry for entry in expected_entries}
+    if any(entry["kind"] == "symlink" for entry in expected_entries):
+        raise RuntimeError("Windows install archives cannot safely preserve symbolic links")
+    actual: dict[str, zipfile.ZipInfo] = {}
+    try:
+        with zipfile.ZipFile(archive_path, mode="r") as archive:
+            seen_paths: set[str] = set()
+            for member in archive.infolist():
+                member_path = _validate_install_member_path(member.filename)
+                _validate_windows_install_path(member_path)
+                comparison_key = member_path.casefold()
+                if comparison_key in seen_paths:
+                    raise RuntimeError(f"duplicate normalized install archive member: {member_path}")
+                seen_paths.add(comparison_key)
+                if member.flag_bits & 1:
+                    raise RuntimeError(f"encrypted install archive member is unsupported: {member_path}")
+                if member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    raise RuntimeError(f"unsupported install archive compression: {member_path}")
+                actual[member_path] = member
+            if set(actual) != set(expected):
+                raise RuntimeError("install archive members do not match the release bundle")
+            for member_path, entry in expected.items():
+                member = actual[member_path]
+                archive_mode = member.external_attr >> 16
+                if entry["kind"] == "directory":
+                    if (
+                        not member.is_dir()
+                        or not stat.S_ISDIR(archive_mode)
+                        or stat.S_IMODE(archive_mode) != int(entry["mode"])
+                    ):
+                        raise RuntimeError(f"install archive directory mode or type mismatch: {member_path}")
+                elif entry["kind"] == "file":
+                    if (
+                        member.is_dir()
+                        or not stat.S_ISREG(archive_mode)
+                        or stat.S_IMODE(archive_mode) != int(entry["mode"])
+                        or member.file_size != int(entry["size_bytes"])
+                    ):
+                        raise RuntimeError(f"install archive file size, mode, or type mismatch: {member_path}")
+                    with archive.open(member, mode="r") as stream:
+                        if _sha256_archive_stream(stream) != entry["sha256"]:
+                            raise RuntimeError(f"install archive file digest mismatch: {member_path}")
+                else:
+                    raise RuntimeError(f"unsupported Windows install archive entry kind: {entry['kind']!r}")
+    except (OSError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
+        raise RuntimeError("Windows install archive is unreadable or malformed") from exc
+
+
+def _verify_install_archive(
+    output_root: Path,
+    bundle_root: Path,
+    artifacts: Sequence[dict[str, object]],
+    evidence: object,
+) -> dict[str, object]:
+    expected_keys = {
+        "schema_version",
+        "path",
+        "format",
+        "platform",
+        "artifact_root",
+        "sha256",
+        "size_bytes",
+        "entry_count",
+        "preserves_executable_modes",
+        "preserves_internal_file_symlinks",
+    }
+    if not isinstance(evidence, dict) or set(evidence) != expected_keys:
+        raise RuntimeError("install archive provenance schema is missing or altered")
+    install_platform = evidence["platform"]
+    spec = INSTALL_ARCHIVE_SPECS.get(str(install_platform))
+    if spec is None:
+        raise RuntimeError("install archive platform is unsupported")
+    expected_name, expected_format = spec
+    expected_claims = {
+        "schema_version": 1,
+        "path": expected_name,
+        "format": expected_format,
+        "artifact_root": APP_NAME,
+        "preserves_executable_modes": install_platform == "Linux",
+        "preserves_internal_file_symlinks": install_platform == "Linux",
+    }
+    if any(not _strict_equal(evidence.get(key), value) for key, value in expected_claims.items()):
+        raise RuntimeError("install archive provenance contains altered platform claims")
+    digest = evidence["sha256"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise RuntimeError("install archive provenance has an invalid SHA-256")
+    if (
+        type(evidence["size_bytes"]) is not int
+        or evidence["size_bytes"] <= 0
+        or type(evidence["entry_count"]) is not int
+        or evidence["entry_count"] <= 0
+    ):
+        raise RuntimeError("install archive provenance has invalid size or member counts")
+
+    for candidate_name, _ in INSTALL_ARCHIVE_SPECS.values():
+        candidate = output_root / candidate_name
+        if candidate_name != expected_name and (candidate.exists() or _is_link_or_junction(candidate)):
+            raise RuntimeError(f"unexpected platform install archive is present: {candidate_name}")
+    archive_path = output_root / expected_name
+    if not archive_path.is_file() or archive_path.is_symlink():
+        raise RuntimeError(f"install archive is missing or unsafe: {archive_path}")
+    if archive_path.stat().st_size != evidence["size_bytes"] or _sha256_file(archive_path) != digest:
+        raise RuntimeError("install archive size or SHA-256 does not match provenance")
+
+    entries = _install_archive_entries(bundle_root, artifacts)
+    if len(entries) != evidence["entry_count"]:
+        raise RuntimeError("install archive member count does not match provenance")
+    if expected_format == "tar.gz":
+        _verify_tar_install_archive(archive_path, entries)
+    elif expected_format == "zip":
+        _verify_zip_install_archive(archive_path, entries)
+    else:
+        raise RuntimeError("install archive format is unsupported")
+    return dict(evidence)
+
+
+def _create_install_archive(
+    output_root: Path,
+    bundle_root: Path,
+    artifacts: Sequence[dict[str, object]],
+    *,
+    install_platform: str | None = None,
+) -> dict[str, object]:
+    install_platform = install_platform or platform.system()
+    spec = INSTALL_ARCHIVE_SPECS.get(install_platform)
+    if spec is None:
+        raise RuntimeError("production install archives are supported only on Windows and Linux")
+    archive_name, archive_format = spec
+    output_root.mkdir(parents=True, exist_ok=True)
+    for candidate_name, _ in INSTALL_ARCHIVE_SPECS.values():
+        candidate = output_root / candidate_name
+        if candidate_name != archive_name and (candidate.exists() or _is_link_or_junction(candidate)):
+            raise RuntimeError(f"unexpected platform install archive already exists: {candidate_name}")
+    archive_path = output_root / archive_name
+    if archive_path.exists() or _is_link_or_junction(archive_path):
+        if not archive_path.is_file() or archive_path.is_symlink():
+            raise RuntimeError(f"install archive output path is unsafe: {archive_path}")
+        archive_path.unlink()
+
+    entries = _install_archive_entries(bundle_root, artifacts)
+    try:
+        if archive_format == "tar.gz":
+            _write_tar_install_archive(archive_path, entries)
+        elif archive_format == "zip":
+            _write_zip_install_archive(archive_path, entries)
+        else:
+            raise RuntimeError("install archive format is unsupported")
+        return _install_archive_evidence(
+            archive_path,
+            install_platform=install_platform,
+            archive_format=archive_format,
+            entry_count=len(entries),
+        )
+    except Exception:
+        archive_path.unlink(missing_ok=True)
+        raise
+
+
 def _release_metadata() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -232,8 +659,11 @@ def _release_metadata() -> dict[str, object]:
         "credits_enabled": False,
         "complete_release_qualification": False,
         "artifact_root": APP_NAME,
-        "artifact_inventory": "regular-files-and-relative-internal-file-symlinks",
+        "artifact_inventory": "regular-files-and-relative-internal-file-symlinks-with-file-modes",
         "checksum_manifest": CHECKSUMS_NAME,
+        "install_archive_required": True,
+        "install_archive_provenance": f"{PROVENANCE_NAME}#install_archive",
+        "desktop_metrics": DESKTOP_METRICS_NAME,
         "provenance": PROVENANCE_NAME,
     }
 
@@ -248,6 +678,7 @@ def _verify_release_attestations(
     expected_build_python: str | object = _EXPECTED_UNSET,
     expected_build_pyinstaller: str | object = _EXPECTED_UNSET,
     expected_publication_evidence: dict[str, object] | None | object = _EXPECTED_UNSET,
+    require_metrics: bool = True,
 ) -> dict[str, object]:
     output_root = output_root.resolve()
     artifacts = _bundle_artifacts(output_root / APP_NAME)
@@ -271,7 +702,7 @@ def _verify_release_attestations(
         provenance = json.loads(provenance_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("release metadata or provenance is not canonical UTF-8 JSON") from exc
-    if metadata != _release_metadata():
+    if not _strict_equal(metadata, _release_metadata()):
         raise RuntimeError("release metadata contains missing, altered, or unsupported alpha claims")
     if metadata_bytes != _canonical_json(metadata).encode("utf-8"):
         raise RuntimeError("release metadata is not canonical UTF-8 JSON")
@@ -291,6 +722,8 @@ def _verify_release_attestations(
         "artifact_root",
         "checksum_manifest",
         "artifacts",
+        "install_archive",
+        "desktop_metrics",
         "catalog_publication_bundle",
         "unsigned",
         "publisher_signature",
@@ -311,9 +744,9 @@ def _verify_release_attestations(
         "automatic_updates": False,
         "complete_release_qualification": False,
     }
-    if any(provenance.get(key) != value for key, value in expected_claims.items()):
+    if any(not _strict_equal(provenance.get(key), value) for key, value in expected_claims.items()):
         raise RuntimeError("release provenance contains an unsupported release claim")
-    if provenance["artifacts"] != artifacts:
+    if not _strict_equal(provenance["artifacts"], artifacts):
         raise RuntimeError("release provenance does not match the emitted bundle")
     source_commit = _normalize_source_commit(provenance["source_commit"])
     source_tree = _normalize_source_commit(provenance["source_tree"])
@@ -331,6 +764,25 @@ def _verify_release_attestations(
         or publication_evidence.get("complete_release_qualification") is not False
     ):
         raise RuntimeError("release provenance contains invalid catalog publication evidence")
+    if publication_evidence is not None:
+        for field in ("schema_version", "catalog_sequence", "member_count"):
+            if field in publication_evidence and type(publication_evidence[field]) is not int:
+                raise RuntimeError(f"catalog publication evidence {field} must be an integer")
+        member_digests = publication_evidence.get("member_digests")
+        if member_digests is not None and (
+            not isinstance(member_digests, dict)
+            or any(
+                not _is_printable_string(path) or not _is_printable_string(digest)
+                for path, digest in member_digests.items()
+            )
+        ):
+            raise RuntimeError("catalog publication member digests are missing or unsafe")
+    install_archive = _verify_install_archive(
+        output_root,
+        output_root / APP_NAME,
+        artifacts,
+        provenance["install_archive"],
+    )
 
     expected_values = {
         "source_commit": (
@@ -350,18 +802,28 @@ def _verify_release_attestations(
         "catalog_publication_bundle": expected_publication_evidence,
     }
     for field, expected_value in expected_values.items():
-        if expected_value is not _EXPECTED_UNSET and provenance[field] != expected_value:
+        if expected_value is not _EXPECTED_UNSET and not _strict_equal(provenance[field], expected_value):
             raise RuntimeError(f"release provenance {field} does not match the expected build input")
-    return {
+    release_summary = {
         "schema_version": 1,
         "artifact_count": len(artifacts),
         "artifact_bytes": sum(int(artifact["size_bytes"]) for artifact in artifacts),
         "checksums_sha256": hashlib.sha256(expected_checksums.encode("utf-8")).hexdigest(),
+        "install_archive": install_archive,
         "source_commit": source_commit,
         "source_tree": source_tree,
         "unsigned": True,
         "complete_release_qualification": False,
     }
+    if require_metrics:
+        _verify_desktop_metrics(
+            output_root,
+            output_root / APP_NAME,
+            release_summary,
+            provenance,
+            provenance["desktop_metrics"],
+        )
+    return release_summary
 
 
 def _write_release_attestations(
@@ -373,6 +835,7 @@ def _write_release_attestations(
     build_workflow: str,
     build_pyinstaller: str,
     publication_evidence: dict[str, object] | None,
+    install_platform: str | None = None,
 ) -> dict[str, object]:
     """Write deterministic checksums plus explicit unsigned-alpha provenance."""
 
@@ -388,6 +851,12 @@ def _write_release_attestations(
     if not build_pyinstaller or any(ord(character) < 32 for character in build_pyinstaller):
         raise RuntimeError("PyInstaller version must be a non-empty, printable string")
     artifacts = _bundle_artifacts(bundle_root)
+    install_archive = _create_install_archive(
+        output_root,
+        bundle_root,
+        artifacts,
+        install_platform=install_platform,
+    )
     provenance = {
         "schema_version": 1,
         "product": APP_NAME,
@@ -402,6 +871,8 @@ def _write_release_attestations(
         "artifact_root": APP_NAME,
         "checksum_manifest": CHECKSUMS_NAME,
         "artifacts": artifacts,
+        "install_archive": install_archive,
+        "desktop_metrics": None,
         "catalog_publication_bundle": publication_evidence,
         "unsigned": True,
         "publisher_signature": False,
@@ -421,12 +892,204 @@ def _write_release_attestations(
         expected_build_python=platform.python_version(),
         expected_build_pyinstaller=build_pyinstaller,
         expected_publication_evidence=publication_evidence,
+        require_metrics=False,
     )
 
 
 def _directory_metrics(path: Path) -> tuple[int, int]:
     files = [item for item in path.rglob("*") if item.is_file()]
     return sum(item.stat().st_size for item in files), len(files)
+
+
+def _is_printable_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value) and not any(ord(character) < 32 for character in value)
+
+
+def _verify_desktop_metrics(
+    output_root: Path,
+    bundle_root: Path,
+    release_summary: dict[str, object],
+    provenance: dict[str, object],
+    evidence: object,
+) -> dict[str, object]:
+    expected_evidence_keys = {"schema_version", "path", "sha256", "size_bytes"}
+    if not isinstance(evidence, dict) or set(evidence) != expected_evidence_keys:
+        raise RuntimeError("desktop metrics provenance schema is missing or altered")
+    if not _strict_equal(evidence.get("schema_version"), 1) or evidence.get("path") != DESKTOP_METRICS_NAME:
+        raise RuntimeError("desktop metrics provenance contains altered claims")
+    digest = evidence.get("sha256")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise RuntimeError("desktop metrics provenance has an invalid SHA-256")
+    if type(evidence.get("size_bytes")) is not int or int(evidence["size_bytes"]) <= 0:
+        raise RuntimeError("desktop metrics provenance has an invalid size")
+
+    metrics_path = output_root / DESKTOP_METRICS_NAME
+    if not metrics_path.is_file() or _is_link_or_junction(metrics_path):
+        raise RuntimeError(f"desktop metrics are missing or unsafe: {metrics_path}")
+    metrics_bytes = metrics_path.read_bytes()
+    if len(metrics_bytes) != evidence["size_bytes"] or hashlib.sha256(metrics_bytes).hexdigest() != digest:
+        raise RuntimeError("desktop metrics size or SHA-256 does not match provenance")
+    try:
+        metrics = json.loads(metrics_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("desktop metrics are not canonical UTF-8 JSON") from exc
+    if not isinstance(metrics, dict) or metrics_bytes != _canonical_json(metrics).encode("utf-8"):
+        raise RuntimeError("desktop metrics are not canonical UTF-8 JSON")
+
+    expected_metric_keys = {
+        "schema_version",
+        "application",
+        "package",
+        "platform",
+        "python",
+        "bundle_bytes",
+        "file_count",
+        "runtime",
+        "acceptance",
+        "ui_smoke_passed",
+        "onboarding_ui_smoke_passed",
+        "node_sidecar",
+        "console_window",
+        "signed",
+        "catalog_bootstrap_bundled",
+        "catalog_publication_bundle",
+        "release_artifacts",
+    }
+    if set(metrics) != expected_metric_keys:
+        raise RuntimeError("desktop metrics schema is missing or altered")
+    install_platform = release_summary["install_archive"]["platform"]
+    expected_claims = {
+        "schema_version": 1,
+        "application": APP_NAME,
+        "package": "communityai-desktop",
+        "platform": provenance["build_platform"],
+        "python": provenance["build_python"],
+        "ui_smoke_passed": True,
+        "onboarding_ui_smoke_passed": True,
+        "console_window": install_platform != "Windows",
+        "signed": False,
+        "catalog_bootstrap_bundled": provenance["catalog_publication_bundle"] is not None,
+        "catalog_publication_bundle": provenance["catalog_publication_bundle"],
+        "release_artifacts": release_summary,
+    }
+    if any(not _strict_equal(metrics.get(key), value) for key, value in expected_claims.items()):
+        raise RuntimeError("desktop metrics contain altered release claims")
+
+    bundle_bytes, file_count = _directory_metrics(bundle_root)
+    if not _strict_equal(metrics["bundle_bytes"], bundle_bytes) or not _strict_equal(metrics["file_count"], file_count):
+        raise RuntimeError("desktop metrics do not match the packaged bundle")
+
+    runtime = metrics["runtime"]
+    if (
+        not isinstance(runtime, dict)
+        or set(runtime) != {"shell", "framework", "version"}
+        or runtime.get("shell") != "pyside"
+        or runtime.get("framework") != "PySide6"
+        or not _is_printable_string(runtime.get("version"))
+    ):
+        raise RuntimeError("desktop runtime metrics are missing or altered")
+    expected_acceptance = {
+        "api_version": 1,
+        "model_count": 3,
+        "worker_actions": 3,
+        "key_lifecycle": "passed",
+        "contribution_policy": "passed",
+        "policy_update": "passed",
+        "auto_selection": "passed",
+    }
+    if not _strict_equal(metrics["acceptance"], expected_acceptance):
+        raise RuntimeError("desktop acceptance metrics are missing or altered")
+
+    node = metrics["node_sidecar"]
+    expected_node_keys = {
+        "relative_executable",
+        "bundle_bytes",
+        "file_count",
+        "runtime",
+        "self_test_passed",
+        "node_entrypoint_smoke_passed",
+        "worker_entrypoint_smoke_passed",
+    }
+    if not isinstance(node, dict) or set(node) != expected_node_keys:
+        raise RuntimeError("node sidecar metrics schema is missing or altered")
+    executable_name = f"{NODE_NAME}{'.exe' if install_platform == 'Windows' else ''}"
+    relative_executable = PurePosixPath(NODE_DIRECTORY, executable_name).as_posix()
+    node_root = bundle_root / NODE_DIRECTORY
+    node_bytes, node_file_count = _directory_metrics(node_root)
+    expected_node_claims = {
+        "relative_executable": relative_executable,
+        "bundle_bytes": node_bytes,
+        "file_count": node_file_count,
+        "self_test_passed": True,
+        "node_entrypoint_smoke_passed": True,
+        "worker_entrypoint_smoke_passed": True,
+    }
+    if any(not _strict_equal(node.get(key), value) for key, value in expected_node_claims.items()):
+        raise RuntimeError("node sidecar metrics do not match the packaged runtime")
+
+    node_runtime = node["runtime"]
+    expected_node_runtime_keys = {
+        "schema_version",
+        "application",
+        "drift",
+        "torch",
+        "transformers",
+        "hivemind",
+        "fastapi",
+        "uvicorn",
+        "keyring",
+        "p2pd",
+        "catalog_bootstrap_schema",
+        "frozen",
+    }
+    if not isinstance(node_runtime, dict) or set(node_runtime) != expected_node_runtime_keys:
+        raise RuntimeError("node runtime metrics schema is missing or altered")
+    expected_node_runtime_claims = {
+        "schema_version": 1,
+        "application": NODE_NAME,
+        "p2pd": f"p2pd{'.exe' if install_platform == 'Windows' else ''}",
+        "catalog_bootstrap_schema": 1,
+        "frozen": True,
+    }
+    if any(not _strict_equal(node_runtime.get(key), value) for key, value in expected_node_runtime_claims.items()):
+        raise RuntimeError("node runtime metrics contain altered release claims")
+    for field in ("drift", "torch", "transformers", "hivemind", "fastapi", "uvicorn", "keyring"):
+        if not _is_printable_string(node_runtime.get(field)):
+            raise RuntimeError(f"node runtime metric {field} is missing or unsafe")
+    return metrics
+
+
+def _write_desktop_metrics(output_root: Path, metrics: dict[str, object]) -> dict[str, object]:
+    output_root = output_root.resolve()
+    provenance_path = output_root / PROVENANCE_NAME
+    if not provenance_path.is_file() or _is_link_or_junction(provenance_path):
+        raise RuntimeError(f"release provenance is missing or unsafe: {provenance_path}")
+    try:
+        provenance_bytes = provenance_path.read_bytes()
+        provenance = json.loads(provenance_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("release provenance is not canonical UTF-8 JSON") from exc
+    if (
+        not isinstance(provenance, dict)
+        or provenance_bytes != _canonical_json(provenance).encode("utf-8")
+        or provenance.get("desktop_metrics") is not None
+    ):
+        raise RuntimeError("release provenance is not ready for desktop metrics")
+
+    metrics_path = output_root / DESKTOP_METRICS_NAME
+    if _is_link_or_junction(metrics_path) or (metrics_path.exists() and not metrics_path.is_file()):
+        raise RuntimeError(f"desktop metrics output path is unsafe: {metrics_path}")
+    metrics_bytes = _canonical_json(metrics).encode("utf-8")
+    metrics_path.write_bytes(metrics_bytes)
+    evidence = {
+        "schema_version": 1,
+        "path": DESKTOP_METRICS_NAME,
+        "sha256": hashlib.sha256(metrics_bytes).hexdigest(),
+        "size_bytes": len(metrics_bytes),
+    }
+    provenance["desktop_metrics"] = evidence
+    provenance_path.write_bytes(_canonical_json(provenance).encode("utf-8"))
+    return evidence
 
 
 def _run_bundle(
@@ -487,7 +1150,7 @@ def _verify_packaged_release_inputs(
     """Revalidate the copied bundle and bind metrics to the packaged bytes."""
 
     packaged_evidence = _prepare_release_inputs(packaged_bundle)
-    if packaged_evidence != expected_evidence:
+    if not _strict_equal(packaged_evidence, expected_evidence):
         raise RuntimeError(
             "packaged catalog publication bundle does not match the source bundle validated before packaging"
         )
@@ -690,7 +1353,7 @@ def main() -> int:
         "ui_smoke_passed": True,
         "onboarding_ui_smoke_passed": True,
         "node_sidecar": {
-            "relative_executable": str(node_executable.relative_to(bundle_root)),
+            "relative_executable": node_executable.relative_to(bundle_root).as_posix(),
             "bundle_bytes": node_bytes,
             "file_count": node_file_count,
             "runtime": node_contract,
@@ -712,9 +1375,19 @@ def main() -> int:
         build_pyinstaller=PyInstaller.__version__,
         publication_evidence=publication_evidence,
     )
-    metrics_path = output_root / "desktop-metrics.json"
-    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_desktop_metrics(output_root, metrics)
+    verified_release = _verify_release_attestations(
+        output_root,
+        expected_source_commit=source_commit,
+        expected_source_tree=source_tree,
+        expected_build_workflow=build_workflow,
+        expected_build_platform=platform.platform(),
+        expected_build_python=platform.python_version(),
+        expected_build_pyinstaller=PyInstaller.__version__,
+        expected_publication_evidence=publication_evidence,
+    )
+    if not _strict_equal(verified_release, metrics["release_artifacts"]):
+        raise RuntimeError("final desktop metrics do not match the independently verified release")
     print(json.dumps(metrics, sort_keys=True))
     return 0
 

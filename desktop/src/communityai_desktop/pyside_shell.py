@@ -757,6 +757,12 @@ def run(
             else:
                 detail = f"{detail}  •  {availability}"
             copy.addWidget(label(detail, "bodyMuted"))
+            copy.addWidget(
+                label(
+                    f"First-use download/storage: {model['download_storage_estimate']}",
+                    "bodyMuted",
+                )
+            )
             layout.addLayout(copy, 1)
             tone = "good" if model["route_complete"] else "warn"
             badge = "Auto choice" if model.get("auto_selected") else "Ready" if tone == "good" else "Limited"
@@ -921,6 +927,12 @@ def run(
                 status_label = label(detail, "bodyMuted")
                 status_label.setWordWrap(True)
                 copy.addWidget(status_label)
+                copy.addWidget(
+                    label(
+                        f"First-use download/storage: {model['download_storage_estimate']}",
+                        "bodyMuted",
+                    )
+                )
                 row_layout.addLayout(copy, 1)
                 toggle = QCheckBox()
                 toggle.setChecked(selected)
