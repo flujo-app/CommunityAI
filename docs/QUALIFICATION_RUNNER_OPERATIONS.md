@@ -95,13 +95,17 @@ only while the exact builder pulls both immutable publications; it must revoke t
 binding, prove the repository private, verify scanning disabled and all four
 index/runtime digests, delete and prove the builder perimeter absent, and revalidate
 `communityai-bootstrap-1`. Any failure deletes a repository created by that run and
-proves it absent. The retained private repository keeps the USD 10 reservation active.
+proves it absent. GCP describes this exact remote upstream as
+`remoteRepositoryConfig.commonRepository.uri == "https://ghcr.io"`; both the cache
+lifecycle and the consuming route lifecycle require that exact object and reject the
+legacy Docker/custom nesting or URI drift. The retained private repository keeps the USD 10
+reservation active.
 
 Generate the provider-call-free cache plan first:
 
 ```powershell
 uv run --no-sync python scripts/qualification_cost_guard.py `
-  --run-id cache-20260830-c `
+  --run-id cache-20260830-d `
   --provider gcp `
   --workload gcp-public-route-cache `
   --purpose "Gate 11 private same-region route image cache" `
@@ -117,7 +121,7 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
   --cache-bootstrap-digest $cacheBootstrapDigest `
   --cache-bootstrap-bytes $cacheBootstrapBytes `
   --ledger docs/RELEASE_READINESS.md `
-  --output docs/evidence/cache-20260830-c-cost-authorization.json
+  --output docs/evidence/cache-20260830-d-cost-authorization.json
 ```
 
 The first pass must report `provisioning_authorized=false`. Record its exact

@@ -521,13 +521,33 @@ def _cache_repository_payload(plan):
             ),
             "format": "DOCKER",
             "mode": "REMOTE_REPOSITORY",
-            "remoteRepositoryConfig": {"dockerRepository": {"customRepository": {"uri": "https://ghcr.io"}}},
+            "remoteRepositoryConfig": {"commonRepository": {"uri": "https://ghcr.io"}},
             "vulnerabilityScanningConfig": {
                 "enablementConfig": "DISABLED",
                 "enablementState": "SCANNING_DISABLED",
             },
         }
     ).encode()
+
+
+@pytest.mark.parametrize(
+    "remote_config",
+    [
+        {"dockerRepository": {"customRepository": {"uri": "https://ghcr.io"}}},
+        {"commonRepository": {"uri": "https://ghcr.io/"}},
+    ],
+)
+def test_route_preflight_rejects_non_provider_cache_upstream_shape(remote_config):
+    plan = _dummy_plan()
+    payload = json.loads(_cache_repository_payload(plan))
+    payload["remoteRepositoryConfig"] = remote_config
+
+    def runner(argv, _timeout):
+        assert tuple(argv[:4]) == ("gcloud", "artifacts", "repositories", "describe")
+        return lifecycle.CommandResult(0, json.dumps(payload).encode(), b"")
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="exact private plan"):
+        lifecycle._verify_private_artifact_cache(plan, runner)
 
 
 def test_route_preflight_requires_private_exact_cache_and_four_digests():

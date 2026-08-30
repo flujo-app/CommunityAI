@@ -2069,3 +2069,34 @@ and diff checks pass, and the live read-only diagnostic proves the exact command
 Independent verification passes 187 tests with two skips, matches both evidence records, and
 proves retry B cannot regenerate under the corrected plan. A new run identity, source-bound
 plan, and reservation are required before the next prewarm.
+
+## Gate 11 private route-cache attempt C
+
+Pushed source `42241d6` and the source-bound
+[retry-C authorization](evidence/cache-20260830-c-cost-authorization.json) bound plan
+`sha256:634c4d9db1474655065b1d4d6c2bb4066aeb6c48afa3e2eda7e85d980282104e`,
+the exact corrected API query, cache bootstrap, and Qwen/Gemma publication inputs, a USD 10
+maximum, and USD 90 headroom. Its
+[live lifecycle](evidence/cache-20260830-c-lifecycle.json) passed local binding, native
+authentication, protected-bootstrap health, exact API verification, and all initial absence
+checks. It created the exact remote repository, then failed closed at `repository_create`
+after 60.594 seconds because the strict verifier expected
+`remoteRepositoryConfig.dockerRepository.customRepository` while GCP returned
+`remoteRepositoryConfig.commonRepository`. No temporary public binding or builder was
+created.
+
+The [bounded provider-schema diagnostic](evidence/cache-20260830-c-repository-schema-diagnostic.json)
+proved the exact returned object has only `commonRepository.uri == "https://ghcr.io"`,
+deleted the exact diagnostic repository, re-proved final absence, and revalidated the
+protected bootstrap. The subsequent
+[sanitized read-only verification](evidence/cache-20260830-c-post-failure-verification.json)
+proved the API enabled, repository absent, all five retry-C builder/perimeter targets absent,
+and `communityai-bootstrap-1` still `RUNNING`. No prompt, output, endpoint, account,
+credential, provider response, path, or command argv is retained. Retry C is
+`CLEANED-RELEASED`.
+
+Both cache creation and route consumption now validate the exact provider-returned
+`commonRepository` shape and reject the legacy nesting or a trailing-slash URI. The focused
+cache/route lifecycle suite passes 75 tests; the expanded provider-free Gate 11 matrix passes
+254 tests with two provider/platform skips. Black, isort, and diff checks pass. A new source-
+bound run identity and reservation are required before another prewarm.

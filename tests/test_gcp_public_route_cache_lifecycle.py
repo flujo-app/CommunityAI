@@ -97,13 +97,31 @@ def _repo_json(plan):
             ),
             "format": "DOCKER",
             "mode": "REMOTE_REPOSITORY",
-            "remoteRepositoryConfig": {"dockerRepository": {"customRepository": {"uri": "https://ghcr.io"}}},
+            "remoteRepositoryConfig": {"commonRepository": {"uri": "https://ghcr.io"}},
             "vulnerabilityScanningConfig": {
                 "enablementConfig": "DISABLED",
                 "enablementState": "SCANNING_DISABLED",
             },
         }
     ).encode()
+
+
+@pytest.mark.parametrize(
+    "remote_config",
+    [
+        {"dockerRepository": {"customRepository": {"uri": "https://ghcr.io"}}},
+        {"commonRepository": {"uri": "https://ghcr.io/"}},
+    ],
+)
+def test_repository_exact_rejects_non_provider_upstream_shape(tmp_path, remote_config):
+    plan, _inputs = _fixture(tmp_path)
+    payload = json.loads(_repo_json(plan))
+    payload["remoteRepositoryConfig"] = remote_config
+
+    def runner(_argv, _timeout):
+        return route.CommandResult(0, json.dumps(payload).encode(), b"")
+
+    assert cache._repository_exact(plan, runner) is False
 
 
 def _ready():

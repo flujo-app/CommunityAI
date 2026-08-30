@@ -1177,16 +1177,15 @@ def _verify_private_artifact_cache(plan: BoundPlan, runner: Runner) -> None:
     )
     remote = value.get("remoteRepositoryConfig")
     scanning = value.get("vulnerabilityScanningConfig")
-    docker = remote.get("dockerRepository") if isinstance(remote, dict) else None
-    custom = docker.get("customRepository") if isinstance(docker, dict) else None
+    common = remote.get("commonRepository") if isinstance(remote, dict) else None
     if (
         plan.project != cost_guard.GCP_ARTIFACT_REGISTRY_PROJECT
         or plan.region != cost_guard.GCP_ARTIFACT_REGISTRY_LOCATION
         or value.get("name") != expected_name
         or value.get("format") != "DOCKER"
         or value.get("mode") != "REMOTE_REPOSITORY"
-        or not isinstance(custom, dict)
-        or custom.get("uri") != "https://ghcr.io"
+        or not isinstance(common, dict)
+        or common.get("uri") != "https://ghcr.io"
         or not isinstance(scanning, dict)
         or scanning.get("enablementConfig") != "DISABLED"
         or scanning.get("enablementState") != "SCANNING_DISABLED"

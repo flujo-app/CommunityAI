@@ -328,15 +328,14 @@ def _repository_exact(plan: BoundCachePlan, runner: Runner) -> bool:
     value = route_lifecycle._bounded_json_object(payload, "cache repository")
     remote = value.get("remoteRepositoryConfig")
     scanning = value.get("vulnerabilityScanningConfig")
-    docker = remote.get("dockerRepository") if isinstance(remote, dict) else None
-    custom = docker.get("customRepository") if isinstance(docker, dict) else None
+    common = remote.get("commonRepository") if isinstance(remote, dict) else None
     return (
         value.get("name")
         == f"projects/{plan.project}/locations/{plan.region}/repositories/{cost_guard.GCP_ARTIFACT_REGISTRY_REPOSITORY}"
         and value.get("format") == "DOCKER"
         and value.get("mode") == "REMOTE_REPOSITORY"
-        and isinstance(custom, dict)
-        and custom.get("uri") == "https://ghcr.io"
+        and isinstance(common, dict)
+        and common.get("uri") == "https://ghcr.io"
         and isinstance(scanning, dict)
         and scanning.get("enablementConfig") == "DISABLED"
         and scanning.get("enablementState") == "SCANNING_DISABLED"

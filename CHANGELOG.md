@@ -139,7 +139,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   fields return no rows even when the API is enabled; it also stopped before repository or
   builder creation and passed exact absence/protected-bootstrap verification. The source-bound
   query now uses GCP's `config.name` filter and output field and still accepts only the single
-  exact bare Artifact Registry service name.
+  exact bare Artifact Registry service name. Cache attempt C then reached exact repository
+  creation and failed closed before public binding or builder creation because GCP describes
+  this remote upstream as `remoteRepositoryConfig.commonRepository.uri`, not the assumed
+  Docker/custom nesting. Bounded diagnostics deleted the exact repository and re-proved its
+  absence after observing that schema; all five builder/perimeter targets are absent and the
+  protected bootstrap is running. Both cache and route validators now require the exact
+  provider-returned shape and reject the legacy nesting or URI drift.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
