@@ -93,8 +93,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   five deletes, six absences, and protected-bootstrap health passed. Pull-only retries now add
   final 60/120-second backoffs to the existing 0/5/15 schedule inside the original one-hour
   deadline, while `docker run` and the whole start action remain single-shot. The source-bound
-  route-E authorization fixes a new six-resource identity, 14-hour provider deletion, both
-  exact immutable route publications, USD 26 maximum, and USD 74 headroom.
+  route-E authorization fixed a new six-resource identity, 14-hour provider deletion, both
+  exact immutable route publications, USD 26 maximum, and USD 74 headroom. Its live controller
+  passed exact preflight, create, and bootstrap but exhausted all five pull attempts before
+  primary health; five deletes, six absences, and protected-bootstrap health passed. The
+  pinned Docker bootstrap now preserves the NVIDIA runtime configuration while forcing one
+  concurrent blob download, validates that setting before readiness, and requires it again
+  in host preflight; immutable pull backoffs and single-shot container start are unchanged.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

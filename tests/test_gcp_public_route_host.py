@@ -147,11 +147,14 @@ def test_start_classifies_post_pull_command_failure_without_retry(monkeypatch, t
 
 def test_bootstrap_preflight_requires_exact_pinned_readiness(monkeypatch, tmp_path):
     readiness = tmp_path / "runtime-ready.json"
+    daemon_config = tmp_path / "daemon.json"
+    daemon_config.write_text(json.dumps({"max-concurrent-downloads": 1}), encoding="utf-8")
     readiness.write_text(
         json.dumps(
             {
                 "container_runtime": "docker",
                 "containerd_version": "2.2.1-0ubuntu1~24.04.3",
+                "docker_max_concurrent_downloads": 1,
                 "docker_version": "29.1.3-0ubuntu3~24.04.2",
                 "gpu_driver_version": "570.211.01",
                 "nvidia_container_toolkit_version": "1.20.0-1",
@@ -163,6 +166,7 @@ def test_bootstrap_preflight_requires_exact_pinned_readiness(monkeypatch, tmp_pa
         encoding="utf-8",
     )
     monkeypatch.setattr(host, "BOOTSTRAP_READY", readiness)
+    monkeypatch.setattr(host, "DOCKER_DAEMON_CONFIG", daemon_config)
 
     def runner(argv, timeout):
         if tuple(argv) == ("docker", "info", "--format", "{{.DefaultRuntime}}"):
@@ -193,6 +197,20 @@ def test_bootstrap_preflight_requires_exact_pinned_readiness(monkeypatch, tmp_pa
 
     with pytest.raises(host.HostError, match="live GPU driver"):
         host.execute_action(action="preflight", run_id=RUN_ID, runner=wrong_driver)
+
+    for invalid_config in ({}, {"max-concurrent-downloads": 2}, {"max-concurrent-downloads": True}):
+        daemon_config.write_text(json.dumps(invalid_config), encoding="utf-8")
+        with pytest.raises(host.HostError, match="download concurrency"):
+            host.execute_action(action="preflight", run_id=RUN_ID, runner=runner)
+    daemon_config.write_text(json.dumps({"max-concurrent-downloads": 1}), encoding="utf-8")
+
+    boolean_readiness = json.loads(readiness.read_text())
+    boolean_readiness["docker_max_concurrent_downloads"] = True
+    readiness.write_text(json.dumps(boolean_readiness), encoding="utf-8")
+    with pytest.raises(host.HostError, match="pinned runtime"):
+        host.execute_action(action="preflight", run_id=RUN_ID, runner=runner)
+    boolean_readiness["docker_max_concurrent_downloads"] = 1
+    readiness.write_text(json.dumps(boolean_readiness), encoding="utf-8")
 
     changed = json.loads(readiness.read_text())
     changed["docker_version"] = "latest"

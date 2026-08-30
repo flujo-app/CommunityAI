@@ -33,6 +33,7 @@ _ACTION_FAILURE_CODES = frozenset({"image_pull", "host_command"})
 ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
 STATE_ROOT = Path("/var/lib/communityai-route")
 BOOTSTRAP_READY = Path("/var/lib/communityai-bootstrap/runtime-ready.json")
+DOCKER_DAEMON_CONFIG = Path("/etc/docker/daemon.json")
 ACCEPTANCE_TARGET = Path("/var/lib/communityai-route/public_route_acceptance.py")
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _RUN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,39}$")
@@ -285,6 +286,7 @@ def _bootstrap_preflight(runner: Runner) -> dict[str, Any]:
     expected = {
         "container_runtime": "docker",
         "containerd_version": "2.2.1-0ubuntu1~24.04.3",
+        "docker_max_concurrent_downloads": 1,
         "docker_version": "29.1.3-0ubuntu3~24.04.2",
         "gpu_driver_version": "570.211.01",
         "nvidia_container_toolkit_version": "1.20.0-1",
@@ -292,8 +294,17 @@ def _bootstrap_preflight(runner: Runner) -> dict[str, Any]:
         "schema_version": 1,
         "scope": "communityai-public-route-bootstrap",
     }
-    if ready != expected:
+    readiness_concurrency = ready.get("docker_max_concurrent_downloads")
+    if isinstance(readiness_concurrency, bool) or ready != expected:
         raise HostError("bootstrap readiness record does not match the pinned runtime")
+    daemon_config = _strict_json_bytes(
+        _read_regular(DOCKER_DAEMON_CONFIG, 4096, "Docker daemon configuration"),
+        "Docker daemon configuration",
+        4096,
+    )
+    download_concurrency = daemon_config.get("max-concurrent-downloads")
+    if isinstance(download_concurrency, bool) or download_concurrency != 1:
+        raise HostError("Docker download concurrency does not match the pinned runtime")
     runner(("systemctl", "is-active", "--quiet", "docker"), 30)
     runner(("systemctl", "is-active", "--quiet", "containerd"), 30)
     runtime = runner(("docker", "info", "--format", "{{.DefaultRuntime}}"), 30).stdout.strip()

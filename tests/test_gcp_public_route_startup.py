@@ -74,9 +74,32 @@ def test_bootstrap_pins_every_external_runtime_boundary():
     assert keyring_readable in script
     assert script.index(keyring_write) < script.index(keyring_readable)
     assert "nvidia-ctk runtime configure --runtime=docker --set-as-default" in script
+    assert 'configuration["max-concurrent-downloads"] = 1' in script
     assert "docker info --format" in script
     assert """test "$(docker info --format '{{.DefaultRuntime}}')" = 'nvidia'""" in script
     assert """grep -q '"nvidia"'""" in script
+
+
+def test_bootstrap_serializes_downloads_without_clobbering_nvidia_runtime():
+    script = STARTUP_PATH.read_text(encoding="utf-8")
+
+    configure = "nvidia-ctk runtime configure --runtime=docker --set-as-default"
+    load_existing = "configuration = json.load(stream)"
+    serialize = 'configuration["max-concurrent-downloads"] = 1'
+    replace = "os.replace(temporary, config_path)"
+    validate = 'value = configuration.get("max-concurrent-downloads")'
+    restart = "systemctl restart docker"
+    readiness = "communityai-public-route-bootstrap"
+
+    assert script.index(configure) < script.index(load_existing)
+    assert script.index(load_existing) < script.index(serialize)
+    assert script.index(serialize) < script.index(replace)
+    assert script.index(replace) < script.rindex(validate)
+    assert script.rindex(validate) < script.index(restart)
+    assert script.index(restart) < script.rindex(readiness)
+    assert 'separators=(",", ":"), sort_keys=True' in script
+    assert "os.O_CREAT | os.O_EXCL | os.O_WRONLY" in script
+    assert 'rm -f "${ready_path}" "${temporary_ready}" "${temporary_docker_config}"' in script
 
 
 def test_bootstrap_is_idempotent_fail_closed_and_does_not_launch_routes():
@@ -88,7 +111,10 @@ def test_bootstrap_is_idempotent_fail_closed_and_does_not_launch_routes():
     assert 'if [[ "${installed_driver}" != "${driver_version}" ]]' in script
     assert 'rm -f "${ready_path}" "${temporary_ready}"' in script
     assert script.index('rm -f "${ready_path}"') < script.index("apt-get update")
-    assert 'trap \'rm -f "${installer_path}" "${key_path}" "${list_path}" "${temporary_ready}"\' EXIT' in script
+    assert (
+        'trap \'rm -f "${installer_path}" "${key_path}" "${list_path}" "${temporary_ready}" '
+        '"${temporary_docker_config}"\' EXIT' in script
+    )
     assert 'test "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader)"' in script
     assert "systemctl is-active --quiet containerd" in script
     assert "systemctl is-active --quiet docker" in script
@@ -111,6 +137,7 @@ def test_bootstrap_readiness_is_private_bounded_aggregate_only():
     readiness = match.group(1)
     assert len(readiness.encode()) < 1024
     assert '"ready":true' in readiness
+    assert '"docker_max_concurrent_downloads":1' in readiness
     assert '"schema_version":1' in readiness
     assert '"scope":"communityai-public-route-bootstrap"' in readiness
     assert "path" not in readiness.lower()

@@ -22,6 +22,8 @@ readonly key_path="${install_root}/nvidia-container-toolkit.gpgkey"
 readonly list_path="${install_root}/nvidia-container-toolkit.list"
 readonly ready_path="${install_root}/runtime-ready.json"
 readonly temporary_ready="${install_root}/.runtime-ready.$$.json"
+readonly docker_config_path='/etc/docker/daemon.json'
+readonly temporary_docker_config="/etc/docker/.communityai-daemon.$$.json"
 
 if [[ "${EUID}" -ne 0 ]]; then
   printf '%s\n' 'public-route bootstrap requires root' >&2
@@ -29,8 +31,8 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 install -d -m 0700 "${install_root}"
-rm -f "${ready_path}" "${temporary_ready}"
-trap 'rm -f "${installer_path}" "${key_path}" "${list_path}" "${temporary_ready}"' EXIT
+rm -f "${ready_path}" "${temporary_ready}" "${temporary_docker_config}"
+trap 'rm -f "${installer_path}" "${key_path}" "${list_path}" "${temporary_ready}" "${temporary_docker_config}"' EXIT
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -82,6 +84,51 @@ apt-mark hold \
   nvidia-container-toolkit >/dev/null
 
 nvidia-ctk runtime configure --runtime=docker --set-as-default
+python3 - "${docker_config_path}" "${temporary_docker_config}" <<'PY'
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+temporary = Path(sys.argv[2])
+mode = config_path.lstat().st_mode
+if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or config_path.stat().st_size > 4096:
+    raise SystemExit("Docker configuration is not bounded regular state")
+with config_path.open("r", encoding="utf-8") as stream:
+    configuration = json.load(stream)
+if not isinstance(configuration, dict):
+    raise SystemExit("Docker configuration is not an object")
+configuration["max-concurrent-downloads"] = 1
+payload = (json.dumps(configuration, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n").encode(
+    "utf-8"
+)
+if len(payload) > 4096:
+    raise SystemExit("Docker configuration exceeds its bound")
+descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+with os.fdopen(descriptor, "wb") as stream:
+    stream.write(payload)
+    stream.flush()
+    os.fsync(stream.fileno())
+os.replace(temporary, config_path)
+PY
+python3 - "${docker_config_path}" <<'PY'
+import json
+import stat
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+mode = config_path.lstat().st_mode
+if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or config_path.stat().st_size > 4096:
+    raise SystemExit("Docker configuration is not bounded regular state")
+with config_path.open("r", encoding="utf-8") as stream:
+    configuration = json.load(stream)
+value = configuration.get("max-concurrent-downloads") if isinstance(configuration, dict) else None
+if isinstance(value, bool) or value != 1:
+    raise SystemExit("Docker download concurrency is not serialized")
+PY
 systemctl enable --now containerd docker
 systemctl restart docker
 systemctl is-active --quiet containerd
@@ -95,7 +142,7 @@ docker info --format '{{json .Runtimes}}' | grep -q '"nvidia"'
 test "$(docker info --format '{{.DefaultRuntime}}')" = 'nvidia'
 
 printf '%s\n' \
-  '{"container_runtime":"docker","containerd_version":"2.2.1-0ubuntu1~24.04.3","docker_version":"29.1.3-0ubuntu3~24.04.2","gpu_driver_version":"570.211.01","nvidia_container_toolkit_version":"1.20.0-1","ready":true,"schema_version":1,"scope":"communityai-public-route-bootstrap"}' \
+  '{"container_runtime":"docker","containerd_version":"2.2.1-0ubuntu1~24.04.3","docker_max_concurrent_downloads":1,"docker_version":"29.1.3-0ubuntu3~24.04.2","gpu_driver_version":"570.211.01","nvidia_container_toolkit_version":"1.20.0-1","ready":true,"schema_version":1,"scope":"communityai-public-route-bootstrap"}' \
   > "${temporary_ready}"
 chmod 0600 "${temporary_ready}"
 mv -f "${temporary_ready}" "${ready_path}"

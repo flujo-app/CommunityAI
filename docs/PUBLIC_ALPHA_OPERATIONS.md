@@ -137,6 +137,13 @@ repositories and verified installer bytes, then writes a mode-0600 bounded readi
 record only after the exact versions, services, runtime, and GPU are observed. It does
 not pull or start either route and it cannot authorize provider calls.
 
+Before bootstrap readiness, the startup script must load the regular NVIDIA-managed Docker
+daemon JSON, preserve its runtime keys, set integer `max-concurrent-downloads` to `1`, install
+it through a bounded mode-private fsync/atomic replacement, validate it, and only then restart
+Docker. Readiness records that same fixed value, and host preflight re-reads the bounded regular
+config before live Docker/NVIDIA checks. This serializes multi-gigabyte GHCR blob requests
+without transferring registry credentials.
+
 After bootstrap readiness, the fixed host controller may retry only the same immutable
 digest-qualified `docker pull` at 5-, 15-, 60-, and 120-second backoffs. Every sleep and
 subprocess timeout is clamped to the original one-hour start-action deadline. Pull exhaustion

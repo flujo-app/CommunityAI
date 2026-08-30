@@ -1833,3 +1833,36 @@ and Gemma `(0, 35)` complete spans. The lifecycle/cost matrix passes 113 tests. 
 provider-free verification reproduced the source, ledger, plan, file-size/digest,
 publication, six-resource, protected-bootstrap exclusion, 14-hour provider-DELETE, budget,
 privacy, and span bindings with no blocker or provider/authentication call.
+
+## Gate 11 route-E bounded-pull failure
+
+The single detached route-E controller used the pushed authorization after a zero-controller
+check. Native/provider preflight, exact create, and bootstrap passed. The fixed primary-start
+action retained the same immutable Qwen digest through all 0/5/15/60/120-second pull attempts,
+then failed after 729.609 seconds with the allowlisted `image_pull` code. Its
+[schema-v2 lifecycle evidence](evidence/gate11route-20260830-e-lifecycle.json) makes no health,
+inference, fallback, restoration, monitoring, or resource-maximum claim and retains none of
+the prohibited privacy fields or raw command/provider output. Finally-based cleanup passed
+five deletes and all six exact absence checks, and the protected bootstrap remained `RUNNING`.
+The route-E USD 26 reservation is released. A fresh read-only provider check confirmed the
+same absence and protected-bootstrap state. The unchanged plan must not be retried.
+
+## Gate 11 serialized immutable-image delivery
+
+Route E exceeded route D by 196.781 seconds, nearly the 180 seconds added by its final two
+backoffs, but failed at the same `image_pull` boundary. The Qwen publication contains
+6,913,950,955 compressed bytes with 3.57 GB and 3.27 GB layers; Gemma contains
+11,011,554,181 compressed bytes with 7.67 GB and 3.27 GB layers, and publication history
+already records a sanitized registry 429. Longer sleeps would consume the one-hour deadline
+shared by both route starts and health without addressing simultaneous blob requests.
+
+The pinned startup now loads the regular NVIDIA-managed Docker JSON, preserves its runtime
+keys, deterministically sets `max-concurrent-downloads` to integer `1`, writes a bounded
+mode-private temporary file with fsync and atomic replacement, validates the installed config,
+and only then restarts Docker and emits readiness with the same fixed value. Host preflight
+requires both that exact readiness field and the bounded regular daemon config before live
+Docker/NVIDIA checks. Missing, boolean, or non-one concurrency fails closed. The immutable
+pull schedule remains 0/5/15/60/120, every pull uses the same digest and deadline, and
+`docker run` plus the whole start action remain single-shot. The focused
+host/lifecycle/startup/cost matrix passes 140 tests; the expanded image-contract/evidence/node
+matrix passes 197. Bash syntax, Black, isort, and diff checks pass.
