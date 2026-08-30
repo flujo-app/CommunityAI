@@ -285,7 +285,16 @@ protocol requirements, not optional troubleshooting:
    temporary file to the current user, transfer it over SSH, decode it only into the
    remote registry login, and delete both copies in unconditional cleanup. Verify the
    first three bytes are not `EF BB BF`; do not compensate later by guessing that
-   bytes should be stripped.
+   bytes should be stripped. The only no-file exception is a reviewed, source-bound
+   controller that obtains one native-`gh` token for an exactly validated GitHub login,
+   rejects BOM, CR, NUL, non-ASCII, whitespace, multiple lines, and oversized bytes,
+   encodes it as one canonical base64 line, and first proves byte identity with a non-secret
+   sentinel through the identical binary-stdin path. That path must use `shell=False`,
+   fixed `gcloud compute ssh --tunnel-through-iap --ssh-flag=-T`, a fixed `sudo -n`
+   helper, discarded bounded output, and no token in argv or environment. The remote
+   helper must decode only into `docker login --password-stdin`, use an exact root-owned
+   mode-0700 isolated Docker config, then logout and remove it in the same action's
+   `finally`; the outer lifecycle repeats idempotent removal before provider deletion.
 5. Generate Linux shell scripts as UTF-8 without BOM and LF-only. Before transfer,
    reject any carriage-return byte and any BOM; after transfer, repeat the byte check
    and run `bash -n`. Do not silently run `dos2unix` or `sed` on a source-bound

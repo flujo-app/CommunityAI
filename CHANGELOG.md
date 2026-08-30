@@ -100,8 +100,18 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   pinned Docker bootstrap now preserves the NVIDIA runtime configuration while forcing one
   concurrent blob download, validates that setting before readiness, and requires it again
   in host preflight; immutable pull backoffs and single-shot container start are unchanged.
-  The source-bound route-F authorization preserves the USD 26 maximum and USD 74 headroom
-  with a fresh isolated six-resource identity and 14-hour provider deletion.
+  The source-bound route-F authorization preserved the USD 26 maximum and USD 74 headroom
+  with a fresh isolated six-resource identity and 14-hour provider deletion. Its live run
+  again failed closed during the primary immutable pull after 727.938 seconds despite the
+  serialized Docker download; no health or inference ran. Five deletes, six absence checks,
+  and protected-bootstrap health passed, releasing the reservation and ruling out concurrent
+  blob downloads as the cause. Native-`gh` authenticated route delivery now validates one
+  exact login/token before paid creation, proves a canonical-base64 binary IAP path with a
+  non-secret sentinel, and prefetches both immutable digests through one fixed `sudo -n`
+  action and isolated root-owned Docker config. The token never enters argv, environment,
+  logs, evidence, or a local file; same-action and lifecycle-finally cleanup both logout and
+  remove the config. Starts verify the local digest before their unchanged single-shot
+  `docker run`, and lifecycle evidence records exact registry-credential removal.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

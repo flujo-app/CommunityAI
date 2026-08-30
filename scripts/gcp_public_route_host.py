@@ -9,6 +9,8 @@ host state file rather than lifecycle evidence.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import ipaddress
 import json
@@ -28,15 +30,20 @@ SCHEMA_VERSION = 1
 MAX_OUTPUT_BYTES = 65_536
 MAX_COMMAND_OUTPUT_BYTES = 1_000_000
 MAX_HEALTH_BYTES = 4096
+MAX_REGISTRY_PAYLOAD_BYTES = 4096
 PULL_RETRY_DELAYS_SECONDS = (5.0, 15.0, 60.0, 120.0)
-_ACTION_FAILURE_CODES = frozenset({"image_pull", "host_command"})
+_ACTION_FAILURE_CODES = frozenset({"registry_auth", "image_pull", "host_command"})
+_ACTION_FAILURE_EXIT_CODES = {"registry_auth": 41, "image_pull": 42, "host_command": 43}
 ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
 STATE_ROOT = Path("/var/lib/communityai-route")
 BOOTSTRAP_READY = Path("/var/lib/communityai-bootstrap/runtime-ready.json")
 DOCKER_DAEMON_CONFIG = Path("/etc/docker/daemon.json")
 ACCEPTANCE_TARGET = Path("/var/lib/communityai-route/public_route_acceptance.py")
+REGISTRY_CONFIG = Path("/run/communityai-registry")
+TRANSPORT_SENTINEL = b"communityai-secret-transport-v1"
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _RUN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,39}$")
+_GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
 _IMAGE_RE = re.compile(r"^ghcr\.io/flujo-app/communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$")
 _CANDIDATES: Mapping[str, Mapping[str, object]] = {
@@ -57,6 +64,8 @@ _CANDIDATES: Mapping[str, Mapping[str, object]] = {
 }
 _ACTIONS = {
     "preflight",
+    "transport-sentinel",
+    "prefetch-images",
     "start-primary",
     "start-standby",
     "health",
@@ -66,6 +75,7 @@ _ACTIONS = {
     "probe-standby",
     "probe-auto",
     "stop-all",
+    "cleanup-registry",
     "cleanup",
 }
 
@@ -89,6 +99,7 @@ class ActionFailure(CommandError):
 
 
 Runner = Callable[[Sequence[str], int], subprocess.CompletedProcess[bytes]]
+SecretRunner = Callable[[Sequence[str], int, bytes], int]
 
 
 def _run_bounded(argv: Sequence[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
@@ -119,12 +130,43 @@ def _run_bounded(argv: Sequence[str], timeout: int) -> subprocess.CompletedProce
     return completed
 
 
+def _run_secret_bounded(argv: Sequence[str], timeout: int, secret: bytes) -> int:
+    if (
+        len(argv) != 8
+        or tuple(argv[:6]) != ("docker", "--config", os.fspath(REGISTRY_CONFIG), "login", "ghcr.io", "--username")
+        or _GITHUB_LOGIN_RE.fullmatch(argv[6]) is None
+        or argv[7] != "--password-stdin"
+        or not 1 <= timeout <= 3600
+        or not secret
+        or len(secret) > MAX_REGISTRY_PAYLOAD_BYTES
+        or not secret.endswith(b"\n")
+        or secret.count(b"\n") != 1
+        or b"\x00" in secret
+        or b"\r" in secret
+        or any(value < 0x21 or value > 0x7E for value in secret[:-1])
+    ):
+        raise CommandError("registry secret command contract is invalid")
+    try:
+        completed = subprocess.run(
+            list(argv),
+            check=False,
+            input=secret,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CommandError("registry secret command failed or timed out") from exc
+    return completed.returncode
+
+
 def _pull_immutable_image(
     *,
     image: str,
     deadline: float,
     maximum_command_timeout_seconds: int,
     runner: Runner,
+    docker_config: Path | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> None:
@@ -139,14 +181,171 @@ def _pull_immutable_image(
         if remaining < 1.0:
             break
         try:
+            docker_argv = ["docker"]
+            if docker_config is not None:
+                docker_argv.extend(["--config", os.fspath(docker_config)])
+            docker_argv.extend(["pull", "--quiet", image])
             runner(
-                ("docker", "pull", "--quiet", image),
+                tuple(docker_argv),
                 min(3600, maximum_command_timeout_seconds, max(1, math.ceil(remaining))),
             )
             return
         except CommandError as exc:
             last_error = exc
     raise ActionFailure("image_pull") from last_error
+
+
+def _strict_base64_secret(payload: bytes, field: str) -> bytearray:
+    if (
+        not payload
+        or len(payload) > MAX_REGISTRY_PAYLOAD_BYTES
+        or not payload.endswith(b"\n")
+        or payload.count(b"\n") != 1
+        or b"\r" in payload
+        or b"\x00" in payload
+        or payload.startswith(b"\xef\xbb\xbf")
+    ):
+        raise HostError(f"{field} framing is invalid")
+    encoded = payload[:-1]
+    if not encoded or any(value < 0x21 or value > 0x7E for value in encoded):
+        raise HostError(f"{field} encoding is invalid")
+    try:
+        decoded = bytearray(base64.b64decode(encoded, validate=True))
+    except (ValueError, binascii.Error) as exc:
+        raise HostError(f"{field} encoding is invalid") from exc
+    if not decoded or base64.b64encode(decoded) != encoded:
+        decoded[:] = b"\x00" * len(decoded)
+        raise HostError(f"{field} encoding is not canonical")
+    return decoded
+
+
+def _registry_user(value: str) -> str:
+    if len(value) > 39 or _GITHUB_LOGIN_RE.fullmatch(value) is None:
+        raise HostError("registry user is invalid")
+    return value
+
+
+def _registry_config_absent() -> bool:
+    try:
+        REGISTRY_CONFIG.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        raise HostError("registry credential state is unavailable") from exc
+    return False
+
+
+def _remove_registry_config(runner: Runner) -> bool:
+    if _registry_config_absent():
+        return True
+    try:
+        mode = REGISTRY_CONFIG.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            REGISTRY_CONFIG.unlink()
+        elif stat.S_ISDIR(mode):
+            try:
+                runner(("docker", "--config", os.fspath(REGISTRY_CONFIG), "logout", "ghcr.io"), 30)
+            except HostError:
+                pass
+            shutil.rmtree(REGISTRY_CONFIG)
+        else:
+            REGISTRY_CONFIG.unlink()
+    except OSError as exc:
+        raise HostError("registry credentials could not be removed") from exc
+    if not _registry_config_absent():
+        raise HostError("registry credentials remain after cleanup")
+    return True
+
+
+def _prepare_registry_config() -> None:
+    if not _registry_config_absent():
+        raise HostError("registry credential directory already exists")
+    try:
+        REGISTRY_CONFIG.mkdir(mode=0o700)
+        status = REGISTRY_CONFIG.lstat()
+    except OSError as exc:
+        raise HostError("registry credential directory could not be secured") from exc
+    if (
+        stat.S_ISLNK(status.st_mode)
+        or not stat.S_ISDIR(status.st_mode)
+        or status.st_uid != 0
+        or stat.S_IMODE(status.st_mode) != 0o700
+    ):
+        raise HostError("registry credential directory is not root-owned mode 0700")
+
+
+def _verify_local_image(image: str, runner: Runner) -> None:
+    raw = runner(("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image), 60).stdout
+    try:
+        digests = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise HostError("local immutable image inventory is invalid") from exc
+    if not isinstance(digests, list) or image not in digests or any(not isinstance(value, str) for value in digests):
+        raise HostError("local immutable image digest is absent")
+
+
+def _transport_sentinel(payload: bytes) -> dict[str, Any]:
+    decoded = _strict_base64_secret(payload, "transport sentinel")
+    try:
+        if bytes(decoded) != TRANSPORT_SENTINEL:
+            raise HostError("transport sentinel bytes changed")
+    finally:
+        decoded[:] = b"\x00" * len(decoded)
+    return {"transport_verified": True}
+
+
+def _prefetch_images(
+    *,
+    primary_image: str,
+    standby_image: str,
+    registry_user: str,
+    secret_payload: bytes,
+    action_timeout_seconds: int,
+    runner: Runner,
+    secret_runner: SecretRunner,
+) -> dict[str, Any]:
+    primary = _image(primary_image, "qwen3.5-2b")
+    standby = _image(standby_image, "gemma-4-e2b")
+    username = _registry_user(registry_user)
+    token = _strict_base64_secret(secret_payload, "registry credential")
+    if any(value < 0x21 or value > 0x7E for value in token):
+        token[:] = b"\x00" * len(token)
+        raise HostError("registry credential bytes are invalid")
+    deadline = time.monotonic() + action_timeout_seconds
+    try:
+        _prepare_registry_config()
+        login_argv = (
+            "docker",
+            "--config",
+            os.fspath(REGISTRY_CONFIG),
+            "login",
+            "ghcr.io",
+            "--username",
+            username,
+            "--password-stdin",
+        )
+        if secret_runner(login_argv, min(300, action_timeout_seconds), bytes(token) + b"\n") != 0:
+            raise ActionFailure("registry_auth")
+        _pull_immutable_image(
+            image=primary,
+            deadline=deadline,
+            maximum_command_timeout_seconds=action_timeout_seconds,
+            runner=runner,
+            docker_config=REGISTRY_CONFIG,
+        )
+        _pull_immutable_image(
+            image=standby,
+            deadline=deadline,
+            maximum_command_timeout_seconds=action_timeout_seconds,
+            runner=runner,
+            docker_config=REGISTRY_CONFIG,
+        )
+        _verify_local_image(primary, runner)
+        _verify_local_image(standby, runner)
+        return {"images_prefetched": 2, "registry_credentials_removed": True}
+    finally:
+        token[:] = b"\x00" * len(token)
+        _remove_registry_config(runner)
 
 
 def _strict_json_bytes(payload: bytes, field: str, maximum: int) -> Mapping[str, Any]:
@@ -362,12 +561,7 @@ def _start(
     port = int(profile["port"])
     action_started = time.monotonic()
     action_deadline = action_started + action_timeout_seconds
-    _pull_immutable_image(
-        image=image,
-        deadline=action_deadline,
-        maximum_command_timeout_seconds=action_timeout_seconds,
-        runner=runner,
-    )
+    _verify_local_image(image, runner)
     remaining = action_deadline - time.monotonic()
     if remaining < 1:
         raise HostError("route start exhausted its bounded action timeout")
@@ -675,6 +869,7 @@ def _stop_all(run_id: str, runner: Runner) -> dict[str, Any]:
 
 
 def _cleanup(run_id: str, runner: Runner) -> dict[str, Any]:
+    _remove_registry_config(runner)
     state = _load_state(run_id)
     removed = 0
     errors = 0
@@ -703,8 +898,11 @@ def execute_action(
     public_ipv4: str | None = None,
     initial_peer: str | None = None,
     acceptance_digest: str | None = None,
+    registry_user: str | None = None,
+    secret_payload: bytes | None = None,
     action_timeout_seconds: int | None = None,
     runner: Runner = _run_bounded,
+    secret_runner: SecretRunner = _run_secret_bounded,
 ) -> dict[str, Any]:
     run_id = _run_id(run_id)
     if action not in _ACTIONS:
@@ -712,6 +910,22 @@ def execute_action(
     details: dict[str, Any]
     if action == "preflight":
         details = _bootstrap_preflight(runner)
+    elif action == "transport-sentinel":
+        if secret_payload is None:
+            raise HostError("transport sentinel payload is absent")
+        details = _transport_sentinel(secret_payload)
+    elif action == "prefetch-images":
+        if primary_image is None or standby_image is None or registry_user is None or secret_payload is None:
+            raise HostError("registry prefetch is missing a fixed input")
+        details = _prefetch_images(
+            primary_image=primary_image,
+            standby_image=standby_image,
+            registry_user=registry_user,
+            secret_payload=secret_payload,
+            action_timeout_seconds=_action_timeout(action_timeout_seconds),
+            runner=runner,
+            secret_runner=secret_runner,
+        )
     elif action in {"start-primary", "start-standby"}:
         candidate = _candidate_for_role("primary" if action.endswith("primary") else "standby")
         raw_image = primary_image if candidate == "qwen3.5-2b" else standby_image
@@ -749,6 +963,8 @@ def execute_action(
         details = _probe(run_id, "auto", _action_timeout(action_timeout_seconds), runner)
     elif action == "stop-all":
         details = _stop_all(run_id, runner)
+    elif action == "cleanup-registry":
+        details = {"registry_credentials_removed": _remove_registry_config(runner)}
     else:
         details = _cleanup(run_id, runner)
     return {
@@ -769,6 +985,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--public-ipv4")
     parser.add_argument("--initial-peer")
     parser.add_argument("--acceptance-digest")
+    parser.add_argument("--registry-user")
     parser.add_argument("--action-timeout-seconds", type=int)
     return parser
 
@@ -799,6 +1016,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("public-route host failed: fixed host actions require Linux root", file=sys.stderr)
         return 2
     try:
+        secret_payload = None
+        if args.action in {"transport-sentinel", "prefetch-images"}:
+            secret_payload = sys.stdin.buffer.read(MAX_REGISTRY_PAYLOAD_BYTES + 1)
+            if len(secret_payload) > MAX_REGISTRY_PAYLOAD_BYTES:
+                raise HostError("secret transport payload exceeds its bound")
         report = execute_action(
             action=args.action,
             run_id=args.run_id,
@@ -807,13 +1029,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             public_ipv4=args.public_ipv4,
             initial_peer=args.initial_peer,
             acceptance_digest=args.acceptance_digest,
+            registry_user=args.registry_user,
+            secret_payload=secret_payload,
             action_timeout_seconds=args.action_timeout_seconds,
         )
         payload = _encode_acknowledgement(report)
     except ActionFailure as exc:
         payload = _encode_acknowledgement(_action_failure_report(args.action, exc.failure_code))
         sys.stdout.buffer.write(payload)
-        return 1
+        return _ACTION_FAILURE_EXIT_CODES[exc.failure_code]
     except HostError as exc:
         print(f"public-route host failed: {exc}", file=sys.stderr)
         return 1

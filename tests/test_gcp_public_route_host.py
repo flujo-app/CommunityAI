@@ -1,3 +1,4 @@
+import base64
 import json
 import subprocess
 
@@ -84,6 +85,8 @@ def test_start_builds_one_shell_free_bounded_docker_argv(monkeypatch, tmp_path):
 
     def runner(argv, timeout):
         calls.append((tuple(argv), timeout))
+        if argv[:3] == ("docker", "image", "inspect"):
+            return _completed(json.dumps([PRIMARY]).encode())
         if argv[:3] == ("docker", "run", "--detach"):
             return _completed(b"container-id\n")
         return _completed()
@@ -100,7 +103,7 @@ def test_start_builds_one_shell_free_bounded_docker_argv(monkeypatch, tmp_path):
     )
 
     assert report["details"] == {"candidate": "qwen3.5-2b", "started": True}
-    assert calls[0] == (("docker", "pull", "--quiet", PRIMARY), 3570)
+    assert calls[0] == (("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", PRIMARY), 60)
     assert calls[1][1] == 300
     docker_run = calls[1][0]
     assert docker_run[:3] == ("docker", "run", "--detach")
@@ -122,6 +125,8 @@ def test_start_classifies_post_pull_command_failure_without_retry(monkeypatch, t
 
     def runner(argv, timeout):
         calls.append((tuple(argv), timeout))
+        if argv[:3] == ("docker", "image", "inspect"):
+            return _completed(json.dumps([PRIMARY]).encode())
         if argv[:3] == ("docker", "run", "--detach"):
             raise host.CommandError("container start failed")
         return _completed()
@@ -140,7 +145,7 @@ def test_start_classifies_post_pull_command_failure_without_retry(monkeypatch, t
 
     assert failure.value.failure_code == "host_command"
     assert [call[0][:3] for call in calls] == [
-        ("docker", "pull", "--quiet"),
+        ("docker", "image", "inspect"),
         ("docker", "run", "--detach"),
     ]
 
@@ -402,3 +407,193 @@ def test_immutable_pull_fails_closed_when_retry_delay_exhausts_deadline():
 
     assert failure.value.failure_code == "image_pull"
     assert [timeout for _argv, timeout in calls] == [10, 5]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"",
+        b"dG9rZW4=\r\n",
+        b"dG9rZW4=\nextra\n",
+        b"\xef\xbb\xbfdG9rZW4=\n",
+        b"dG9r\x00ZW4=\n",
+        b"not-base64!\n",
+    ],
+)
+def test_registry_secret_decoder_rejects_ambiguous_bytes(payload):
+    with pytest.raises(host.HostError):
+        host._strict_base64_secret(payload, "test secret")
+
+
+def test_transport_sentinel_requires_exact_canonical_bytes():
+    payload = base64.b64encode(host.TRANSPORT_SENTINEL) + b"\n"
+
+    assert host._transport_sentinel(payload) == {"transport_verified": True}
+
+    with pytest.raises(host.HostError, match="changed"):
+        host._transport_sentinel(base64.b64encode(b"wrong") + b"\n")
+
+
+def test_authenticated_prefetch_pulls_both_digests_and_removes_credentials(monkeypatch, tmp_path):
+    registry = tmp_path / "registry"
+    monkeypatch.setattr(host, "REGISTRY_CONFIG", registry)
+    monkeypatch.setattr(host, "_prepare_registry_config", lambda: registry.mkdir())
+    calls = []
+    secrets = []
+
+    def runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        if argv[:3] == ("docker", "image", "inspect"):
+            return _completed(json.dumps([argv[-1]]).encode())
+        return _completed()
+
+    def secret_runner(argv, timeout, secret):
+        secrets.append((tuple(argv), timeout, bytes(secret)))
+        return 0
+
+    report = host.execute_action(
+        action="prefetch-images",
+        run_id=RUN_ID,
+        primary_image=PRIMARY,
+        standby_image=STANDBY,
+        registry_user="octocat",
+        secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+        action_timeout_seconds=3570,
+        runner=runner,
+        secret_runner=secret_runner,
+    )
+
+    assert report["details"] == {"images_prefetched": 2, "registry_credentials_removed": True}
+    assert secrets[0][0] == (
+        "docker",
+        "--config",
+        str(registry),
+        "login",
+        "ghcr.io",
+        "--username",
+        "octocat",
+        "--password-stdin",
+    )
+    assert secrets[0][2] == b"native-gh-token\n"
+    assert all("native-gh-token" not in value for value in secrets[0][0])
+    pull_argv = [argv for argv, _timeout in calls if "pull" in argv]
+    assert pull_argv == [
+        ("docker", "--config", str(registry), "pull", "--quiet", PRIMARY),
+        ("docker", "--config", str(registry), "pull", "--quiet", STANDBY),
+    ]
+    assert not registry.exists()
+
+
+def test_authenticated_prefetch_cleans_registry_on_pull_exception(monkeypatch, tmp_path):
+    registry = tmp_path / "registry"
+    monkeypatch.setattr(host, "REGISTRY_CONFIG", registry)
+    monkeypatch.setattr(host, "_prepare_registry_config", lambda: registry.mkdir())
+    calls = []
+
+    def runner(argv, timeout):
+        calls.append(tuple(argv))
+        return _completed()
+
+    monkeypatch.setattr(
+        host,
+        "_pull_immutable_image",
+        lambda **_kwargs: (_ for _ in ()).throw(host.ActionFailure("image_pull")),
+    )
+
+    with pytest.raises(host.ActionFailure) as failure:
+        host.execute_action(
+            action="prefetch-images",
+            run_id=RUN_ID,
+            primary_image=PRIMARY,
+            standby_image=STANDBY,
+            registry_user="octocat",
+            secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+            action_timeout_seconds=3570,
+            runner=runner,
+            secret_runner=lambda _argv, _timeout, _secret: 0,
+        )
+
+    assert failure.value.failure_code == "image_pull"
+    assert any(argv[-2:] == ("logout", "ghcr.io") for argv in calls)
+    assert not registry.exists()
+
+
+def test_registry_prefetch_rejects_and_removes_preexisting_nondirectory(monkeypatch, tmp_path):
+    registry = tmp_path / "registry"
+    registry.write_text("unsafe", encoding="utf-8")
+    monkeypatch.setattr(host, "REGISTRY_CONFIG", registry)
+
+    with pytest.raises(host.HostError, match="already exists"):
+        host.execute_action(
+            action="prefetch-images",
+            run_id=RUN_ID,
+            primary_image=PRIMARY,
+            standby_image=STANDBY,
+            registry_user="octocat",
+            secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+            action_timeout_seconds=3570,
+            runner=lambda _argv, _timeout: _completed(),
+            secret_runner=lambda _argv, _timeout, _secret: 0,
+        )
+
+    assert not registry.exists()
+
+
+def test_registry_prefetch_cleans_registry_on_login_failure(monkeypatch, tmp_path):
+    registry = tmp_path / "registry"
+    monkeypatch.setattr(host, "REGISTRY_CONFIG", registry)
+    monkeypatch.setattr(host, "_prepare_registry_config", lambda: registry.mkdir())
+
+    with pytest.raises(host.ActionFailure) as failure:
+        host.execute_action(
+            action="prefetch-images",
+            run_id=RUN_ID,
+            primary_image=PRIMARY,
+            standby_image=STANDBY,
+            registry_user="octocat",
+            secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+            action_timeout_seconds=3570,
+            runner=lambda _argv, _timeout: _completed(),
+            secret_runner=lambda _argv, _timeout, _secret: 1,
+        )
+
+    assert failure.value.failure_code == "registry_auth"
+    assert not registry.exists()
+
+
+def test_registry_prefetch_cleans_registry_on_base_exception(monkeypatch, tmp_path):
+    registry = tmp_path / "registry"
+    monkeypatch.setattr(host, "REGISTRY_CONFIG", registry)
+    monkeypatch.setattr(host, "_prepare_registry_config", lambda: registry.mkdir())
+    monkeypatch.setattr(
+        host,
+        "_pull_immutable_image",
+        lambda **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        host.execute_action(
+            action="prefetch-images",
+            run_id=RUN_ID,
+            primary_image=PRIMARY,
+            standby_image=STANDBY,
+            registry_user="octocat",
+            secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+            action_timeout_seconds=3570,
+            runner=lambda _argv, _timeout: _completed(),
+            secret_runner=lambda _argv, _timeout, _secret: 0,
+        )
+
+    assert not registry.exists()
+
+
+def test_registry_cleanup_is_idempotent_before_route_state_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr(host, "REGISTRY_CONFIG", tmp_path / "missing-registry")
+
+    report = host.execute_action(
+        action="cleanup-registry",
+        run_id=RUN_ID,
+        runner=lambda _argv, _timeout: _completed(),
+    )
+
+    assert report["details"] == {"registry_credentials_removed": True}

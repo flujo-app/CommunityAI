@@ -9,6 +9,7 @@ report retains aggregate health, inference stage, ceiling, and cleanup facts onl
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import ipaddress
 import json
@@ -37,6 +38,7 @@ SCHEMA_VERSION = 2
 MAX_LOCAL_JSON_BYTES = 1_000_000
 MAX_COMMAND_OUTPUT_BYTES = 1_000_000
 MAX_REPORT_BYTES = 1_000_000
+MAX_REGISTRY_TOKEN_BYTES = 4096
 MAX_AUTH_SECONDS = 60
 MAX_PROVIDER_SECONDS = 600
 MAX_STARTUP_SECONDS = 3600
@@ -47,11 +49,14 @@ HEALTH_PERIOD_SECONDS = 300
 HEALTH_FRESHNESS_SECONDS = 330
 FUTURE_TOLERANCE_SECONDS = 5
 HOST_ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
-_HOST_ACTION_FAILURE_CODES = frozenset({"image_pull", "host_command"})
+TRANSPORT_SENTINEL_PAYLOAD = base64.b64encode(b"communityai-secret-transport-v1") + b"\n"
+_HOST_ACTION_FAILURE_CODES = frozenset({"registry_auth", "image_pull", "host_command"})
+_HOST_SECRET_FAILURE_CODES = {41: "registry_auth", 42: "image_pull", 43: "host_command"}
 _GIB = 1024**3
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _RUN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,39}$")
+_GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
 _IMAGE_RE = re.compile(r"^ghcr\.io/flujo-app/communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$")
 _AUTHORIZATION_KEYS = {
@@ -237,6 +242,8 @@ class BoundPlan:
 
 
 Runner = Callable[[Sequence[str], int], CommandResult]
+CredentialRunner = Callable[[Sequence[str], int], bytearray]
+SecretRunner = Callable[[Sequence[str], int, bytes], int]
 Clock = Callable[[], float]
 WallClock = Callable[[], datetime]
 Sleeper = Callable[[float], None]
@@ -271,6 +278,138 @@ def _run_bounded(argv: Sequence[str], timeout: int) -> CommandResult:
     if len(completed.stdout) > MAX_COMMAND_OUTPUT_BYTES or len(completed.stderr) > MAX_COMMAND_OUTPUT_BYTES:
         raise ProviderCommandError("provider command output exceeded its bound")
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _run_credential_bounded(argv: Sequence[str], timeout: int) -> bytearray:
+    if (
+        len(argv) != 7
+        or tuple(argv[:4]) != ("gh", "auth", "token", "--hostname")
+        or argv[4] != "github.com"
+        or argv[5] != "--user"
+        or _GITHUB_LOGIN_RE.fullmatch(argv[6]) is None
+        or not 1 <= timeout <= MAX_AUTH_SECONDS
+    ):
+        raise ProviderCommandError("registry credential command contract is invalid")
+    executable = shutil.which("gh")
+    if executable is None:
+        raise ProviderCommandError("native GitHub executable is unavailable")
+    try:
+        completed = subprocess.run(
+            [executable, *argv[1:]],
+            check=False,
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProviderCommandError("native registry credential lookup failed") from exc
+    if completed.returncode != 0 or len(completed.stdout) > MAX_REGISTRY_TOKEN_BYTES:
+        raise ProviderCommandError("native registry credential lookup failed")
+    return bytearray(completed.stdout)
+
+
+def _run_secret_bounded(argv: Sequence[str], timeout: int, secret: bytes) -> int:
+    if (
+        len(argv) != 13
+        or tuple(argv[:3]) != ("gcloud", "compute", "ssh")
+        or _RUN_RE.fullmatch(argv[3]) is None
+        or argv[4] != "--zone"
+        or re.fullmatch(r"[a-z0-9-]{1,63}", argv[5]) is None
+        or argv[6] != "--tunnel-through-iap"
+        or argv[7] != "--project"
+        or re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", argv[8]) is None
+        or tuple(argv[9:12]) != ("--quiet", "--ssh-flag=-T", "--command")
+        or not 1 <= timeout <= MAX_STARTUP_SECONDS
+        or not secret
+        or len(secret) > MAX_REGISTRY_TOKEN_BYTES
+        or not secret.endswith(b"\n")
+        or secret.count(b"\n") != 1
+        or b"\r" in secret
+        or b"\x00" in secret
+        or secret.startswith(b"\xef\xbb\xbf")
+        or any(value < 0x21 or value > 0x7E for value in secret[:-1])
+    ):
+        raise ProviderCommandError("secret transport contract is invalid")
+    try:
+        remote_argv = shlex.split(argv[-1])
+    except ValueError as exc:
+        raise ProviderCommandError("secret transport remote command is invalid") from exc
+    prefix = (
+        "sudo",
+        "-n",
+        "python3",
+        "/var/lib/communityai-route/gcp_public_route_host.py",
+        "--action",
+    )
+    if tuple(remote_argv[:5]) != prefix:
+        raise ProviderCommandError("secret transport remote action is invalid")
+    action = remote_argv[5] if len(remote_argv) > 5 else None
+    primary_image_match = _IMAGE_RE.fullmatch(remote_argv[9]) if len(remote_argv) == 16 else None
+    standby_image_match = _IMAGE_RE.fullmatch(remote_argv[11]) if len(remote_argv) == 16 else None
+    sentinel_valid = (
+        action == "transport-sentinel"
+        and len(remote_argv) == 8
+        and remote_argv[6] == "--run-id"
+        and _RUN_RE.fullmatch(remote_argv[7]) is not None
+    )
+    prefetch_valid = (
+        action == "prefetch-images"
+        and len(remote_argv) == 16
+        and remote_argv[6] == "--run-id"
+        and _RUN_RE.fullmatch(remote_argv[7]) is not None
+        and remote_argv[8] == "--primary-image"
+        and primary_image_match is not None
+        and primary_image_match.group(1) == "qwen3.5-2b"
+        and remote_argv[10] == "--standby-image"
+        and standby_image_match is not None
+        and standby_image_match.group(1) == "gemma-4-e2b"
+        and remote_argv[12] == "--registry-user"
+        and _GITHUB_LOGIN_RE.fullmatch(remote_argv[13]) is not None
+        and remote_argv[14] == "--action-timeout-seconds"
+        and remote_argv[15].isdigit()
+        and MIN_HOST_ACTION_SECONDS <= int(remote_argv[15]) <= MAX_STARTUP_SECONDS
+    )
+    if not sentinel_valid and not prefetch_valid:
+        raise ProviderCommandError("secret transport remote action is invalid")
+    executable = shutil.which("gcloud")
+    if executable is None:
+        raise ProviderCommandError("native GCP executable is unavailable")
+    try:
+        completed = subprocess.run(
+            [executable, *argv[1:]],
+            check=False,
+            shell=False,
+            input=secret,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProviderCommandError("secret transport failed or timed out") from exc
+    return completed.returncode
+
+
+def _strict_visible_line(payload: bytearray, field: str, maximum: int) -> bytearray:
+    try:
+        if (
+            not payload
+            or len(payload) > maximum
+            or not payload.endswith(b"\n")
+            or payload.count(b"\n") != 1
+            or b"\r" in payload
+            or b"\x00" in payload
+            or payload.startswith(b"\xef\xbb\xbf")
+        ):
+            raise ProviderCommandError(f"{field} framing is invalid")
+        value = bytearray(payload[:-1])
+        if not value or any(byte < 0x21 or byte > 0x7E for byte in value):
+            value[:] = b"\x00" * len(value)
+            raise ProviderCommandError(f"{field} bytes are invalid")
+        return value
+    finally:
+        payload[:] = b"\x00" * len(payload)
 
 
 def _regular_bytes(path: Path, maximum: int, field: str) -> bytes:
@@ -807,7 +946,7 @@ def _protected_bootstrap_running(plan: BoundPlan, runner: Runner) -> bool:
     return protected.strip() == b"RUNNING"
 
 
-def _native_preflight(plan: BoundPlan, runner: Runner) -> None:
+def _native_preflight(plan: BoundPlan, runner: Runner) -> str:
     auth = _require_success(
         runner(("gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"), MAX_AUTH_SECONDS),
         "gcloud authentication",
@@ -817,6 +956,19 @@ def _native_preflight(plan: BoundPlan, runner: Runner) -> None:
     _require_success(
         runner(("gh", "auth", "status", "--hostname", "github.com"), MAX_AUTH_SECONDS), "GitHub authentication"
     )
+    raw_login = _require_success(
+        runner(("gh", "api", "--hostname", "github.com", "user", "--jq", ".login"), MAX_AUTH_SECONDS),
+        "GitHub registry identity",
+    )
+    login_bytes = _strict_visible_line(bytearray(raw_login), "GitHub registry identity", 128)
+    try:
+        registry_user = login_bytes.decode("ascii")
+    except UnicodeError as exc:
+        raise ProviderCommandError("GitHub registry identity is invalid") from exc
+    finally:
+        login_bytes[:] = b"\x00" * len(login_bytes)
+    if _GITHUB_LOGIN_RE.fullmatch(registry_user) is None:
+        raise ProviderCommandError("GitHub registry identity is invalid")
     common = ("--project", plan.project)
     machine = _require_success(
         runner(
@@ -889,6 +1041,25 @@ def _native_preflight(plan: BoundPlan, runner: Runner) -> None:
         raise ProviderCommandError("protected bootstrap is not running")
     for index, command in enumerate(plan.provider_plan["verify_cleanup_commands"]):
         _require_success(runner(tuple(command), MAX_PROVIDER_SECONDS), f"initial absence check {index}", empty=True)
+    return registry_user
+
+
+def _registry_token(
+    registry_user: str,
+    runner: Runner,
+    credential_runner: CredentialRunner | None,
+) -> bytearray:
+    argv = ("gh", "auth", "token", "--hostname", "github.com", "--user", registry_user)
+    if credential_runner is None:
+        if runner is _run_bounded:
+            raw = _run_credential_bounded(argv, MAX_AUTH_SECONDS)
+        else:
+            raw = bytearray(_require_success(runner(argv, MAX_AUTH_SECONDS), "GitHub registry credential"))
+    else:
+        raw = credential_runner(argv, MAX_AUTH_SECONDS)
+    if not isinstance(raw, bytearray):
+        raise ProviderCommandError("registry credential runner returned an invalid value")
+    return _strict_visible_line(raw, "GitHub registry credential", MAX_REGISTRY_TOKEN_BYTES)
 
 
 def _parse_instance_verification(payload: bytes) -> str | None:
@@ -1128,6 +1299,54 @@ def _host_action(
     return _remote_command(plan, runner, argv, timeout=timeout, expected_action=action)
 
 
+def _secret_remote_action(
+    plan: BoundPlan,
+    secret_runner: SecretRunner,
+    action: str,
+    secret_payload: bytes,
+    *,
+    registry_user: str | None = None,
+    timeout: int,
+) -> None:
+    if action not in {"transport-sentinel", "prefetch-images"} or not 1 <= timeout <= MAX_STARTUP_SECONDS:
+        raise LifecycleError("secret host action contract is invalid")
+    argv = [
+        "sudo",
+        "-n",
+        "python3",
+        "/var/lib/communityai-route/gcp_public_route_host.py",
+        "--action",
+        action,
+        "--run-id",
+        plan.run_id,
+    ]
+    if action == "prefetch-images":
+        if registry_user is None or _GITHUB_LOGIN_RE.fullmatch(registry_user) is None:
+            raise LifecycleError("registry prefetch user is invalid")
+        action_timeout = timeout - REMOTE_ACTION_RESERVE_SECONDS
+        if action_timeout < MIN_HOST_ACTION_SECONDS:
+            raise LifecycleError("registry prefetch has insufficient bounded time remaining")
+        argv.extend(
+            [
+                "--primary-image",
+                plan.primary.runtime_image_reference,
+                "--standby-image",
+                plan.standby.runtime_image_reference,
+                "--registry-user",
+                registry_user,
+                "--action-timeout-seconds",
+                str(action_timeout),
+            ]
+        )
+    remote = (*_ssh_prefix(plan), "--ssh-flag=-T", "--command", shlex.join(argv))
+    returncode = secret_runner(remote, timeout, secret_payload)
+    if returncode == 0:
+        return
+    if action == "prefetch-images" and returncode in _HOST_SECRET_FAILURE_CODES:
+        raise HostActionError(_HOST_SECRET_FAILURE_CODES[returncode])
+    raise ProviderCommandError("secret host action failed")
+
+
 def _remaining_startup_seconds(deadline: float, clock: Clock) -> int:
     remaining = math.ceil(deadline - clock())
     if remaining < MIN_HOST_ACTION_SECONDS + REMOTE_ACTION_RESERVE_SECONDS:
@@ -1237,6 +1456,8 @@ def execute_lifecycle(
     output_path: Path,
     monitor_seconds: int,
     runner: Runner = _run_bounded,
+    credential_runner: CredentialRunner | None = None,
+    secret_runner: SecretRunner | None = None,
     clock: Clock = time.monotonic,
     wall_clock: WallClock = lambda: datetime.now(timezone.utc),
     sleeper: Sleeper = time.sleep,
@@ -1249,6 +1470,7 @@ def execute_lifecycle(
         "provider_preflight": False,
         "create": False,
         "bootstrap": False,
+        "registry_prefetch": False,
         "primary_inference": False,
         "standby_inference": False,
         "auto_primary": False,
@@ -1270,9 +1492,22 @@ def execute_lifecycle(
     failure_code = None
     public_ipv4 = None
     protected_bootstrap_running = False
+    registry_payload = bytearray()
+    registry_credentials_removed = True
     previous: dict[str, Mapping[str, Any]] | None = None
+    selected_secret_runner = secret_runner
+    if selected_secret_runner is None:
+        if runner is _run_bounded:
+            selected_secret_runner = _run_secret_bounded
+        else:
+            selected_secret_runner = lambda argv, timeout, _secret: runner(argv, timeout).returncode
     try:
-        _native_preflight(plan, runner)
+        registry_user = _native_preflight(plan, runner)
+        token = _registry_token(registry_user, runner, credential_runner)
+        try:
+            registry_payload = bytearray(base64.b64encode(token) + b"\n")
+        finally:
+            token[:] = b"\x00" * len(token)
         stages["native_authentication"] = True
         stages["provider_preflight"] = True
         protected_bootstrap_running = True
@@ -1308,6 +1543,28 @@ def execute_lifecycle(
             sleeper=sleeper,
         )
         stages["bootstrap"] = True
+
+        failure_stage = "registry_transport"
+        _secret_remote_action(
+            plan,
+            selected_secret_runner,
+            "transport-sentinel",
+            TRANSPORT_SENTINEL_PAYLOAD,
+            timeout=min(MAX_PROVIDER_SECONDS, _remaining_startup_seconds(startup_deadline, clock)),
+        )
+        failure_stage = "registry_prefetch"
+        registry_credentials_removed = False
+        _secret_remote_action(
+            plan,
+            selected_secret_runner,
+            "prefetch-images",
+            bytes(registry_payload),
+            registry_user=registry_user,
+            timeout=_remaining_startup_seconds(startup_deadline, clock),
+        )
+        registry_payload[:] = b"\x00" * len(registry_payload)
+        registry_credentials_removed = True
+        stages["registry_prefetch"] = True
 
         failure_stage = "start_primary"
         _host_action(
@@ -1439,6 +1696,13 @@ def execute_lifecycle(
         try:
             if created:
                 try:
+                    registry_cleanup = _host_action(plan, runner, "cleanup-registry")
+                    registry_credentials_removed = (
+                        registry_cleanup.get("details", {}).get("registry_credentials_removed") is True
+                    )
+                except Exception:
+                    pass
+                try:
                     _host_action(plan, runner, "stop-all")
                 except Exception:
                     pass
@@ -1447,16 +1711,24 @@ def execute_lifecycle(
                 except Exception:
                     pass
                 cleanup_deleted, absence = _cleanup_provider(plan, runner)
+                if len(absence) == 6 and all(absence):
+                    registry_credentials_removed = True
                 try:
                     protected_bootstrap_running = _protected_bootstrap_running(plan, runner)
                 except Exception:
                     protected_bootstrap_running = False
             stages["cleanup"] = (
-                len(absence) == 6 and all(absence) and (not stages["provider_preflight"] or protected_bootstrap_running)
+                registry_credentials_removed
+                and len(absence) == 6
+                and all(absence)
+                and (not stages["provider_preflight"] or protected_bootstrap_running)
             )
         finally:
+            registry_payload[:] = b"\x00" * len(registry_payload)
             if not stages["cleanup"]:
                 result = "failed"
+            privacy = dict(_PRIVACY_FIELDS)
+            privacy["credentials_retained"] = not registry_credentials_removed
             report = {
                 "schema_version": SCHEMA_VERSION,
                 "scope": "gcp-public-route-lifecycle-evidence",
@@ -1484,10 +1756,11 @@ def execute_lifecycle(
                     "delete_commands_passed": cleanup_deleted,
                     "absence_checks": absence,
                     "all_absent": len(absence) == 6 and all(absence),
+                    "registry_credentials_removed": registry_credentials_removed,
                 },
                 "protected_bootstrap_running": protected_bootstrap_running,
                 "co_located_fallback_not_redundancy": True,
-                "privacy": dict(_PRIVACY_FIELDS),
+                "privacy": privacy,
                 "complete_release_qualification": False,
             }
             _atomic_report(output_path, report)

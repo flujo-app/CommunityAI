@@ -70,7 +70,10 @@ agent:
   fail-closed [Windows registry-token and remote-script boundary](QUALIFICATION_RUNNER_OPERATIONS.md#windows-registry-token-and-remote-script-boundary).
   Revalidate native auth immediately before paid creation; reject UTF-8 BOM/CRLF drift,
   recover Fly token IDs by exact unique name, revoke them in unconditional cleanup, and
-  preserve Buildx state explicitly when isolating `DOCKER_CONFIG`.
+  preserve Buildx state explicitly when isolating `DOCKER_CONFIG`. A source-bound remote
+  registry action may use the documented sentinel-proved binary/base64 stdin exception only
+  with fixed `sudo -n` IAP transport, no secret argv/environment/output retention, and exact
+  same-action plus lifecycle-finally credential removal.
 
 ### Public-alpha scope boundary
 

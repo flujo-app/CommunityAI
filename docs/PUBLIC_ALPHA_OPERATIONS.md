@@ -141,14 +141,25 @@ Before bootstrap readiness, the startup script must load the regular NVIDIA-mana
 daemon JSON, preserve its runtime keys, set integer `max-concurrent-downloads` to `1`, install
 it through a bounded mode-private fsync/atomic replacement, validate it, and only then restart
 Docker. Readiness records that same fixed value, and host preflight re-reads the bounded regular
-config before live Docker/NVIDIA checks. This serializes multi-gigabyte GHCR blob requests
-without transferring registry credentials.
+config before live Docker/NVIDIA checks. This serializes multi-gigabyte GHCR blob requests.
 
-After bootstrap readiness, the fixed host controller may retry only the same immutable
-digest-qualified `docker pull` at 5-, 15-, 60-, and 120-second backoffs. Every sleep and
-subprocess timeout is clamped to the original one-hour start-action deadline. Pull exhaustion
-is the only `image_pull` failure; the subsequent fixed `docker run` and the whole route-start
-action remain single-shot, with post-pull failure classified only as `host_command`.
+Before paid creation, the lifecycle resolves one exactly validated GitHub login and token from
+native `gh` authentication. The token is never placed in argv, environment, logs, evidence, or
+a local file. After bootstrap, a fixed non-secret sentinel must survive the exact binary/base64
+stdin, no-TTY IAP, and `sudo -n` helper path byte-for-byte before the token may cross it. One
+fixed authenticated prefetch action creates an exact root-owned mode-0700 Docker config under
+`/run`, logs into GHCR by `--password-stdin`, pulls Qwen then Gemma by immutable digest, verifies
+both local digest inventories, and unconditionally logs out and removes the config before it
+returns. The lifecycle repeats idempotent credential removal before route/container and provider
+cleanup, and evidence may set `registry_credentials_removed=true` only after exact removal or
+complete instance/disk absence.
+
+The prefetch may retry only each same immutable digest-qualified pull at 5-, 15-, 60-, and
+120-second backoffs. Every sleep and subprocess timeout is clamped to the original shared
+one-hour startup deadline. Pull exhaustion is the only `image_pull` failure; registry login
+failure is `registry_auth`. After successful prefetch, primary and standby start actions verify
+the exact local digest before their single fixed `docker run`; neither the run nor the whole
+start action is retried, and post-verification failure is only `host_command`.
 
 Do not reserve the USD 26 plan or run any emitted create command until both bounded
 publication-evidence files are committed and the reviewed lifecycle runner enforces

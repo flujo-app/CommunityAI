@@ -778,7 +778,7 @@ def test_first_create_failure_still_runs_cleanup_and_rechecks_bootstrap(tmp_path
     plan.provider_plan["verify_create_commands"] = [["verify", "instance"]]
     cleaned = []
 
-    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: None)
+    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "octocat")
     monkeypatch.setattr(
         lifecycle,
         "_host_action",
@@ -812,9 +812,13 @@ def test_first_create_failure_still_runs_cleanup_and_rechecks_bootstrap(tmp_path
             output_path=output,
             monitor_seconds=0,
             runner=runner,
+            credential_runner=lambda _argv, _timeout: bytearray(b"unique-secret-value\n"),
         )
 
-    report = json.loads(output.read_text(encoding="utf-8"))
+    evidence_text = output.read_text(encoding="utf-8")
+    assert "unique-secret-value" not in evidence_text
+    assert "octocat" not in evidence_text
+    report = json.loads(evidence_text)
     assert cleaned == [plan.run_id]
     assert report["cleanup"]["all_absent"] is True
     assert report["protected_bootstrap_running"] is True
@@ -827,7 +831,7 @@ def test_host_action_failure_code_is_recorded_before_cleanup(tmp_path, monkeypat
     plan.provider_plan["create_commands"] = []
     plan.provider_plan["verify_create_commands"] = [["verify", "instance"]]
 
-    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: None)
+    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: "octocat")
     monkeypatch.setattr(
         lifecycle,
         "_await_instance_verification",
@@ -860,6 +864,7 @@ def test_host_action_failure_code_is_recorded_before_cleanup(tmp_path, monkeypat
             output_path=output,
             monitor_seconds=0,
             runner=lambda _argv, _timeout: lifecycle.CommandResult(0, b"", b""),
+            credential_runner=lambda _argv, _timeout: bytearray(b"token\n"),
         )
 
     report = json.loads(output.read_text(encoding="utf-8"))
@@ -870,6 +875,7 @@ def test_host_action_failure_code_is_recorded_before_cleanup(tmp_path, monkeypat
         "delete_commands_passed": 5,
         "absence_checks": [True] * 6,
         "all_absent": True,
+        "registry_credentials_removed": True,
     }
     assert report["protected_bootstrap_running"] is True
 
@@ -908,3 +914,214 @@ def test_report_privacy_contract_has_no_sensitive_retention():
         "provider_output_retained": False,
         "command_argv_retained": False,
     }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        bytearray(),
+        bytearray(b"token\r\n"),
+        bytearray(b"token\nextra\n"),
+        bytearray(b"\xef\xbb\xbftoken\n"),
+        bytearray(b"to\x00ken\n"),
+        bytearray(b"token \n"),
+        bytearray(b"\x80token\n"),
+    ],
+)
+def test_registry_credential_line_rejects_ambiguous_bytes(payload):
+    with pytest.raises(lifecycle.ProviderCommandError):
+        lifecycle._strict_visible_line(payload, "credential", 4096)
+
+    assert set(payload) <= {0}
+
+
+def test_registry_token_is_bound_to_validated_native_gh_identity():
+    calls = []
+
+    def credential_runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        return bytearray(b"native-gh-token\n")
+
+    token = lifecycle._registry_token(
+        "octocat",
+        lambda _argv, _timeout: lifecycle.CommandResult(0, b"", b""),
+        credential_runner,
+    )
+
+    assert bytes(token) == b"native-gh-token"
+    assert calls == [
+        (
+            ("gh", "auth", "token", "--hostname", "github.com", "--user", "octocat"),
+            lifecycle.MAX_AUTH_SECONDS,
+        )
+    ]
+
+
+def test_secret_remote_sentinel_uses_exact_iap_no_tty_command_without_secret_in_argv():
+    calls = []
+    fake_secret = b"ZmFrZS1zZWNyZXQ=\n"
+
+    def secret_runner(argv, timeout, secret):
+        calls.append((tuple(argv), timeout, bytes(secret)))
+        return 0
+
+    lifecycle._secret_remote_action(
+        _dummy_plan(),
+        secret_runner,
+        "transport-sentinel",
+        fake_secret,
+        timeout=600,
+    )
+
+    argv, timeout, secret = calls[0]
+    assert argv[:3] == ("gcloud", "compute", "ssh")
+    assert "--tunnel-through-iap" in argv
+    assert "--ssh-flag=-T" in argv
+    assert argv.count("--command") == 1
+    remote = shlex.split(argv[-1])
+    assert remote[:4] == [
+        "sudo",
+        "-n",
+        "python3",
+        "/var/lib/communityai-route/gcp_public_route_host.py",
+    ]
+    assert remote[remote.index("--action") + 1] == "transport-sentinel"
+    assert fake_secret.decode().strip() not in repr(argv)
+    assert secret == fake_secret
+    assert timeout == 600
+
+
+def test_secret_transport_sentinel_failure_blocks_registry_prefetch():
+    with pytest.raises(lifecycle.ProviderCommandError, match="secret host action failed"):
+        lifecycle._secret_remote_action(
+            _dummy_plan(),
+            lambda _argv, _timeout, _secret: 255,
+            "transport-sentinel",
+            lifecycle.TRANSPORT_SENTINEL_PAYLOAD,
+            timeout=600,
+        )
+
+
+@pytest.mark.parametrize(
+    "returncode,failure_code",
+    [(41, "registry_auth"), (42, "image_pull"), (43, "host_command")],
+)
+def test_secret_registry_prefetch_maps_only_allowlisted_failure_codes(returncode, failure_code):
+    with pytest.raises(lifecycle.HostActionError) as failure:
+        lifecycle._secret_remote_action(
+            _dummy_plan(),
+            lambda _argv, _timeout, _secret: returncode,
+            "prefetch-images",
+            b"bmF0aXZlLWdoLXRva2Vu\n",
+            registry_user="octocat",
+            timeout=3600,
+        )
+
+    assert failure.value.failure_code == failure_code
+
+
+def test_secret_runner_uses_binary_stdin_and_discards_all_output(monkeypatch):
+    plan = _dummy_plan()
+    remote = (
+        *lifecycle._ssh_prefix(plan),
+        "--ssh-flag=-T",
+        "--command",
+        shlex.join(
+            (
+                "sudo",
+                "-n",
+                "python3",
+                "/var/lib/communityai-route/gcp_public_route_host.py",
+                "--action",
+                "transport-sentinel",
+                "--run-id",
+                plan.run_id,
+            )
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(lifecycle.shutil, "which", lambda name: r"C:\tools\gcloud.CMD" if name == "gcloud" else None)
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return lifecycle.subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(lifecycle.subprocess, "run", run)
+    secret = b"ZmFrZS1zZWNyZXQ=\n"
+
+    assert lifecycle._run_secret_bounded(remote, 600, secret) == 0
+    argv, kwargs = calls[0]
+    assert argv[0] == r"C:\tools\gcloud.CMD"
+    assert kwargs["shell"] is False
+    assert kwargs["input"] == secret
+    assert kwargs["stdout"] is lifecycle.subprocess.DEVNULL
+    assert kwargs["stderr"] is lifecycle.subprocess.DEVNULL
+    assert secret.decode().strip() not in repr(argv)
+
+
+def test_secret_runner_rejects_extra_remote_arguments_before_subprocess(monkeypatch):
+    plan = _dummy_plan()
+    remote = (
+        *lifecycle._ssh_prefix(plan),
+        "--ssh-flag=-T",
+        "--command",
+        shlex.join(
+            (
+                "sudo",
+                "-n",
+                "python3",
+                "/var/lib/communityai-route/gcp_public_route_host.py",
+                "--action",
+                "transport-sentinel",
+                "--run-id",
+                plan.run_id,
+                "--extra",
+                "command",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        lifecycle.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("subprocess must not run"),
+    )
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="remote action"):
+        lifecycle._run_secret_bounded(remote, 600, lifecycle.TRANSPORT_SENTINEL_PAYLOAD)
+
+
+def test_secret_runner_rejects_swapped_image_roles_before_subprocess(monkeypatch):
+    plan = _dummy_plan()
+    remote = (
+        *lifecycle._ssh_prefix(plan),
+        "--ssh-flag=-T",
+        "--command",
+        shlex.join(
+            (
+                "sudo",
+                "-n",
+                "python3",
+                "/var/lib/communityai-route/gcp_public_route_host.py",
+                "--action",
+                "prefetch-images",
+                "--run-id",
+                plan.run_id,
+                "--primary-image",
+                plan.standby.runtime_image_reference,
+                "--standby-image",
+                plan.primary.runtime_image_reference,
+                "--registry-user",
+                "octocat",
+                "--action-timeout-seconds",
+                "3600",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        lifecycle.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("subprocess must not run"),
+    )
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="remote action"):
+        lifecycle._run_secret_bounded(remote, 3600, b"bmF0aXZlLWdoLXRva2Vu\n")
