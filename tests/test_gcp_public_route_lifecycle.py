@@ -557,6 +557,88 @@ def test_remote_action_rejects_missing_or_duplicate_acknowledgement_markers():
             )
 
 
+def test_remote_action_propagates_one_allowlisted_failure_code():
+    payload = {
+        "schema_version": 1,
+        "scope": "gcp-public-route-host-action",
+        "result": "failed",
+        "action": "start-primary",
+        "details": {"failure_code": "image_pull"},
+    }
+    raw = lifecycle.HOST_ACK_PREFIX + json.dumps(payload).encode()
+
+    with pytest.raises(lifecycle.HostActionError) as failure:
+        lifecycle._remote_command(
+            _dummy_plan(),
+            lambda _argv, _timeout: lifecycle.CommandResult(1, raw, b"discarded provider output"),
+            ("sudo", "true"),
+            expected_action="start-primary",
+        )
+
+    assert failure.value.failure_code == "image_pull"
+    assert str(failure.value) == "fixed host action failed"
+
+
+@pytest.mark.parametrize(
+    ("returncode", "payload"),
+    [
+        (
+            0,
+            {
+                "schema_version": 1,
+                "scope": "gcp-public-route-host-action",
+                "result": "failed",
+                "action": "start-primary",
+                "details": {"failure_code": "image_pull"},
+            },
+        ),
+        (
+            1,
+            {
+                "schema_version": 1,
+                "scope": "gcp-public-route-host-action",
+                "result": "passed",
+                "action": "start-primary",
+                "details": {},
+            },
+        ),
+        (
+            1,
+            {
+                "schema_version": 1,
+                "scope": "gcp-public-route-host-action",
+                "result": "failed",
+                "action": "start-primary",
+                "details": {"failure_code": "provider_output"},
+            },
+        ),
+        (
+            1,
+            {
+                "schema_version": 1,
+                "scope": "gcp-public-route-host-action",
+                "result": "failed",
+                "action": "start-primary",
+                "details": {"failure_code": "image_pull"},
+                "extra": True,
+            },
+        ),
+    ],
+)
+def test_remote_action_rejects_untrusted_failure_acknowledgements(returncode, payload):
+    raw = lifecycle.HOST_ACK_PREFIX + json.dumps(payload).encode()
+
+    with pytest.raises(lifecycle.ProviderCommandError) as failure:
+        lifecycle._remote_command(
+            _dummy_plan(),
+            lambda _argv, _timeout: lifecycle.CommandResult(returncode, raw, b"discarded"),
+            ("sudo", "true"),
+            expected_action="start-primary",
+        )
+
+    assert not isinstance(failure.value, lifecycle.HostActionError)
+
+
 def test_startup_remaining_time_is_anchored_to_one_sixty_minute_deadline():
     deadline = 4600.0
 
@@ -737,6 +819,59 @@ def test_first_create_failure_still_runs_cleanup_and_rechecks_bootstrap(tmp_path
     assert report["cleanup"]["all_absent"] is True
     assert report["protected_bootstrap_running"] is True
     assert report["result"] == "failed"
+    assert report["failure_code"] is None
+
+
+def test_host_action_failure_code_is_recorded_before_cleanup(tmp_path, monkeypatch):
+    plan = _dummy_plan()
+    plan.provider_plan["create_commands"] = []
+    plan.provider_plan["verify_create_commands"] = [["verify", "instance"]]
+
+    monkeypatch.setattr(lifecycle, "_native_preflight", lambda plan, runner: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_await_instance_verification",
+        lambda *_args, **_kwargs: "34.42.181.232",
+    )
+    monkeypatch.setattr(lifecycle, "_install_helpers", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(lifecycle, "_await_host_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(lifecycle, "_cleanup_provider", lambda plan, runner: (5, [True] * 6))
+    monkeypatch.setattr(lifecycle, "_protected_bootstrap_running", lambda plan, runner: True)
+
+    def host_action(plan, runner, action, **kwargs):
+        if action == "start-primary":
+            raise lifecycle.HostActionError("image_pull")
+        return {
+            "schema_version": 1,
+            "scope": "gcp-public-route-host-action",
+            "result": "passed",
+            "action": action,
+            "details": {},
+        }
+
+    monkeypatch.setattr(lifecycle, "_host_action", host_action)
+    output = tmp_path / "failed-host-action.json"
+
+    with pytest.raises(lifecycle.HostActionError):
+        lifecycle.execute_lifecycle(
+            plan,
+            host_controller_path=HOST,
+            acceptance_probe_path=ACCEPTANCE,
+            output_path=output,
+            monitor_seconds=0,
+            runner=lambda _argv, _timeout: lifecycle.CommandResult(0, b"", b""),
+        )
+
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["schema_version"] == 2
+    assert report["failure_stage"] == "start_primary"
+    assert report["failure_code"] == "image_pull"
+    assert report["cleanup"] == {
+        "delete_commands_passed": 5,
+        "absence_checks": [True] * 6,
+        "all_absent": True,
+    }
+    assert report["protected_bootstrap_running"] is True
 
 
 def test_cleanup_continues_after_delete_failure_and_requires_six_empty_checks():

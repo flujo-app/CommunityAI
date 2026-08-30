@@ -33,7 +33,7 @@ try:
 except ModuleNotFoundError:
     import qualification_cost_guard as cost_guard  # type: ignore[no-redef]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_LOCAL_JSON_BYTES = 1_000_000
 MAX_COMMAND_OUTPUT_BYTES = 1_000_000
 MAX_REPORT_BYTES = 1_000_000
@@ -47,6 +47,7 @@ HEALTH_PERIOD_SECONDS = 300
 HEALTH_FRESHNESS_SECONDS = 330
 FUTURE_TOLERANCE_SECONDS = 5
 HOST_ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
+_HOST_ACTION_FAILURE_CODES = frozenset({"image_pull", "host_command"})
 _GIB = 1024**3
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -188,6 +189,16 @@ class LifecycleError(ValueError):
 
 class ProviderCommandError(LifecycleError):
     """A bounded native provider command failed."""
+
+
+class HostActionError(ProviderCommandError):
+    """A fixed host action reported one privacy-safe allowlisted failure code."""
+
+    def __init__(self, failure_code: str) -> None:
+        if failure_code not in _HOST_ACTION_FAILURE_CODES:
+            raise ValueError("host action failure code is invalid")
+        self.failure_code = failure_code
+        super().__init__("fixed host action failed")
 
 
 @dataclass(frozen=True)
@@ -960,27 +971,52 @@ def _ssh_prefix(plan: BoundPlan) -> tuple[str, ...]:
 
 
 def _remote_command(
-    plan: BoundPlan, runner: Runner, argv: Sequence[str], timeout: int = MAX_PROVIDER_SECONDS
+    plan: BoundPlan,
+    runner: Runner,
+    argv: Sequence[str],
+    timeout: int = MAX_PROVIDER_SECONDS,
+    *,
+    expected_action: str | None = None,
 ) -> Mapping[str, Any]:
     if any(not value or "\n" in value or "\r" in value or "\x00" in value for value in argv):
         raise ProviderCommandError("remote fixed action argv is invalid")
     shell_command = shlex.join(tuple(argv))
     result = runner((*_ssh_prefix(plan), "--command", shell_command), timeout)
-    raw = _require_success(result, "fixed host action")
+    raw = result.stdout
     if len(raw) > 65_536:
         raise ProviderCommandError("fixed host acknowledgement is unbounded")
     framed = [line[len(HOST_ACK_PREFIX) :] for line in raw.splitlines() if line.startswith(HOST_ACK_PREFIX)]
     if len(framed) != 1:
+        if result.returncode != 0:
+            raise ProviderCommandError("fixed host action failed")
         raise ProviderCommandError("fixed host acknowledgement is invalid")
     try:
         value = json.loads(framed[0].decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise ProviderCommandError("fixed host acknowledgement is invalid") from exc
+    action_matches = isinstance(value, dict) and (expected_action is None or value.get("action") == expected_action)
+    if result.returncode != 0:
+        details = value.get("details") if isinstance(value, dict) else None
+        if (
+            isinstance(value, dict)
+            and set(value) == {"schema_version", "scope", "result", "action", "details"}
+            and value.get("schema_version") == 1
+            and value.get("scope") == "gcp-public-route-host-action"
+            and value.get("result") == "failed"
+            and action_matches
+            and isinstance(details, dict)
+            and set(details) == {"failure_code"}
+            and details.get("failure_code") in _HOST_ACTION_FAILURE_CODES
+        ):
+            raise HostActionError(str(details["failure_code"]))
+        raise ProviderCommandError("fixed host action failed")
     if (
         not isinstance(value, dict)
+        or set(value) != {"schema_version", "scope", "result", "action", "details"}
         or value.get("schema_version") != 1
         or value.get("scope") != "gcp-public-route-host-action"
         or value.get("result") != "passed"
+        or not action_matches
         or not isinstance(value.get("details"), dict)
     ):
         raise ProviderCommandError("fixed host acknowledgement schema is invalid")
@@ -1089,7 +1125,7 @@ def _host_action(
         if action_timeout < MIN_HOST_ACTION_SECONDS:
             raise LifecycleError("fixed host action has insufficient bounded time remaining")
         argv.extend(["--action-timeout-seconds", str(action_timeout)])
-    return _remote_command(plan, runner, argv, timeout=timeout)
+    return _remote_command(plan, runner, argv, timeout=timeout, expected_action=action)
 
 
 def _remaining_startup_seconds(deadline: float, clock: Clock) -> int:
@@ -1231,6 +1267,7 @@ def execute_lifecycle(
     absence = [False] * 6
     result = "failed"
     failure_stage = "native_authentication"
+    failure_code = None
     public_ipv4 = None
     protected_bootstrap_running = False
     previous: dict[str, Mapping[str, Any]] | None = None
@@ -1393,6 +1430,9 @@ def execute_lifecycle(
         stages["monitor"] = True
         result = "passed"
         failure_stage = ""
+    except HostActionError as exc:
+        failure_code = exc.failure_code
+        raise
     except BaseException:
         raise
     finally:
@@ -1436,6 +1476,7 @@ def execute_lifecycle(
                 ],
                 "stages": stages,
                 "failure_stage": failure_stage or None,
+                "failure_code": failure_code,
                 "elapsed_seconds": round(max(0.0, clock() - started), 3),
                 "health_sample_count": health_samples,
                 "observed_maxima_bytes": maxima,

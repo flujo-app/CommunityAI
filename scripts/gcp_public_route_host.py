@@ -29,6 +29,7 @@ MAX_OUTPUT_BYTES = 65_536
 MAX_COMMAND_OUTPUT_BYTES = 1_000_000
 MAX_HEALTH_BYTES = 4096
 PULL_RETRY_DELAYS_SECONDS = (5.0, 15.0)
+_ACTION_FAILURE_CODES = frozenset({"image_pull", "host_command"})
 ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
 STATE_ROOT = Path("/var/lib/communityai-route")
 BOOTSTRAP_READY = Path("/var/lib/communityai-bootstrap/runtime-ready.json")
@@ -74,6 +75,16 @@ class HostError(ValueError):
 
 class CommandError(HostError):
     """A fixed host subprocess failed or exceeded its output boundary."""
+
+
+class ActionFailure(CommandError):
+    """A fixed start action failed at one privacy-safe allowlisted boundary."""
+
+    def __init__(self, failure_code: str) -> None:
+        if failure_code not in _ACTION_FAILURE_CODES:
+            raise ValueError("host action failure code is invalid")
+        self.failure_code = failure_code
+        super().__init__("fixed host action failed")
 
 
 Runner = Callable[[Sequence[str], int], subprocess.CompletedProcess[bytes]]
@@ -134,7 +145,7 @@ def _pull_immutable_image(
             return
         except CommandError as exc:
             last_error = exc
-    raise CommandError("immutable image pull failed within its bounded retry window") from last_error
+    raise ActionFailure("image_pull") from last_error
 
 
 def _strict_json_bytes(payload: bytes, field: str, maximum: int) -> Mapping[str, Any]:
@@ -349,46 +360,49 @@ def _start(
     remaining = action_deadline - time.monotonic()
     if remaining < 1:
         raise HostError("route start exhausted its bounded action timeout")
-    runner(
-        (
-            "docker",
-            "run",
-            "--detach",
-            "--name",
-            container,
-            "--restart",
-            "no",
-            "--gpus",
-            "all",
-            "--read-only",
-            "--security-opt",
-            "no-new-privileges",
-            "--cap-drop",
-            "ALL",
-            "--pids-limit",
-            "1024",
-            "--memory",
-            "30g",
-            "--tmpfs",
-            "/tmp/communityai:rw,nosuid,nodev,noexec,size=256m,uid=65532,gid=65532,mode=700",
-            "--mount",
-            f"type=bind,source={route_dir},target=/run/communityai",
-            "--publish",
-            f"{port}:{port}",
-            "--env",
-            f"COMMUNITYAI_PUBLIC_ROUTE_CANDIDATE={candidate}",
-            "--env",
-            f"COMMUNITYAI_PUBLIC_ROUTE_IPV4={public_ipv4}",
-            "--env",
-            f"COMMUNITYAI_PUBLIC_ROUTE_INITIAL_PEER={initial_peer}",
-            "--env",
-            "HF_HUB_OFFLINE=1",
-            "--env",
-            "TRANSFORMERS_OFFLINE=1",
-            image,
-        ),
-        min(300, max(1, math.ceil(remaining))),
-    )
+    try:
+        runner(
+            (
+                "docker",
+                "run",
+                "--detach",
+                "--name",
+                container,
+                "--restart",
+                "no",
+                "--gpus",
+                "all",
+                "--read-only",
+                "--security-opt",
+                "no-new-privileges",
+                "--cap-drop",
+                "ALL",
+                "--pids-limit",
+                "1024",
+                "--memory",
+                "30g",
+                "--tmpfs",
+                "/tmp/communityai:rw,nosuid,nodev,noexec,size=256m,uid=65532,gid=65532,mode=700",
+                "--mount",
+                f"type=bind,source={route_dir},target=/run/communityai",
+                "--publish",
+                f"{port}:{port}",
+                "--env",
+                f"COMMUNITYAI_PUBLIC_ROUTE_CANDIDATE={candidate}",
+                "--env",
+                f"COMMUNITYAI_PUBLIC_ROUTE_IPV4={public_ipv4}",
+                "--env",
+                f"COMMUNITYAI_PUBLIC_ROUTE_INITIAL_PEER={initial_peer}",
+                "--env",
+                "HF_HUB_OFFLINE=1",
+                "--env",
+                "TRANSFORMERS_OFFLINE=1",
+                image,
+            ),
+            min(300, max(1, math.ceil(remaining))),
+        )
+    except CommandError as exc:
+        raise ActionFailure("host_command") from exc
     routes[candidate] = {
         "container": container,
         "image": image,
@@ -756,6 +770,18 @@ def _encode_acknowledgement(report: Mapping[str, Any]) -> bytes:
     return framed
 
 
+def _action_failure_report(action: str, failure_code: str) -> Mapping[str, Any]:
+    if action not in _ACTIONS or failure_code not in _ACTION_FAILURE_CODES:
+        raise HostError("host action failure acknowledgement is invalid")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "scope": "gcp-public-route-host-action",
+        "result": "failed",
+        "action": action,
+        "details": {"failure_code": failure_code},
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if os.name != "posix" or os.geteuid() != 0:
@@ -773,6 +799,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             action_timeout_seconds=args.action_timeout_seconds,
         )
         payload = _encode_acknowledgement(report)
+    except ActionFailure as exc:
+        payload = _encode_acknowledgement(_action_failure_report(args.action, exc.failure_code))
+        sys.stdout.buffer.write(payload)
+        return 1
     except HostError as exc:
         print(f"public-route host failed: {exc}", file=sys.stderr)
         return 1

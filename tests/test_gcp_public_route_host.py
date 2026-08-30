@@ -115,6 +115,36 @@ def test_start_builds_one_shell_free_bounded_docker_argv(monkeypatch, tmp_path):
     assert state["private"]["initial_peer"] == INITIAL_PEER
 
 
+def test_start_classifies_post_pull_command_failure_without_retry(monkeypatch, tmp_path):
+    monkeypatch.setattr(host, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(host.os, "chown", lambda *_args: None, raising=False)
+    calls = []
+
+    def runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        if argv[:3] == ("docker", "run", "--detach"):
+            raise host.CommandError("container start failed")
+        return _completed()
+
+    with pytest.raises(host.ActionFailure) as failure:
+        host.execute_action(
+            action="start-primary",
+            run_id=RUN_ID,
+            primary_image=PRIMARY,
+            public_ipv4="34.42.181.232",
+            initial_peer=INITIAL_PEER,
+            acceptance_digest="sha256:" + "d" * 64,
+            action_timeout_seconds=3570,
+            runner=runner,
+        )
+
+    assert failure.value.failure_code == "host_command"
+    assert [call[0][:3] for call in calls] == [
+        ("docker", "pull", "--quiet"),
+        ("docker", "run", "--detach"),
+    ]
+
+
 def test_bootstrap_preflight_requires_exact_pinned_readiness(monkeypatch, tmp_path):
     readiness = tmp_path / "runtime-ready.json"
     readiness.write_text(
@@ -184,6 +214,21 @@ def test_host_acknowledgement_is_bounded_and_marker_framed():
 
     assert framed.startswith(host.ACK_PREFIX)
     assert json.loads(framed[len(host.ACK_PREFIX) :]) == report
+
+
+def test_action_failure_acknowledgement_contains_only_allowlisted_code():
+    report = host._action_failure_report("start-primary", "image_pull")
+    framed = host._encode_acknowledgement(report)
+
+    assert json.loads(framed[len(host.ACK_PREFIX) :]) == {
+        "schema_version": 1,
+        "scope": "gcp-public-route-host-action",
+        "result": "failed",
+        "action": "start-primary",
+        "details": {"failure_code": "image_pull"},
+    }
+    with pytest.raises(host.HostError, match="acknowledgement"):
+        host._action_failure_report("start-primary", "provider_stderr")
 
 
 def test_log_accounting_rejects_missing_relative_or_nonregular_paths(tmp_path):
@@ -269,7 +314,7 @@ def test_immutable_pull_fails_closed_when_retry_delay_exhausts_deadline():
         calls.append((tuple(argv), timeout))
         raise host.CommandError("persistent pull failure")
 
-    with pytest.raises(host.CommandError, match="bounded retry window"):
+    with pytest.raises(host.ActionFailure) as failure:
         host._pull_immutable_image(
             image=PRIMARY,
             deadline=10.0,
@@ -279,4 +324,5 @@ def test_immutable_pull_fails_closed_when_retry_delay_exhausts_deadline():
             sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
         )
 
+    assert failure.value.failure_code == "image_pull"
     assert [timeout for _argv, timeout in calls] == [10, 5]
