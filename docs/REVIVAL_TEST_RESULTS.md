@@ -2163,3 +2163,46 @@ non-symlink readiness file before reading. A completed malformed schema still fa
 The cache-lifecycle focus passes 12 tests and the cost/cache/route lifecycle focus passes 159.
 The expanded provider-free Gate 11 matrix passes 258 with two expected platform skips. Black,
 isort, Bash syntax, and the scoped diff check pass.
+
+
+## Gate 11 cache F upstream-visibility failure and fail-fast cleanup
+
+On 2026-08-30, cache run `cache-20260830-f` used source
+`bff0c3203191725928246ad3e13deb01ffbab8de`, provider plan
+`sha256:735cfd847291229571529c8f640fc76005e340a29680806295dad33a7e1a1fb6`,
+and a USD 10 maximum. It passed exact private repository creation, the keyless ephemeral
+reader identity, and builder creation before entering concurrent Qwen/Gemma cache warm.
+
+After approximately one hour, a bounded serial classification proved that both image pulls
+had emitted authentication/daemon failures and the startup script had exited nonzero. No
+readiness acknowledgement existed, so the old controller would have waited for its four-hour
+deadline despite a terminal bootstrap result. Native `gh` metadata then proved both exact
+GHCR public-route packages were still `private`; Artifact Registry's credential-free remote
+upstream therefore could not pull them anonymously. No raw serial/provider response,
+credential, endpoint, path, command argv, or account identity is retained.
+
+The controller was interrupted only after the terminal startup failure was proved.
+[Sanitized post-failure verification](evidence/cache-20260830-f-post-failure-verification.json)
+records all six exact cleanup commands and absence checks passing, the fixed repository
+deleted and absent, the ephemeral identity removed with no key, no public access or retained
+credential, and `communityai-bootstrap-1` still running. The USD 10 reservation is
+`CLEANED-RELEASED`.
+
+The corrected cache bootstrap now removes its isolated Docker credentials and atomically
+publishes a strict failure acknowledgement on every nonzero exit. The lifecycle recognizes
+only that exact credential-clean failure envelope and begins cleanup on the next poll.
+Before any GCP mutation it also revalidates native GitHub authentication and requires both
+fixed GHCR packages to report `public` visibility. A private or malformed response fails
+before protected-bootstrap or resource creation checks.
+
+Verification:
+
+- focused cache lifecycle: 14 passed;
+- expanded provider-free Gate 11 matrix: 260 passed, 2 expected platform skips;
+- Black and isort checks passed;
+- Git Bash syntax validation passed for the cache bootstrap;
+- `git diff --check` passed (existing Windows line-ending warnings only).
+
+The next cache reservation remains blocked until the two GHCR package settings are
+explicitly changed from private to public. GitHub documents that transition as irreversible,
+so no automated visibility mutation was attempted.

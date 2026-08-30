@@ -32,6 +32,17 @@ READY_KEYS = {
     "images_prefetched",
     "registry_credentials_removed",
 }
+FAILURE_READY_KEYS = {
+    "schema_version",
+    "scope",
+    "result",
+    "failure_code",
+    "registry_credentials_removed",
+}
+UPSTREAM_PACKAGES = (
+    "communityai-public-route-qwen3.5-2b",
+    "communityai-public-route-gemma-4-e2b",
+)
 PRIVACY = {
     "credentials_retained": False,
     "paths_retained": False,
@@ -86,6 +97,29 @@ def _success(result: route_lifecycle.CommandResult, field: str, *, empty: bool =
     if empty and result.stdout.strip():
         raise CacheLifecycleError(f"{field} did not prove absence")
     return result.stdout
+
+
+def _require_public_upstreams(runner: Runner) -> None:
+    _success(
+        runner(("gh", "auth", "status", "--hostname", "github.com"), route_lifecycle.MAX_AUTH_SECONDS),
+        "gh authentication",
+    )
+    for package in UPSTREAM_PACKAGES:
+        visibility = _success(
+            runner(
+                (
+                    "gh",
+                    "api",
+                    f"users/flujo-app/packages/container/{package}",
+                    "--jq",
+                    ".visibility",
+                ),
+                route_lifecycle.MAX_AUTH_SECONDS,
+            ),
+            "GHCR package visibility",
+        )
+        if visibility.strip() != b"public":
+            raise CacheLifecycleError("GHCR package is not public")
 
 
 def _image_spec(plan: Mapping[str, Any], role: str) -> Mapping[str, Any]:
@@ -476,6 +510,15 @@ def _wait_cache_ready(plan: BoundCachePlan, runner: Runner, *, clock: Clock, sle
                 and value.get("registry_credentials_removed") is True
             ):
                 return
+            if (
+                set(value) == FAILURE_READY_KEYS
+                and value.get("schema_version") == 1
+                and value.get("scope") == "communityai-public-route-cache-bootstrap"
+                and value.get("result") == "failed"
+                and value.get("failure_code") == "cache_bootstrap_failed"
+                and value.get("registry_credentials_removed") is True
+            ):
+                raise CacheLifecycleError("cache bootstrap failed")
             raise CacheLifecycleError("cache bootstrap acknowledgement is invalid")
         if clock() >= deadline:
             raise CacheLifecycleError("cache prewarm timed out")
@@ -528,6 +571,8 @@ def execute_cache_lifecycle(
         )
         if not auth.strip() or len(auth) > 4096:
             raise CacheLifecycleError("gcloud authentication is unavailable")
+        stage = "upstream_visibility"
+        _require_public_upstreams(runner)
         protected_running = _protected_bootstrap_running(plan, runner)
         if not protected_running:
             raise CacheLifecycleError("protected bootstrap is not running")

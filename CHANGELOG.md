@@ -161,6 +161,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   intentionally retained no failed remote bytes, so the exact remote cause remains unclaimed.
   Readiness is now published by atomic rename, and the fixed poller excludes empty, partial,
   symlinked, or non-regular files before strict schema validation.
+  Cache attempt F reached the private concurrent warm path, but both GHCR pulls had already
+  failed authentication because the two route packages were still private; the old controller
+  continued polling because no failure acknowledgement existed. The stopped attempt released
+  its reservation after exact repository deletion, six temporary-resource absences, and
+  protected-bootstrap verification. Cache bootstrap failures now publish one atomic,
+  credential-clean structured failure record, so the controller cleans up on its next poll.
+  Before any provider mutation, the lifecycle also revalidates native GitHub authentication
+  and requires both exact GHCR public-route packages to report `public` visibility.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

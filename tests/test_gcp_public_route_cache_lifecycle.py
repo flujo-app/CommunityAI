@@ -136,6 +136,26 @@ def _ready():
     ).encode()
 
 
+def _failed_ready():
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "scope": "communityai-public-route-cache-bootstrap",
+            "result": "failed",
+            "failure_code": "cache_bootstrap_failed",
+            "registry_credentials_removed": True,
+        }
+    ).encode()
+
+
+def _github_public(argv):
+    if argv[:4] == ("gh", "auth", "status", "--hostname"):
+        return route.CommandResult(0, b"", b"")
+    if argv[:2] == ("gh", "api"):
+        return route.CommandResult(0, b"public\n", b"")
+    return None
+
+
 def _enabled_service(argv):
     service = (
         "iam.googleapis.com"
@@ -153,7 +173,11 @@ def test_cache_bootstrap_uses_ephemeral_metadata_identity_without_public_access(
     assert "--username oauth2accesstoken --password-stdin" in body
     assert 'docker --config "${REGISTRY_CONFIG}" pull' in body
     assert 'rm -rf -- "${REGISTRY_CONFIG}"' in body
+    assert "cleanup_registry() {\n  access_token=''\n  token_payload=''" in body
+    assert "  cleanup_registry\n  if [[ ${status} -ne 0 ]]; then" in body
     assert '"registry_credentials_removed":true' in body
+    assert '"failure_code":"cache_bootstrap_failed"' in body
+    assert "trap fail_closed EXIT" in body
     assert 'READY_TEMP="${READY_FILE}.tmp"' in body
     assert '>"${READY_TEMP}"' in body
     assert 'mv -f -- "${READY_TEMP}" "${READY_FILE}"' in body
@@ -161,7 +185,7 @@ def test_cache_bootstrap_uses_ephemeral_metadata_identity_without_public_access(
     assert "allUsers" not in body
     assert "service-account-key" not in body
     assert body.index("--password-stdin") < body.index('pull_one "${primary_image}"')
-    assert body.rindex("cleanup_registry") < body.index("registry_credentials_removed")
+    assert body.rindex("cleanup_registry") < body.rindex("registry_credentials_removed")
 
 
 def test_cache_ready_probe_waits_for_atomic_nonempty_regular_file(tmp_path):
@@ -193,6 +217,21 @@ def test_cache_ready_probe_waits_for_atomic_nonempty_regular_file(tmp_path):
         f"sudo -n test -s {cache.READY_PATH} && "
         f"sudo -n cat {cache.READY_PATH}"
     )
+
+
+def test_cache_ready_probe_fails_immediately_on_atomic_failure_acknowledgement(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+    slept = []
+
+    with pytest.raises(cache.CacheLifecycleError, match="bootstrap failed"):
+        cache._wait_cache_ready(
+            plan,
+            lambda _argv, _timeout: route.CommandResult(0, _failed_ready(), b""),
+            clock=lambda: 0.0,
+            sleeper=slept.append,
+        )
+
+    assert slept == []
 
 
 def test_bound_cache_plan_validates_ledger_publication_and_source(tmp_path):
@@ -262,6 +301,35 @@ def test_cache_lifecycle_never_cleans_unproven_targets_before_initial_absence(tm
     assert not any(tuple(command) in calls for command in plan.provider_plan["cleanup_commands"])
 
 
+def test_cache_lifecycle_rejects_private_upstream_before_gcp_mutation(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+    calls = []
+
+    def runner(argv, _timeout):
+        argv = tuple(argv)
+        calls.append(argv)
+        if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
+            return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gh", "auth", "status", "--hostname"):
+            return route.CommandResult(0, b"", b"")
+        if argv[:2] == ("gh", "api"):
+            return route.CommandResult(0, b"private\n", b"")
+        raise AssertionError(argv)
+
+    evidence = cache.execute_cache_lifecycle(
+        plan,
+        output_path=tmp_path / "evidence.json",
+        runner=runner,
+        clock=lambda: 0.0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert evidence["result"] == "failed"
+    assert evidence["failure_stage"] == "upstream_visibility"
+    assert not any(argv[:3] == ("gcloud", "services", "enable") for argv in calls)
+    assert not any(tuple(command) in calls for command in plan.provider_plan["cleanup_commands"])
+
+
 def test_cache_lifecycle_passes_only_after_private_digest_verification_and_cleanup(tmp_path):
     plan, _inputs = _fixture(tmp_path)
     calls = []
@@ -271,6 +339,9 @@ def test_cache_lifecycle_passes_only_after_private_digest_verification_and_clean
         calls.append(argv)
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
+        github = _github_public(argv)
+        if github is not None:
+            return github
         if argv[:4] == ("gcloud", "services", "enable", "artifactregistry.googleapis.com"):
             return route.CommandResult(1, b"", b"provider response lost")
         if argv[:4] == ("gcloud", "services", "list", "--enabled"):
@@ -340,6 +411,9 @@ def test_cache_lifecycle_failure_removes_new_repository_and_builder(tmp_path):
         argv = tuple(argv)
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
+        github = _github_public(argv)
+        if github is not None:
+            return github
         if argv[:4] == ("gcloud", "services", "list", "--enabled"):
             return _enabled_service(argv)
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
@@ -401,6 +475,9 @@ def test_cache_lifecycle_cleans_repository_when_create_applies_but_reports_failu
         calls.append(argv)
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
+        github = _github_public(argv)
+        if github is not None:
+            return github
         if argv[:4] == ("gcloud", "services", "list", "--enabled"):
             return _enabled_service(argv)
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
@@ -449,6 +526,9 @@ def test_cache_lifecycle_revokes_identity_when_binding_applies_but_reports_failu
         calls.append(argv)
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
+        github = _github_public(argv)
+        if github is not None:
+            return github
         if argv[:4] == ("gcloud", "services", "list", "--enabled"):
             return _enabled_service(argv)
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(

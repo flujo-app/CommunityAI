@@ -12,14 +12,36 @@ REGISTRY_PREFIX=${REGISTRY_HOST}/community-ai-506321/communityai-ghcr-cache/fluj
 REGISTRY_CONFIG=/run/communityai-cache-registry
 
 access_token=''
+token_payload=''
 cleanup_registry() {
   access_token=''
+  token_payload=''
   if [[ -d "${REGISTRY_CONFIG}" ]] && command -v docker >/dev/null 2>&1; then
     docker --config "${REGISTRY_CONFIG}" logout "${REGISTRY_HOST}" >/dev/null 2>&1 || true
   fi
   rm -rf -- "${REGISTRY_CONFIG}"
 }
-trap cleanup_registry EXIT
+
+write_acknowledgement() {
+  local payload=$1
+  mkdir -p "${READY_ROOT}"
+  rm -f "${READY_TEMP}"
+  printf '%s\n' "${payload}" >"${READY_TEMP}"
+  chmod 0600 "${READY_TEMP}"
+  mv -f -- "${READY_TEMP}" "${READY_FILE}"
+}
+
+fail_closed() {
+  local status=$?
+  trap - EXIT
+  cleanup_registry
+  if [[ ${status} -ne 0 ]]; then
+    write_acknowledgement \
+      '{"failure_code":"cache_bootstrap_failed","registry_credentials_removed":true,"result":"failed","scope":"communityai-public-route-cache-bootstrap","schema_version":1}'
+  fi
+  exit "${status}"
+}
+trap fail_closed EXIT
 
 mkdir -p "${READY_ROOT}"
 rm -f "${READY_FILE}" "${READY_TEMP}"
@@ -98,7 +120,5 @@ cleanup_registry
 trap - EXIT
 [[ ! -e "${REGISTRY_CONFIG}" ]]
 
-printf '{"images_prefetched":2,"registry_credentials_removed":true,"result":"passed","scope":"communityai-public-route-cache-bootstrap","schema_version":1}\n' \
-  >"${READY_TEMP}"
-chmod 0600 "${READY_TEMP}"
-mv -f -- "${READY_TEMP}" "${READY_FILE}"
+write_acknowledgement \
+  '{"images_prefetched":2,"registry_credentials_removed":true,"result":"passed","scope":"communityai-public-route-cache-bootstrap","schema_version":1}'

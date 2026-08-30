@@ -94,8 +94,14 @@ derived service-account email from metadata, validates one bounded metadata toke
 only through Docker `--password-stdin`, and removes the isolated Docker config before its
 readiness acknowledgement. Readiness is written to a mode-private temporary file and exposed
 only by atomic same-filesystem rename; the fixed IAP probe requires a nonempty regular,
-non-symlink file before strict JSON validation. No `allUsers` or `allAuthenticatedUsers` binding is planned.
-After prewarm, the lifecycle deletes the builder, revokes the exact reader binding, deletes
+non-symlink file before strict JSON validation. A nonzero bootstrap exit first removes
+registry credentials and atomically publishes the one exact failure acknowledgement, which
+the controller treats as immediately terminal. Before any GCP mutation, native `gh`
+authentication and both fixed package metadata records must report `public`; a private,
+missing, or malformed package fails the run before provisioning. GitHub makes the
+private-to-public package transition irreversible, so it is an explicit publication action.
+No `allUsers` or `allAuthenticatedUsers` binding is planned. After prewarm, the lifecycle
+deletes the builder, revokes the exact reader binding, deletes
 the ephemeral service account, requires all six builder/perimeter/identity absence checks,
 requires an empty repository policy, verifies scanning disabled and all four index/runtime
 digests, and revalidates `communityai-bootstrap-1`. Any failure deletes a repository
@@ -108,7 +114,7 @@ Generate the provider-call-free cache plan first:
 
 ```powershell
 uv run --no-sync python scripts/qualification_cost_guard.py `
-  --run-id cache-20260830-f `
+  --run-id cache-20260830-g `
   --provider gcp `
   --workload gcp-public-route-cache `
   --purpose "Gate 11 private same-region route image cache" `
@@ -124,7 +130,7 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
   --cache-bootstrap-digest $cacheBootstrapDigest `
   --cache-bootstrap-bytes $cacheBootstrapBytes `
   --ledger docs/RELEASE_READINESS.md `
-  --output docs/evidence/cache-20260830-f-cost-authorization.json
+  --output docs/evidence/cache-20260830-g-cost-authorization.json
 ```
 
 The first pass must report `provisioning_authorized=false`. Record its exact
