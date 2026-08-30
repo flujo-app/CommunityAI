@@ -45,6 +45,16 @@ desktop CI verifies and bundles those inputs; an input-free local engineering bu
 remains available and honestly renders the missing-catalog state on a truly clean
 install. See [`CATALOG_BOOTSTRAP_V1.md`](../docs/CATALOG_BOOTSTRAP_V1.md).
 
+The packaged catalog bundle contains trust/configuration metadata, not model weights. The
+sidecar lazily downloads artifacts from each manifest's immutable Hugging Face revision when
+the user selects a model or enables contribution. It verifies every selected file, retains
+resumable partials privately, and reuses one persistent cache across inference and worker
+roles. A client downloads the upstream shards containing its local embeddings/head; a worker
+downloads the shards containing its assigned blocks. Whole-file upstream shard layout is the
+current minimum, so the UI must present the selected download/storage estimate before transfer
+and must not imply tensor-level byte-range delivery. See
+[`ADR 0003`](../docs/adr/0003-direct-manifested-artifact-delivery.md).
+
 Cross-platform packaged validation of native-store promotion and the new
 single-instance/login-startup behavior, contribution budgets, accessibility validation,
 signed installers, and update/rollback behavior remain later milestone-5 gates.

@@ -86,3 +86,10 @@ They do not establish behavior under real packet loss, long partitions, regional
 failure, dishonest coverage providers, or hardware/resource envelopes. Gate 9 must still
 publish the Windows/Linux Qwen/Gemma envelopes, and later packaged-flow and canary gates
 must exercise the real installer, worker, and public-route lifecycle.
+
+[ADR 0003](adr/0003-direct-manifested-artifact-delivery.md) also makes selected-shard bytes
+and verified cache affinity part of the target placement cost. This Gate 10 acceptance does
+not claim that refinement: current admission still relies on configured resource ceilings and
+manifest claims before acquisition. Gate 9 must publish selected-file costs, and Gate 14 must
+prove that packaged automatic contribution reuses the shared cache and does not switch into an
+uncached download that violates local storage or bandwidth policy.

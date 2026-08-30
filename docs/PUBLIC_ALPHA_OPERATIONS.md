@@ -60,6 +60,27 @@ automatic fallback completed in 58.073 seconds, restoration completed in 32.042 
 and both inference paths succeeded. The host remains bounded by 7 GiB Qwen, 15 GiB Gemma,
 22 GiB combined accelerator, 30 GiB RAM, 160 GiB route-storage, and 1 GiB log ceilings.
 
+## Download-minimized artifact rules
+
+The signed catalog, exact manifests, direct artifact origin, and persistent cache are separate
+layers. Keep them separate during every alpha operation:
+
+- deploy one generic runtime and bootstrap; never rebuild it merely to add or change a model;
+- let the signed catalog approve the exact manifest and let the manifest authenticate bytes;
+- obtain selected files from the immutable Hugging Face revision by default;
+- share one verified cache between the local client and contribution workers for the same
+  manifest, including multiple bounded roles on one provider host;
+- preserve resumable partials during the authorized operation and expose a file only after size
+  and SHA-256 verification; and
+- treat mirrors as optional transport accelerators, never as alternate trust or mutable model
+  sources.
+
+Selection is limited by the upstream checkpoint layout. A partial-range contributor downloads
+only files containing its assigned blocks, but each selected file is downloaded in full. A
+full-range seed downloads every weight shard. Record selected file bytes and cache reuse so
+operators and users see the real storage/bandwidth cost. See
+[ADR 0003](adr/0003-direct-manifested-artifact-delivery.md).
+
 ## Legacy CUDA route-image publication boundary
 
 This section records the superseded experimental path. It is not the Gate 11 deployment

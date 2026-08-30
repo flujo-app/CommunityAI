@@ -2262,3 +2262,32 @@ restoration took 32.042 seconds. Both services and routes remain live under the 
 automatic-delete deadline, and the protected bootstrap is running. The same-host standby is
 an alpha fallback, not independent infrastructure redundancy. Gate 11 is `PASSED`; complete
 release qualification remains false and Gate 9 still blocks packaged Gate 13 work.
+
+## Gate 11 architecture conclusion and Gate 9 transfer
+
+Gate 11 passed by removing model-image delivery from the product path, not by accelerating
+registry pulls. The accepted architecture now separates a small generic runtime, signed catalog
+approval, exact manifest integrity, direct immutable Hugging Face transport, and persistent
+verified local state. The catalog remains necessary and unchanged as a trust/rollback/policy
+layer; it never becomes a container registry or weight bundle. The decision is recorded in
+[ADR 0003](adr/0003-direct-manifested-artifact-delivery.md).
+
+The implementation already minimizes acquisition at upstream checkpoint-file granularity. A
+client requests only shards containing its local embeddings, final normalization, and head; a
+worker requests only shards containing its assigned blocks. Run `route-20260830-j` used full
+Qwen and Gemma ranges, so those workers legitimately selected all weight shards. A smaller
+desktop contribution range should select fewer files, but an upstream file that mixes required
+and unrelated tensors must still be downloaded in full and verified as one artifact.
+
+This changes the next Gate 9 attempt. The revised
+[edge-envelope runbook](EDGE_RESOURCE_ENVELOPE_RUNBOOK.md) requires one resumable acquisition
+record and one verified-warm-cache steady-state envelope for each Qwen/Gemma Windows/Linux cell.
+It removes the old five-minute directory-growth heuristic and uses the manifest artifact's
+bounded partial/request state instead. It also replaces allocator-sensitive in-process RSS return
+as the pass boundary with a fresh supervised benchmark child whose complete process-tree exit
+proves operating-system memory reclamation; route-manager/DHT and accelerator cleanup must still
+pass inside the child.
+
+This is a documented method change, not a Gate 9 result. Before another paid run, the acquisition
+record and schema-v3 benchmark supervisor must be implemented and tested, then bound to a fresh
+authorization. The four real platform/model envelopes remain required.

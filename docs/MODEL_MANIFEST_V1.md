@@ -162,6 +162,38 @@ Files resolved by Transformers that are not declared with a compatible artifact
 role are rejected. A failed integrity check is fatal instead of entering the legacy
 download retry loop.
 
+### Selective delivery and minimum download
+
+Manifest v1 deliberately separates trust from transport. A signed catalog approves this
+manifest's digest; the manifest pins the immutable repository revision and valid artifact
+bytes; Hugging Face is the default source of those bytes; and a persistent local cache keeps
+verified files reusable. A model-specific installer or OCI image is not part of this chain.
+See [ADR 0003](adr/0003-direct-manifested-artifact-delivery.md).
+
+Selection is exact at whole-file granularity:
+
+- the client patches the checkpoint index to remove remote transformer-block keys, then
+  materializes and verifies only the remaining checkpoint files for local components;
+- the worker maps each assigned block prefix through the checkpoint index and materializes
+  and verifies only the referenced files; and
+- startup metadata and tokenizer/chat-template files are acquired only by roles that need
+  them.
+
+An upstream shard may contain both required and unrelated tensors. The current verifier must
+download that complete file because the manifest authenticates the complete file. The minimum
+download is therefore the union of required upstream shards, not the sum of required tensor
+bytes. Full-range workers legitimately select every shard.
+
+Admission and resource envelopes should report both selected tensor/component bytes and
+selected artifact-file bytes. Their ratio exposes shard amplification. A future manifest may
+authenticate block-aligned artifacts or tensor byte ranges, but it must include independent
+integrity metadata for those units; offsets from an unsigned checkpoint index are insufficient.
+No ModelManifest v1 schema change is required for current selective whole-shard delivery.
+
+All product roles that use an exact manifest on one installation should share its persistent
+verified cache. Cache eviction may remove only unleased artifacts and never converts a partial
+or unverified file into a usable model input.
+
 Validate a manifest without network access:
 
 ```text

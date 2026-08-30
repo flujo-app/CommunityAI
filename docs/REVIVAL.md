@@ -120,22 +120,37 @@ integrity, authenticated peers, bounded public request handling, authoritative l
 resource limits, and a tested disable path are the minimum safety floor for an alpha that
 accepts strangers.
 
+### Model delivery decision
+
+The normal product installs one generic CommunityAI runtime, not one application or OCI
+image per model. The signed catalog approves exact manifests and supplies discovery policy;
+it does not distribute weights. Each manifest pins an immutable Hugging Face revision and
+the size and SHA-256 of every allowed artifact. The client or contributor downloads only
+the whole upstream checkpoint files selected for its local tensors or assigned blocks,
+verifies them before use, and reuses them from one persistent shared cache.
+
+This preserves the catalog architecture: catalog signatures answer **which model/profile is
+approved**, the manifest answers **which exact bytes are valid**, Hugging Face or a future
+interchangeable mirror answers **where those bytes are transported from**, and the local
+cache answers **which verified bytes are already present**. No mutable URL, registry image,
+or transport provider becomes a trust root. The accepted decision and its whole-upstream-
+shard granularity limit are recorded in
+[`ADR 0003`](adr/0003-direct-manifested-artifact-delivery.md).
+
 ### Non-negotiable launch sequence
 
-Gate 4 has passed. The immediate critical path is now outcome-first:
+The signed catalog and product-node Gate 11 route have passed. Gate 9 is the immediate
+critical path:
 
-1. pass the live public vertical slice in [`RELEASE_READINESS.md`](RELEASE_READINESS.md):
-   use TinyLlama to make desktop/catalog/discovery plumbing cheap to debug, then bring a
-   real Qwen3.5 2B worker online on the available GCP L4, let the app observe and select
-   it, and generate through it;
-2. qualify Qwen3.5 2B and Gemma 4 E2B on the required Windows/Linux CPU/CUDA profiles and
-   run their real CPU-only Fly separate-machine recovery drills;
-3. complete automatic contributor model/block placement and prove the user's contribution
-   limits on real hardware;
-4. publish the minimal signed alpha catalog/bootstrap and initial public routes, then pass
-   clean packaged install, inference, contribution, manual upgrade/uninstall, and the
-   bounded public canary on Windows and Linux; and
-5. publish and observe the explicitly best-effort public alpha.
+1. split each Windows/Linux edge measurement into resumable direct-Hub acquisition and a
+   supervised steady-state benchmark from the verified persistent cache;
+2. publish the four Qwen/Gemma Windows/Linux client envelopes without building or pulling a
+   model-specific image;
+3. pass clean packaged install and inference against a product-node route, including cache
+   reuse, restart, manual upgrade/reinstall, uninstall, and retained-data choice;
+4. prove automatic contribution and resource controls on real packaged Windows/Linux
+   hardware; and
+5. run the bounded public canary and publish the explicitly best-effort alpha.
 
 Do not resume post-alpha redundancy, publisher-signing/updater, independent-governance, or
 exhaustive hostile-network programs while an earlier alpha outcome is unfinished. Preserve
@@ -151,11 +166,10 @@ temporary host. Native `gcloud`,
 `flyctl`, and `gh` authentication is currently available; re-check it immediately before
 use rather than relying on an older evidence note.
 
-The next external deliverable is not another harness or unit-test expansion. It is a
-screen-visible public route: the local app observes a real remote worker, explains the
-model selected by `auto`, and generates through it. TinyLlama is a bring-up tool, not a
-substitute for immediately repeating the path with the real Qwen3.5 2B candidate. Supporting
-code is justified when it closes a concrete gap in that path or in the next real gate.
+The next external deliverable is not another image, mirror, harness, or unit-test expansion.
+It is the four real Gate 9 client envelopes using the product artifact path. Supporting code
+is justified only when it implements the bounded acquisition record, process-supervised
+cleanup, or another concrete gap exposed by that real run.
 
 ### Execution loop
 
@@ -437,10 +451,11 @@ The target design is:
   voting system. Blockchain is considered only if credits eventually require open,
   transferable, trustless settlement and a federated design cannot meet the threat
   model.
-- **Explicit residual dependencies.** Model artifacts initially come from pinned
-  Hugging Face revisions and local caches. The longer-term design should support
-  content-addressed mirrors and peer-assisted distribution, but artifact delivery
-  must be replaceable and its contents verified.
+- **Explicit residual dependencies.** Model artifacts come from pinned Hugging Face
+  revisions and persistent verified local caches. Clients and contributors select only
+  the upstream checkpoint files required by their local tensors or assigned blocks.
+  Content-addressed mirrors and peer-assisted distribution may be added later, but every
+  transport remains replaceable and subordinate to manifest verification.
 
 No single bootstrap, catalog mirror, health dashboard, hosted API, or credit node
 may have unilateral control over inference. Catalog signing and credit settlement
@@ -609,6 +624,12 @@ The first protocol exchange must compare manifest digests. A client or worker mu
 reject a same-named peer with different weights or an incompatible execution
 profile instead of merely warning about it.
 
+Manifest loading is selective at whole-file granularity. The checkpoint index maps local
+client tensors or assigned transformer blocks to upstream weight files; only that file set
+is downloaded and verified. If required and unrelated tensors share one upstream shard,
+the whole shard is still required. A future tensor-range format needs independently signed
+range digests and cannot be inferred safely from safetensors offsets alone.
+
 ### Distributed capacity and demand signals
 
 Nodes publish signed, expiring leases describing current and intended block ranges,
@@ -641,6 +662,11 @@ intent lease. Minimum residency times, switching penalties, random jitter, coold
 and hysteresis prevent oscillation and download storms. A node may partition its
 budget across models only when doing so improves complete redundant routes rather
 than leaving unusable fragments.
+
+Placement cost includes cache affinity: already verified selected shards reduce download
+cost, while switching to an uncached model must account for exact selected-file bytes,
+bandwidth limits, storage headroom, and the value of cache entries that eviction would lose.
+Remote demand remains too weak to override these local costs or force a download storm.
 
 Within the selected model, the current throughput-aware contiguous block allocator
 remains the starting point. It must be extended to target minimum replica counts,
@@ -681,9 +707,11 @@ multi-model manager:
   directly.
 
 "Edge device" requires a measured definition. Today the client still loads the
-embeddings and language-model head. For every candidate model, publish cold-start
-download, disk, peak RAM/VRAM, first-token and token-generation measurements for the
-client-only path. If that is too heavy for the supported edge class, prototype an
+embeddings and language-model head. For every candidate model, publish a first-acquisition
+record for selected-file download and disk cost plus a steady-state verified-cache envelope
+for peak RAM/VRAM, first-token latency, and token generation. Run the measured runtime in a
+fresh supervised child so process-tree exit, not allocator-specific in-process RSS return,
+is the authoritative memory-cleanup boundary. If that is too heavy for the supported edge class, prototype an
 OpenAI-only thin mode in which input embeddings and the final head/sampling stage are
 addressable remote roles. Preserve the current local-logits mode for research users.
 Thin mode changes privacy, trust, sampling flexibility, failure recovery and traffic,
@@ -1178,7 +1206,7 @@ prototypes before the corresponding stable-service feature ships:
 | Demand signal | Coarse signed aggregates and observed route pressure, never request contents. | Sybil/spam simulation, privacy review, convergence under bursty demand, and proof that one attacker cannot trigger a network-wide download storm. |
 | Credit settlement | Prototype federated notaries before considering a permissionless ledger. | Double-spend, replay, partition, collusion, privacy, audit, recovery, and sustained-outage tests with explicit trust and governance costs. |
 | Compute marketplace | Sell verified compute through replaceable marketplaces; keep buyer credits, provider earnings, and promotions separate, and do not launch a freely traded token. | Unit economics, useful-work and related-account fraud tests, double-entry audit, payment-provider and jurisdiction review, chargeback/reconciliation drills, and proof that marketplace failure cannot stop inference. |
-| Artifact distribution | Start with immutable Hub revisions and verified local caches, then add interchangeable mirrors and peer-assisted delivery. | Full-hash verification, poisoned-mirror rejection, resume behavior, gated-model licensing, bandwidth limits, and origin outage tests. |
+| Artifact distribution | Resolved in ADR 0003: ship a generic runtime; use the signed catalog for approval, exact manifests for integrity, direct immutable Hub revisions for default transport, role-selected whole-file shards, and a persistent shared cache. Add mirrors or peer assistance only as interchangeable transports. | Publish selected-file amplification and Gate 9 acquisition envelopes; prove full-hash verification, poisoned-mirror rejection, resume behavior, gated-model licensing, bandwidth/storage limits, cache eviction, and origin outage behavior. |
 
 ## Nakshatra relationship
 
@@ -1241,7 +1269,9 @@ The plan builds on, but is not limited to:
   and multiple peer-discovery sources: [Kademlia DHT specification](https://github.com/libp2p/specs/blob/master/kad-dht/README.md)
   and [peer routing records](https://github.com/libp2p/specs/blob/master/RFC/0003-routing-records.md);
 - immutable Hub revisions for reproducible model artifacts: [Hugging Face Hub
-  downloads](https://huggingface.co/docs/huggingface_hub/guides/download); and
+  downloads](https://huggingface.co/docs/huggingface_hub/guides/download);
+- the accepted separation of catalog trust, manifest integrity, direct artifact transport,
+  and persistent cache in [`ADR 0003`](adr/0003-direct-manifested-artifact-delivery.md); and
 - threshold roles, delegation, rotation, expiry, mirrors and rollback protection as
   design input for catalogs and application updates: [The Update Framework
   specification](https://theupdateframework.github.io/specification/latest/).

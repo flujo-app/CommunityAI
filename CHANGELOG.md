@@ -17,6 +17,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - Exact content-addressed model manifests, verified artifacts, signed worker identities,
   encrypted manifested transport, bounded failure recovery, and signed catalog/bootstrap
   formats.
+- Gate 11 now runs through the generic CommunityAI product node: the signed catalog approves
+  exact manifests, selected model files are downloaded directly from immutable Hugging Face
+  revisions, every file is verified, and inference/contribution roles reuse a persistent shared
+  cache. Primary inference, automatic Qwen-to-Gemma fallback, standby inference, restoration,
+  and restored inference passed without a model-specific image or cache mirror. ADR 0003 fixes
+  this as the normal desktop and provider-route artifact architecture.
 - Qwen3.5 2B and Gemma 4 E2B first-rung candidate manifests with Windows CPU parity and
   local selected-worker recovery evidence.
 - The first threshold-one signed public-alpha catalog/bootstrap bundle, containing those
@@ -37,8 +43,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 - A fail-closed combined GCP/Fly qualification cost guard with a conservative USD 69
   G2/L4 four-profile plan, one-host-at-a-time CUDA-safe phases, checksum-pinned GPU and
   Windows SSH bootstrap, named NAT addresses, and exact isolated cleanup verification.
-- A finite Gate 11 public-route plan now binds one isolated G2/L4 host to separately
-  published CUDA Qwen primary and Gemma standby images, their exact qualified
+- Historical Gate 11 image-delivery tooling bound one isolated G2/L4 host to separately
+  published CUDA Qwen primary and Gemma standby images. That delivery path is superseded for
+  normal product operation by direct manifested artifacts and remains historical/qualification
+  tooling only. The original work bound the exact qualified
   snapshots/manifests and publication evidence, the source-bound fresh-VM bootstrap,
   public ports, aggregate health, primary-disable/standby-fallback/restoration checks,
   explicit 7/15/22 GiB device, 30 GiB host-memory, 160 GiB route-storage, and 1 GiB log

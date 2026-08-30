@@ -4,7 +4,8 @@ Status: the strict sidecar consumer, desktop lifecycle integration, last-known-g
 cache, best-effort-alpha publication-bundle contract, and fail-closed packaging handoff
 are implemented. The threshold-one `public-alpha/catalog-v1` bundle publishes the
 exact qualified first-rung manifests, pinned public mirror and seed, and self-verifying
-first-install input. Route operation and packaged inference remain separate gates.
+first-install input. Gate 11 route operation passed through the generic product node;
+packaged clean-install inference remains a separate gate.
 
 `CatalogBootstrap v1` is the small, trusted release input that lets a clean desktop
 installation find a model catalog and the public discovery network. It is application
@@ -123,6 +124,13 @@ remote mirrors are unavailable, a still-valid previously accepted catalog and it
 content-addressed manifests can recreate a missing configuration. An expired cached
 catalog cannot do so.
 
+Bootstrap installs trust and configuration, not model weights. After configuration, the
+generic node lazily materializes only the Hugging Face files required by a selected client
+runtime or contribution block range, verifies them against the exact installed manifest,
+and reuses a persistent cache. Catalog mirrors carry the signed catalog and manifests;
+they are not model-weight mirrors. This boundary is fixed by
+[ADR 0003](adr/0003-direct-manifested-artifact-delivery.md).
+
 ## Release gate
 
 Do not bundle a placeholder root, an unsigned catalog, test-vector manifests, or a
@@ -130,7 +138,7 @@ private signing key. The published alpha bundle contains both exact qualified fi
 manifests and a signed envelope that a fresh consumer fetched through its pinned HTTPS
 mirror before recreating the two-model node configuration. The catalog declares
 eligibility policy, not live capacity: `auto` still fails honestly when authenticated
-coverage does not satisfy that policy. Gate 11 route operation and Gate 13 packaged
-inference therefore remain separate real-world gates. Catalog mirrors and seeds can be
+coverage does not satisfy that policy. Gate 11 route operation has passed, while Gate 13
+packaged inference remains a separate real-world gate. Catalog mirrors and seeds can be
 replaced in a later signed application build; user-supplied seeds and independently
 updateable discovery configuration remain milestone-6 work.
