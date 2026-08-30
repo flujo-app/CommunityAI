@@ -39,8 +39,8 @@
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:2f95e5004d5bde12e19ae785e8859b0847b25fd1cc7d074e7bb76b82248fa0ae",
-  "ledger_purpose": "Gate 9 sequential Qwen/Gemma Windows/Linux acquisition records and schema-v3 edge envelopes at pushed source ba410f74f1cf625f1e1c34734b53e4514fa7c5ec, reusing the separately authorized product route and creating at most one bounded native Linux client per model [plan sha256:2f95e5004d5bde12e19ae785e8859b0847b25fd1cc7d074e7bb76b82248fa0ae]",
+  "provider_plan_digest": "sha256:aa0dc9de596ec059f67c20b52d8e208d74c6329af7c1d7d0713422507af8dfaa",
+  "ledger_purpose": "Gate 9 sequential Qwen/Gemma Windows/Linux acquisition records and schema-v3 edge envelopes at pushed source ba410f74f1cf625f1e1c34734b53e4514fa7c5ec, reusing the separately authorized product route and creating at most one bounded native Linux client per model [plan sha256:aa0dc9de596ec059f67c20b52d8e208d74c6329af7c1d7d0713422507af8dfaa]",
   "provider_plan": {
     "provider": "GCP",
     "project": "community-ai-506321",
@@ -48,7 +48,7 @@
       "action": "reuse-separately-authorized-live-bounded-product-route",
       "run_id": "route-20260830-j",
       "lifecycle_evidence": "docs/evidence/gate11node-20260830-a-lifecycle.json",
-      "expected_instance": "route-20260830-j-route",
+      "expected_instance": "route-20260830-j-node",
       "expected_zone": "us-central1-a",
       "expected_state": "RUNNING",
       "automatic_delete_deadline": "2026-08-31T05:44:14Z",
@@ -125,7 +125,7 @@
       ],
       "protected_resources": [
         "communityai-bootstrap-1",
-        "route-20260830-j-route",
+        "route-20260830-j-node",
         "all resources not named by this plan"
       ],
       "protected_bootstrap_must_remain_running": true,
@@ -162,6 +162,13 @@
     "budget headroom and one unused L4 quota slot",
     "focused software tests and privacy-safe schema checks"
   ],
+  "operator_override": {
+    "recorded_at": "2026-08-30",
+    "route_service_account_count_nonblocking": true,
+    "route_service_account_scope_count_nonblocking": true,
+    "current_l4_usage_nonblocking_within_combined_budget": true,
+    "hard_cloud_ceiling_unchanged_usd": "100.00"
+  },
   "provider_calls_authorized_without_preflight": false,
   "provisioning_authorized": true,
   "reservation_recorded": true,
