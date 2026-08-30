@@ -24,7 +24,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -879,7 +879,7 @@ def _native_preflight(plan: BoundPlan, runner: Runner) -> None:
         _require_success(runner(tuple(command), MAX_PROVIDER_SECONDS), f"initial absence check {index}", empty=True)
 
 
-def _parse_instance_verification(payload: bytes) -> str:
+def _parse_instance_verification(payload: bytes) -> str | None:
     if len(payload) > 4096:
         raise ProviderCommandError("instance verification output is unbounded")
     try:
@@ -887,12 +887,16 @@ def _parse_instance_verification(payload: bytes) -> str:
     except UnicodeError as exc:
         raise ProviderCommandError("instance verification output is invalid") from exc
     fields = text.split()
-    if (
-        len(fields) != 4
-        or fields[0] != "RUNNING"
-        or "g2-standard-8" not in fields[1]
-        or fields[2] not in {"50400", "50400s"}
-    ):
+    if fields and fields[0] in {"PROVISIONING", "STAGING"}:
+        return None
+    if len(fields) != 4 or fields[0] != "RUNNING" or "g2-standard-8" not in fields[1]:
+        raise ProviderCommandError("created instance does not match the exact plan")
+    duration_text = fields[2][:-1] if fields[2].endswith("s") else fields[2]
+    try:
+        duration = Decimal(duration_text)
+    except InvalidOperation as exc:
+        raise ProviderCommandError("created instance does not match the exact plan") from exc
+    if not duration.is_finite() or duration != Decimal("50400"):
         raise ProviderCommandError("created instance does not match the exact plan")
     try:
         address = ipaddress.ip_address(fields[3])
@@ -901,6 +905,31 @@ def _parse_instance_verification(payload: bytes) -> str:
     if not isinstance(address, ipaddress.IPv4Address) or not address.is_global:
         raise ProviderCommandError("created instance public address is not global IPv4")
     return address.compressed
+
+
+def _await_instance_verification(
+    command: Sequence[str],
+    runner: Runner,
+    *,
+    clock: Clock,
+    sleeper: Sleeper,
+) -> str:
+    deadline = clock() + MAX_PROVIDER_SECONDS
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise ProviderCommandError("created instance did not reach RUNNING within its bounded verification window")
+        payload = _require_success(
+            runner(tuple(command), max(1, math.ceil(remaining))),
+            "instance verification",
+        )
+        address = _parse_instance_verification(payload)
+        if address is not None:
+            return address
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise ProviderCommandError("created instance did not reach RUNNING within its bounded verification window")
+        sleeper(min(5.0, remaining))
 
 
 def _ssh_prefix(plan: BoundPlan) -> tuple[str, ...]:
@@ -1151,8 +1180,11 @@ def execute_lifecycle(
         verification = plan.provider_plan["verify_create_commands"]
         if not isinstance(verification, list) or len(verification) != 1:
             raise LifecycleError("provider create verification contract is invalid")
-        public_ipv4 = _parse_instance_verification(
-            _require_success(runner(tuple(verification[0]), MAX_PROVIDER_SECONDS), "instance verification")
+        public_ipv4 = _await_instance_verification(
+            verification[0],
+            runner,
+            clock=clock,
+            sleeper=sleeper,
         )
         stages["create"] = True
         failure_stage = "bootstrap"

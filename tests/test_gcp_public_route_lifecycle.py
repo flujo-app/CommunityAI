@@ -330,15 +330,64 @@ def test_quota_headroom_requires_one_exact_finite_metric():
         )
 
 
-def test_instance_verification_accepts_gcloud_duration_suffix_only():
+def test_instance_verification_waits_for_transient_states_and_accepts_decimal_duration():
+    assert lifecycle._parse_instance_verification(b"PROVISIONING") is None
+    assert lifecycle._parse_instance_verification(b"STAGING g2-standard-8") is None
     assert (
         lifecycle._parse_instance_verification(
-            b"RUNNING https://www.googleapis.com/compute/v1/projects/p/zones/z/machineTypes/g2-standard-8 50400s 8.8.8.8"
+            b"RUNNING https://www.googleapis.com/compute/v1/projects/p/zones/z/machineTypes/g2-standard-8 50400.000s 8.8.8.8"
         )
         == "8.8.8.8"
     )
     with pytest.raises(lifecycle.ProviderCommandError, match="exact plan"):
         lifecycle._parse_instance_verification(b"RUNNING g2-standard-8 50401s 8.8.8.8")
+    with pytest.raises(lifecycle.ProviderCommandError, match="exact plan"):
+        lifecycle._parse_instance_verification(b"STOPPING g2-standard-8 50400s 8.8.8.8")
+
+
+def test_instance_verification_polls_within_one_bounded_window():
+    responses = [
+        b"PROVISIONING",
+        b"STAGING g2-standard-8",
+        b"RUNNING g2-standard-8 50400s 8.8.8.8",
+    ]
+    now = [0.0]
+    calls = []
+
+    def runner(command, timeout):
+        calls.append((command, timeout))
+        return lifecycle.subprocess.CompletedProcess(command, 0, responses.pop(0), b"")
+
+    def sleeper(seconds):
+        now[0] += seconds
+
+    address = lifecycle._await_instance_verification(
+        ("gcloud", "compute", "instances", "describe"),
+        runner,
+        clock=lambda: now[0],
+        sleeper=sleeper,
+    )
+
+    assert address == "8.8.8.8"
+    assert len(calls) == 3
+    assert all(0 < timeout <= lifecycle.MAX_PROVIDER_SECONDS for _, timeout in calls)
+    assert now[0] == 10.0
+
+
+def test_instance_verification_times_out_fail_closed():
+    now = [0.0]
+
+    def runner(command, timeout):
+        now[0] += timeout
+        return lifecycle.subprocess.CompletedProcess(command, 0, b"PROVISIONING", b"")
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="bounded verification window"):
+        lifecycle._await_instance_verification(
+            ("gcloud", "compute", "instances", "describe"),
+            runner,
+            clock=lambda: now[0],
+            sleeper=lambda _seconds: None,
+        )
 
 
 def test_health_requires_fresh_exact_identity_and_monotonic_counters():
