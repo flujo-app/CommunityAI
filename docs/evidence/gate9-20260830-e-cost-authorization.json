@@ -39,8 +39,8 @@
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:f5122a47a9762d8fa21500ec0bf3896d417ce888b1a11bfa01c6f3acc9d200e2",
-  "ledger_purpose": "Gate 9 concurrent Qwen/Gemma Windows/Linux acquisition records and schema-v3 edge envelopes at pushed source ba410f74f1cf625f1e1c34734b53e4514fa7c5ec, reusing the separately authorized product route and using bounded isolated clients [plan sha256:f5122a47a9762d8fa21500ec0bf3896d417ce888b1a11bfa01c6f3acc9d200e2]",
+  "provider_plan_digest": "sha256:04ba77ee68f4a895ae080a4ddcbf6805b502da6a95a4146734acbddff92de307",
+  "ledger_purpose": "Gate 9 concurrent Qwen/Gemma Windows/Linux acquisition records and schema-v3 edge envelopes at pushed source ba410f74f1cf625f1e1c34734b53e4514fa7c5ec, reusing the separately authorized product route and using bounded isolated clients [plan sha256:04ba77ee68f4a895ae080a4ddcbf6805b502da6a95a4146734acbddff92de307]",
   "provider_plan": {
     "provider": "GCP",
     "project": "community-ai-506321",
@@ -81,7 +81,7 @@
         "instance": "gate9-20260830-e-gemma-windows",
         "disk": "gate9-20260830-e-gemma-windows",
         "zone": "us-central1-a",
-        "machine_type": "e2-standard-4",
+        "machine_type": "e2-standard-8",
         "os": "windows-server-2022-dc-v20260814",
         "boot_disk_gib": 100,
         "boot_disk_type": "pd-balanced",
@@ -90,7 +90,10 @@
         "scopes": [],
         "max_run_seconds": 5400,
         "termination_action": "DELETE",
-        "source_install": "public exact-commit archive"
+        "source_install": "public exact-commit archive",
+        "in_place_resize_from": "e2-standard-4",
+        "cache_reuse": "verified cold-acquisition cache on retained auto-delete boot disk",
+        "benchmark_retry_limit": 1
       }
     ],
     "linux_clients": [
@@ -139,7 +142,13 @@
         "qwen-windows-cloud",
         "gemma-windows-cloud"
       ],
-      "qwen_pair_required_before_gemma": false
+      "qwen_pair_required_before_gemma": false,
+      "gemma_benchmark_retry": {
+        "trigger": "e2-standard-4 supervised child terminated without a result after exact cold acquisition",
+        "authorization": "single in-place memory resize and warm-cache benchmark retry",
+        "new_machine_type": "e2-standard-8",
+        "new_resources_created": 0
+      }
     },
     "cleanup": {
       "delete_only_exact_run_client_instances_and_auto_delete_disks": true,
@@ -203,7 +212,11 @@
     "native_windows_link_below_model_window_replaced_by_isolated_cloud_windows_clients": true,
     "additional_windows_client_reservation_usd": "18.00",
     "combined_committed_maximum_usd": "72.00",
-    "hard_cloud_ceiling_unchanged_usd": "100.00"
+    "hard_cloud_ceiling_unchanged_usd": "100.00",
+    "gemma_memory_retry_authorized_for_speed": true,
+    "gemma_memory_retry_new_resources": 0,
+    "gemma_memory_retry_ceiling_increase_usd": "0.00",
+    "gemma_memory_retry_recorded_at": "2026-08-30T19:23:00Z"
   },
   "provider_calls_authorized_without_preflight": false,
   "provisioning_authorized": true,
