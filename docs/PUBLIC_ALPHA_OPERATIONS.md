@@ -137,6 +137,12 @@ repositories and verified installer bytes, then writes a mode-0600 bounded readi
 record only after the exact versions, services, runtime, and GPU are observed. It does
 not pull or start either route and it cannot authorize provider calls.
 
+After bootstrap readiness, the fixed host controller may retry only the same immutable
+digest-qualified `docker pull` at 5-, 15-, 60-, and 120-second backoffs. Every sleep and
+subprocess timeout is clamped to the original one-hour start-action deadline. Pull exhaustion
+is the only `image_pull` failure; the subsequent fixed `docker run` and the whole route-start
+action remain single-shot, with post-pull failure classified only as `host_command`.
+
 Do not reserve the USD 26 plan or run any emitted create command until both bounded
 publication-evidence files are committed and the reviewed lifecycle runner enforces
 evidence/bootstrap attestation, preflight, startup, health, fallback, stop, and cleanup.

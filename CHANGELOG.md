@@ -88,7 +88,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   then failed closed at primary start with no health or inference claim; five deletes, six
   absences, and protected-bootstrap health passed. Source `cc2cbb3` adds strict marker-framed
   `image_pull`/`host_command` failure classification while retaining no raw provider output and
-  never retrying `docker run`; its source-bound route-D plan preserves the USD 26 maximum.
+  never retrying `docker run`. Its source-bound route-D controller passed exact preflight,
+  create, and bootstrap, then proved the primary failure was an immutable image-pull failure;
+  five deletes, six absences, and protected-bootstrap health passed. Pull-only retries now add
+  final 60/120-second backoffs to the existing 0/5/15 schedule inside the original one-hour
+  deadline, while `docker run` and the whole start action remain single-shot.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

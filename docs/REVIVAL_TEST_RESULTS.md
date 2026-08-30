@@ -1775,9 +1775,9 @@ existing one-hour action deadline; it must not retry the whole non-idempotent st
 ## Gate 11 privacy-safe host failure classification
 
 Source `cc2cbb393f19e203a4c7eb5e5abfdfe772dacddc` preserves the 0/5/15-second
-immutable pull schedule and adds no speculative cooldown. Only pull exhaustion becomes
-`image_pull`; only a post-pull fixed Docker command failure becomes `host_command`, and
-`docker run` remains single-shot. The host returns nonzero with one bounded marker-framed
+immutable pull schedule until live evidence distinguishes the boundary. Only pull exhaustion
+becomes `image_pull`; only a post-pull fixed Docker command failure becomes `host_command`,
+and `docker run` remains single-shot. The host returns nonzero with one bounded marker-framed
 failure acknowledgement. The lifecycle accepts it only with the exact schema, scope, action,
 details, and allowlisted code; zero-exit failure frames, nonzero success frames, wrong actions,
 unknown/extra/malformed/missing/duplicate frames fail generically. Raw stdout and stderr are
@@ -1793,3 +1793,24 @@ binds that exact source and 30,213-byte host helper, the unchanged 4,994-byte bo
 74 headroom. Its ledger row was committed as `bca3305`; the identical second guard pass set
 `reservation_recorded=true` and `provisioning_authorized=true`, and a real `load_bound_plan`
 accepted both complete spans.
+
+## Gate 11 route-D classified image-pull failure
+
+The single detached route-D controller first revalidated zero competing controllers, native
+GCP/GH authentication, quota/capacity, all six exact initial absences, and the protected
+bootstrap. Its [schema-v2 lifecycle evidence](evidence/gate11route-20260830-d-lifecycle.json)
+records successful provider preflight, exact create, and bootstrap before the first fixed
+primary-start action failed after 532.828 seconds with the allowlisted `image_pull` code.
+No health sample, inference, fallback, restoration, monitoring, raw output, endpoint, provider
+identifier, command argv, path, prompt, token ID, or credential was retained. Finally-based
+cleanup passed all five exact delete commands and six absence checks, and revalidated the
+protected bootstrap `RUNNING`; the route-D USD 26 reservation is therefore released.
+
+That real diagnosis permits one narrow retry change: immutable digest pulls use fixed
+0/5/15/60/120-second attempts, with every sleep and subprocess timeout clamped to the same
+original one-hour action deadline. The whole start action and post-pull `docker run` remain
+single-shot. Regression coverage proves success on the final attempt, persistent failure after
+all five identical-digest attempts retains `image_pull`, short deadlines skip unaffordable
+backoffs, float rounding cannot exceed the validated timeout, and post-pull failure remains
+`host_command` without retry. The focused host/lifecycle/startup/cost matrix passes 139 tests;
+the expanded image-contract/evidence/node matrix passes 196, with Black and isort checks.

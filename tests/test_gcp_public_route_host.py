@@ -288,6 +288,64 @@ def test_immutable_pull_retries_transient_command_failures_within_deadline():
     assert sleeps == [5.0, 15.0]
 
 
+def test_immutable_pull_uses_final_bounded_backoff_before_succeeding():
+    now = [0.0]
+    calls = []
+    sleeps = []
+
+    def runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        if len(calls) < 5:
+            raise host.CommandError("transient pull failure")
+        return _completed()
+
+    def sleeper(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    host._pull_immutable_image(
+        image=PRIMARY,
+        deadline=3570.0,
+        maximum_command_timeout_seconds=3570,
+        runner=runner,
+        clock=lambda: now[0],
+        sleeper=sleeper,
+    )
+
+    assert [timeout for _argv, timeout in calls] == [3570, 3565, 3550, 3490, 3370]
+    assert all(argv == ("docker", "pull", "--quiet", PRIMARY) for argv, _timeout in calls)
+    assert sleeps == [5.0, 15.0, 60.0, 120.0]
+
+
+def test_immutable_pull_retains_classification_after_all_bounded_attempts():
+    now = [0.0]
+    calls = []
+    sleeps = []
+
+    def runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        raise host.CommandError("persistent pull failure")
+
+    def sleeper(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    with pytest.raises(host.ActionFailure) as failure:
+        host._pull_immutable_image(
+            image=PRIMARY,
+            deadline=3570.0,
+            maximum_command_timeout_seconds=3570,
+            runner=runner,
+            clock=lambda: now[0],
+            sleeper=sleeper,
+        )
+
+    assert failure.value.failure_code == "image_pull"
+    assert [timeout for _argv, timeout in calls] == [3570, 3565, 3550, 3490, 3370]
+    assert all(argv == ("docker", "pull", "--quiet", PRIMARY) for argv, _timeout in calls)
+    assert sleeps == [5.0, 15.0, 60.0, 120.0]
+
+
 def test_immutable_pull_clamps_float_rounding_to_action_timeout():
     calls = []
 
