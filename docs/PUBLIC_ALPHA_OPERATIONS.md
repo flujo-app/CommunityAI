@@ -1,7 +1,7 @@
 # Public alpha operations runbook
 
-Status: finite Gate 11 plan, machine-readable health, CUDA route-image publication
-contract, and fresh-VM bootstrap implemented; publication and lifecycle work remain.
+Status: Gate 11 product-node route live and accepted; Gate 9 resource envelopes and
+packaged clean-install work remain.
 
 This runbook is for the Windows/Linux public inference alpha. It does not authorize
 a deployment by itself and it does not replace the release gates in
@@ -11,7 +11,7 @@ a deployment by itself and it does not replace the release gates in
 
 Do not expose a public model worker until all of these are true:
 
-1. the worker uses an exact qualified model manifest and an immutable image/source
+1. the worker uses an exact qualified model manifest and an exact generic runtime
    digest accepted by the release tracker;
 2. its signed identity and revocation inputs are backed up and the announcement is
    bound to the exact manifest;
@@ -19,7 +19,7 @@ Do not expose a public model worker until all of these are true:
    deadline, failure cleanup, and honest degraded/unavailable behavior;
 4. manifested-worker admission, aggregate health, training-off defaults, and the
    affected worker's independent disable path are enabled and observable;
-5. the operator has a last-known-good immutable artifact and can stop the worker
+5. the operator has a last-known-good runtime artifact and can stop the worker
    without depending on the public swarm; and
 6. any paid rollout fits the combined cloud ledger before provisioning.
 
@@ -36,39 +36,35 @@ peer/session identifiers in an incident report.
 
 ## Gate 11 finite route contract
 
-Generate a `gcp-public-route` authorization with
-`scripts/qualification_cost_guard.py` before provisioning. The schema-v2 plan binds:
+Generate a source-bound `gcp-product-node-route` authorization before provisioning. The
+Gate 11 contract binds one `g2-standard-8`/L4 host, a 200 GiB balanced auto-delete disk,
+isolated networking, public DHT TCP 31337-31338, no service account, and a maximum
+14-hour `DELETE` deadline.
 
-- one `g2-standard-8`/L4 host, a 200 GiB balanced disk, an instance-lifetime ephemeral public IPv4,
-  isolated network/subnet/firewalls, public TCP 31337-31338, and a maximum 14-hour
-  `DELETE` deadline;
-- separately published immutable CUDA Qwen3.5 2B primary and Gemma 4 E2B standby
-  route images, their exact qualified snapshot carriers and manifest digests, the
-  digests of their publication evidence, and the committed fresh-VM bootstrap digest
-  and byte count;
-- a 60-minute startup boundary, five-minute privacy-safe health sampling, exact
-  primary and standby inference, Qwen-disable/Gemma-fallback/restoration evidence,
-  and explicit stop conditions; and
-- exact reverse-order cleanup and empty-output absence checks scoped only to the run.
-  Partial creation or any stop condition requires immediate cleanup. A successful
-  observation may retain the exact resources only through the plan deadline; renewal
-  or baseline transition needs another exact authorization.
+Install only the exact generic CommunityAI wheel and the signed public catalog bootstrap.
+Do not embed, publish, mirror, or operator-transfer model weights. The normal product node
+must verify the catalog and manifests, download the selected artifacts from their catalog
+origin, verify them, and retain them in a persistent shared cache. Multiple node roles on
+the same host must reuse that cache. Each role runs the same `drift node` product command
+and uses an `automatic` worker constrained only by the bounded provider policy.
 
-Before the first provider call, re-run the cost guard against the ledger row and require
-`provisioning_authorized=true`; revalidate native `gcloud` and `gh` authentication,
-one unused global/zonal L4 slot, exact machine availability, OS image state, both
-publication-evidence files and GHCR digests, and protected-bootstrap presence. The cost
-guard is intentionally provider-call-free. It rejects the qualification repositories as
-route images and binds the expected evidence digests, but the lifecycle runner must still
-load and attest those files before authentication.
+Acceptance requires complete externally discovered Qwen primary and Gemma standby routes,
+a stable-worker observation window, exact one-token primary inference, deliberate primary
+pause, automatic standby selection and inference, primary restoration, restored automatic
+selection and inference, active services, bounded resource use, protected-bootstrap health,
+and privacy-safe evidence. A successful observation may retain the resources only through
+the plan deadline; renewal or baseline transition needs another authorization.
 
-The plan stops when Qwen exceeds 7 GiB device allocation, Gemma exceeds 15 GiB, their
-combined device allocation exceeds 22 GiB or is unobservable, host memory exceeds
-30 GiB, route storage exceeds 160 GiB, or combined logs exceed 1 GiB. These are
-pre-operational ceilings, not qualified envelopes or proof that both models fit
-concurrently. Co-residency remains unproven until the real bounded startup succeeds.
+Run `route-20260830-j` passed this contract. Qwen used 24/24 blocks, Gemma used 35/35,
+automatic fallback completed in 58.073 seconds, restoration completed in 32.042 seconds,
+and both inference paths succeeded. The host remains bounded by 7 GiB Qwen, 15 GiB Gemma,
+22 GiB combined accelerator, 30 GiB RAM, 160 GiB route-storage, and 1 GiB log ceilings.
 
-## CUDA route-image publication boundary
+## Legacy CUDA route-image publication boundary
+
+This section records the superseded experimental path. It is not the Gate 11 deployment
+procedure: do not build or pull a model-specific route image when the signed-catalog product
+node can verify and cache the model artifacts directly.
 
 The qualified images are immutable CPU-only snapshot carriers. Never run them as public
 routes: their entrypoint rejects the complete manifested range and their runtime has no

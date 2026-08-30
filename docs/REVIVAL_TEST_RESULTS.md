@@ -2237,3 +2237,28 @@ again has USD 100 available. The unchanged bootstrap must not be retried because
 failure category cannot distinguish setup, metadata, token, registry-authentication, timeout,
 or either immutable pull. The next source must add bounded privacy-safe failure categories and
 deterministic provider-free shell coverage before a new identity, plan, and reservation.
+
+## Gate 11 product-node route acceptance
+
+Run `route-20260830-j` replaced the model-specific OCI delivery path with the actual
+CommunityAI product node. A bounded G2/L4 VM installed only the generic `2.3.0.dev2` wheel,
+verified the signed public catalog and exact Qwen/Gemma manifests, downloaded model artifacts
+directly from Hugging Face, and reused one persistent verified cache across both node roles.
+No model image, private mirror, embedded weight, or operator-transferred model artifact was
+used.
+
+The run exposed and repaired five product-path issues without changing the authorized host,
+deadline, or USD 26 ceiling: native throughput-cache initialization, standby bootstrap
+ordering, cross-role cache reuse, a privacy-safe acceptance probe, and hot peer-list
+reconciliation that had restarted healthy workers. The final generic wheel is bound to source
+`4cef141746705c3ee8bc8e017693855e0bc4871e` and
+`sha256:589bbe3eacee01af773f5eeda47cd5575c1be02b720f08c9299ac7aeafa884ee`.
+
+The [sanitized lifecycle evidence](evidence/gate11node-20260830-a-lifecycle.json) proves a
+complete 24/24 Qwen primary and 35/35 Gemma standby, stable workers, primary one-token
+inference, deliberate primary pause, automatic Gemma selection and standby inference,
+automatic Qwen restoration, and restored inference. Fallback took 58.073 seconds and
+restoration took 32.042 seconds. Both services and routes remain live under the fixed 14-hour
+automatic-delete deadline, and the protected bootstrap is running. The same-host standby is
+an alpha fallback, not independent infrastructure redundancy. Gate 11 is `PASSED`; complete
+release qualification remains false and Gate 9 still blocks packaged Gate 13 work.
