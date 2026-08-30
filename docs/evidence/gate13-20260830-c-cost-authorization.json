@@ -4,7 +4,7 @@
   "run_id": "gate13-20260830-c",
   "gate": 13,
   "result": "planned",
-  "authorization_revision": 2,
+  "authorization_revision": 3,
   "cost_authorization_only": true,
   "source": {
     "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
@@ -86,6 +86,14 @@
       "instances_created": 0,
       "disks_created": 0,
       "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "sequential in-place Linux then Windows G2/L4 clean clients",
+      "result": "owner-authorized",
+      "reason": "the operator explicitly directed the live Gate 11 route to stop temporarily and its sole L4 allocation to move to Gate 13",
+      "new_instances": 0,
+      "new_disks": 0,
+      "maximum_cost_change_usd": "0.00"
     }
   ],
   "budget": {
@@ -99,20 +107,24 @@
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:34d4277f0d5d1e1036d13636ecd17d4fd2703e89409e86f2fdf9fae70724079d",
-  "ledger_purpose": "Gate 13 concurrent clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, using isolated bounded high-memory CPU clients and the separately authorized live L4 product route",
+  "provider_plan_digest": "sha256:e714ae04fc01c39e7c29436126e8e4d5e65c24c6d50fd30262ad94d550503aae",
+  "ledger_purpose": "Gate 13 sequential clean packaged Gemma Linux and Qwen Windows lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 to the existing isolated clients in place",
   "provider_plan": {
     "provider": "GCP",
     "project": "community-ai-506321",
     "route": {
-      "action": "reuse-separately-authorized-live-bounded-product-route",
+      "action": "stop-temporarily-preserve-disk-and-restore-after-gate13",
       "run_id": "route-20260830-j",
       "instance": "route-20260830-j-node",
       "zone": "us-central1-a",
-      "expected_state": "RUNNING",
+      "initial_state": "RUNNING",
+      "qualification_state": "TERMINATED",
+      "final_required_state": "RUNNING",
       "automatic_delete_deadline": "2026-08-31T05:44:13Z",
-      "mutation_authorized_by_this_plan": false,
-      "deletion_authorized_by_this_plan": false
+      "mutation_authorized_by_this_plan": true,
+      "deletion_authorized_by_this_plan": false,
+      "boot_disk_and_configuration_must_be_preserved": true,
+      "qwen_and_gemma_coverage_must_be_reproved_after_restore": true
     },
     "clients": [
       {
@@ -122,8 +134,8 @@
         "instance": "gate13-20260830-c-windows",
         "disk": "gate13-20260830-c-windows",
         "zone": "us-west1-a",
-        "machine_type": "e2-standard-8",
-        "accelerator": false,
+        "machine_type": "g2-standard-8",
+        "accelerator": "1 x NVIDIA L4",
         "image_project": "windows-cloud",
         "image": "windows-server-2022-dc-v20260814",
         "boot_disk_gib": 100,
@@ -134,8 +146,8 @@
         "provisioning_model": "STANDARD",
         "max_run_seconds": 5400,
         "termination_action": "DELETE",
-        "gpu_driver_bootstrap": false,
-        "execution_class": "CPU clean-host lifecycle; packaged CUDA runtime provenance remains bound but no client GPU claim is made",
+        "gpu_driver_bootstrap": true,
+        "execution_class": "single-L4 clean-host lifecycle after in-place stop, machine-type change, driver verification, and restart; no disk replacement or package retransfer",
         "empty_persistent_cache_required": true,
         "native_credential_store": "Windows Credential Manager",
         "os_containment": "kill-on-close Job Object assigned before child execution"
@@ -147,8 +159,8 @@
         "instance": "gate13-20260830-c-linux",
         "disk": "gate13-20260830-c-linux",
         "zone": "us-east1-b",
-        "machine_type": "e2-highmem-8",
-        "accelerator": false,
+        "machine_type": "g2-standard-8",
+        "accelerator": "1 x NVIDIA L4",
         "image_project": "ubuntu-os-cloud",
         "image": "ubuntu-2404-noble-amd64-v20260826",
         "boot_disk_gib": 100,
@@ -159,8 +171,8 @@
         "provisioning_model": "STANDARD",
         "max_run_seconds": 5400,
         "termination_action": "DELETE",
-        "gpu_driver_bootstrap": false,
-        "execution_class": "CPU clean-host lifecycle; packaged CUDA runtime provenance remains bound but no client GPU claim is made",
+        "gpu_driver_bootstrap": true,
+        "execution_class": "single-L4 clean-host lifecycle after in-place stop, machine-type change, driver verification, and restart; the already-verified package and empty model cache stay on the same auto-delete disk",
         "empty_persistent_cache_required": true,
         "native_credential_store": "Secret Service",
         "os_containment": "systemd system cgroup-v2 service with KillMode=control-group and LimitCORE=0"
@@ -196,9 +208,10 @@
       "model_registry_or_cache_mirror": false
     },
     "topology_revision": {
-      "revision": 2,
-      "previous_topology_result": "canceled-before-resource-creation",
-      "reason": "the protected route owns the sole project-global GPU allocation",
+      "revision": 3,
+      "previous_topology_result": "CPU clients provisioned and package staging begun; no valid lifecycle result yet",
+      "reason": "the operator explicitly prioritized completion speed and authorized temporary Gate 11 route suspension so the sole global L4 can be reused sequentially",
+      "gate11_lesson_applied": "reuse the exact product-node L4 resource class, direct immutable model acquisition, native process containment, and cleanup discipline that passed the live route",
       "gate13_scope": "clean packaged install, localhost inference, contribution controls, replacement, uninstall, and cleanup",
       "gate14_real_gpu_control_claim_deferred": true,
       "cost_ceiling_changed": false
@@ -213,7 +226,13 @@
       "pause_timeout_seconds": 30.0
     },
     "sequencing": {
-      "concurrent_platform_models": 2,
+      "concurrent_platform_models": 1,
+      "gpu_order": [
+        "gate13-20260830-c-linux",
+        "gate13-20260830-c-windows"
+      ],
+      "route_stopped_before_first_client_gpu_start": true,
+      "route_restored_only_after_both_client_deletions": true,
       "windows_model": "Qwen3.5 2B",
       "linux_model": "Gemma 4 E2B IT",
       "maximum_transfer_resumptions": 3,
@@ -234,10 +253,11 @@
       ],
       "protected_resources": [
         "communityai-bootstrap-1",
-        "route-20260830-j-node",
+        "route-20260830-j-node boot disk and configuration",
         "all resources not named by this plan"
       ],
       "protected_bootstrap_must_remain_running": true,
+      "route_instance_may_stop_and_restart_but_must_not_be_deleted": true,
       "route_cleanup_owned_by_separate_authorization": true
     },
     "prohibited": {
@@ -268,13 +288,15 @@
     "current route identity, deadline, state, and complete Qwen/Gemma coverage",
     "exact target instances and disks absent",
     "protected bootstrap running",
-    "exact high-memory CPU machine types available in both planned zones",
+    "exact g2-standard-8 machine type, one NVIDIA L4, and current driver path available sequentially in both planned zones after the route stops",
     "focused lifecycle software tests and privacy-safe schema checks"
   ],
   "operator_override": {
     "recorded_at": "2026-08-30",
     "parallel_models_and_platforms_authorized_for_speed": true,
     "current_l4_usage_nonblocking_within_combined_budget": true,
+    "temporary_gate11_route_stop_and_sequential_l4_reallocation_authorized": true,
+    "gate11_route_deletion_not_authorized": true,
     "hard_cloud_ceiling_unchanged_usd": "100.00"
   },
   "provider_calls_authorized_without_preflight": false,
