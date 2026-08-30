@@ -23,6 +23,33 @@ def _digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def test_bounded_runner_resolves_native_cli_shims_before_create_process(monkeypatch):
+    calls = []
+    resolved = r"C:\\tools\\gcloud.CMD"
+    monkeypatch.setattr(lifecycle.shutil, "which", lambda name: resolved if name == "gcloud" else None)
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return lifecycle.subprocess.CompletedProcess(argv, 0, b"account", b"")
+
+    monkeypatch.setattr(lifecycle.subprocess, "run", run)
+
+    result = lifecycle._run_bounded(("gcloud", "auth", "list"), 30)
+
+    assert result.returncode == 0
+    assert calls[0][0] == [resolved, "auth", "list"]
+    assert calls[0][1]["shell"] is False
+
+
+def test_bounded_runner_rejects_missing_or_unreviewed_executables(monkeypatch):
+    monkeypatch.setattr(lifecycle.shutil, "which", lambda _name: None)
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="executable is unavailable"):
+        lifecycle._run_bounded(("gcloud", "auth", "list"), 30)
+    with pytest.raises(lifecycle.ProviderCommandError, match="command contract"):
+        lifecycle._run_bounded(("python", "--version"), 30)
+
+
 def _publication(candidate: str, index_character: str, runtime_character: str) -> dict:
     expected = lifecycle._ROUTE_EXPECTATIONS[candidate]
     repository = expected["repository"]

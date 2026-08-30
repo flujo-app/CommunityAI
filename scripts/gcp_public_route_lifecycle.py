@@ -16,6 +16,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -236,13 +237,18 @@ def _run_bounded(argv: Sequence[str], timeout: int) -> CommandResult:
             not isinstance(value, str) or not value or "\x00" in value or "\r" in value or "\n" in value
             for value in argv
         )
+        or argv[0] not in {"gcloud", "gh"}
         or not 1 <= timeout <= 3600
     ):
         raise ProviderCommandError("provider command contract is invalid")
+    executable = shutil.which(argv[0])
+    if executable is None:
+        raise ProviderCommandError("bounded provider executable is unavailable")
     try:
         completed = subprocess.run(
-            list(argv),
+            [executable, *argv[1:]],
             check=False,
+            shell=False,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
