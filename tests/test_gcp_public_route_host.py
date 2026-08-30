@@ -1,6 +1,7 @@
 import base64
 import json
 import subprocess
+import threading
 
 import pytest
 
@@ -519,10 +520,45 @@ def test_authenticated_prefetch_pulls_both_digests_and_removes_credentials(monke
     assert secrets[0][2] == b"native-gh-token\n"
     assert all("native-gh-token" not in value for value in secrets[0][0])
     pull_argv = [argv for argv, _timeout in calls if "pull" in argv]
-    assert pull_argv == [
+    assert set(pull_argv) == {
         ("docker", "--config", str(registry), "pull", "--quiet", PRIMARY),
         ("docker", "--config", str(registry), "pull", "--quiet", STANDBY),
-    ]
+    }
+    assert not registry.exists()
+
+
+def test_authenticated_prefetch_pulls_images_concurrently(monkeypatch, tmp_path):
+    registry = tmp_path / "registry"
+    monkeypatch.setattr(host, "REGISTRY_CONFIG", registry)
+    monkeypatch.setattr(host, "_prepare_registry_config", lambda: registry.mkdir())
+    rendezvous = threading.Barrier(2)
+    pulled = []
+
+    def pull(**kwargs):
+        pulled.append(kwargs["image"])
+        rendezvous.wait(timeout=2)
+
+    def runner(argv, _timeout):
+        if argv[:3] == ("docker", "image", "inspect"):
+            return _completed(json.dumps([argv[-1]]).encode())
+        return _completed()
+
+    monkeypatch.setattr(host, "_pull_immutable_image", pull)
+
+    report = host.execute_action(
+        action="prefetch-images-file",
+        run_id=RUN_ID,
+        primary_image=PRIMARY,
+        standby_image=STANDBY,
+        registry_user="octocat",
+        secret_payload=base64.b64encode(b"native-gh-token") + b"\n",
+        action_timeout_seconds=3570,
+        runner=runner,
+        secret_runner=lambda _argv, _timeout, _secret: 0,
+    )
+
+    assert set(pulled) == {PRIMARY, STANDBY}
+    assert report["details"] == {"images_prefetched": 2, "registry_credentials_removed": True}
     assert not registry.exists()
 
 

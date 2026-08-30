@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -506,20 +507,20 @@ def _prefetch_images(
         )
         if secret_runner(login_argv, min(300, action_timeout_seconds), bytes(token) + b"\n") != 0:
             raise ActionFailure("registry_auth")
-        _pull_immutable_image(
-            image=primary,
-            deadline=deadline,
-            maximum_command_timeout_seconds=action_timeout_seconds,
-            runner=runner,
-            docker_config=REGISTRY_CONFIG,
-        )
-        _pull_immutable_image(
-            image=standby,
-            deadline=deadline,
-            maximum_command_timeout_seconds=action_timeout_seconds,
-            runner=runner,
-            docker_config=REGISTRY_CONFIG,
-        )
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="communityai-image-pull") as executor:
+            pulls = [
+                executor.submit(
+                    _pull_immutable_image,
+                    image=image,
+                    deadline=deadline,
+                    maximum_command_timeout_seconds=action_timeout_seconds,
+                    runner=runner,
+                    docker_config=REGISTRY_CONFIG,
+                )
+                for image in (primary, standby)
+            ]
+            for pull in pulls:
+                pull.result()
         _verify_local_image(primary, runner)
         _verify_local_image(standby, runner)
         return {"images_prefetched": 2, "registry_credentials_removed": True}
