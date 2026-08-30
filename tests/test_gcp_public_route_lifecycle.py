@@ -333,10 +333,12 @@ def test_quota_headroom_requires_one_exact_finite_metric():
 def _instance_verification(
     status: str,
     *,
-    duration: str = "50400s",
+    duration: object = None,
     address: str = "8.8.8.8",
     machine_type: str = "https://www.googleapis.com/compute/v1/projects/p/zones/z/machineTypes/g2-standard-8",
 ) -> bytes:
+    if duration is None:
+        duration = {"seconds": "50400", "nanos": 0}
     return json.dumps(
         {
             "status": status,
@@ -347,12 +349,16 @@ def _instance_verification(
     ).encode()
 
 
-def test_instance_verification_uses_structured_fields_and_accepts_decimal_duration():
+def test_instance_verification_uses_structured_gcloud_duration_fields():
     assert lifecycle._parse_instance_verification(_instance_verification("PROVISIONING")) is None
     assert lifecycle._parse_instance_verification(_instance_verification("STAGING")) is None
-    assert lifecycle._parse_instance_verification(_instance_verification("RUNNING", duration="50400.000s")) == "8.8.8.8"
+    assert lifecycle._parse_instance_verification(_instance_verification("RUNNING")) == "8.8.8.8"
     with pytest.raises(lifecycle.ProviderCommandError, match="exact plan"):
-        lifecycle._parse_instance_verification(_instance_verification("RUNNING", duration="50401s"))
+        lifecycle._parse_instance_verification(
+            _instance_verification("RUNNING", duration={"seconds": "50400", "nanos": 1})
+        )
+    with pytest.raises(lifecycle.ProviderCommandError, match="exact plan"):
+        lifecycle._parse_instance_verification(_instance_verification("RUNNING", duration="50400s"))
     with pytest.raises(lifecycle.ProviderCommandError, match="exact plan"):
         lifecycle._parse_instance_verification(_instance_verification("STOPPING"))
     with pytest.raises(lifecycle.ProviderCommandError, match="invalid"):

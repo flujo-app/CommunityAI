@@ -24,7 +24,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -902,15 +902,7 @@ def _parse_instance_verification(payload: bytes) -> str | None:
         or len(interfaces) != 1
     ):
         raise ProviderCommandError("created instance does not match the exact plan")
-    duration_value = scheduling.get("maxRunDuration")
-    if not isinstance(duration_value, str):
-        raise ProviderCommandError("created instance does not match the exact plan")
-    duration_text = duration_value[:-1] if duration_value.endswith("s") else duration_value
-    try:
-        duration = Decimal(duration_text)
-    except InvalidOperation as exc:
-        raise ProviderCommandError("created instance does not match the exact plan") from exc
-    if not duration.is_finite() or duration != Decimal("50400"):
+    if scheduling.get("maxRunDuration") != {"seconds": "50400", "nanos": 0}:
         raise ProviderCommandError("created instance does not match the exact plan")
     interface = interfaces[0]
     access_configs = interface.get("accessConfigs") if isinstance(interface, dict) else None
