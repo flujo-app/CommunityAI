@@ -403,28 +403,42 @@ def _gcp_public_route_cache_plan(
     subnet = f"{run_id}-subnet"
     firewall = f"{run_id}-iap"
     target_tag = f"{run_id}-cache"
+    service_account_id = f"ca-{hashlib.sha256(run_id.encode('ascii')).hexdigest()[:20]}"
+    service_account = f"{service_account_id}@{project}.iam.gserviceaccount.com"
+    service_account_member = f"serviceAccount:{service_account}"
+    cloud_platform_scope = "https://www.googleapis.com/auth/cloud-platform"
     max_run_seconds = int(maximum_hours * Decimal(3600))
     common = ["--project", project, "--quiet"]
-    verify_api_enabled_command = _command(
-        "gcloud",
-        "services",
-        "list",
-        "--enabled",
-        "--filter",
-        "config.name=artifactregistry.googleapis.com",
-        "--format",
-        "value(config.name)",
-        "--project",
-        project,
+    required_services = (
+        "artifactregistry.googleapis.com",
+        "iam.googleapis.com",
     )
-    create_commands = [
+    verify_api_enabled_commands = [
         _command(
             "gcloud",
             "services",
-            "enable",
-            "artifactregistry.googleapis.com",
-            *common,
-        ),
+            "list",
+            "--enabled",
+            "--filter",
+            f"config.name={service}",
+            "--format",
+            "value(config.name)",
+            "--project",
+            project,
+        )
+        for service in required_services
+    ]
+    create_commands = [
+        *[
+            _command(
+                "gcloud",
+                "services",
+                "enable",
+                service,
+                *common,
+            )
+            for service in required_services
+        ],
         _command(
             "gcloud",
             "artifacts",
@@ -444,6 +458,18 @@ def _gcp_public_route_cache_plan(
         ),
         _command(
             "gcloud",
+            "iam",
+            "service-accounts",
+            "create",
+            service_account_id,
+            "--display-name",
+            "CommunityAI Gate 11 cache builder",
+            "--description",
+            "Ephemeral least-privilege identity for one bounded cache prewarm",
+            *common,
+        ),
+        _command(
+            "gcloud",
             "artifacts",
             "repositories",
             "add-iam-policy-binding",
@@ -451,9 +477,10 @@ def _gcp_public_route_cache_plan(
             "--location",
             region,
             "--member",
-            "allUsers",
+            service_account_member,
             "--role",
             "roles/artifactregistry.reader",
+            "--condition=None",
             *common,
         ),
         _command("gcloud", "compute", "networks", "create", network, "--subnet-mode", "custom", *common),
@@ -515,8 +542,10 @@ def _gcp_public_route_cache_plan(
             "--boot-disk-type",
             "pd-balanced",
             "--boot-disk-auto-delete",
-            "--no-service-account",
-            "--no-scopes",
+            "--service-account",
+            service_account,
+            "--scopes",
+            cloud_platform_scope,
             "--provisioning-model",
             "STANDARD",
             "--max-run-duration",
@@ -539,7 +568,7 @@ def _gcp_public_route_cache_plan(
             *common,
         ),
     ]
-    revoke_public_command = _command(
+    revoke_builder_reader_command = _command(
         "gcloud",
         "artifacts",
         "repositories",
@@ -548,14 +577,13 @@ def _gcp_public_route_cache_plan(
         "--location",
         region,
         "--member",
-        "allUsers",
+        service_account_member,
         "--role",
         "roles/artifactregistry.reader",
         "--all",
         *common,
     )
     cleanup_commands = [
-        revoke_public_command,
         _command(
             "gcloud",
             "compute",
@@ -566,6 +594,15 @@ def _gcp_public_route_cache_plan(
             zone,
             "--delete-disks",
             "all",
+            *common,
+        ),
+        revoke_builder_reader_command,
+        _command(
+            "gcloud",
+            "iam",
+            "service-accounts",
+            "delete",
+            service_account,
             *common,
         ),
         _command("gcloud", "compute", "firewall-rules", "delete", firewall, *common),
@@ -644,6 +681,18 @@ def _gcp_public_route_cache_plan(
             "--project",
             project,
         ),
+        _command(
+            "gcloud",
+            "iam",
+            "service-accounts",
+            "list",
+            "--filter",
+            f"email={service_account}",
+            "--format",
+            "value(email)",
+            "--project",
+            project,
+        ),
     ]
     return {
         "project": project,
@@ -657,6 +706,7 @@ def _gcp_public_route_cache_plan(
             "upstream": "https://ghcr.io",
             "host": GCP_ARTIFACT_REGISTRY_HOST,
             "private_after_prewarm": True,
+            "temporary_public_access": False,
             "vulnerability_scanning": False,
             "retained_after_pass": True,
         },
@@ -669,8 +719,12 @@ def _gcp_public_route_cache_plan(
             "machine_type": "e2-standard-4",
             "boot_disk_gib": 200,
             "os_image": linux_image,
-            "service_account": False,
-            "scopes": [],
+            "service_account": service_account,
+            "service_account_id": service_account_id,
+            "service_account_key_created": False,
+            "repository_member": service_account_member,
+            "scopes": [cloud_platform_scope],
+            "metadata_token_auth": True,
             "max_run_seconds": max_run_seconds,
             "termination_action": "DELETE",
         },
@@ -699,13 +753,15 @@ def _gcp_public_route_cache_plan(
         ],
         "preflight_contract": [
             "revalidate native gcloud authentication before the first provider call",
-            "verify the exact cache repository and all run-scoped builder resources are initially absent",
+            "verify the exact cache repository, ephemeral service account, and all run-scoped builder resources are initially absent",
             "verify communityai-bootstrap-1 is RUNNING and never include it in mutation commands",
             "rehash the exact source-bound cache bootstrap before creation",
+            "create no service-account key and grant only repository reader to the ephemeral builder identity",
         ],
         "create_commands": create_commands,
-        "verify_api_enabled_command": verify_api_enabled_command,
-        "revoke_public_command": revoke_public_command,
+        "required_services": list(required_services),
+        "verify_api_enabled_commands": verify_api_enabled_commands,
+        "revoke_builder_reader_command": revoke_builder_reader_command,
         "cleanup_commands": cleanup_commands,
         "verify_cleanup_commands": verify_cleanup_commands,
         "delete_repository_command": _command(
@@ -719,8 +775,8 @@ def _gcp_public_route_cache_plan(
             *common,
         ),
         "cleanup_success_condition": (
-            "temporary allUsers access removed, five builder absence checks empty, cache private, "
-            "four exact cached manifests present, protected bootstrap RUNNING"
+            "ephemeral builder identity and repository binding removed, six builder/identity absence checks empty, "
+            "cache policy empty, four exact cached manifests present, protected bootstrap RUNNING"
         ),
     }
 

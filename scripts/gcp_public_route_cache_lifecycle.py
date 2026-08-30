@@ -25,7 +25,13 @@ MAX_CREATE_SECONDS = 600
 MAX_CACHE_WARM_SECONDS = 18_000
 POLL_SECONDS = 30
 READY_PATH = "/var/lib/communityai-cache/cache-ready.json"
-READY_KEYS = {"schema_version", "scope", "result", "images_prefetched"}
+READY_KEYS = {
+    "schema_version",
+    "scope",
+    "result",
+    "images_prefetched",
+    "registry_credentials_removed",
+}
 PRIVACY = {
     "credentials_retained": False,
     "paths_retained": False,
@@ -247,9 +253,23 @@ def _protected_bootstrap_running(plan: BoundCachePlan, runner: Runner) -> bool:
     return result.returncode == 0 and result.stdout.strip() == b"RUNNING"
 
 
-def _api_enabled(plan: BoundCachePlan, runner: Runner) -> bool:
-    result = runner(tuple(plan.provider_plan["verify_api_enabled_command"]), MAX_PROVIDER_SECONDS)
-    return result.returncode == 0 and result.stdout.strip() == b"artifactregistry.googleapis.com"
+def _apis_enabled(plan: BoundCachePlan, runner: Runner) -> bool:
+    services = plan.provider_plan.get("required_services")
+    commands = plan.provider_plan.get("verify_api_enabled_commands")
+    if (
+        not isinstance(services, list)
+        or services != ["artifactregistry.googleapis.com", "iam.googleapis.com"]
+        or not isinstance(commands, list)
+        or len(commands) != len(services)
+    ):
+        raise CacheLifecycleError("required service plan is invalid")
+    for service, command in zip(services, commands):
+        if not isinstance(command, list) or any(not isinstance(part, str) for part in command):
+            raise CacheLifecycleError("required service query is invalid")
+        result = runner(tuple(command), MAX_PROVIDER_SECONDS)
+        if result.returncode != 0 or result.stdout.strip() != service.encode("ascii"):
+            return False
+    return True
 
 
 def _repository_list(plan: BoundCachePlan, runner: Runner) -> bytes:
@@ -301,9 +321,7 @@ def _private_policy(plan: BoundCachePlan, runner: Runner) -> bool:
         members = binding.get("members") if isinstance(binding, dict) else None
         if not isinstance(members, list) or any(not isinstance(member, str) for member in members):
             raise CacheLifecycleError("cache policy is invalid")
-        if {"allUsers", "allAuthenticatedUsers"}.intersection(members):
-            return False
-    return True
+    return not bindings
 
 
 def _repository_exact(plan: BoundCachePlan, runner: Runner) -> bool:
@@ -376,7 +394,8 @@ def _cached_digests(plan: BoundCachePlan, runner: Runner) -> int:
 
 
 def _wait_instance(plan: BoundCachePlan, runner: Runner, *, clock: Clock, sleeper: Sleeper) -> None:
-    instance = str(plan.provider_plan["builder"]["instance"])
+    builder = plan.provider_plan["builder"]
+    instance = str(builder["instance"])
     deadline = clock() + MAX_CREATE_SECONDS
     while True:
         payload = _success(
@@ -389,7 +408,7 @@ def _wait_instance(plan: BoundCachePlan, runner: Runner, *, clock: Clock, sleepe
                     instance,
                     "--zone",
                     plan.zone,
-                    "--format=json(status,machineType,scheduling.maxRunDuration)",
+                    "--format=json(status,machineType,scheduling.maxRunDuration,serviceAccounts)",
                     "--project",
                     plan.project,
                 ),
@@ -405,12 +424,18 @@ def _wait_instance(plan: BoundCachePlan, runner: Runner, *, clock: Clock, sleepe
             continue
         machine = value.get("machineType")
         scheduling = value.get("scheduling")
+        identities = value.get("serviceAccounts")
+        expected_identity = {
+            "email": builder.get("service_account"),
+            "scopes": builder.get("scopes"),
+        }
         if (
             value.get("status") != "RUNNING"
             or not isinstance(machine, str)
             or not machine.endswith("/machineTypes/e2-standard-4")
             or not isinstance(scheduling, dict)
             or scheduling.get("maxRunDuration") != {"seconds": "21600", "nanos": 0}
+            or identities != [expected_identity]
         ):
             raise CacheLifecycleError("cache builder does not match the exact plan")
         return
@@ -443,6 +468,7 @@ def _wait_cache_ready(plan: BoundCachePlan, runner: Runner, *, clock: Clock, sle
                 and value.get("scope") == "communityai-public-route-cache-bootstrap"
                 and value.get("result") == "passed"
                 and value.get("images_prefetched") == 2
+                and value.get("registry_credentials_removed") is True
             ):
                 return
             raise CacheLifecycleError("cache bootstrap acknowledgement is invalid")
@@ -480,13 +506,11 @@ def execute_cache_lifecycle(
     started = clock()
     stage = "native_authentication"
     repository_create_attempted_after_absence = False
-    public_binding_added = False
-    temporary_public_binding_removed = True
     repository_absent_after_failure: bool | None = None
     repository_retained = False
     cached_manifest_count = 0
     cleanup_deleted = 0
-    absence = [False] * 5
+    absence = [False] * 6
     result = "failed"
     protected_running = False
     try:
@@ -504,58 +528,50 @@ def execute_cache_lifecycle(
             raise CacheLifecycleError("protected bootstrap is not running")
         for index, command in enumerate(plan.provider_plan["verify_cleanup_commands"]):
             _success(runner(tuple(command), MAX_PROVIDER_SECONDS), f"initial builder absence {index}", empty=True)
+            absence[index] = True
 
         stage = "api_enablement"
         create_commands = plan.provider_plan["create_commands"]
-        try:
-            runner(tuple(create_commands[0]), MAX_PROVIDER_SECONDS)
-        except Exception:
-            pass
-        if not _api_enabled(plan, runner):
-            raise CacheLifecycleError("Artifact Registry API enablement is not observable")
+        for command in create_commands[:2]:
+            try:
+                runner(tuple(command), MAX_PROVIDER_SECONDS)
+            except Exception:
+                pass
+        if not _apis_enabled(plan, runner):
+            raise CacheLifecycleError("required cache APIs are not observably enabled")
         if _repository_list(plan, runner).strip():
             raise CacheLifecycleError("cache repository already exists outside this run")
 
         stage = "repository_create"
         repository_create_attempted_after_absence = True
-        _success(runner(tuple(create_commands[1]), MAX_PROVIDER_SECONDS), "cache repository creation")
+        absence = [False] * 6
+        _success(runner(tuple(create_commands[2]), MAX_PROVIDER_SECONDS), "cache repository creation")
         if not _repository_exact(plan, runner):
             raise CacheLifecycleError("created cache repository does not match the exact plan")
 
-        stage = "temporary_public_binding"
-        public_binding_added = True
-        temporary_public_binding_removed = False
-        _success(runner(tuple(create_commands[2]), MAX_PROVIDER_SECONDS), "temporary cache reader binding")
+        stage = "builder_identity"
+        _success(runner(tuple(create_commands[3]), MAX_PROVIDER_SECONDS), "ephemeral builder identity creation")
+        _success(runner(tuple(create_commands[4]), MAX_PROVIDER_SECONDS), "ephemeral builder reader binding")
 
         stage = "builder_create"
-        for command in create_commands[3:]:
+        for command in create_commands[5:]:
             _success(runner(tuple(command), MAX_PROVIDER_SECONDS), "cache builder create command")
         _wait_instance(plan, runner, clock=clock, sleeper=sleeper)
 
         stage = "cache_warm"
         _wait_cache_ready(plan, runner, clock=clock, sleeper=sleeper)
 
-        stage = "privacy_revoke"
-        _success(
-            runner(tuple(plan.provider_plan["revoke_public_command"]), MAX_PROVIDER_SECONDS),
-            "temporary cache reader revocation",
-        )
-        public_binding_added = False
+        stage = "builder_cleanup"
+        cleanup_deleted, absence = _cleanup_builder(plan, runner)
+        if not all(absence):
+            raise CacheLifecycleError("cache builder or identity cleanup is incomplete")
         if not _private_policy(plan, runner):
-            raise CacheLifecycleError("cache remains public after prewarm")
-        temporary_public_binding_removed = True
+            raise CacheLifecycleError("retained cache policy is not empty")
 
         stage = "digest_verification"
         cached_manifest_count = _cached_digests(plan, runner)
         if not _repository_exact(plan, runner):
             raise CacheLifecycleError("cache repository changed during prewarm")
-
-        stage = "builder_cleanup"
-        cleanup_deleted, absence = _cleanup_builder(plan, runner)
-        if not all(absence):
-            raise CacheLifecycleError("cache builder cleanup is incomplete")
-        if not _private_policy(plan, runner):
-            raise CacheLifecycleError("retained cache is not private")
         protected_running = _protected_bootstrap_running(plan, runner)
         if not protected_running:
             raise CacheLifecycleError("protected bootstrap is not running after cleanup")
@@ -565,15 +581,7 @@ def execute_cache_lifecycle(
     except Exception:
         result = "failed"
     finally:
-        if public_binding_added:
-            try:
-                revoke = runner(tuple(plan.provider_plan["revoke_public_command"]), MAX_PROVIDER_SECONDS)
-                if revoke.returncode == 0 and _private_policy(plan, runner):
-                    public_binding_added = False
-                    temporary_public_binding_removed = True
-            except Exception:
-                temporary_public_binding_removed = False
-        if not all(absence):
+        if repository_create_attempted_after_absence and not all(absence):
             cleanup_deleted, absence = _cleanup_builder(plan, runner)
         if result != "passed" and repository_create_attempted_after_absence:
             try:
@@ -584,15 +592,14 @@ def execute_cache_lifecycle(
                 repository_absent_after_failure = not _repository_list(plan, runner).strip()
             except Exception:
                 repository_absent_after_failure = False
-            if repository_absent_after_failure:
-                public_binding_added = False
-                temporary_public_binding_removed = True
             repository_retained = False
         try:
             protected_running = _protected_bootstrap_running(plan, runner)
         except Exception:
             protected_running = False
 
+    privacy = dict(PRIVACY)
+    privacy["credentials_retained"] = repository_create_attempted_after_absence and not all(absence)
     evidence = {
         "schema_version": SCHEMA_VERSION,
         "scope": "gcp-public-route-cache-lifecycle",
@@ -612,14 +619,19 @@ def execute_cache_lifecycle(
             "absent_after_failure": repository_absent_after_failure,
         },
         "cached_manifest_count": cached_manifest_count,
-        "temporary_public_binding_removed": temporary_public_binding_removed,
+        "temporary_public_access_used": False,
+        "builder_identity": {
+            "ephemeral": True,
+            "key_created": False,
+            "removed": all(absence),
+        },
         "builder_cleanup": {
             "delete_commands_succeeded": cleanup_deleted,
             "absence_checks": absence,
             "all_absent": all(absence),
         },
         "protected_bootstrap_running": protected_running,
-        "privacy": dict(PRIVACY),
+        "privacy": privacy,
         "complete_release_qualification": False,
     }
     _atomic_json(output_path, evidence)

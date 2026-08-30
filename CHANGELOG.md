@@ -145,7 +145,15 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   Docker/custom nesting. Bounded diagnostics deleted the exact repository and re-proved its
   absence after observing that schema; all five builder/perimeter targets are absent and the
   protected bootstrap is running. Both cache and route validators now require the exact
-  provider-returned shape and reject the legacy nesting or URI drift.
+  provider-returned shape and reject the legacy nesting or URI drift. Attempt D advanced
+  through that check, then the project domain policy rejected its temporary `allUsers`
+  reader binding; no public access applied, no builder was created, and exact repository plus
+  perimeter cleanup passed. The replacement cache path never requests public access: one
+  deterministic keyless ephemeral service account receives only repository-reader, the
+  builder authenticates from metadata without a service-account key, and Docker credentials
+  are removed before readiness. Retention requires an empty repository policy, all four exact
+  cached digests, six builder/identity absences, and protected-bootstrap health; the consuming
+  route rejects any residual repository binding.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

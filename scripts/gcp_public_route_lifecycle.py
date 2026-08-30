@@ -1217,8 +1217,8 @@ def _verify_private_artifact_cache(plan: BoundPlan, runner: Runner) -> None:
         members = binding.get("members") if isinstance(binding, dict) else None
         if not isinstance(members, list) or any(not isinstance(member, str) for member in members):
             raise ProviderCommandError("Artifact Registry cache policy is invalid")
-        if {"allUsers", "allAuthenticatedUsers"}.intersection(members):
-            raise ProviderCommandError("Artifact Registry cache must be private")
+    if bindings:
+        raise ProviderCommandError("Artifact Registry cache policy must be empty")
 
     for image in (
         plan.primary.image_reference,

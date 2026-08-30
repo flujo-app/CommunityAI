@@ -131,8 +131,33 @@ def _ready():
             "scope": "communityai-public-route-cache-bootstrap",
             "result": "passed",
             "images_prefetched": 2,
+            "registry_credentials_removed": True,
         }
     ).encode()
+
+
+def _enabled_service(argv):
+    service = (
+        "iam.googleapis.com"
+        if any("iam.googleapis.com" in part for part in argv)
+        else "artifactregistry.googleapis.com"
+    )
+    return route.CommandResult(0, (service + "\n").encode(), b"")
+
+
+def test_cache_bootstrap_uses_ephemeral_metadata_identity_without_public_access():
+    body = BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "instance/service-accounts/default" in body
+    assert "ca-[0-9a-f]{20}@community-ai-506321" in body
+    assert "--username oauth2accesstoken --password-stdin" in body
+    assert 'docker --config "${REGISTRY_CONFIG}" pull' in body
+    assert 'rm -rf -- "${REGISTRY_CONFIG}"' in body
+    assert '"registry_credentials_removed":true' in body
+    assert "allUsers" not in body
+    assert "service-account-key" not in body
+    assert body.index("--password-stdin") < body.index('pull_one "${primary_image}"')
+    assert body.rindex("cleanup_registry") < body.index("registry_credentials_removed")
 
 
 def test_bound_cache_plan_validates_ledger_publication_and_source(tmp_path):
@@ -173,6 +198,35 @@ def test_private_policy_rejects_public_or_malformed_members(tmp_path):
         cache._private_policy(plan, malformed_runner)
 
 
+def test_cache_lifecycle_never_cleans_unproven_targets_before_initial_absence(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+    calls = []
+
+    def runner(argv, _timeout):
+        argv = tuple(argv)
+        calls.append(argv)
+        if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
+            return route.CommandResult(1, b"", b"")
+        if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
+            "communityai-bootstrap-1" in part for part in argv
+        ):
+            return route.CommandResult(0, b"RUNNING\n", b"")
+        raise AssertionError(argv)
+
+    evidence = cache.execute_cache_lifecycle(
+        plan,
+        output_path=tmp_path / "evidence.json",
+        runner=runner,
+        clock=lambda: 0.0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert evidence["result"] == "failed"
+    assert evidence["failure_stage"] == "native_authentication"
+    assert evidence["privacy"]["credentials_retained"] is False
+    assert not any(tuple(command) in calls for command in plan.provider_plan["cleanup_commands"])
+
+
 def test_cache_lifecycle_passes_only_after_private_digest_verification_and_cleanup(tmp_path):
     plan, _inputs = _fixture(tmp_path)
     calls = []
@@ -185,7 +239,7 @@ def test_cache_lifecycle_passes_only_after_private_digest_verification_and_clean
         if argv[:4] == ("gcloud", "services", "enable", "artifactregistry.googleapis.com"):
             return route.CommandResult(1, b"", b"provider response lost")
         if argv[:4] == ("gcloud", "services", "list", "--enabled"):
-            return route.CommandResult(0, b"artifactregistry.googleapis.com\n", b"")
+            return _enabled_service(argv)
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
             "communityai-bootstrap-1" in part for part in argv
         ):
@@ -206,6 +260,12 @@ def test_cache_lifecycle_passes_only_after_private_digest_verification_and_clean
                         "status": "RUNNING",
                         "machineType": "projects/p/zones/z/machineTypes/e2-standard-4",
                         "scheduling": {"maxRunDuration": {"seconds": "21600", "nanos": 0}},
+                        "serviceAccounts": [
+                            {
+                                "email": plan.provider_plan["builder"]["service_account"],
+                                "scopes": plan.provider_plan["builder"]["scopes"],
+                            }
+                        ],
                     }
                 ).encode(),
                 b"",
@@ -232,7 +292,8 @@ def test_cache_lifecycle_passes_only_after_private_digest_verification_and_clean
         "upstream": "https://ghcr.io",
         "absent_after_failure": None,
     }
-    assert evidence["temporary_public_binding_removed"] is True
+    assert evidence["temporary_public_access_used"] is False
+    assert evidence["builder_identity"]["removed"] is True
     assert evidence["builder_cleanup"]["all_absent"] is True
     assert not any("delete" in argv and guard.GCP_ARTIFACT_REGISTRY_REPOSITORY in argv for argv in calls)
 
@@ -245,7 +306,7 @@ def test_cache_lifecycle_failure_removes_new_repository_and_builder(tmp_path):
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
         if argv[:4] == ("gcloud", "services", "list", "--enabled"):
-            return route.CommandResult(0, b"artifactregistry.googleapis.com\n", b"")
+            return _enabled_service(argv)
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
             "communityai-bootstrap-1" in part for part in argv
         ):
@@ -262,6 +323,12 @@ def test_cache_lifecycle_failure_removes_new_repository_and_builder(tmp_path):
                         "status": "RUNNING",
                         "machineType": "projects/p/zones/z/machineTypes/e2-standard-4",
                         "scheduling": {"maxRunDuration": {"seconds": "21600", "nanos": 0}},
+                        "serviceAccounts": [
+                            {
+                                "email": plan.provider_plan["builder"]["service_account"],
+                                "scopes": plan.provider_plan["builder"]["scopes"],
+                            }
+                        ],
                     }
                 ).encode(),
                 b"",
@@ -282,7 +349,8 @@ def test_cache_lifecycle_failure_removes_new_repository_and_builder(tmp_path):
     assert evidence["failure_stage"] == "cache_warm"
     assert evidence["repository"]["retained"] is False
     assert evidence["repository"]["absent_after_failure"] is True
-    assert evidence["temporary_public_binding_removed"] is True
+    assert evidence["temporary_public_access_used"] is False
+    assert evidence["builder_identity"]["removed"] is True
     assert evidence["builder_cleanup"]["all_absent"] is True
     assert evidence["protected_bootstrap_running"] is True
 
@@ -299,7 +367,7 @@ def test_cache_lifecycle_cleans_repository_when_create_applies_but_reports_failu
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
         if argv[:4] == ("gcloud", "services", "list", "--enabled"):
-            return route.CommandResult(0, b"artifactregistry.googleapis.com\n", b"")
+            return _enabled_service(argv)
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
             "communityai-bootstrap-1" in part for part in argv
         ):
@@ -328,16 +396,17 @@ def test_cache_lifecycle_cleans_repository_when_create_applies_but_reports_failu
     assert delete_repository in calls
     assert state["repository_exists"] is False
     assert evidence["repository"]["absent_after_failure"] is True
-    assert evidence["temporary_public_binding_removed"] is True
+    assert evidence["temporary_public_access_used"] is False
+    assert evidence["builder_identity"]["removed"] is True
 
 
-def test_cache_lifecycle_revokes_binding_when_add_applies_but_reports_failure(tmp_path):
+def test_cache_lifecycle_revokes_identity_when_binding_applies_but_reports_failure(tmp_path):
     plan, _inputs = _fixture(tmp_path)
-    state = {"repository_exists": False, "public_binding": False}
+    state = {"repository_exists": False, "reader_binding": False}
     calls = []
-    create_repository = tuple(plan.provider_plan["create_commands"][1])
-    add_binding = tuple(plan.provider_plan["create_commands"][2])
-    revoke_binding = tuple(plan.provider_plan["revoke_public_command"])
+    create_repository = tuple(plan.provider_plan["create_commands"][2])
+    add_binding = tuple(plan.provider_plan["create_commands"][4])
+    revoke_binding = tuple(plan.provider_plan["revoke_builder_reader_command"])
     delete_repository = tuple(plan.provider_plan["delete_repository_command"])
 
     def runner(argv, _timeout):
@@ -346,7 +415,7 @@ def test_cache_lifecycle_revokes_binding_when_add_applies_but_reports_failure(tm
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
         if argv[:4] == ("gcloud", "services", "list", "--enabled"):
-            return route.CommandResult(0, b"artifactregistry.googleapis.com\n", b"")
+            return _enabled_service(argv)
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
             "communityai-bootstrap-1" in part for part in argv
         ):
@@ -360,16 +429,11 @@ def test_cache_lifecycle_revokes_binding_when_add_applies_but_reports_failure(tm
         if argv[:4] == ("gcloud", "artifacts", "repositories", "describe"):
             return route.CommandResult(0, _repo_json(plan), b"")
         if argv == add_binding:
-            state["public_binding"] = True
+            state["reader_binding"] = True
             return route.CommandResult(1, b"", b"provider response lost")
         if argv == revoke_binding:
-            state["public_binding"] = False
+            state["reader_binding"] = False
             return route.CommandResult(0, b"", b"")
-        if argv[:4] == ("gcloud", "artifacts", "repositories", "get-iam-policy"):
-            bindings = (
-                [{"role": "roles/artifactregistry.reader", "members": ["allUsers"]}] if state["public_binding"] else []
-            )
-            return route.CommandResult(0, json.dumps({"bindings": bindings}).encode(), b"")
         if argv == delete_repository:
             state["repository_exists"] = False
             return route.CommandResult(0, b"", b"")
@@ -384,8 +448,9 @@ def test_cache_lifecycle_revokes_binding_when_add_applies_but_reports_failure(tm
     )
 
     assert evidence["result"] == "failed"
-    assert evidence["failure_stage"] == "temporary_public_binding"
+    assert evidence["failure_stage"] == "builder_identity"
     assert revoke_binding in calls
-    assert state == {"repository_exists": False, "public_binding": False}
+    assert state == {"repository_exists": False, "reader_binding": False}
     assert evidence["repository"]["absent_after_failure"] is True
-    assert evidence["temporary_public_binding_removed"] is True
+    assert evidence["temporary_public_access_used"] is False
+    assert evidence["builder_identity"]["removed"] is True

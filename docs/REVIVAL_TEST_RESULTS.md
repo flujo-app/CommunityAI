@@ -2100,3 +2100,40 @@ Both cache creation and route consumption now validate the exact provider-return
 cache/route lifecycle suite passes 75 tests; the expanded provider-free Gate 11 matrix passes
 254 tests with two provider/platform skips. Black, isort, and diff checks pass. A new source-
 bound run identity and reservation are required before another prewarm.
+
+## Gate 11 private route-cache attempt D
+
+The independently verified
+[retry-D authorization](evidence/cache-20260830-d-cost-authorization.json) bound pushed
+source `3ae7a09`, plan
+`sha256:2387d038386ea64e6301d70133aaee4dceedb2c8279e1a341b744ffb1f9fdbc4`,
+the corrected provider schema, exact bootstrap/publication inputs, a USD 10 maximum, and
+USD 90 headroom. Its [live lifecycle](evidence/cache-20260830-d-lifecycle.json) passed
+source/ledger binding, native authentication, protected-bootstrap health, exact API and
+initial-absence checks, repository creation, and the observed `commonRepository.uri`
+configuration. It then failed closed at `temporary_public_binding` after 55.5 seconds
+because the project's domain-restricted-sharing policy rejected `allUsers`. The binding
+did not apply and no builder was created.
+
+The [bounded policy diagnostic](evidence/cache-20260830-d-domain-policy-diagnostic.json)
+recreated only the exact repository, reproduced the policy rejection without retaining raw
+output, proved no binding was present, deleted the repository, re-proved absence, and
+revalidated the protected bootstrap. The subsequent
+[sanitized read-only verification](evidence/cache-20260830-d-post-failure-verification.json)
+proved Artifact Registry enabled, IAM not yet enabled, the repository and all five D
+builder/perimeter targets absent, and `communityai-bootstrap-1` still `RUNNING`.
+Retry D is `CLEANED-RELEASED`.
+
+The replacement design does not weaken or bypass the domain policy. It never requests a
+public principal. The provider plan enables and exact-verifies Artifact Registry and IAM,
+derives one run-bound ephemeral service account, creates no key, grants only repository
+reader, and assigns that identity to the builder. Startup accepts only the derived metadata
+identity and one bounded metadata token, passes it to Docker only over stdin, pulls both
+immutable digests, removes the isolated Docker credential config, and acknowledges
+readiness only after credential removal. The lifecycle then deletes the builder, revokes the
+reader binding, deletes the service account, proves six resource/identity absences, requires
+an empty repository policy and all four cached digests, and checks the protected bootstrap.
+The consuming route now also rejects any residual repository binding. The focused
+cost/cache/route lifecycle suite passes 158 tests; the expanded provider-free Gate 11 matrix
+passes 257 with two provider/platform skips. Black, isort, Bash syntax, and diff checks pass.
+A fresh source-bound run identity and reservation are required before retrying prewarm.

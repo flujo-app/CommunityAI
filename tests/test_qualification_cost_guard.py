@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -717,36 +718,42 @@ def test_gcp_public_route_cache_plan_is_private_bounded_and_exact():
         "upstream": "https://ghcr.io",
         "host": guard.GCP_ARTIFACT_REGISTRY_HOST,
         "private_after_prewarm": True,
+        "temporary_public_access": False,
         "vulnerability_scanning": False,
         "retained_after_pass": True,
     }
-    assert plan["builder"]["service_account"] is False
-    assert plan["builder"]["scopes"] == []
-    assert plan["builder"]["max_run_seconds"] == 21600
+    builder = plan["builder"]
+    assert re.fullmatch(
+        r"ca-[0-9a-f]{20}@community-ai-506321\.iam\.gserviceaccount\.com",
+        builder["service_account"],
+    )
+    assert builder["repository_member"] == f"serviceAccount:{builder['service_account']}"
+    assert builder["service_account_key_created"] is False
+    assert builder["metadata_token_auth"] is True
+    assert builder["scopes"] == ["https://www.googleapis.com/auth/cloud-platform"]
+    assert builder["max_run_seconds"] == 21600
     assert plan["images"][0]["source"] == PRIMARY_PUBLICATION_IMAGE
     assert plan["images"][0]["cached"] == PRIMARY_IMAGE
     assert plan["images"][1]["source"] == STANDBY_PUBLICATION_IMAGE
     assert plan["images"][1]["cached"] == STANDBY_IMAGE
     create = plan["create_commands"]
-    assert plan["verify_api_enabled_command"] == [
-        "gcloud",
-        "services",
-        "list",
-        "--enabled",
-        "--filter",
-        "config.name=artifactregistry.googleapis.com",
-        "--format",
-        "value(config.name)",
-        "--project",
-        guard.GCP_ARTIFACT_REGISTRY_PROJECT,
+    assert plan["required_services"] == [
+        "artifactregistry.googleapis.com",
+        "iam.googleapis.com",
     ]
+    assert len(plan["verify_api_enabled_commands"]) == 2
+    assert all(
+        command[:4] == ["gcloud", "services", "list", "--enabled"] for command in plan["verify_api_enabled_commands"]
+    )
     assert any("artifactregistry.googleapis.com" in command for command in create)
+    assert any("iam.googleapis.com" in command for command in create)
     assert any("https://ghcr.io" in command for command in create)
-    assert any("allUsers" in command for command in create)
-    assert "allUsers" in plan["revoke_public_command"]
+    assert not any("allUsers" in command for command in create + plan["cleanup_commands"])
+    assert builder["repository_member"] in create[4]
+    assert builder["repository_member"] in plan["revoke_builder_reader_command"]
     flattened = {part for command in create + plan["cleanup_commands"] for part in command}
     assert "communityai-bootstrap-1" not in flattened
-    assert len(plan["verify_cleanup_commands"]) == 5
+    assert len(plan["verify_cleanup_commands"]) == 6
 
 
 @pytest.mark.parametrize(

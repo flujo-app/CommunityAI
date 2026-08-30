@@ -572,22 +572,35 @@ def test_route_preflight_requires_private_exact_cache_and_four_digests():
     assert all(argv[5].startswith(guard.GCP_ARTIFACT_REGISTRY_PREFIX + "/") for argv in image_describes)
 
 
-def test_route_preflight_rejects_public_cache_before_capacity_checks():
+@pytest.mark.parametrize(
+    "member",
+    [
+        "allUsers",
+        "serviceAccount:ca-0123456789abcdef0123@community-ai-506321.iam.gserviceaccount.com",
+    ],
+)
+def test_route_preflight_rejects_nonempty_cache_policy_before_capacity_checks(member):
     plan = _dummy_plan()
+    policy = json.dumps(
+        {
+            "bindings": [
+                {
+                    "members": [member],
+                    "role": "roles/artifactregistry.reader",
+                }
+            ]
+        }
+    ).encode()
 
     def runner(argv, _timeout):
         argv = tuple(argv)
         if argv[:4] == ("gcloud", "artifacts", "repositories", "describe"):
             return lifecycle.CommandResult(0, _cache_repository_payload(plan), b"")
         if argv[:4] == ("gcloud", "artifacts", "repositories", "get-iam-policy"):
-            return lifecycle.CommandResult(
-                0,
-                b'{"bindings":[{"members":["allUsers"],"role":"roles/artifactregistry.reader"}]}',
-                b"",
-            )
+            return lifecycle.CommandResult(0, policy, b"")
         raise AssertionError(argv)
 
-    with pytest.raises(lifecycle.ProviderCommandError, match="must be private"):
+    with pytest.raises(lifecycle.ProviderCommandError, match="policy must be empty"):
         lifecycle._verify_private_artifact_cache(plan, runner)
 
 

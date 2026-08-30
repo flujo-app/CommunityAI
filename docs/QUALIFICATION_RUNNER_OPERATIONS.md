@@ -84,28 +84,29 @@ Gate 11 uses two separately reserved GCP workloads. First,
 `gcp-public-route-cache` creates and prewarms the fixed private
 `us-central1` Artifact Registry remote repository backed by `https://ghcr.io`.
 It reserves USD 10 for one six-hour, auto-deleting `e2-standard-4` CPU builder,
-a 200 GiB balanced boot disk, and up to 30 days of retained cache storage. The builder
-has no service account or scopes. The fixed Artifact Registry API enable call is
-followed by an exact enabled-service query using
-`--filter config.name=artifactregistry.googleapis.com` and
-`--format value(config.name)`; an ambiguous command response is accepted only when that
-query returns exactly one bare `artifactregistry.googleapis.com`, otherwise the lifecycle
-stops before repository creation. The lifecycle may grant `allUsers` the reader role
-only while the exact builder pulls both immutable publications; it must revoke that
-binding, prove the repository private, verify scanning disabled and all four
-index/runtime digests, delete and prove the builder perimeter absent, and revalidate
-`communityai-bootstrap-1`. Any failure deletes a repository created by that run and
-proves it absent. GCP describes this exact remote upstream as
-`remoteRepositoryConfig.commonRepository.uri == "https://ghcr.io"`; both the cache
-lifecycle and the consuming route lifecycle require that exact object and reject the
-legacy Docker/custom nesting or URI drift. The retained private repository keeps the USD 10
-reservation active.
+a 200 GiB balanced boot disk, and up to 30 days of retained cache storage. The lifecycle
+enables and exact-verifies both `artifactregistry.googleapis.com` and
+`iam.googleapis.com` with fixed `config.name` queries before repository creation.
+It derives one run-bound ephemeral service-account identifier, creates no key, grants only
+`roles/artifactregistry.reader` on the exact repository, and assigns only that identity
+with the cloud-platform token scope to the builder. The startup script accepts only the
+derived service-account email from metadata, validates one bounded metadata token, uses it
+only through Docker `--password-stdin`, and removes the isolated Docker config before its
+readiness acknowledgement. No `allUsers` or `allAuthenticatedUsers` binding is planned.
+After prewarm, the lifecycle deletes the builder, revokes the exact reader binding, deletes
+the ephemeral service account, requires all six builder/perimeter/identity absence checks,
+requires an empty repository policy, verifies scanning disabled and all four index/runtime
+digests, and revalidates `communityai-bootstrap-1`. Any failure deletes a repository
+created by that run and proves it absent. GCP describes the exact remote upstream as
+`remoteRepositoryConfig.commonRepository.uri == "https://ghcr.io"`; both cache and route
+lifecycles require that exact object, and the route rejects any residual resource policy.
+The retained private repository keeps the USD 10 reservation active.
 
 Generate the provider-call-free cache plan first:
 
 ```powershell
 uv run --no-sync python scripts/qualification_cost_guard.py `
-  --run-id cache-20260830-d `
+  --run-id cache-20260830-e `
   --provider gcp `
   --workload gcp-public-route-cache `
   --purpose "Gate 11 private same-region route image cache" `
@@ -121,7 +122,7 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
   --cache-bootstrap-digest $cacheBootstrapDigest `
   --cache-bootstrap-bytes $cacheBootstrapBytes `
   --ledger docs/RELEASE_READINESS.md `
-  --output docs/evidence/cache-20260830-d-cost-authorization.json
+  --output docs/evidence/cache-20260830-e-cost-authorization.json
 ```
 
 The first pass must report `provisioning_authorized=false`. Record its exact
