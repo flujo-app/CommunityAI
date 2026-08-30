@@ -23,6 +23,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   cache. Primary inference, automatic Qwen-to-Gemma fallback, standby inference, restoration,
   and restored inference passed without a model-specific image or cache mirror. ADR 0003 fixes
   this as the normal desktop and provider-route artifact architecture.
+- Gate 9 edge measurement now separates first-install acquisition from steady-state inference.
+  `drift edge-acquire` downloads and verifies only the loader-selected whole checkpoint shards,
+  with at most three resumptions and a path/credential/URL-free record. `drift edge-benchmark`
+  runs in a fresh OS-contained child, reports schema v3 without prompts or outputs, and treats
+  an empty Windows Job Object or Linux process group as the portable memory-cleanup boundary while
+  still requiring route-manager/DHT and accelerator cleanup. Process-tree RSS sampling remains
+  diagnostic and cannot certify cleanup on its own.
 - Qwen3.5 2B and Gemma 4 E2B first-rung candidate manifests with Windows CPU parity and
   local selected-worker recovery evidence.
 - The first threshold-one signed public-alpha catalog/bootstrap bundle, containing those

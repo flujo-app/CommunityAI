@@ -97,20 +97,24 @@ window expires, or the provider deadline requires cleanup.
 
 ## Required software boundary before the next paid run
 
-The next source-bound Gate 9 attempt must add and test two small product-path capabilities:
+The source-bound Gate 9 attempt uses two tested product-path capabilities:
 
-1. A manifest acquisition operation that uses `ManifestArtifactVerifier` to materialize the
-   same client-selected files as the real loader without generating. It emits a privacy-safe
-   acquisition record and preserves the verified cache for the benchmark.
-2. A schema-v3 benchmark supervisor that launches one fresh benchmark child, samples that
-   child's process tree, and treats child/process-tree exit as the authoritative RSS cleanup
-   boundary. The child must still prove route-manager/DHT shutdown and accelerator-cache
-   release before exit.
+1. `drift edge-acquire` uses `ManifestArtifactVerifier` and the loader's shared checkpoint-index
+   filter to materialize the same client-selected whole shards without generating. It permits at
+   most three interrupted-transfer resumptions, emits a privacy-safe acquisition record, and
+   preserves the verified cache for the benchmark.
+2. The schema-v3 `drift edge-benchmark` supervisor launches one fresh benchmark child over a
+   private stdin control boundary, removes prompt/output/path/credential material from the result,
+   and makes operating-system containment the cleanup authority. On Windows it creates the child
+   suspended, assigns it to a kill-on-close Job Object, and only then resumes it. On Linux it starts
+   the child in a new session and retains the complete process group. Sampled process identities
+   and RSS remain measurement evidence; they are not cleanup authority. The child must still prove
+   route-manager/DHT shutdown and accelerator-cache release before exit.
 
 In-process RSS returning to within 16 MiB of baseline remains useful diagnostic data but is not
 a portable cleanup invariant: Linux allocators may retain free arenas. A process that exits with
-its complete process tree gone has returned its memory to the operating system. A process or DHT
-child that survives still fails cleanup.
+its complete Job Object or process group gone has returned its memory to the operating system. A
+contained process or DHT child that survives still fails cleanup.
 
 The existing schema-v2 benchmark and previous attempts remain valid historical evidence. They
 must not be relabeled as schema v3.
@@ -138,6 +142,15 @@ Then perform exactly this sequence:
 6. Aggregate the four acquisition records and four resource envelopes once.
 7. Clean only resources created by this run; never delete the protected bootstrap or a separately
    authorized still-live route.
+
+The empty-cache acquisition command shape is:
+
+```text
+drift edge-acquire <exact-manifest.json> \
+  --cache_dir <empty-persistent-cache> \
+  --max_resumptions 3 \
+  --output <acquisition-record.json>
+```
 
 The steady-state command shape remains:
 

@@ -7,6 +7,7 @@
     drift api <model> ...           An OpenAI-compatible HTTP API backed by the swarm
     drift node <manifest> ...       A persistent authenticated localhost gateway
     drift bootstrap <config>        Install a verified first-run model catalog
+    drift edge-acquire <manifest>   Acquire exact client artifacts into a persistent cache
     drift edge-benchmark <manifest> Measure client-only edge resource use
     drift manifest <file>           Validate and inspect a ModelManifest v1
     drift catalog ...               Create and verify signed model catalogs
@@ -26,6 +27,7 @@ _COMMANDS = (
     "api",
     "node",
     "bootstrap",
+    "edge-acquire",
     "edge-benchmark",
     "manifest",
     "catalog",
@@ -44,6 +46,8 @@ commands:
   api       Serve an OpenAI-compatible HTTP API backed by the swarm (requires drift[api])
   node      Run a persistent authenticated localhost gateway (requires drift[api])
   bootstrap Install a threshold-signed catalog as a first-run node configuration
+  edge-acquire
+            Acquire and verify client-selected artifacts (requires drift[benchmark])
   edge-benchmark
             Measure manifested client storage, memory, and generation latency (requires drift[benchmark])
   manifest  Validate and inspect a content-addressed ModelManifest v1
@@ -79,6 +83,8 @@ def main() -> int:
         from drift.cli.run_node import main as run
     elif command == "bootstrap":
         from drift.cli.run_bootstrap import main as run
+    elif command == "edge-acquire":
+        from drift.cli.run_edge_acquisition import main as run
     elif command == "edge-benchmark":
         from drift.cli.run_edge_benchmark import main as run
     elif command == "manifest":
