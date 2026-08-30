@@ -1866,3 +1866,20 @@ pull schedule remains 0/5/15/60/120, every pull uses the same digest and deadlin
 `docker run` plus the whole start action remain single-shot. The focused
 host/lifecycle/startup/cost matrix passes 140 tests; the expanded image-contract/evidence/node
 matrix passes 197. Bash syntax, Black, isort, and diff checks pass.
+
+## Gate 11 route-F authorization
+
+The provider-call-free first guard pass bound pushed source
+`77eaa8ad683477ac07498d4c2420d8a959afc1e7`, the 30,862-byte host helper, 6,938-byte
+serialized-download bootstrap, unchanged 6,913-byte acceptance probe, both immutable
+publication records, and a new isolated six-resource identity. It emitted plan
+`sha256:49b182a304b1cd4dd527345cd9f64c1ec80a74dfedda740b2a198c81279e6ece`
+with USD 100 before, USD 26 maximum, USD 74 maximum headroom after, and provisioning false.
+The exact reservation row was committed and pushed as `437ecf6`; the identical second pass
+then emitted the [authorized plan](evidence/gate11route-20260830-f-cost-authorization.json)
+with reservation and provisioning true.
+
+The real lifecycle loader rehashed every bound input and accepted Qwen `(0, 24)` and Gemma
+`(0, 35)` complete spans; 113 lifecycle/cost tests pass. Independent provider-free audit
+reproduced the source/ledger/plan/file/publication/resource/cleanup/14-hour DELETE/budget/privacy
+bindings and found no blocker or provider/authentication call.

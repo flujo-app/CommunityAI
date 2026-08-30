@@ -100,6 +100,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   pinned Docker bootstrap now preserves the NVIDIA runtime configuration while forcing one
   concurrent blob download, validates that setting before readiness, and requires it again
   in host preflight; immutable pull backoffs and single-shot container start are unchanged.
+  The source-bound route-F authorization preserves the USD 26 maximum and USD 74 headroom
+  with a fresh isolated six-resource identity and 14-hour provider deletion.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
