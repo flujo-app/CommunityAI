@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import time
 from pathlib import Path
@@ -20,6 +21,18 @@ from drift.model_manifest import (
 from drift.node.edge_benchmark import cache_is_empty, directory_size
 
 EDGE_ACQUISITION_SCHEMA_VERSION = 1
+_DIRECT_UPSTREAM_ENDPOINT = "https://huggingface.co"
+_TRANSPORT_OVERRIDE_NAMES = (
+    "HF_ENDPOINT",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+)
 _STARTUP_ROLES = {"chat_template", "config", "tokenizer", "weight_index"}
 _CHECKPOINT_ROLES = {"weight"}
 
@@ -101,8 +114,21 @@ def acquire_client_artifacts(
     max_resumptions: int = 3,
     verifier: Optional[ManifestArtifactVerifier] = None,
     ignored_key_patterns: Optional[Iterable[str]] = None,
+    require_direct_upstream: bool = False,
 ) -> Dict[str, Any]:
     """Materialize the loader's exact client files and return a path/credential-free record."""
+    if not isinstance(require_direct_upstream, bool):
+        raise ValueError("require_direct_upstream must be a boolean")
+    from huggingface_hub.constants import ENDPOINT
+
+    transport_override_present = any(os.environ.get(name) for name in _TRANSPORT_OVERRIDE_NAMES)
+    internal_verifier = verifier is None
+    direct_upstream = (
+        internal_verifier and str(ENDPOINT).rstrip("/") == _DIRECT_UPSTREAM_ENDPOINT and not transport_override_present
+    )
+    mirror_used = internal_verifier and not direct_upstream
+    if require_direct_upstream and not direct_upstream:
+        raise ManifestError("direct Hugging Face acquisition requires the official endpoint without proxy overrides")
     if isinstance(max_resumptions, bool) or not isinstance(max_resumptions, int) or not 0 <= max_resumptions <= 3:
         raise ValueError("max_resumptions must be an integer between 0 and 3")
 
@@ -207,6 +233,10 @@ def acquire_client_artifacts(
         },
         "artifacts": [_safe_artifact_record(artifact, transfers[artifact.path]) for artifact in selected],
         "transfer": {
+            "direct_upstream_transfer": direct_upstream,
+            "mirror_used": mirror_used,
+            "source_class_verified": internal_verifier,
+            "transport_override_present": transport_override_present,
             "elapsed_seconds": elapsed,
             "max_resumptions": max_resumptions,
             "resumptions": resumptions_used,

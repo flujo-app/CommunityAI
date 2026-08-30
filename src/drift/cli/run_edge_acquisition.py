@@ -23,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache_dir", type=Path, required=True, help="Empty persistent cache to populate")
     parser.add_argument("--token", default=None, help="Hugging Face token for a gated repository")
     parser.add_argument("--max_resumptions", type=int, default=3, choices=range(4))
+    parser.add_argument(
+        "--require_direct_upstream",
+        action="store_true",
+        help="Fail unless the configured Hub endpoint is the official Hugging Face upstream",
+    )
     parser.add_argument("--output", type=Path, help="Write JSON atomically to this file; otherwise print it")
     return parser
 
@@ -40,6 +45,7 @@ def main() -> None:
             cache_dir=args.cache_dir.expanduser().resolve(),
             token=args.token,
             max_resumptions=args.max_resumptions,
+            require_direct_upstream=args.require_direct_upstream,
         )
     except (ManifestError, OSError, RuntimeError, ValueError) as exc:
         parser.error(str(exc))

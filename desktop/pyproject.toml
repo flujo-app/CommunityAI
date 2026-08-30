@@ -37,3 +37,4 @@ required-version = "22.3.0"
 [tool.isort]
 profile = "black"
 line_length = 120
+known_first_party = ["communityai_desktop", "drift", "test_utils"]

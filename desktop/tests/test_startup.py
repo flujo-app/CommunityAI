@@ -13,7 +13,11 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "desktop" / "src"))
 
 from communityai_desktop.app import main
-from communityai_desktop.pyside_shell import _single_instance_server_name
+from communityai_desktop.pyside_shell import (
+    _exec_with_termination_cleanup,
+    _install_posix_termination_bridge,
+    _single_instance_server_name,
+)
 from communityai_desktop.startup import (
     LINUX_AUTOSTART_NAME,
     LOGIN_STARTUP_FLAG,
@@ -72,6 +76,103 @@ class FakeRegistry:
             del self.values[(key[1], name)]
         except KeyError as exc:
             raise FileNotFoundError(name) from exc
+
+
+class PosixTerminationBridgeTests(unittest.TestCase):
+    def test_sigterm_requests_quit_and_restores_handlers(self):
+        class Signal:
+            def __init__(self):
+                self.callback = None
+
+            def connect(self, callback):
+                self.callback = callback
+
+        class Timer:
+            instance = None
+
+            def __init__(self, parent):
+                self.parent = parent
+                self.interval = None
+                self.timeout = Signal()
+                self.started = False
+                self.stopped = False
+                Timer.instance = self
+
+            def setInterval(self, interval):
+                self.interval = interval
+
+            def start(self):
+                self.started = True
+
+            def stop(self):
+                self.stopped = True
+
+        class Application:
+            quit_count = 0
+
+            def quit(self):
+                self.quit_count += 1
+
+        application = Application()
+        old_handlers = {2: object(), 15: object()}
+        with (
+            patch("communityai_desktop.pyside_shell.os.name", "posix"),
+            patch(
+                "communityai_desktop.pyside_shell.signal.getsignal",
+                side_effect=lambda signum: old_handlers[signum],
+            ),
+            patch("communityai_desktop.pyside_shell.signal.signal") as set_signal,
+        ):
+            restore = _install_posix_termination_bridge(application, Timer)
+            installed = {item.args[0]: item.args[1] for item in set_signal.call_args_list}
+            installed[15](15, None)
+            self.assertEqual(application.quit_count, 1)
+            self.assertEqual(Timer.instance.interval, 250)
+            self.assertTrue(Timer.instance.started)
+            self.assertIsNotNone(Timer.instance.timeout.callback)
+
+            restore()
+            calls_after_restore = list(set_signal.call_args_list)
+            restore()
+
+        self.assertTrue(Timer.instance.stopped)
+        self.assertEqual(len(calls_after_restore), 4)
+        self.assertEqual(set_signal.call_args_list, calls_after_restore)
+        self.assertIs(calls_after_restore[2].args[1], old_handlers[2])
+        self.assertIs(calls_after_restore[3].args[1], old_handlers[15])
+
+    def test_lifecycle_cleanup_finishes_before_handlers_are_restored(self):
+        events = []
+
+        class Application:
+            def exec(self):
+                events.append("exec")
+                return 7
+
+        result = _exec_with_termination_cleanup(
+            Application(),
+            lambda: events.append("restore"),
+            lambda: events.append("lifecycle-close"),
+        )
+
+        self.assertEqual(result, 7)
+        self.assertEqual(events, ["exec", "lifecycle-close", "restore"])
+
+    def test_handler_restore_survives_lifecycle_cleanup_failure(self):
+        events = []
+
+        def fail_cleanup():
+            events.append("lifecycle-close")
+            raise RuntimeError("cleanup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            _exec_with_termination_cleanup(
+                type("Application", (), {"exec": lambda self: 0})(),
+                lambda: events.append("restore"),
+                fail_cleanup,
+            )
+
+        self.assertEqual(events, ["lifecycle-close", "restore"])
 
 
 class LoginStartupTests(unittest.TestCase):

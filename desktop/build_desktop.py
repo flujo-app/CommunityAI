@@ -261,7 +261,7 @@ def _validate_install_member_path(raw_path: str) -> str:
 
 
 def _validate_windows_install_path(member_path: str) -> None:
-    reserved_names = {"CON", "PRN", "AUX", "NUL"}
+    reserved_names = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
     reserved_names.update(f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10))
     reserved_names.update(f"{prefix}{number}" for prefix in ("COM", "LPT") for number in ("¹", "²", "³"))
     for part in PurePosixPath(member_path).parts:
@@ -1006,7 +1006,9 @@ def _verify_desktop_metrics(
         "bundle_bytes",
         "file_count",
         "runtime",
+        "worker_runtime",
         "self_test_passed",
+        "worker_self_test_passed",
         "node_entrypoint_smoke_passed",
         "worker_entrypoint_smoke_passed",
     }
@@ -1021,6 +1023,7 @@ def _verify_desktop_metrics(
         "bundle_bytes": node_bytes,
         "file_count": node_file_count,
         "self_test_passed": True,
+        "worker_self_test_passed": True,
         "node_entrypoint_smoke_passed": True,
         "worker_entrypoint_smoke_passed": True,
     }
@@ -1056,6 +1059,23 @@ def _verify_desktop_metrics(
     for field in ("drift", "torch", "transformers", "hivemind", "fastapi", "uvicorn", "keyring"):
         if not _is_printable_string(node_runtime.get(field)):
             raise RuntimeError(f"node runtime metric {field} is missing or unsafe")
+    if node_runtime["torch"] != "2.6.0+cu124":
+        raise RuntimeError("node runtime is not the qualified CUDA PyTorch build")
+
+    expected_worker_runtime = {
+        "schema_version": 1,
+        "application": "CommunityAI-Worker",
+        "entrypoint": "server",
+        "server_class": "Server",
+        "model_loading_performed": False,
+        "network_join_performed": False,
+        "throughput_mode": "dry_run",
+        "training_rpcs_enabled": False,
+        "process_lifetime_guard_armed": True,
+        "frozen": True,
+    }
+    if not _strict_equal(node["worker_runtime"], expected_worker_runtime):
+        raise RuntimeError("worker runtime self-test metrics are missing or altered")
     return metrics
 
 
@@ -1335,9 +1355,13 @@ def main() -> int:
     _run_bundle(executable, "--ui-self-test", environment)
     _run_bundle(executable, "--onboarding-ui-self-test", environment)
     node_contract = json.loads(_run_bundle(node_executable, "--self-test", environment, timeout=180).stdout)
+    worker_contract = json.loads(
+        _run_bundle(node_executable, ("server", "--self-test"), environment, timeout=180).stdout
+    )
     _run_bundle(node_executable, "--help", environment, timeout=180)
     _run_bundle(node_executable, ("bootstrap", "--help"), environment, timeout=180)
     _run_bundle(node_executable, ("server", "--help"), environment, timeout=180)
+    _run_bundle(node_executable, ("edge-acquire", "--help"), environment, timeout=180)
     bundle_bytes, file_count = _directory_metrics(bundle_root)
     node_bytes, node_file_count = _directory_metrics(node_root)
     metrics = {
@@ -1357,7 +1381,9 @@ def main() -> int:
             "bundle_bytes": node_bytes,
             "file_count": node_file_count,
             "runtime": node_contract,
+            "worker_runtime": worker_contract,
             "self_test_passed": True,
+            "worker_self_test_passed": True,
             "node_entrypoint_smoke_passed": True,
             "worker_entrypoint_smoke_passed": True,
         },

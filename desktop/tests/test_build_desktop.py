@@ -273,7 +273,7 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
                     "schema_version": 1,
                     "application": build_desktop.NODE_NAME,
                     "drift": "1.test",
-                    "torch": "1.test",
+                    "torch": "2.6.0+cu124",
                     "transformers": "1.test",
                     "hivemind": "1.test",
                     "fastapi": "1.test",
@@ -283,7 +283,20 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
                     "catalog_bootstrap_schema": 1,
                     "frozen": True,
                 },
+                "worker_runtime": {
+                    "schema_version": 1,
+                    "application": "CommunityAI-Worker",
+                    "entrypoint": "server",
+                    "server_class": "Server",
+                    "model_loading_performed": False,
+                    "network_join_performed": False,
+                    "throughput_mode": "dry_run",
+                    "training_rpcs_enabled": False,
+                    "process_lifetime_guard_armed": True,
+                    "frozen": True,
+                },
                 "self_test_passed": True,
+                "worker_self_test_passed": True,
                 "node_entrypoint_smoke_passed": True,
                 "worker_entrypoint_smoke_passed": True,
             },
@@ -626,6 +639,10 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
             ("node-bytes", ("node_sidecar", "bundle_bytes"), 4.0),
             ("node-files", ("node_sidecar", "file_count"), 1.0),
             ("node-runtime-schema", ("node_sidecar", "runtime", "schema_version"), True),
+            ("node-runtime-torch", ("node_sidecar", "runtime", "torch"), "2.6.0+cpu"),
+            ("worker-runtime-schema", ("node_sidecar", "worker_runtime", "schema_version"), True),
+            ("worker-model-loading", ("node_sidecar", "worker_runtime", "model_loading_performed"), 0),
+            ("worker-process-guard", ("node_sidecar", "worker_runtime", "process_lifetime_guard_armed"), 1),
             (
                 "node-catalog-schema",
                 ("node_sidecar", "runtime", "catalog_bootstrap_schema"),
@@ -704,7 +721,7 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
                     build_desktop._verify_release_attestations(output_root)
 
     def test_windows_superscript_dos_device_names_are_rejected(self):
-        for reserved_name in ("COM¹", "com².txt", "LPT³.bin"):
+        for reserved_name in ("COM¹", "com².txt", "LPT³.bin", "CONIN$", "conout$.txt"):
             with self.subTest(name=reserved_name):
                 with self.assertRaisesRegex(RuntimeError, "unsafe on Windows"):
                     build_desktop._validate_windows_install_path(f"CommunityAI/{reserved_name}")

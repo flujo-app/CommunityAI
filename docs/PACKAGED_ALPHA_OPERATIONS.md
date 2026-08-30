@@ -189,6 +189,50 @@ The desktop owns its node credential through Windows Credential Manager. Evidenc
 records only the number of product-owned entries. Do not enumerate values or place a
 secret in an argument, environment variable, ordinary file, transcript, or evidence.
 
+#### Native Windows packaged-lifecycle orchestrator
+
+Use
+[gate13_windows_packaged_lifecycle.ps1](../scripts/gate13_windows_packaged_lifecycle.ps1)
+for the complete 16-phase Windows run. Stage it beside
+gate13_windows_localhost_inference.ps1, gate13_packaged_lifecycle.py,
+gate13-windows-run.json, payload/communityai-desktop-windows.zip, and the package
+audit files under audit/. Run it from native Windows PowerShell 5.1 as an ordinary
+user; the helper accepts no arguments and rejects an existing work root.
+
+The run input binds the independently downloaded archive to its release record and
+the intended public catalog selection:
+
+~~~json
+{
+  "schema_version": 1,
+  "run_id": "gate13-windows-qwen-a",
+  "source_commit": "<40 lowercase hex>",
+  "package_version": "0.4.0",
+  "package_sha256": "<64 lowercase hex>",
+  "package_bytes": 1,
+  "model_id": "Qwen3.5 2B",
+  "manifest_digest": "<64 lowercase hex>"
+}
+~~~
+
+Do not derive these values from an unpacked or locally rebuilt package. The helper
+cross-checks them against the archive, audit, provenance, packaged runtime version,
+and live selected catalog profile. It rejects unsafe or case-colliding ZIP members,
+including Windows device names and trailing-dot or trailing-space aliases.
+
+With transcription and shell tracing disabled:
+
+~~~text
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\gate13_windows_packaged_lifecycle.ps1 > gate13-windows-evidence.json
+~~~
+
+Every packaged process is created suspended, placed in a kill-on-close Job Object,
+and only then resumed. Fixed commands are bounded; acquisition has a 3,600-second
+ceiling and at most three resumptions. Pause and cleanup require the exact automatic
+worker PID to leave the product job, and final success requires the whole Job Object
+to be empty. Any timeout, forced graceful cleanup, retained credential, or unverifiable
+process-tree exit fails the run with generic privacy-safe evidence.
+
 ### Linux
 
 Use the archive utility appropriate to the published artifact and sha256sum. Reject
@@ -198,6 +242,122 @@ the frozen node executable directly, not a repository module.
 Use the packaged keyring backend and the ordinary user's Secret Service session.
 Evidence records only product-owned item counts. Do not fall back to plaintext
 credential files merely to make the clean-host run pass.
+
+#### Native Linux packaged-lifecycle orchestrator
+
+Use
+[gate13_linux_packaged_lifecycle.py](../scripts/gate13_linux_packaged_lifecycle.py)
+for the complete 16-phase Linux run. Stage it with the localhost-inference adapter
+and gate13_packaged_lifecycle.py; these qualification helpers use only the Python
+standard library. Run as the ordinary qualification user inside one private
+dbus-run-session with an unlocked Secret Service provider. The host must authorize
+only the fixed, noninteractive sudo -n /usr/bin/systemd-run and
+sudo -n /usr/bin/systemctl operations used by the helper.
+
+The helper creates system services with --uid set to that ordinary user,
+KillMode=control-group, and the private D-Bus address. The GUI's
+NodeLifecycleSupervisor, node, contribution worker, and daemon therefore remain in
+one cgroup even when a child creates a new POSIX session. Graceful phases signal only
+the GUI service's main PID with SIGTERM and require that root to return and the entire
+cgroup to become empty. A cgroup.kill or SIGKILL fallback fails a graceful phase.
+Recovery deliberately kills the owned fault cgroup and then starts a new owned unit.
+Final success requires every run-scoped unit to be empty and removed.
+
+Supply one absolute, private config path. The work root must not exist and its leaf
+must be exactly .gate13-linux-<run_id>. The config contains no credential:
+
+~~~json
+{
+  "schema_version": 1,
+  "run_id": "gate13-linux-qwen-a",
+  "release_root": "/qualification/original",
+  "replacement_release_root": "/qualification/replacement",
+  "work_root": "/qualification/.gate13-linux-gate13-linux-qwen-a",
+  "model_id": "Qwen3.5 2B",
+  "package_version": "0.4.0",
+  "package_sha256": "<64 lowercase hex>",
+  "package_bytes": 1,
+  "replacement_kind": "reinstall",
+  "replacement_package_sha256": "<same 64 lowercase hex>",
+  "replacement_package_bytes": 1,
+  "max_disk_space": "20GiB",
+  "max_vram": "8GiB",
+  "max_bandwidth_mbps": 100.0,
+  "max_power_watts": 250.0,
+  "pause_timeout": 30.0
+}
+~~~
+
+For replacement_kind reinstall, digest and bytes must equal the original archive.
+For upgrade, the replacement digest must differ. Bind all sizes and digests to the
+bytes downloaded from the release job; do not recompute a config from a different
+local build.
+
+With shell tracing disabled:
+
+~~~text
+dbus-run-session -- python3 gate13_linux_packaged_lifecycle.py \
+  --config /qualification/gate13-linux-run.json > gate13-linux-evidence.json
+~~~
+
+The acquisition invocation is fixed to:
+
+~~~text
+CommunityAI-Node edge-acquire <installed-manifest> \
+  --cache_dir <empty-persistent-cache> \
+  --max_resumptions 3 \
+  --require_direct_upstream
+~~~
+
+Before phase 6, the helper requires the raw acquisition record to bind every unique
+selected artifact path, role, size, and SHA-256 to the exact threshold-signed
+installed manifest. It also requires direct_upstream_transfer=true,
+mirror_used=false, source_class_verified=true, transport_override_present=false,
+exact selected cache_bytes_after and cache_growth_bytes, no prior cache bytes, no
+more than three resumptions, and final digest verification. Missing any raw field
+fails the run; a projected or hand-authored summary cannot substitute for the raw
+record.
+
+Run Qwen3.5 2B and Gemma 4 E2B IT as separate lifecycle documents with unique run
+IDs and absent work roots. They may be scheduled independently on separate clean
+hosts, but cold-cache, native credential, cgroup, and final deletion proofs must
+remain isolated per model.
+
+
+#### Native Linux localhost-inference adapter
+
+Copy
+[gate13_linux_localhost_inference.py](../scripts/gate13_linux_localhost_inference.py)
+to the operator-controlled qualification directory alongside the lifecycle controller;
+do not copy a checkout or install project dependencies. The clean host needs only
+Python 3's standard library plus the operating-system `dbus-run-session`,
+`secret-tool`, and an unlocked Secret Service provider.
+
+Start and keep the packaged desktop/node and the adapter inside the same
+`dbus-run-session`. Create at least one ordinary local API key through the packaged
+product first: the node deliberately refuses to revoke its last active API key, so
+this precondition guarantees that the adapter's temporary qualification key can be
+revoked. With shell tracing disabled, run the following inside that existing private
+D-Bus session after automatic selection and verified acquisition are ready:
+
+~~~text
+python3 gate13_linux_localhost_inference.py > localhost-inference.json
+~~~
+
+The adapter reads the `org.communityai.desktop` /
+`local-node-control-v1` control item through a fixed `secret-tool` argument vector
+and a captured pipe. It never accepts a token through argv or the environment and
+never writes one to an ordinary file, transcript, response, or evidence. It disables
+HTTP proxies and redirects, calls only the fixed loopback control and OpenAI paths,
+creates one in-memory temporary API key, makes one bounded automatic-model request,
+and unconditionally revokes that key.
+
+A successful standard output object is the exact phase 7
+`localhost_inference` record accepted by the lifecycle controller. The adapter
+retains neither prompt nor response content and records no key, token, request, or
+endpoint identifier. Its generic failure object is not a phase record and must never
+be included as passing evidence. Treat any nonzero exit, missing cleanup proof, or
+remaining active qualification key as a failed platform run.
 
 ## First start, acquisition, and inference
 
