@@ -1584,18 +1584,17 @@ verification, required attestations, and immutable runtime references.
 The [publication attempt record](evidence/gate11pub-20260829-a-publication-attempt.json)
 proves registry logout and absence of both root and operator credential files. Immediate
 exact-builder deletion was attempted after evidence capture, but the existing local GCP
-credential required interactive reauthentication and no application-default credential
-was available. The builder and auto-delete disk therefore remain `CLEANUP PENDING` under
-the six-hour provider DELETE backstop, conservatively estimated at
-2026-08-30T00:09:18Z. The USD 10 maximum remains fully committed and leaves USD 6; exact
-builder/disk absence and the protected bootstrap must be revalidated before this run is
-marked cleaned. A [sanitized cleanup verification attempt](evidence/gate11pub-20260829-a-cleanup-verification-attempt.json)
-at 2026-08-29T23:34:03Z found the native account still configured but unable to refresh
-without interactive reauthentication. It observed no provider state, created no resource,
-reserved no additional spend, and therefore leaves every cleanup assertion false rather
-than inferring deletion from the backstop. Gate 11 remains `IN PROGRESS`, and the USD 26
-route must not be reserved or created without cleanup proof plus billing reconciliation
-or an explicit cleanup-backed owner reset.
+credential initially required interactive reauthentication and no application-default
+credential was available. A later [sanitized cleanup verification](evidence/gate11pub-20260829-a-cleanup-verification-attempt.json)
+at 2026-08-30T00:36:31Z refreshed native authentication, observed the exact builder and
+auto-delete boot disk absent, and revalidated the protected bootstrap running. It created
+or deleted no resource, reserved no additional spend, and proves cleanup independently
+of the elapsed provider DELETE deadline. The USD 10 maximum remained fully committed while
+billing was delayed and left USD 6 at verification time. After cleanup was proved, the
+owner explicitly reset the combined authorization epoch to USD 100 on 2026-08-30 and
+prioritized the shortest authorized critical path. Gate 11 remains `IN PROGRESS`; its
+USD 26 route now fits but still requires an exact source-bound authorization, matching
+ledger reservation, fresh fail-closed preflight, bounded operation, and complete cleanup.
 
 ## Gate 12 best-effort alpha publication contract
 

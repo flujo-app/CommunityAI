@@ -63,11 +63,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   strict artifact, source, carrier, Linux-runtime, non-root/config, layer-size, SLSA
   provenance, and SPDX SBOM collection. The collector narrowly accepts BuildKit's equivalent
   digest-only carrier purl while still rejecting repository or digest drift. Registry
-  credentials were removed after collection. Provider cleanup remains pending under the
-  builder's six-hour DELETE backstop because local GCP authentication required interactive
-  reauthentication. A later native-auth verification attempt remained fail-closed without
-  observing provider state, creating resources, or spending more; no route was created. The
-  USD 26 route plan remains unreserved and cannot fit the current USD 6 ledger balance.
+  credentials were removed after collection. Immediate provider cleanup was initially
+  blocked because local GCP authentication required interactive reauthentication. A later
+  sanitized native-auth verification proved the exact builder and auto-delete boot disk
+  absent and the protected bootstrap running, without creating or deleting resources or
+  reserving more spend. No route was created. The owner's cleanup-backed reset restored a
+  USD 100 authorization epoch and prioritizes the shortest authorized critical path. The
+  USD 26 route plan now fits but remains unreserved pending its exact source-bound
+  authorization and fresh fail-closed preflight.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
