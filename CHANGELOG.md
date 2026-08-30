@@ -116,7 +116,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   The token never enters argv, environment, logs, or evidence. Same-action and lifecycle-finally
   cleanup require local removal, remote removal, and in-memory zeroing; provider absence cannot
   mask a local cleanup failure. Starts verify the local digest before their unchanged single-shot
-  `docker run`.
+  `docker run`. Route H on historical source `c09552e` proved this transport and both
+  authenticated immutable pulls, but the serialized pair consumed the shared startup boundary
+  and failed closed before health at 3,819.484 seconds. Cleanup again passed five deletes, six
+  absence checks, registry removal, and protected-bootstrap health. Pushed source `fc4c18b` now
+  runs the two exact digest pulls concurrently inside the unchanged deadline, waits for both
+  results, and retains exact post-pull inventory verification and finally-based credential
+  removal.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

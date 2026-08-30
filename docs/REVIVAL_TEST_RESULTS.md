@@ -1952,3 +1952,38 @@ retains no command argv, credentials, endpoints, outputs, paths, peer/provider I
 provider output, or token IDs. Route G is `CLEANED-RELEASED`; the binary-stdin transport must not
 be retried. The protected-file repair described above is provider-call-free and requires a new
 source-bound authorization and reservation before another live route.
+
+## Gate 11 route-H startup-health result
+
+The [source-bound route-H authorization](evidence/gate11route-20260830-h-cost-authorization.json)
+bound historical sequential-prefetch source `c09552e`, reserved USD 26, and retained USD 74
+headroom. Its
+[live lifecycle evidence](evidence/gate11route-20260830-h-lifecycle.json) passed local
+validation, native authentication, provider preflight, exact create, pinned bootstrap, the
+protected-file registry transport, authenticated registry prefetch, and exact local inventory
+checks for both immutable images. Sequential Qwen and Gemma pulls consumed the shared startup
+window, so the controller failed closed at `startup_health` after 3,819.484 seconds. It emitted
+zero health samples and made no primary, standby, automatic-selection, fallback, restoration,
+or monitoring claim.
+
+Finally-based cleanup passed all five exact delete commands and all six resource-absence
+checks; registry credentials were removed and the protected bootstrap remained `RUNNING`.
+The schema-v2 record retains no command argv, credentials, endpoints, outputs, paths,
+peer/provider IDs, prompts, provider output, or token IDs. Route H is `CLEANED-RELEASED` and
+the unchanged sequential-prefetch plan must not be retried.
+
+## Gate 11 concurrent immutable-image prefetch
+
+Pushed source `fc4c18b` starts the exact Qwen and Gemma immutable pulls concurrently under the
+same shared 60-minute startup deadline and the existing bounded retry policy. It waits for both
+pull results, verifies both exact local digest inventories, and only then reports prefetch
+success. The isolated registry config remains root-owned mode 0700 and is still removed in the
+same `finally`, including when either pull fails. No deadline, image, credential, route, cleanup,
+or cost boundary changed.
+
+A regression requires both pull workers to rendezvous, so a sequential implementation fails.
+The focused host/lifecycle suite passes 95 tests with two Linux ownership checks skipped on
+Windows. The expanded host/lifecycle/startup/cost/image-contract/image-evidence/route-node
+matrix passes 228 tests with the same two skips. Black, isort, and diff checks pass. This repair
+made no provider call and requires independent verification plus a new source-bound run
+identity before another live route.
