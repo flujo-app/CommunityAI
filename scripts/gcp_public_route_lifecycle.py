@@ -406,7 +406,14 @@ def _load_publication(
     ):
         raise LifecycleError("public-route publication references are not exactly bound")
     span = evidence["full_block_span"]
-    if not isinstance(span, list) or len(span) != 2 or tuple(span) != expected["span"]:
+    expected_span = expected["span"]
+    if (
+        not isinstance(expected_span, tuple)
+        or len(expected_span) != 2
+        or any(isinstance(value, bool) or not isinstance(value, int) for value in expected_span)
+        or not isinstance(span, str)
+        or span != f"{expected_span[0]}:{expected_span[1]}"
+    ):
         raise LifecycleError("public-route publication full block span is invalid")
     layers = evidence["layers"]
     if not isinstance(layers, list) or not 1 <= len(layers) <= 256:
@@ -440,7 +447,7 @@ def _load_publication(
         image_reference=str(evidence["image_reference"]),
         runtime_image_reference=str(evidence["runtime_image_reference"]),
         evidence_digest=expected_digest,
-        full_span=tuple(span),  # type: ignore[arg-type]
+        full_span=(expected_span[0], expected_span[1]),
     )
 
 

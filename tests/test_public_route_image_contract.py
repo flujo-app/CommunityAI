@@ -135,6 +135,7 @@ def test_prepare_emits_exact_cuda_route_build_contract(tmp_path, candidate):
     output = arguments["output_dir"]
     document = json.loads((output / "image-contract.json").read_text(encoding="utf-8"))
     plan = json.loads((output / "build-plan.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output / "model-manifest.json").read_text(encoding="utf-8"))
 
     assert report["result"] == "passed"
     assert set(path.name for path in output.iterdir()) == {
@@ -152,7 +153,7 @@ def test_prepare_emits_exact_cuda_route_build_contract(tmp_path, candidate):
     assert document["nonroot_uid"] == 65532
     assert document["training_rpcs"] == "disabled"
     assert document["health_state_path"] == "/run/communityai/health.json"
-    assert document["full_block_span"].startswith("0:")
+    assert document["full_block_span"] == f"0:{manifest['model']['num_blocks']}"
     assert document["carrier_runtime_image"].startswith(contract._CARRIERS[candidate]["repository"] + "@sha256:")
     assert document["carrier_evidence_digest"] == contract._CARRIERS[candidate]["evidence_digest"]
     assert document["image_tag"].startswith(contract._TARGET_REPOSITORIES[candidate] + ":source-")

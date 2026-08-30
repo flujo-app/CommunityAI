@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "scripts" / "gcp_public_route_startup.sh"
 HOST = ROOT / "scripts" / "gcp_public_route_host.py"
 ACCEPTANCE = ROOT / "scripts" / "public_route_acceptance.py"
+QWEN_PUBLICATION = ROOT / "docs" / "evidence" / "gate11pub-20260829-a-qwen3.5-2b-publication-evidence.json"
+GEMMA_PUBLICATION = ROOT / "docs" / "evidence" / "gate11pub-20260829-a-gemma-4-e2b-publication-evidence.json"
 
 
 def _digest(path: Path) -> str:
@@ -27,7 +29,7 @@ def _publication(candidate: str, index_character: str, runtime_character: str) -
     source = "b" * 40
     index_digest = "sha256:" + index_character * 64
     runtime_digest = "sha256:" + runtime_character * 64
-    span = list(expected["span"])
+    span = f"{expected['span'][0]}:{expected['span'][1]}"
     return {
         "schema_version": 1,
         "scope": "public-route-image-publication-evidence",
@@ -174,6 +176,41 @@ def test_bound_plan_validates_all_local_inputs_without_provider_access(tmp_path)
     assert plan.initial_peer == INITIAL_PEER
     assert plan.primary.candidate == "qwen3.5-2b"
     assert plan.standby.full_span == (0, 35)
+
+
+@pytest.mark.parametrize(
+    "candidate,evidence_path,expected_span",
+    (
+        ("qwen3.5-2b", QWEN_PUBLICATION, (0, 24)),
+        ("gemma-4-e2b", GEMMA_PUBLICATION, (0, 35)),
+    ),
+)
+def test_committed_publication_evidence_uses_the_lifecycle_schema(candidate, evidence_path, expected_span):
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    expected = lifecycle._ROUTE_EXPECTATIONS[candidate]
+    binding = lifecycle._load_publication(
+        evidence_path,
+        expected_digest=_digest(evidence_path),
+        planned_route={
+            "role": expected["role"],
+            "candidate": candidate,
+            "image": evidence["image_reference"],
+            "manifest_digest": expected["manifest"],
+        },
+    )
+
+    assert binding.full_span == expected_span
+
+
+@pytest.mark.parametrize("span", ([0, 24], "00:24", "0:024", "0:23", "0:24 ", "0-24", None))
+def test_publication_span_requires_canonical_contract_string(tmp_path, span):
+    fixture = _bound_fixture(
+        tmp_path,
+        mutate_evidence=lambda evidence: evidence.update(full_block_span=span),
+    )
+
+    with pytest.raises(lifecycle.LifecycleError, match="full block span"):
+        lifecycle.load_bound_plan(**fixture)
 
 
 def test_lifecycle_peer_rejects_whitespace_and_allows_dns_s():
