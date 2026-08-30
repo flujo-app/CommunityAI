@@ -4,6 +4,7 @@ umask 077
 
 READY_ROOT=/var/lib/communityai-cache
 READY_FILE="${READY_ROOT}/cache-ready.json"
+READY_TEMP="${READY_FILE}.tmp"
 METADATA=http://metadata.google.internal/computeMetadata/v1/instance/attributes
 SERVICE_METADATA=http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default
 REGISTRY_HOST=us-central1-docker.pkg.dev
@@ -21,7 +22,7 @@ cleanup_registry() {
 trap cleanup_registry EXIT
 
 mkdir -p "${READY_ROOT}"
-rm -f "${READY_FILE}"
+rm -f "${READY_FILE}" "${READY_TEMP}"
 rm -rf -- "${REGISTRY_CONFIG}"
 
 metadata() {
@@ -98,5 +99,6 @@ trap - EXIT
 [[ ! -e "${REGISTRY_CONFIG}" ]]
 
 printf '{"images_prefetched":2,"registry_credentials_removed":true,"result":"passed","scope":"communityai-public-route-cache-bootstrap","schema_version":1}\n' \
-  >"${READY_FILE}"
-chmod 0600 "${READY_FILE}"
+  >"${READY_TEMP}"
+chmod 0600 "${READY_TEMP}"
+mv -f -- "${READY_TEMP}" "${READY_FILE}"

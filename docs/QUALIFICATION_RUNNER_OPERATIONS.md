@@ -92,7 +92,9 @@ It derives one run-bound ephemeral service-account identifier, creates no key, g
 with the cloud-platform token scope to the builder. The startup script accepts only the
 derived service-account email from metadata, validates one bounded metadata token, uses it
 only through Docker `--password-stdin`, and removes the isolated Docker config before its
-readiness acknowledgement. No `allUsers` or `allAuthenticatedUsers` binding is planned.
+readiness acknowledgement. Readiness is written to a mode-private temporary file and exposed
+only by atomic same-filesystem rename; the fixed IAP probe requires a nonempty regular,
+non-symlink file before strict JSON validation. No `allUsers` or `allAuthenticatedUsers` binding is planned.
 After prewarm, the lifecycle deletes the builder, revokes the exact reader binding, deletes
 the ephemeral service account, requires all six builder/perimeter/identity absence checks,
 requires an empty repository policy, verifies scanning disabled and all four index/runtime
@@ -106,7 +108,7 @@ Generate the provider-call-free cache plan first:
 
 ```powershell
 uv run --no-sync python scripts/qualification_cost_guard.py `
-  --run-id cache-20260830-e `
+  --run-id cache-20260830-f `
   --provider gcp `
   --workload gcp-public-route-cache `
   --purpose "Gate 11 private same-region route image cache" `
@@ -122,7 +124,7 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
   --cache-bootstrap-digest $cacheBootstrapDigest `
   --cache-bootstrap-bytes $cacheBootstrapBytes `
   --ledger docs/RELEASE_READINESS.md `
-  --output docs/evidence/cache-20260830-e-cost-authorization.json
+  --output docs/evidence/cache-20260830-f-cost-authorization.json
 ```
 
 The first pass must report `provisioning_authorized=false`. Record its exact

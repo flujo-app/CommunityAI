@@ -1,0 +1,50 @@
+{
+  "cleanup_revalidated_from_lifecycle": {
+    "builder_and_identity_absence_checks": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "protected_bootstrap_running": true,
+    "repository_absent": true
+  },
+  "complete_release_qualification": false,
+  "diagnostic_probe": {
+    "exact_known_acknowledgement_accepted": true,
+    "fixed_no_write_marker_stdout_exact": true,
+    "native_runner_returncode_zero": true,
+    "performed_at": "2026-08-30T12:12:53Z",
+    "provider_state_changed": false
+  },
+  "implementation_boundary": {
+    "exact_failure_bytes_retained": false,
+    "exact_remote_cause_proven": false,
+    "prior_probe_excluded_neither_empty_nor_partial_readiness": true,
+    "prior_readiness_write_was_direct": true,
+    "repair": "atomic readiness rename plus nonempty regular non-symlink precheck",
+    "retry_requires_new_source_and_run_identity": true
+  },
+  "observed_failure": {
+    "cached_manifest_count_claimed": 0,
+    "elapsed_seconds": 1653.422,
+    "failure_stage": "cache_warm",
+    "logical_timeout_seconds": 18000,
+    "repository_retained": false
+  },
+  "privacy": {
+    "command_argv_retained": false,
+    "credentials_retained": false,
+    "paths_retained": false,
+    "provider_ids_retained": false,
+    "provider_output_retained": false
+  },
+  "provider_plan_digest": "sha256:fc13db74e107795c6d2896e0135c4a669a3fd7618a9ef1c4feab54f2425cf948",
+  "result": "passed",
+  "run_id": "cache-20260830-e",
+  "schema_version": 1,
+  "scope": "gcp-public-route-cache-acknowledgement-diagnostic",
+  "source_commit": "c0bd81e4e3ced3cd05a642740e343da41d05aceb"
+}

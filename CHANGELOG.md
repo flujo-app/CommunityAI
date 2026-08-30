@@ -153,7 +153,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   builder authenticates from metadata without a service-account key, and Docker credentials
   are removed before readiness. Retention requires an empty repository policy, all four exact
   cached digests, six builder/identity absences, and protected-bootstrap health; the consuming
-  route rejects any residual repository binding.
+  route rejects any residual repository binding. Cache attempt E exercised that private path
+  through repository, ephemeral identity, reader binding, and CPU-builder creation, then failed
+  closed at cache readiness after 1,653.422 seconds. It retained no cache, key, public access, or
+  credential; repository deletion, all six identity/perimeter absences, and protected-bootstrap
+  health passed. A same-run no-write diagnostic proved the native IAP/JSON framing boundary but
+  intentionally retained no failed remote bytes, so the exact remote cause remains unclaimed.
+  Readiness is now published by atomic rename, and the fixed poller excludes empty, partial,
+  symlinked, or non-regular files before strict schema validation.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

@@ -453,7 +453,12 @@ def _wait_cache_ready(plan: BoundCachePlan, runner: Runner, *, clock: Clock, sle
         plan.zone,
         "--tunnel-through-iap",
         "--command",
-        f"sudo -n cat {READY_PATH}",
+        (
+            f"sudo -n test -f {READY_PATH} && "
+            f"sudo -n test ! -L {READY_PATH} && "
+            f"sudo -n test -s {READY_PATH} && "
+            f"sudo -n cat {READY_PATH}"
+        ),
         "--project",
         plan.project,
         "--quiet",

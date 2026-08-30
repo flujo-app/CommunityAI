@@ -154,10 +154,45 @@ def test_cache_bootstrap_uses_ephemeral_metadata_identity_without_public_access(
     assert 'docker --config "${REGISTRY_CONFIG}" pull' in body
     assert 'rm -rf -- "${REGISTRY_CONFIG}"' in body
     assert '"registry_credentials_removed":true' in body
+    assert 'READY_TEMP="${READY_FILE}.tmp"' in body
+    assert '>"${READY_TEMP}"' in body
+    assert 'mv -f -- "${READY_TEMP}" "${READY_FILE}"' in body
+    assert '>"${READY_FILE}"' not in body
     assert "allUsers" not in body
     assert "service-account-key" not in body
     assert body.index("--password-stdin") < body.index('pull_one "${primary_image}"')
     assert body.rindex("cleanup_registry") < body.index("registry_credentials_removed")
+
+
+def test_cache_ready_probe_waits_for_atomic_nonempty_regular_file(tmp_path):
+    plan, _inputs = _fixture(tmp_path)
+    calls = []
+    results = iter(
+        [
+            route.CommandResult(1, b"", b"not ready"),
+            route.CommandResult(0, _ready(), b""),
+        ]
+    )
+
+    def runner(argv, _timeout):
+        calls.append(tuple(argv))
+        return next(results)
+
+    cache._wait_cache_ready(
+        plan,
+        runner,
+        clock=lambda: 0.0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert len(calls) == 2
+    command = calls[0][calls[0].index("--command") + 1]
+    assert command == (
+        f"sudo -n test -f {cache.READY_PATH} && "
+        f"sudo -n test ! -L {cache.READY_PATH} && "
+        f"sudo -n test -s {cache.READY_PATH} && "
+        f"sudo -n cat {cache.READY_PATH}"
+    )
 
 
 def test_bound_cache_plan_validates_ledger_publication_and_source(tmp_path):

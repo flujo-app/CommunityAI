@@ -2137,3 +2137,29 @@ The consuming route now also rejects any residual repository binding. The focuse
 cost/cache/route lifecycle suite passes 158 tests; the expanded provider-free Gate 11 matrix
 passes 257 with two provider/platform skips. Black, isort, Bash syntax, and diff checks pass.
 A fresh source-bound run identity and reservation are required before retrying prewarm.
+
+## Gate 11 private cache attempt E and atomic readiness repair
+
+Cache run `cache-20260830-e` bound source
+`c0bd81e4e3ced3cd05a642740e343da41d05aceb`, plan
+`sha256:fc13db74e107795c6d2896e0135c4a669a3fd7618a9ef1c4feab54f2425cf948`,
+and a USD 10 maximum with USD 90 headroom. The
+[live lifecycle](evidence/cache-20260830-e-lifecycle.json) passed native/provider preflight,
+created the exact private remote repository, deterministic keyless ephemeral identity, exact
+repository-reader binding, and CPU builder, then failed closed at `cache_warm` after
+1,653.422 seconds. It claimed zero cached manifests and retained no repository. Cleanup passed
+all six builder/perimeter/identity absence checks, deleted the ephemeral identity and exact
+repository, retained no service-account key, public access, or registry credential, and
+revalidated the protected bootstrap. Retry E is `CLEANED-RELEASED`.
+
+The [bounded acknowledgement diagnostic](evidence/cache-20260830-e-acknowledgement-diagnostic.json)
+uses the same native bounded runner and fixed no-write IAP path to prove that a known exact
+readiness JSON is accepted without stdout framing drift. The failed remote acknowledgement
+bytes were intentionally not retained, so the exact remote cause is not claimed. Code review
+isolated one remaining local race: readiness was written directly while the poller did not
+first exclude an empty or partial file. The bootstrap now writes a mode-private temporary file
+and atomically renames it on the same filesystem; the fixed probe requires a nonempty regular,
+non-symlink readiness file before reading. A completed malformed schema still fails closed.
+The cache-lifecycle focus passes 12 tests and the cost/cache/route lifecycle focus passes 159.
+The expanded provider-free Gate 11 matrix passes 258 with two expected platform skips. Black,
+isort, Bash syntax, and the scoped diff check pass.
