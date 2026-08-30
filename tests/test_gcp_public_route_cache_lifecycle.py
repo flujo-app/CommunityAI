@@ -156,6 +156,52 @@ def _github_public(argv):
     return None
 
 
+def test_github_runner_rejects_commands_outside_fixed_visibility_contract():
+    with pytest.raises(cache.CacheLifecycleError, match="contract"):
+        cache._run_github_bounded(
+            ("gh", "api", "users/flujo-app/packages/container/unplanned", "--jq", ".visibility"),
+            route.MAX_AUTH_SECONDS,
+        )
+
+
+def test_public_visibility_uses_dedicated_runner_with_default_gcloud_runner(monkeypatch):
+    calls = []
+
+    def github_runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        if argv[:4] == ("gh", "auth", "status", "--hostname"):
+            return route.CommandResult(0, b"", b"")
+        return route.CommandResult(0, b"public\n", b"")
+
+    monkeypatch.setattr(cache, "_run_github_bounded", github_runner)
+
+    cache._require_public_upstreams(route._run_bounded)
+
+    assert calls == [
+        (("gh", "auth", "status", "--hostname", "github.com"), route.MAX_AUTH_SECONDS),
+        (
+            (
+                "gh",
+                "api",
+                "users/flujo-app/packages/container/communityai-public-route-qwen3.5-2b",
+                "--jq",
+                ".visibility",
+            ),
+            route.MAX_AUTH_SECONDS,
+        ),
+        (
+            (
+                "gh",
+                "api",
+                "users/flujo-app/packages/container/communityai-public-route-gemma-4-e2b",
+                "--jq",
+                ".visibility",
+            ),
+            route.MAX_AUTH_SECONDS,
+        ),
+    ]
+
+
 def _enabled_service(argv):
     service = (
         "iam.googleapis.com"

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
@@ -99,7 +101,48 @@ def _success(result: route_lifecycle.CommandResult, field: str, *, empty: bool =
     return result.stdout
 
 
+def _run_github_bounded(argv: Sequence[str], timeout: int) -> route_lifecycle.CommandResult:
+    allowed = {
+        ("gh", "auth", "status", "--hostname", "github.com"),
+        *{
+            (
+                "gh",
+                "api",
+                f"users/flujo-app/packages/container/{package}",
+                "--jq",
+                ".visibility",
+            )
+            for package in UPSTREAM_PACKAGES
+        },
+    }
+    if tuple(argv) not in allowed or not 1 <= timeout <= route_lifecycle.MAX_AUTH_SECONDS:
+        raise CacheLifecycleError("GitHub command contract is invalid")
+    executable = shutil.which("gh")
+    if executable is None:
+        raise CacheLifecycleError("native GitHub executable is unavailable")
+    try:
+        completed = subprocess.run(
+            [executable, *argv[1:]],
+            check=False,
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CacheLifecycleError("bounded GitHub command failed or timed out") from exc
+    if (
+        len(completed.stdout) > route_lifecycle.MAX_COMMAND_OUTPUT_BYTES
+        or len(completed.stderr) > route_lifecycle.MAX_COMMAND_OUTPUT_BYTES
+    ):
+        raise CacheLifecycleError("GitHub command output exceeded its bound")
+    return route_lifecycle.CommandResult(completed.returncode, completed.stdout, completed.stderr)
+
+
 def _require_public_upstreams(runner: Runner) -> None:
+    if runner is route_lifecycle._run_bounded:
+        runner = _run_github_bounded
     _success(
         runner(("gh", "auth", "status", "--hostname", "github.com"), route_lifecycle.MAX_AUTH_SECONDS),
         "gh authentication",
