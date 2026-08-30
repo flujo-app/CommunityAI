@@ -72,8 +72,9 @@ jobs:
         if: runner.os == 'Windows'
         run: python -c "import torch; assert torch.__version__ == '2.6.0+cu124'"
       - name: Run protocol and runtime-boundary tests
+        working-directory: .
         run: |
-          python -m unittest discover -s tests -v
+          python -m unittest discover -s desktop/tests -v
           communityai-desktop --self-test
       - name: Reverify qualified CUDA runtime before bundling
         run: python -c "import torch; assert torch.__version__ == '2.6.0+cu124'"
