@@ -69,6 +69,7 @@ def test_configures_full_route_through_automatic_worker(tmp_path, role, blocks, 
     assert worker.port == port
     assert worker.public_ip == "203.0.113.20"
     assert worker.max_vram == vram
+    assert config.auto_model_priority[0] == report["manifest_digest"]
     assert source["contribution_policy"]["sharing_enabled"] is True
     assert len(source["contribution_policy"]["allowed_models"]) == 1
 

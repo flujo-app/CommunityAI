@@ -170,6 +170,13 @@ def configure_product_route_node(
             "public_ip": normalized_ip,
         }
     )
+    # The node builds an initial launch before its first fresh placement sample.
+    # Keep the selected signed seed model first during that bootstrap window so
+    # a full-span standby is never validated against the smaller primary.
+    existing_priority = source.get("auto_model_priority", [])
+    source["auto_model_priority"] = [profile.manifest_digest] + [
+        selector for selector in existing_priority if selector != profile.manifest_digest
+    ]
     source["contribution_policy"] = {
         "sharing_enabled": True,
         "allowed_models": [profile.manifest_digest],
