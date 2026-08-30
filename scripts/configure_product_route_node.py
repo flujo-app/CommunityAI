@@ -86,7 +86,9 @@ def _load_config(path: Path) -> dict[str, Any]:
     return value
 
 
-def _validate_bootstrap_shape(source: Mapping[str, Any], profile: SeedProfile, *, config_path: Path) -> None:
+def _validate_bootstrap_shape(
+    source: Mapping[str, Any], profile: SeedProfile, *, config_path: Path
+) -> Mapping[str, dict[str, Any]]:
     if source.get("schema_version") != SCHEMA_VERSION:
         raise ProductRouteConfigError("node configuration schema is unsupported")
     workers = source.get("workers")
@@ -99,7 +101,7 @@ def _validate_bootstrap_shape(source: Mapping[str, Any], profile: SeedProfile, *
     models = source.get("models")
     if not isinstance(models, list) or len(models) != 2:
         raise ProductRouteConfigError("public-alpha bootstrap must contain exactly two manifested models")
-    digests = set()
+    models_by_digest: dict[str, dict[str, Any]] = {}
     for index, model in enumerate(models):
         if not isinstance(model, dict) or not isinstance(model.get("manifest"), str):
             raise ProductRouteConfigError(f"model {index} does not contain a manifest path")
@@ -110,10 +112,11 @@ def _validate_bootstrap_shape(source: Mapping[str, Any], profile: SeedProfile, *
             manifest = ModelManifest.load(manifest_path)
         except Exception as exc:
             raise ProductRouteConfigError(f"model {index} manifest is invalid") from exc
-        digests.add(manifest.digest_id)
+        models_by_digest[manifest.digest_id] = model
     expected = {item.manifest_digest for item in PROFILES.values()}
-    if digests != expected or profile.manifest_digest not in digests:
+    if set(models_by_digest) != expected or profile.manifest_digest not in models_by_digest:
         raise ProductRouteConfigError("node configuration does not contain the exact signed alpha candidates")
+    return models_by_digest
 
 
 def _atomic_replace(path: Path, payload: bytes) -> None:
@@ -153,7 +156,13 @@ def configure_product_route_node(
         raise ProductRouteConfigError("public route address must be one canonical IPv4 address") from exc
     root = cache_root.expanduser().resolve()
     source = _load_config(path)
-    _validate_bootstrap_shape(source, profile, config_path=path)
+    models_by_digest = _validate_bootstrap_shape(source, profile, config_path=path)
+
+    # Reuse one manifest-verified snapshot for both localhost inference and
+    # contribution. This avoids downloading a second multi-gigabyte copy when a
+    # desktop node both consumes and serves the same signed model.
+    for candidate in PROFILES.values():
+        models_by_digest[candidate.manifest_digest]["cache_dir"] = str(root / candidate.role)
 
     worker = source["workers"][0]
     worker.update(

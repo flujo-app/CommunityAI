@@ -70,6 +70,8 @@ def test_configures_full_route_through_automatic_worker(tmp_path, role, blocks, 
     assert worker.public_ip == "203.0.113.20"
     assert worker.max_vram == vram
     assert config.auto_model_priority[0] == report["manifest_digest"]
+    cache_dirs = {Path(model.cache_dir) for model in config.models}
+    assert cache_dirs == {tmp_path / "worker-cache" / "primary", tmp_path / "worker-cache" / "standby"}
     assert source["contribution_policy"]["sharing_enabled"] is True
     assert len(source["contribution_policy"]["allowed_models"]) == 1
 
