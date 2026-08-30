@@ -247,6 +247,11 @@ def _protected_bootstrap_running(plan: BoundCachePlan, runner: Runner) -> bool:
     return result.returncode == 0 and result.stdout.strip() == b"RUNNING"
 
 
+def _api_enabled(plan: BoundCachePlan, runner: Runner) -> bool:
+    result = runner(tuple(plan.provider_plan["verify_api_enabled_command"]), MAX_PROVIDER_SECONDS)
+    return result.returncode == 0 and result.stdout.strip() == b"artifactregistry.googleapis.com"
+
+
 def _repository_list(plan: BoundCachePlan, runner: Runner) -> bytes:
     return _success(
         runner(
@@ -503,7 +508,12 @@ def execute_cache_lifecycle(
 
         stage = "api_enablement"
         create_commands = plan.provider_plan["create_commands"]
-        _success(runner(tuple(create_commands[0]), MAX_PROVIDER_SECONDS), "Artifact Registry API enablement")
+        try:
+            runner(tuple(create_commands[0]), MAX_PROVIDER_SECONDS)
+        except Exception:
+            pass
+        if not _api_enabled(plan, runner):
+            raise CacheLifecycleError("Artifact Registry API enablement is not observable")
         if _repository_list(plan, runner).strip():
             raise CacheLifecycleError("cache repository already exists outside this run")
 

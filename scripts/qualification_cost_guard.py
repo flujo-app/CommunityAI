@@ -405,6 +405,18 @@ def _gcp_public_route_cache_plan(
     target_tag = f"{run_id}-cache"
     max_run_seconds = int(maximum_hours * Decimal(3600))
     common = ["--project", project, "--quiet"]
+    verify_api_enabled_command = _command(
+        "gcloud",
+        "services",
+        "list",
+        "--enabled",
+        "--filter",
+        "name=artifactregistry.googleapis.com",
+        "--format",
+        "value(name)",
+        "--project",
+        project,
+    )
     create_commands = [
         _command(
             "gcloud",
@@ -692,6 +704,7 @@ def _gcp_public_route_cache_plan(
             "rehash the exact source-bound cache bootstrap before creation",
         ],
         "create_commands": create_commands,
+        "verify_api_enabled_command": verify_api_enabled_command,
         "revoke_public_command": revoke_public_command,
         "cleanup_commands": cleanup_commands,
         "verify_cleanup_commands": verify_cleanup_commands,

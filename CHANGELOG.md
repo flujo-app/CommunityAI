@@ -125,7 +125,16 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   removal. Route I proved both concurrent pulls and local inventories, but direct GHCR delivery
   still reached `startup_health` with zero samples at 3,812.266 seconds. Five deletes, six
   absences, registry removal, and protected-bootstrap health passed again. Direct GHCR startup
-  is therefore retired in favor of a bounded exact-digest GCP-local artifact path.
+  is therefore retired in favor of a bounded exact-digest GCP-local artifact path. A new
+  source-bound lifecycle can create a fixed `us-central1` Artifact Registry remote cache,
+  temporarily expose only its reader role for a no-identity CPU prewarm builder, verify both
+  immutable index/runtime digest pairs, revoke public access, prove private/scanning-disabled
+  configuration, and retain the cache only after exact builder cleanup; any failure deletes a
+  repository created by that run. Its first live attempt stopped before repository or builder
+  creation when API enablement applied but the CLI returned nonzero. Read-only verification
+  proved the API enabled, every exact target absent, and the protected bootstrap running. The
+  corrected lifecycle now requires an exact enabled-service state after the fixed enable call,
+  so ambiguous provider responses remain fail-closed without rejecting a proved applied state.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

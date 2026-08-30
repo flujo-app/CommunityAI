@@ -728,6 +728,18 @@ def test_gcp_public_route_cache_plan_is_private_bounded_and_exact():
     assert plan["images"][1]["source"] == STANDBY_PUBLICATION_IMAGE
     assert plan["images"][1]["cached"] == STANDBY_IMAGE
     create = plan["create_commands"]
+    assert plan["verify_api_enabled_command"] == [
+        "gcloud",
+        "services",
+        "list",
+        "--enabled",
+        "--filter",
+        "name=artifactregistry.googleapis.com",
+        "--format",
+        "value(name)",
+        "--project",
+        guard.GCP_ARTIFACT_REGISTRY_PROJECT,
+    ]
     assert any("artifactregistry.googleapis.com" in command for command in create)
     assert any("https://ghcr.io" in command for command in create)
     assert any("allUsers" in command for command in create)

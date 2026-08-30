@@ -164,6 +164,10 @@ def test_cache_lifecycle_passes_only_after_private_digest_verification_and_clean
         calls.append(argv)
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gcloud", "services", "enable", "artifactregistry.googleapis.com"):
+            return route.CommandResult(1, b"", b"provider response lost")
+        if argv[:4] == ("gcloud", "services", "list", "--enabled"):
+            return route.CommandResult(0, b"artifactregistry.googleapis.com\n", b"")
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
             "communityai-bootstrap-1" in part for part in argv
         ):
@@ -222,6 +226,8 @@ def test_cache_lifecycle_failure_removes_new_repository_and_builder(tmp_path):
         argv = tuple(argv)
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gcloud", "services", "list", "--enabled"):
+            return route.CommandResult(0, b"artifactregistry.googleapis.com\n", b"")
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
             "communityai-bootstrap-1" in part for part in argv
         ):
@@ -274,6 +280,8 @@ def test_cache_lifecycle_cleans_repository_when_create_applies_but_reports_failu
         calls.append(argv)
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gcloud", "services", "list", "--enabled"):
+            return route.CommandResult(0, b"artifactregistry.googleapis.com\n", b"")
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
             "communityai-bootstrap-1" in part for part in argv
         ):
@@ -319,6 +327,8 @@ def test_cache_lifecycle_revokes_binding_when_add_applies_but_reports_failure(tm
         calls.append(argv)
         if argv[:4] == ("gcloud", "auth", "list", "--filter=status:ACTIVE"):
             return route.CommandResult(0, b"owner@example.com\n", b"")
+        if argv[:4] == ("gcloud", "services", "list", "--enabled"):
+            return route.CommandResult(0, b"artifactregistry.googleapis.com\n", b"")
         if argv[:4] == ("gcloud", "compute", "instances", "list") and any(
             "communityai-bootstrap-1" in part for part in argv
         ):

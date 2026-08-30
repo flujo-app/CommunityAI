@@ -2008,3 +2008,37 @@ Every privacy retention flag is false and complete release qualification remains
 is `CLEANED-RELEASED`. Direct GHCR delivery, whether sequential or concurrent, must not be
 retried; the next route requires a bounded exact-digest GCP-local artifact path under the same
 60-minute startup contract.
+
+## Gate 11 private route-cache attempt A
+
+Pushed source `a41d9ed` added a provider-call-free USD 10 cache plan and a fail-closed
+`us-central1` Artifact Registry remote-cache lifecycle. It binds the original Qwen and
+Gemma GHCR publication evidence to fixed same-region cached references, uses one six-hour
+auto-deleting no-identity CPU builder, permits `allUsers` reader access only during prewarm,
+and retains the repository only after revocation, private-policy and scanning-disabled
+verification, all four index/runtime digest checks, five builder/perimeter absences, and
+protected-bootstrap health. Partial provider application at repository-create and IAM-add
+boundaries is cleanup-owned after exact initial absence; tests cover nonzero responses after
+applied mutations, including a repository delete that applies while returning nonzero.
+
+The first provider-call-free authorization required its exact ledger row, then bound plan
+`sha256:271778431c7553f93d674dffb5131c60133449478d4103c46f366129d7eae2ab`,
+a USD 10 maximum, and USD 90 headroom. Independent preflight passed the strict real loader
+against the pushed source, ledger, 1,534-byte bootstrap, and both publication records. The
+[live attempt](evidence/cache-20260830-a-lifecycle.json) revalidated native authentication,
+the protected bootstrap, and all five initial builder absences, then failed closed at
+`api_enablement` after 61.156 seconds. GCP applied the API enablement but the CLI returned
+nonzero; no repository or builder was created. The subsequent
+[sanitized read-only verification](evidence/cache-20260830-a-post-failure-verification.json)
+proved the API enabled, the exact repository absent, every builder/perimeter target absent,
+and `communityai-bootstrap-1` still `RUNNING`. The reservation is released.
+
+The lifecycle now source-binds a fixed enabled-service query and, after the fixed enable
+call, requires exactly `artifactregistry.googleapis.com` from that query. An ambiguous
+enable return is accepted only when the subsequent state is proved; empty, malformed, or
+failed verification still stops before repository creation. The full focused Gate 11 matrix
+passes 250 tests with two provider/platform skips; Black, isort, Bash syntax, and diff checks
+remain clean. Independent verification passed 187 tests with two skips, reproduced exact
+success and fail-closed service-query cases, and proved the old plan cannot regenerate under
+the corrected provider-plan shape. A new run identity and exact reservation are required
+before retrying the prewarm.
