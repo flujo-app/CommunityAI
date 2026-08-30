@@ -61,6 +61,7 @@ curl --fail --location --silent --show-error --retry 5 --connect-timeout 20 --ma
   "${toolkit_key_url}" --output "${key_path}"
 printf '%s  %s\n' "${toolkit_key_sha256}" "${key_path}" | sha256sum --check --strict
 gpg --batch --yes --dearmor --output /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg "${key_path}"
+chmod 0644 /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 
 curl --fail --location --silent --show-error --retry 5 --connect-timeout 20 --max-time 120 \
   "${toolkit_list_url}" --output "${list_path}"

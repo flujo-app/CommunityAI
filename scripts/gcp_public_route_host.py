@@ -28,6 +28,7 @@ SCHEMA_VERSION = 1
 MAX_OUTPUT_BYTES = 65_536
 MAX_COMMAND_OUTPUT_BYTES = 1_000_000
 MAX_HEALTH_BYTES = 4096
+PULL_RETRY_DELAYS_SECONDS = (5.0, 15.0)
 ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
 STATE_ROOT = Path("/var/lib/communityai-route")
 BOOTSTRAP_READY = Path("/var/lib/communityai-bootstrap/runtime-ready.json")
@@ -104,6 +105,35 @@ def _run_bounded(argv: Sequence[str], timeout: int) -> subprocess.CompletedProce
     if completed.returncode != 0:
         raise CommandError("fixed host command returned a nonzero status")
     return completed
+
+
+def _pull_immutable_image(
+    *,
+    image: str,
+    deadline: float,
+    runner: Runner,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> None:
+    last_error: CommandError | None = None
+    for delay in (0.0, *PULL_RETRY_DELAYS_SECONDS):
+        remaining = deadline - clock()
+        if delay:
+            if remaining <= delay + 1.0:
+                break
+            sleeper(delay)
+            remaining = deadline - clock()
+        if remaining < 1.0:
+            break
+        try:
+            runner(
+                ("docker", "pull", "--quiet", image),
+                min(3600, max(1, math.ceil(remaining))),
+            )
+            return
+        except CommandError as exc:
+            last_error = exc
+    raise CommandError("immutable image pull failed within its bounded retry window") from last_error
 
 
 def _strict_json_bytes(payload: bytes, field: str, maximum: int) -> Mapping[str, Any]:
@@ -308,8 +338,9 @@ def _start(
     container = _container(run_id, candidate)
     port = int(profile["port"])
     action_started = time.monotonic()
-    runner(("docker", "pull", "--quiet", image), action_timeout_seconds)
-    remaining = action_timeout_seconds - (time.monotonic() - action_started)
+    action_deadline = action_started + action_timeout_seconds
+    _pull_immutable_image(image=image, deadline=action_deadline, runner=runner)
+    remaining = action_deadline - time.monotonic()
     if remaining < 1:
         raise HostError("route start exhausted its bounded action timeout")
     runner(

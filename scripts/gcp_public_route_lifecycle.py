@@ -1272,7 +1272,7 @@ def execute_lifecycle(
         )
         stages["bootstrap"] = True
 
-        failure_stage = "startup_health"
+        failure_stage = "start_primary"
         _host_action(
             plan,
             runner,
@@ -1281,6 +1281,7 @@ def execute_lifecycle(
             initial_peer=plan.initial_peer,
             timeout=_remaining_startup_seconds(startup_deadline, clock),
         )
+        failure_stage = "start_standby"
         _host_action(
             plan,
             runner,
@@ -1289,6 +1290,7 @@ def execute_lifecycle(
             initial_peer=plan.initial_peer,
             timeout=_remaining_startup_seconds(startup_deadline, clock),
         )
+        failure_stage = "startup_health"
         while True:
             try:
                 previous, values, _continuity = _sample(

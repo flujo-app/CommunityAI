@@ -212,3 +212,51 @@ def test_acceptance_peer_and_candidate_validation_fail_before_model_loading():
         acceptance.run_probe(candidate="unknown", initial_peer=INITIAL_PEER, timeout=1)
     with pytest.raises(acceptance.AcceptanceError, match="bootstrap peer"):
         acceptance.run_probe(candidate="qwen3.5-2b", initial_peer="/ip4/127.0.0.1/tcp/1", timeout=1)
+
+
+def test_immutable_pull_retries_transient_command_failures_within_deadline():
+    now = [0.0]
+    calls = []
+    sleeps = []
+
+    def runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        if len(calls) < 3:
+            raise host.CommandError("transient pull failure")
+        return _completed()
+
+    def sleeper(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    host._pull_immutable_image(
+        image=PRIMARY,
+        deadline=100.0,
+        runner=runner,
+        clock=lambda: now[0],
+        sleeper=sleeper,
+    )
+
+    assert [timeout for _argv, timeout in calls] == [100, 95, 80]
+    assert all(argv == ("docker", "pull", "--quiet", PRIMARY) for argv, _timeout in calls)
+    assert sleeps == [5.0, 15.0]
+
+
+def test_immutable_pull_fails_closed_when_retry_delay_exhausts_deadline():
+    now = [0.0]
+    calls = []
+
+    def runner(argv, timeout):
+        calls.append((tuple(argv), timeout))
+        raise host.CommandError("persistent pull failure")
+
+    with pytest.raises(host.CommandError, match="bounded retry window"):
+        host._pull_immutable_image(
+            image=PRIMARY,
+            deadline=10.0,
+            runner=runner,
+            clock=lambda: now[0],
+            sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
+        )
+
+    assert [timeout for _argv, timeout in calls] == [10, 5]

@@ -66,6 +66,13 @@ def test_bootstrap_pins_every_external_runtime_boundary():
         "nvidia-container-toolkit",
     ):
         assert f'"{package}=${{toolkit_version}}"' in script
+    keyring_write = (
+        'gpg --batch --yes --dearmor --output /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg "${key_path}"'
+    )
+    keyring_readable = "chmod 0644 /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
+    assert keyring_write in script
+    assert keyring_readable in script
+    assert script.index(keyring_write) < script.index(keyring_readable)
     assert "nvidia-ctk runtime configure --runtime=docker --set-as-default" in script
     assert "docker info --format" in script
     assert """test "$(docker info --format '{{.DefaultRuntime}}')" = 'nvidia'""" in script

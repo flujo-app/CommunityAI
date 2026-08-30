@@ -72,7 +72,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   USD 26 route is now source-bound and reserved. Live fail-closed attempts advanced exact
   instance, SSH, and bootstrap validation; after the latest framed controller was interrupted,
   five exact deletions and six absence checks proved complete cleanup while preserving the
-  protected bootstrap. The next retry uses a detached controller after fresh preflight.
+  protected bootstrap. A clean single-controller detached retry subsequently passed exact
+  native/provider preflight, create, SSH, and pinned bootstrap, then failed on the first fixed
+  route-start action and again proved five deletes, six absences, and protected-bootstrap
+  health. Immutable digest pulls now retry only bounded command failures at fixed 5/15-second
+  intervals inside the original startup deadline, and lifecycle evidence distinguishes primary
+  from standby start failures. The pinned NVIDIA package keyring is now made mode 0644
+  after digest verification and before apt repository access, closing the restrictive-bootstrap-
+  umask failure without weakening any downloaded-key or package pin.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

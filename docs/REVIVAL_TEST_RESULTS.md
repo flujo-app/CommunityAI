@@ -1681,3 +1681,48 @@ firewall—as `true`, and exactly one protected `communityai-bootstrap-1` remain
 retains no provider output, endpoint, credential, prompt, token, path, peer ID, or command
 argv. Gate 11 remains `IN PROGRESS`; the matching USD 26 reservation remains active for a
 fresh-preflight retry using a detached controller that survives workflow handoff.
+
+## Gate 11 detached bootstrap and first route-start failure
+
+On 2026-08-30, the first detached retry correctly failed before create because an older
+relative-path lifecycle controller still owned the exact run-scoped targets; its
+[provider-preflight report](evidence/gate11route-20260830-a-detached-retry-lifecycle.json)
+made no create or route claim. The process audit was widened from repository-qualified
+command lines to the exact lifecycle script name. After the older controller stopped,
+manual exact cleanup again proved all six resource classes absent and the protected
+bootstrap `RUNNING`, and a zero-controller check preceded retry B.
+
+[Detached retry B](evidence/gate11route-20260830-a-detached-retry-b-lifecycle.json)
+used source `0ea140f3fe764a6772a3b4217ead4bcd7e93562f`. It passed local validation,
+native/provider preflight, exact instance create, helper upload, and the pinned driver,
+Docker, containerd, toolkit, and GPU bootstrap. The first fixed route-start action then
+returned nonzero before any health sample. Cleanup passed all five exact delete commands,
+six ordered absence checks, and the protected-bootstrap check. The attempt therefore makes
+no inference, fallback, monitoring, or Gate 11 pass claim.
+
+Earlier Gate 11 publication had already observed a transient GHCR 429, while host startup
+performed each immutable digest pull only once. The fixed host controller now retries only
+`CommandError` pull failures at 5 and 15 seconds, never changes the digest, never extends the
+existing action/startup deadline, and still fails closed after the bounded window. Lifecycle
+evidence now distinguishes `start_primary`, `start_standby`, and later `startup_health`.
+Two new retry/deadline tests plus the existing host/lifecycle focus pass 53 tests; Black,
+isort, and `git diff --check` pass. The authorization must be regenerated against the pushed
+source and new helper digest before another provider call.
+
+## Gate 11 NVIDIA apt keyring permission boundary
+
+A concurrent source-`0ea140f` bootstrap attempt deterministically verified the pinned
+NVIDIA toolkit key digest but failed before any container or inference because the global
+bootstrap `umask 077` left the dearmored apt keyring unreadable to apt's unprivileged
+repository method. Its sanitized
+[keyring failure and cleanup evidence](evidence/gate11route-20260830-a-keyring-failure-cleanup.json)
+proves no duplicate create, no route start, five exact cleanup targets processed, six
+resource classes absent, and the protected bootstrap `RUNNING`.
+
+The pinned startup script now changes only the verified dearmored keyring to mode 0644
+immediately after `gpg --dearmor` and before apt reads the signed NVIDIA repository. The
+source key digest, repository URL, distribution selector, package versions, driver/runtime
+checks, root-only bootstrap state, and fail-closed cleanup remain unchanged. The startup
+test fixes that ordering, and the full 185-test Gate 11 lifecycle/host/startup/node/cost
+focus passes with Black, isort, and diff checks. This startup digest must be included in the
+same refreshed authorization as the host pull-retry digest before another provider call.
