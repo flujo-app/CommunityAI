@@ -1987,3 +1987,24 @@ Windows. The expanded host/lifecycle/startup/cost/image-contract/image-evidence/
 matrix passes 228 tests with the same two skips. Black, isort, and diff checks pass. This repair
 made no provider call and requires independent verification plus a new source-bound run
 identity before another live route.
+
+## Gate 11 route-I concurrent-prefetch result
+
+The independently verified
+[route-I authorization](evidence/gate11route-20260830-i-cost-authorization.json) bound pushed
+source `fc4c18b`, plan `sha256:c17ca0aa19f3eb79f1ae837f240b4972a17c821c5c4b8521582e2d38fbd6b99a`,
+the exact helper/bootstrap/probe and Qwen/Gemma publication records, a USD 26 maximum,
+and USD 74 headroom. Its [live lifecycle evidence](evidence/gate11route-20260830-i-lifecycle.json)
+passed local validation, native authentication, provider preflight, exact create, pinned
+bootstrap, protected-file registry transport, authenticated concurrent prefetch, and both
+exact local digest inventories. The direct GHCR path still consumed the shared startup
+window, so the run failed closed at `startup_health` after 3,812.266 seconds with zero health
+samples and no primary, standby, automatic-selection, fallback, restoration, or monitoring
+claim.
+
+Finally-based cleanup passed all five exact delete commands and all six resource-absence
+checks; registry credentials were removed and the protected bootstrap remained `RUNNING`.
+Every privacy retention flag is false and complete release qualification remains false. Route I
+is `CLEANED-RELEASED`. Direct GHCR delivery, whether sequential or concurrent, must not be
+retried; the next route requires a bounded exact-digest GCP-local artifact path under the same
+60-minute startup contract.

@@ -122,7 +122,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   absence checks, registry removal, and protected-bootstrap health. Pushed source `fc4c18b` now
   runs the two exact digest pulls concurrently inside the unchanged deadline, waits for both
   results, and retains exact post-pull inventory verification and finally-based credential
-  removal.
+  removal. Route I proved both concurrent pulls and local inventories, but direct GHCR delivery
+  still reached `startup_health` with zero samples at 3,812.266 seconds. Five deletes, six
+  absences, registry removal, and protected-bootstrap health passed again. Direct GHCR startup
+  is therefore retired in favor of a bounded exact-digest GCP-local artifact path.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable
