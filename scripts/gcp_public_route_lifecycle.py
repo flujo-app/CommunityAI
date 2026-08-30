@@ -988,6 +988,9 @@ def _install_helpers(
     runner: Runner,
     host_controller_path: Path,
     acceptance_probe_path: Path,
+    *,
+    clock: Clock = time.monotonic,
+    sleeper: Sleeper = time.sleep,
 ) -> None:
     instance = str(plan.provider_plan["resources"]["instance"])
     scp = (
@@ -1004,7 +1007,19 @@ def _install_helpers(
         plan.project,
         "--quiet",
     )
-    _require_success(runner(scp, MAX_PROVIDER_SECONDS), "host helper upload")
+    deadline = clock() + MAX_PROVIDER_SECONDS
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise ProviderCommandError("host helper upload did not become available within its bounded window")
+        result = runner(scp, max(1, min(MIN_HOST_ACTION_SECONDS, math.ceil(remaining))))
+        if result.returncode == 0:
+            _require_success(result, "host helper upload")
+            break
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise ProviderCommandError("host helper upload did not become available within its bounded window")
+        sleeper(min(5.0, remaining))
     install_argv = (
         "sudo",
         "python3",

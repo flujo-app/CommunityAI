@@ -549,22 +549,55 @@ def test_startup_remaining_time_is_anchored_to_one_sixty_minute_deadline():
         lifecycle._remaining_startup_seconds(deadline, lambda: 4451.0)
 
 
-def test_helper_install_command_is_shell_quoted_and_python_compiles():
+def test_helper_install_command_retries_ssh_readiness_and_python_compiles():
     calls = []
+    results = [1, 1, 0, 0]
+    now = [0.0]
 
     def runner(argv, timeout):
-        calls.append(tuple(argv))
-        return lifecycle.CommandResult(0, b"", b"")
+        calls.append((tuple(argv), timeout))
+        return lifecycle.CommandResult(results.pop(0), b"", b"")
 
-    lifecycle._install_helpers(_dummy_plan(), runner, HOST, ACCEPTANCE)
+    def sleeper(seconds):
+        now[0] += seconds
 
-    assert len(calls) == 2
-    assert calls[0][:3] == ("gcloud", "compute", "scp")
-    remote = shlex.split(calls[1][calls[1].index("--command") + 1])
+    lifecycle._install_helpers(
+        _dummy_plan(),
+        runner,
+        HOST,
+        ACCEPTANCE,
+        clock=lambda: now[0],
+        sleeper=sleeper,
+    )
+
+    assert len(calls) == 4
+    assert all(call[0][:3] == ("gcloud", "compute", "scp") for call in calls[:3])
+    assert all(0 < call[1] <= lifecycle.MIN_HOST_ACTION_SECONDS for call in calls[:3])
+    assert now[0] == 10.0
+    remote = shlex.split(calls[3][0][calls[3][0].index("--command") + 1])
     assert remote[:3] == ["sudo", "python3", "-c"]
     assert "0o500" in remote[3]
     assert "0o444" in remote[3]
     compile(remote[3], "<host-helper-install>", "exec")
+
+
+def test_helper_upload_times_out_fail_closed(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr(lifecycle, "MAX_PROVIDER_SECONDS", 10)
+
+    def runner(argv, timeout):
+        now[0] += timeout
+        return lifecycle.CommandResult(1, b"", b"not ready")
+
+    with pytest.raises(lifecycle.ProviderCommandError, match="bounded window"):
+        lifecycle._install_helpers(
+            _dummy_plan(),
+            runner,
+            HOST,
+            ACCEPTANCE,
+            clock=lambda: now[0],
+            sleeper=lambda _seconds: None,
+        )
 
 
 def test_first_create_failure_still_runs_cleanup_and_rechecks_bootstrap(tmp_path, monkeypatch):
