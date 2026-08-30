@@ -530,7 +530,7 @@ def _gcp_public_route_plan(
             "--zone",
             zone,
             "--format",
-            "value(status,machineType,scheduling.maxRunDuration,networkInterfaces[0].accessConfigs[0].natIP)",
+            "json(status,machineType,scheduling.maxRunDuration,networkInterfaces[0].accessConfigs[0].natIP)",
             "--project",
             project,
         ),

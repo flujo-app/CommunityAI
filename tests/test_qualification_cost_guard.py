@@ -745,6 +745,10 @@ def test_gcp_public_route_plan_binds_finite_routes_health_and_cleanup():
     assert guard.GCP_IAP_SOURCE_RANGE in iap_firewall
     create_instance = plan["create_commands"][-1]
     assert "startup-script=scripts/gcp_public_route_startup.sh" in create_instance
+    verify_instance = plan["verify_create_commands"][0]
+    assert verify_instance[verify_instance.index("--format") + 1] == (
+        "json(status,machineType,scheduling.maxRunDuration," "networkInterfaces[0].accessConfigs[0].natIP)"
+    )
     assert ["--max-run-duration", "50400s"] == create_instance[
         create_instance.index("--max-run-duration") : create_instance.index("--max-run-duration") + 2
     ]

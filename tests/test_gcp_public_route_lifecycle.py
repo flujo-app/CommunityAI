@@ -330,26 +330,40 @@ def test_quota_headroom_requires_one_exact_finite_metric():
         )
 
 
-def test_instance_verification_waits_for_transient_states_and_accepts_decimal_duration():
-    assert lifecycle._parse_instance_verification(b"PROVISIONING") is None
-    assert lifecycle._parse_instance_verification(b"STAGING g2-standard-8") is None
-    assert (
-        lifecycle._parse_instance_verification(
-            b"RUNNING https://www.googleapis.com/compute/v1/projects/p/zones/z/machineTypes/g2-standard-8 50400.000s 8.8.8.8"
-        )
-        == "8.8.8.8"
-    )
+def _instance_verification(
+    status: str,
+    *,
+    duration: str = "50400s",
+    address: str = "8.8.8.8",
+    machine_type: str = "https://www.googleapis.com/compute/v1/projects/p/zones/z/machineTypes/g2-standard-8",
+) -> bytes:
+    return json.dumps(
+        {
+            "status": status,
+            "machineType": machine_type,
+            "scheduling": {"maxRunDuration": duration},
+            "networkInterfaces": [{"accessConfigs": [{"natIP": address}]}],
+        }
+    ).encode()
+
+
+def test_instance_verification_uses_structured_fields_and_accepts_decimal_duration():
+    assert lifecycle._parse_instance_verification(_instance_verification("PROVISIONING")) is None
+    assert lifecycle._parse_instance_verification(_instance_verification("STAGING")) is None
+    assert lifecycle._parse_instance_verification(_instance_verification("RUNNING", duration="50400.000s")) == "8.8.8.8"
     with pytest.raises(lifecycle.ProviderCommandError, match="exact plan"):
-        lifecycle._parse_instance_verification(b"RUNNING g2-standard-8 50401s 8.8.8.8")
+        lifecycle._parse_instance_verification(_instance_verification("RUNNING", duration="50401s"))
     with pytest.raises(lifecycle.ProviderCommandError, match="exact plan"):
-        lifecycle._parse_instance_verification(b"STOPPING g2-standard-8 50400s 8.8.8.8")
+        lifecycle._parse_instance_verification(_instance_verification("STOPPING"))
+    with pytest.raises(lifecycle.ProviderCommandError, match="invalid"):
+        lifecycle._parse_instance_verification(b"RUNNING g2-standard-8 50400s 8.8.8.8")
 
 
 def test_instance_verification_polls_within_one_bounded_window():
     responses = [
-        b"PROVISIONING",
-        b"STAGING g2-standard-8",
-        b"RUNNING g2-standard-8 50400s 8.8.8.8",
+        _instance_verification("PROVISIONING"),
+        _instance_verification("STAGING"),
+        _instance_verification("RUNNING"),
     ]
     now = [0.0]
     calls = []
@@ -379,7 +393,7 @@ def test_instance_verification_times_out_fail_closed():
 
     def runner(command, timeout):
         now[0] += timeout
-        return lifecycle.subprocess.CompletedProcess(command, 0, b"PROVISIONING", b"")
+        return lifecycle.subprocess.CompletedProcess(command, 0, _instance_verification("PROVISIONING"), b"")
 
     with pytest.raises(lifecycle.ProviderCommandError, match="bounded verification window"):
         lifecycle._await_instance_verification(

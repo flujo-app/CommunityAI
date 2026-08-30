@@ -880,26 +880,44 @@ def _native_preflight(plan: BoundPlan, runner: Runner) -> None:
 
 
 def _parse_instance_verification(payload: bytes) -> str | None:
-    if len(payload) > 4096:
+    if len(payload) > 16_384:
         raise ProviderCommandError("instance verification output is unbounded")
     try:
-        text = payload.decode("utf-8").strip()
-    except UnicodeError as exc:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
         raise ProviderCommandError("instance verification output is invalid") from exc
-    fields = text.split()
-    if fields and fields[0] in {"PROVISIONING", "STAGING"}:
+    if not isinstance(value, dict) or not isinstance(value.get("status"), str):
+        raise ProviderCommandError("instance verification output is invalid")
+    if value["status"] in {"PROVISIONING", "STAGING"}:
         return None
-    if len(fields) != 4 or fields[0] != "RUNNING" or "g2-standard-8" not in fields[1]:
+    machine_type = value.get("machineType")
+    scheduling = value.get("scheduling")
+    interfaces = value.get("networkInterfaces")
+    if (
+        value["status"] != "RUNNING"
+        or not isinstance(machine_type, str)
+        or not machine_type.endswith("/machineTypes/g2-standard-8")
+        or not isinstance(scheduling, dict)
+        or not isinstance(interfaces, list)
+        or len(interfaces) != 1
+    ):
         raise ProviderCommandError("created instance does not match the exact plan")
-    duration_text = fields[2][:-1] if fields[2].endswith("s") else fields[2]
+    duration_value = scheduling.get("maxRunDuration")
+    if not isinstance(duration_value, str):
+        raise ProviderCommandError("created instance does not match the exact plan")
+    duration_text = duration_value[:-1] if duration_value.endswith("s") else duration_value
     try:
         duration = Decimal(duration_text)
     except InvalidOperation as exc:
         raise ProviderCommandError("created instance does not match the exact plan") from exc
     if not duration.is_finite() or duration != Decimal("50400"):
         raise ProviderCommandError("created instance does not match the exact plan")
+    interface = interfaces[0]
+    access_configs = interface.get("accessConfigs") if isinstance(interface, dict) else None
+    if not isinstance(access_configs, list) or len(access_configs) != 1 or not isinstance(access_configs[0], dict):
+        raise ProviderCommandError("created instance does not match the exact plan")
     try:
-        address = ipaddress.ip_address(fields[3])
+        address = ipaddress.ip_address(access_configs[0].get("natIP"))
     except ValueError as exc:
         raise ProviderCommandError("created instance public address is invalid") from exc
     if not isinstance(address, ipaddress.IPv4Address) or not address.is_global:
