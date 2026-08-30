@@ -86,7 +86,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   authorization binds the corrected helper/bootstrap bytes and preserves the USD 26 maximum
   with USD 74 headroom. Its live controller passed exact preflight, create, SSH, and bootstrap,
   then failed closed at primary start with no health or inference claim; five deletes, six
-  absences, and protected-bootstrap health passed.
+  absences, and protected-bootstrap health passed. Source `cc2cbb3` adds strict marker-framed
+  `image_pull`/`host_command` failure classification while retaining no raw provider output and
+  never retrying `docker run`; its source-bound route-D plan preserves the USD 26 maximum.
 - Manifested workers may emit one canonical, atomic, mode-private health file containing
   only their exact manifest/range, bounded aggregate admission counters, component
   liveness, and an overall health bit. Relative, symlinked, non-regular, or unwritable

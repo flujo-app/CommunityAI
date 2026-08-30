@@ -1771,3 +1771,25 @@ allowlisted failure code that distinguishes immutable image pull exhaustion from
 host-command failure. It may broaden retries only inside the immutable digest pull and the
 existing one-hour action deadline; it must not retry the whole non-idempotent start action or
 `docker run`.
+
+## Gate 11 privacy-safe host failure classification
+
+Source `cc2cbb393f19e203a4c7eb5e5abfdfe772dacddc` preserves the 0/5/15-second
+immutable pull schedule and adds no speculative cooldown. Only pull exhaustion becomes
+`image_pull`; only a post-pull fixed Docker command failure becomes `host_command`, and
+`docker run` remains single-shot. The host returns nonzero with one bounded marker-framed
+failure acknowledgement. The lifecycle accepts it only with the exact schema, scope, action,
+details, and allowlisted code; zero-exit failure frames, nonzero success frames, wrong actions,
+unknown/extra/malformed/missing/duplicate frames fail generically. Raw stdout and stderr are
+discarded, while schema-v2 lifecycle evidence stores only the allowlisted code or null and
+still executes finally-based cleanup.
+
+The 137-test host/lifecycle/cost/startup focus, 194-test expanded Gate 11 matrix, and an
+8-case adversarial acknowledgement matrix pass. Independent verification reproduced the
+retry/no-retry, classification, privacy, cleanup, Black, isort, and diff contracts. The
+provider-call-free [route-D authorization](evidence/gate11route-20260830-d-cost-authorization.json)
+binds that exact source and 30,213-byte host helper, the unchanged 4,994-byte bootstrap and
+6,913-byte acceptance probe, both immutable publication records, a USD 26 maximum, and USD
+74 headroom. Its ledger row was committed as `bca3305`; the identical second guard pass set
+`reservation_recorded=true` and `provisioning_authorized=true`, and a real `load_bound_plan`
+accepted both complete spans.
