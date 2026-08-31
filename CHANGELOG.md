@@ -39,9 +39,17 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   runner string despite its exact provenance-to-metrics match; cleanup again remained empty. Pushed
   source `5f52d73` now accepts only canonical Windows or a bounded case-sensitive Windows runner
   suffix, rejects platform/case/control spoofing, retains exact metrics cross-binding, and passes
-  the full 2,695,065,068-byte production package audit. Same-host Windows continuation and the
-  uniquely named Linux Gemma replacement remain inside the unchanged USD 98 combined ceiling;
-  real completed lifecycle evidence remains required.
+  the full 2,695,065,068-byte production package audit. The resulting clean install passed all
+  desktop and node self-tests, then failed before model acquisition because native containment
+  merged worker stderr diagnostics into strict JSON stdout. Source `4818da3` gives captured child
+  stderr a dedicated inheritable NUL sink while preserving bounded stdout; 15 native tests and
+  independent high-volume, handle-leak, descendant, timeout, and Job Object probes pass. The failed
+  host retained no model cache, credential, or product process, and every exact Gate 13 client and
+  disk is absent. The protected Gate 11 route was restored with a corrected 4,800-second DELETE
+  backstop; both Qwen/Gemma services are active and fresh primary, fallback, restoration, and
+  inference acceptance passed. Gate 13 remains open because neither platform has a completed
+  16-phase clean-host lifecycle, and no further provisioning is authorized under the remaining
+  USD 2 headroom.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,

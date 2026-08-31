@@ -3,8 +3,8 @@
   "scope": "gate13-packaged-clean-install-cost-authorization",
   "run_id": "gate13-20260830-c",
   "gate": 13,
-  "result": "planned",
-  "authorization_revision": 12,
+  "result": "stopped-clean",
+  "authorization_revision": 13,
   "cost_authorization_only": true,
   "source": {
     "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
@@ -15,7 +15,7 @@
     "workflow_result": "passed",
     "qualification_helper_commit": "6787272575f45c4f66ccab7a822bb56bf13b5de6",
     "linux_lifecycle_helper_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
-    "windows_lifecycle_helper_commit": "5f52d735cf23fdd7a9f0cc4b90a7bcd3c2d9309d"
+    "windows_lifecycle_helper_commit": "4818da304f4eeafc81978873bcdfa8a41f6cad36"
   },
   "immutable_inputs": {
     "catalog_bundle_sha256": "sha256:d1d67591607f3f98bb3359cc9f6591d4fccf0469b52499e9b28b3929fb608537",
@@ -70,7 +70,7 @@
       }
     },
     "lifecycle_helper_correction": {
-      "latest_source_commit": "5f52d735cf23fdd7a9f0cc4b90a7bcd3c2d9309d",
+      "latest_source_commit": "4818da304f4eeafc81978873bcdfa8a41f6cad36",
       "linux": {
         "source_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
         "path": "scripts/gate13_linux_packaged_lifecycle.py",
@@ -78,10 +78,10 @@
         "bytes": 113260
       },
       "windows": {
-        "source_commit": "5f52d735cf23fdd7a9f0cc4b90a7bcd3c2d9309d",
+        "source_commit": "4818da304f4eeafc81978873bcdfa8a41f6cad36",
         "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
-        "sha256": "0a22c7d428e84069371226fcfe7d76698d714631739f8401ad90f6ab2762276c",
-        "bytes": 129779,
+        "sha256": "2272b3bd9a59ccbe66963558f2cee66b41f68403f611f8eff92362eebf8e22b8",
+        "bytes": 131385,
         "json_input_limit_bytes": 2097152,
         "lifecycle_output_limit_bytes": 1048576,
         "production_build_platform": "Windows-2025Server-10.0.26100-SP0",
@@ -99,7 +99,11 @@
       "duplicate_keys_rejected": true,
       "nonfinite_values_rejected": true,
       "production_provenance_bytes": 1241883,
-      "windows_focused_tests_passed": 14,
+      "windows_focused_tests_passed": 15,
+      "windows_high_volume_stderr_probe_passed": true,
+      "windows_repeated_contained_runs_without_handle_growth": 80,
+      "windows_descendant_timeout_and_job_cleanup_probe_passed": true,
+      "stderr_separated_from_captured_stdout": true,
       "linux_focused_tests_passed": 33,
       "gate13_matrix_tests_passed": 140,
       "independent_review": "passed"
@@ -217,6 +221,32 @@
       "workroot_cleanup_proved": true,
       "process_and_job_cleanup_proved": true,
       "instance_reuse_authorized_within_original_deadline": true,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "fresh Windows G2 packaged self-test boundary",
+      "result": "failed-closed-before-model-acquisition",
+      "reason": "the exact package audit, clean install, four desktop self-tests, and packaged-node self-test passed, then the packaged worker self-test exposed that the Windows containment host merged stderr process-lifetime diagnostics into captured stdout before strict JSON parsing; source 4818da3 gives stderr a dedicated inheritable NUL sink while preserving bounded stdout capture",
+      "package_redownload_required": false,
+      "model_cache_bytes": 0,
+      "credential_retained": false,
+      "workroot_cleanup_proved": true,
+      "persistent_data_cleanup_proved": true,
+      "process_and_job_cleanup_proved": true,
+      "client_instance_absent": true,
+      "auto_delete_disk_absent": true,
+      "lifecycle_success_claimed": false,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Gate 13 provider cleanup and Gate 11 route restoration",
+      "result": "passed",
+      "reason": "all four exact Gate 13 clients and disks are absent; the protected bootstrap is running; the preserved route was restarted with a corrected 4,800-second DELETE backstop no later than its original deadline, both product-node services are active, and final primary/fallback/restoration inference passed",
+      "gate13_clients_and_disks_absent": true,
+      "protected_bootstrap_running": true,
+      "gate11_route_running": true,
+      "gate11_qwen_and_gemma_coverage_reproved": true,
+      "gate13_lifecycle_success_claimed": false,
       "maximum_cost_change_usd": "0.00"
     }
   ],
@@ -445,6 +475,16 @@
       "provider deletion deadline leaves insufficient completion and cleanup margin"
     ]
   },
+  "post_run_state": {
+    "evidence": "gate13-20260830-c-windows-attempt-and-route-restore.json",
+    "all_exact_gate13_clients_and_disks_absent": true,
+    "protected_bootstrap_running": true,
+    "gate11_route_running": true,
+    "gate11_qwen_and_gemma_coverage_reproved": true,
+    "gate13_status": "IN PROGRESS",
+    "windows_and_linux_16_phase_lifecycles_complete": false,
+    "new_provisioning_requires_fresh_cost_authorization": true
+  },
   "preflight_required": [
     "native gcloud, flyctl, and gh authentication",
     "passed production run and audit bind exact Actions wrapper and inner package names, bytes, and SHA-256",
@@ -465,7 +505,7 @@
     "hard_cloud_ceiling_unchanged_usd": "100.00"
   },
   "provider_calls_authorized_without_preflight": false,
-  "provisioning_authorized": true,
+  "provisioning_authorized": false,
   "reservation_recorded": true,
   "privacy": {
     "credentials_retained": false,
