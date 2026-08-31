@@ -46,10 +46,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   independent high-volume, handle-leak, descendant, timeout, and Job Object probes pass. The failed
   host retained no model cache, credential, or product process, and every exact Gate 13 client and
   disk is absent. The protected Gate 11 route was restored with a corrected 4,800-second DELETE
-  backstop; both Qwen/Gemma services are active and fresh primary, fallback, restoration, and
-  inference acceptance passed. Gate 13 remains open because neither platform has a completed
-  16-phase clean-host lifecycle, and no further provisioning is authorized under the remaining
-  USD 2 headroom.
+  backstop; both Qwen/Gemma services became active and fresh primary, fallback, restoration, and
+  inference acceptance passed. The corrected backstop subsequently deleted the route instance
+  and named disk as designed. Follow-up cleanup deleted the two exact run-scoped firewall rules
+  from the original authorization. A privacy-safe recheck proves every route resource and Gate 13
+  client/disk absent, zero live product-route availability, and the protected bootstrap still
+  running. Gate 11 acceptance evidence is preserved, but Gate 13 is blocked because neither
+  platform has completed its 16-phase clean-host lifecycle and no replacement route or paid rerun
+  is authorized under the remaining USD 2 headroom.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,

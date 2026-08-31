@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "scope": "gate11-route-delete-backstop-and-gate13-cleanup-verification",
+  "run_id": "route-20260830-j",
+  "observed_at": "2026-08-31T07:22:57Z",
+  "result": "passed-cleaned-no-live-product-route",
+  "verification": {
+    "method": "exact run-scoped firewall cleanup followed by read-only native gcloud absence checks",
+    "project_matches_authorization": true,
+    "corrected_delete_deadline_utc": "2026-08-31T05:28:16.516Z",
+    "checked_after_delete_deadline": true,
+    "route_instance": "route-20260830-j-node",
+    "route_instance_absent": true,
+    "route_named_boot_disk_absent": true,
+    "route_firewall_rules_deleted": [
+      "route-20260830-j-iap",
+      "route-20260830-j-dht"
+    ],
+    "route_firewall_rules_absent": true,
+    "gate13_client_instances_absent": [
+      "gate13-20260830-c-windows",
+      "gate13-20260830-d-windows",
+      "gate13-20260830-c-linux",
+      "gate13-20260830-d-linux"
+    ],
+    "gate13_named_disks_absent": [
+      "gate13-20260830-c-windows",
+      "gate13-20260830-d-windows",
+      "gate13-20260830-c-linux",
+      "gate13-20260830-d-linux"
+    ],
+    "protected_bootstrap": {
+      "name": "communityai-bootstrap-1",
+      "status": "RUNNING"
+    },
+    "global_gpu_quota": {
+      "metric": "GPUS_ALL_REGIONS",
+      "limit": 1,
+      "usage": 0
+    },
+    "regional_l4_usage": {
+      "us-central1": 0,
+      "us-west1": 0,
+      "us-east1": 0
+    }
+  },
+  "release_state": {
+    "gate11_acceptance_evidence_preserved": true,
+    "live_product_route_available": false,
+    "gate13_windows_lifecycle_complete": false,
+    "gate13_linux_lifecycle_complete": false,
+    "gate13_status": "BLOCKED",
+    "next_paid_run_requires_new_owner_budget_authority": true
+  },
+  "budget": {
+    "combined_cloud_ceiling_usd": "100.00",
+    "combined_committed_maximum_usd": "98.00",
+    "remaining_authorization_headroom_usd": "2.00",
+    "owner_reset_recorded": false,
+    "additional_maximum_authorized_usd": "0.00",
+    "billing_state": "delayed"
+  },
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_ids_retained": false,
+    "private_paths_retained": false,
+    "private_endpoints_retained": false,
+    "provider_output_retained": false,
+    "command_argv_retained": false
+  }
+}
