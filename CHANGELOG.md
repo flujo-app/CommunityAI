@@ -28,8 +28,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   provider deadline deleted the client and auto-delete disk; both are absent and no lifecycle
   success is claimed. The preserved Windows disk then failed before OS startup on G2; fixed-host-key
   IAP SSH and an explicit noninteractive PowerShell wrapper proved it remained usable only on E2 and
-  contained no install archive or lifecycle state. The bounded continuation therefore replaces only
-  that boot configuration with one fresh G2-compatible Windows Qwen client, followed by one uniquely
+  contained no install archive or lifecycle state. The replacement exact-binds its operator SSH key
+  and ACL, Python 3.12.9 controller installer, and commit-pinned Google GPU installer before create.
+  The bounded continuation therefore replaces only that boot configuration with one fresh
+  G2-compatible Windows Qwen client, followed by one uniquely
   named Linux Gemma replacement under the unchanged USD 98 combined ceiling; real completed lifecycle
   evidence remains required.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a

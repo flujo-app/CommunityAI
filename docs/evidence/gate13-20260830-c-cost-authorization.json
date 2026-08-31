@@ -4,7 +4,7 @@
   "run_id": "gate13-20260830-c",
   "gate": 13,
   "result": "planned",
-  "authorization_revision": 9,
+  "authorization_revision": 10,
   "cost_authorization_only": true,
   "source": {
     "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
@@ -179,6 +179,14 @@
       "original_client_preserved_for_exact_cleanup": true,
       "replacement_windows_client_authorized_within_existing_maximum": true,
       "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "fresh Windows G2 bootstrap binding",
+      "result": "authorized-before-resource-creation",
+      "reason": "the replacement host now binds the exact operator startup script, Python qualification-controller installer, and commit-pinned Google Cloud GPU-driver installer before provisioning; no image, package, model, resource class, or maximum changed",
+      "replacement_instance_absent": true,
+      "replacement_disk_absent": true,
+      "maximum_cost_change_usd": "0.00"
     }
   ],
   "budget": {
@@ -192,7 +200,7 @@
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:26b04ac8735781904002c3fcae7b1f29726af78ce821a6f33710b1ffcdd76cae",
+  "provider_plan_digest": "sha256:56b06dc2e0988dc19f49f1cc0e502b2e8a2dc9958c3ce003b3cf88f2d6ab9372",
   "ledger_purpose": "Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 first to one fresh G2-compatible Windows client and then one replacement Linux client",
   "provider_plan": {
     "provider": "GCP",
@@ -235,7 +243,28 @@
         "execution_class": "new unique single-L4 clean G2-compatible Windows host after the preserved staged disk failed before OS startup on G2; deliver the same digest-bound production package and corrected helper before one empty-cache lifecycle",
         "empty_persistent_cache_required": true,
         "native_credential_store": "Windows Credential Manager",
-        "os_containment": "kill-on-close Job Object assigned before child execution"
+        "os_containment": "kill-on-close Job Object assigned before child execution",
+        "bootstrap": {
+          "startup_script_path": ".gate13-artifacts/33338872342/operator/gate13-windows-d-bootstrap.ps1",
+          "startup_script_sha256": "8b403ecb1234350f1ac55dacbd16703346b1745488a62370c35fb83ea60e9b2e",
+          "startup_script_bytes": 3592,
+          "exact_operator_public_key_only": true,
+          "protected_authorized_key_acl": true,
+          "explicit_powershell_remote_wrapper_required": true,
+          "python_controller_runtime": {
+            "version": "3.12.9",
+            "url": "https://www.python.org/ftp/python/3.12.9/python-3.12.9-amd64.exe",
+            "sha256": "2a52993092a19cfdffe126e2eeac46a4265e25705614546604ad44988e040c0f",
+            "bytes": 26923696
+          },
+          "gpu_driver_installer": {
+            "repository": "GoogleCloudPlatform/compute-gpu-installation",
+            "commit": "e4d32d90993a17795b9f6bc411d2ae6d767052ca",
+            "path": "windows/install_gpu_driver.ps1",
+            "sha256": "9d3eb7064a19aaf8e043c6eb863a490054105f0c7f8f121cdab76b100a092897",
+            "bytes": 8483
+          }
+        }
       },
       {
         "platform": "linux",
@@ -305,9 +334,9 @@
       "model_registry_or_cache_mirror": false
     },
     "topology_revision": {
-      "revision": 9,
+      "revision": 10,
       "previous_topology_result": "the preserved Windows client's staged boot disk failed before OS startup on G2, returned cleanly to E2, passed fixed-host-key IAP SSH with an explicit PowerShell wrapper, and contained no install archive or lifecycle state",
-      "reason": "replace only that unusable boot configuration with one uniquely named fresh G2-compatible Windows host, retain the unchanged USD 26 Gate 13 maximum, finish Windows first, then create the already-authorized unique Linux replacement",
+      "reason": "replace only the unusable Windows boot configuration with one uniquely named fresh G2-compatible host whose SSH, controller-Python, and GPU-driver bootstrap bytes are now exact-bound; retain the unchanged USD 26 Gate 13 maximum, finish Windows first, then create the already-authorized unique Linux replacement",
       "gate11_lesson_applied": "reuse the exact product-node L4 resource class and immutable package/model inputs, but rebuild disposable host configuration instead of debugging a non-portable boot disk; retain native containment and exact cleanup",
       "gate13_scope": "clean packaged install, localhost inference, contribution controls, replacement, uninstall, and cleanup",
       "gate14_real_gpu_control_claim_deferred": true,
