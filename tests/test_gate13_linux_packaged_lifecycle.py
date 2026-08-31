@@ -420,6 +420,34 @@ def test_contribution_facts_come_from_status_and_require_four_limit_classes():
         linux_lifecycle.contribution_phase(running_status(vram_bytes=None), MODEL_ID, DIGEST, 3.0)
 
 
+def test_secret_tool_store_uses_input_pipe_without_duplicate_stdin(monkeypatch):
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return SimpleNamespace(returncode=0, stdout=b"")
+
+    monkeypatch.setattr(
+        linux_lifecycle,
+        "_trusted_root_binary",
+        lambda path: path,
+    )
+    monkeypatch.setattr(linux_lifecycle.subprocess, "run", fake_run)
+
+    secret = b"drift_control_regression_only\n"
+    linux_lifecycle._secret_tool_run(("store", "service", "fixture"), input_bytes=secret)
+    store_arguments, store_options = calls.pop()
+    assert store_options["input"] is secret
+    assert "stdin" not in store_options
+    assert "env" not in store_options
+    assert secret.strip().decode("ascii") not in "\x00".join(map(str, store_arguments))
+
+    linux_lifecycle._secret_tool_run(("lookup", "service", "fixture"))
+    _, lookup_options = calls.pop()
+    assert "input" not in lookup_options
+    assert lookup_options["stdin"] is linux_lifecycle.subprocess.DEVNULL
+
+
 def test_revoked_inference_keys_do_not_change_retained_secret_count(monkeypatch, tmp_path):
     monkeypatch.setattr(linux_lifecycle, "_credential_count", lambda: 1)
     store_path = tmp_path / "api-keys.json"

@@ -1728,16 +1728,16 @@ def _run_self_tests(
 
 def _secret_tool_run(arguments: Sequence[str], *, input_bytes: bytes | None = None) -> Any:
     tool = _trusted_root_binary(inference.SECRET_TOOL_PATH)
+    stdin = {"stdin": subprocess.DEVNULL} if input_bytes is None else {"input": input_bytes}
     try:
         return subprocess.run(
             [str(tool), *arguments],
-            input=input_bytes,
-            stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
             timeout=15,
             close_fds=True,
+            **stdin,
         )
     except BaseException as exc:
         raise LifecycleRunError("native credential operation failed") from exc
