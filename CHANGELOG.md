@@ -307,6 +307,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   boundary without serializing their thread lock and reload a newer persistent watermark
   after deserialization.
 
+### Fixed
+
+- The asymmetric DeepSeek MLA paged-cache equivalence check now uses the dense first
+  layer to isolate gather/scatter correctness from MoE top-k expert ties. Dedicated
+  DeepSeek block tests continue to cover both dense and MoE execution. This removes the
+  nondeterministic Ubuntu default-branch failure exposed after PR #22 without weakening
+  the cache geometry or MoE behavior contracts.
+
 ### Changed
 
 - Defined the first release as a Windows/Linux public inference alpha. macOS and all
