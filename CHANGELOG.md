@@ -35,9 +35,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   lifecycle-output bound for the 1,241,883-byte production provenance input. Cleanup proved no
   workroot, persistent data, credential, or product process. Pushed source `4a9c51e` separates a
   2 MiB JSON-input bound from the unchanged 1 MiB output bound and passes the exact production
-  provenance plus an above-bound rejection. Same-host Windows continuation and the uniquely named
-  Linux Gemma replacement remain inside the unchanged USD 98 combined ceiling; real completed
-  lifecycle evidence remains required.
+  provenance plus an above-bound rejection. The next exact audit rejected GitHub's full Windows
+  runner string despite its exact provenance-to-metrics match; cleanup again remained empty. Pushed
+  source `5f52d73` now accepts only canonical Windows or a bounded case-sensitive Windows runner
+  suffix, rejects platform/case/control spoofing, retains exact metrics cross-binding, and passes
+  the full 2,695,065,068-byte production package audit. Same-host Windows continuation and the
+  uniquely named Linux Gemma replacement remain inside the unchanged USD 98 combined ceiling;
+  real completed lifecycle evidence remains required.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,
