@@ -53,7 +53,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   client/disk absent, zero live product-route availability, and the protected bootstrap still
   running. Gate 11 acceptance evidence is preserved, but Gate 13 is blocked because neither
   platform has completed its 16-phase clean-host lifecycle and no replacement route or paid rerun
-  is authorized under the remaining USD 2 headroom.
+  is authorized under the remaining USD 2 headroom. A read-only provider check also found that the
+  selected native account now requires interactive reauthentication; no provider mutation ran.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,
@@ -313,7 +314,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   layer to isolate gather/scatter correctness from MoE top-k expert ties. Dedicated
   DeepSeek block tests continue to cover both dense and MoE execution. This removes the
   nondeterministic Ubuntu default-branch failure exposed after PR #22 without weakening
-  the cache geometry or MoE behavior contracts.
+  the cache geometry or MoE behavior contracts. PR #23 merged as `c90625c`, whose exact
+  default-branch Tests, Check style, and CodeQL runs all pass.
 
 ### Changed
 
