@@ -9,7 +9,7 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 - Gate 13 packaged-lifecycle prerequisites now emit deterministic self-contained Windows ZIP
   and Linux tar.gz archives, preserve or reject platform filesystem semantics fail-closed, and
-  bind the archive plus canonical desktop metrics into exact-type release provenance. The local
+  bind the archive plus strict desktop metrics into exact-type release provenance. The local
   API and Models/Sharing UI disclose exact signed-manifest first-use shard bytes before transfer,
   while a privacy-safe 16-phase controller and operations runbook bind clean install, acquisition,
   localhost inference, contribution, pause, cache reuse, manual replacement, recovery, both
@@ -18,7 +18,9 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   all 16 phases with exact worker/descendant absence and bounded acquisition. Exact-source
   production run 33338872342 publishes independently audited Windows and Linux CUDA 12.4 archives.
   A fail-closed, stdin-only qualification downloader now validates the exact Actions wrapper and
-  inner release archive without retaining its signed URL or a host GitHub credential; real
+  inner release archive without retaining its signed URL or a host GitHub credential. Linux release
+  evidence accepts insignificant JSON whitespace while recursively rejecting bool/int/float claim
+  substitution, duplicate keys, non-finite values, and any exact digest or size mismatch; real
   clean-host lifecycle and provider-cleanup evidence remain required before Gate 13 passes.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
