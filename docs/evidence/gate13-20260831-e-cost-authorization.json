@@ -92,7 +92,7 @@
       "bytes": 3371
     }
   },
-  "provider_plan_digest": "sha256:0b8c423090e27ec792c55287676d753db4042a5817d25d550d2ef5f2e4b4119b",
+  "provider_plan_digest": "sha256:9ca0fa516017c4a3709a467752f779bcb3bbc0a7c790f9bc61de56d385804c62",
   "provider_plan": {
     "project": "community-ai-506321",
     "route": {
@@ -128,7 +128,7 @@
         "platform": "windows",
         "model": "Qwen3.5 2B",
         "instance": "gate13-20260831-e-win",
-        "zone": "us-central1-a",
+        "zone": "us-central1-b",
         "machine_type": "e2-standard-8",
         "image": "windows-server-2025-dc-v20260814",
         "image_project": "windows-cloud",
@@ -147,7 +147,7 @@
         "platform": "linux",
         "model": "Gemma 4 E2B IT",
         "instance": "gate13-20260831-e-linux",
-        "zone": "us-central1-a",
+        "zone": "us-central1-b",
         "machine_type": "e2-standard-8",
         "image": "ubuntu-2404-noble-amd64-v20260826",
         "image_project": "ubuntu-os-cloud",
@@ -221,9 +221,9 @@
     "private_paths_retained": false
   },
   "plan_revision": {
-    "revision": 3,
-    "previous_provider_plan_digest": "sha256:32ac935c0163aa8afb080e87eb65bed234610bde1609b36bb651e9f4346b5221",
-    "reason": "the exact us-central1-a route request created no VM or disk and returned L4 stockout with provider-reported capacity in us-central1-b; only the route zone changes at unchanged cost while clients remain in us-central1-a",
+    "revision": 4,
+    "previous_provider_plan_digest": "sha256:0b8c423090e27ec792c55287676d753db4042a5817d25d550d2ef5f2e4b4119b",
+    "reason": "the controller requires route and sequential clients in one exact zone; after the us-central1-a L4 stockout created no VM or disk, the complete run moves to provider-recommended us-central1-b at unchanged cost",
     "resource_set_changed": true,
     "cost_ceiling_changed": false
   }
