@@ -51,10 +51,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   and named disk as designed. Follow-up cleanup deleted the two exact run-scoped firewall rules
   from the original authorization. A privacy-safe recheck proves every route resource and Gate 13
   client/disk absent, zero live product-route availability, and the protected bootstrap still
-  running. Gate 11 acceptance evidence is preserved, but Gate 13 is blocked because neither
-  platform has completed its 16-phase clean-host lifecycle and no replacement route or paid rerun
-  is authorized under the remaining USD 2 headroom. A read-only provider check also found that the
-  selected native account now requires interactive reauthentication; no provider mutation ran.
+  running. Gate 11 acceptance evidence is preserved, but Gate 13 remains incomplete because neither
+  platform has completed its 16-phase clean-host lifecycle. After every route and Gate 13 target
+  was cleanup-proved, the owner authorized a cleanup-backed reset on 2026-08-31: the prior USD 98
+  maxima are historical and the next-run epoch starts at USD 100. Each paid create still requires
+  a fresh exact source-bound conservative reservation, and Gate 13 remains blocked until the
+  selected native account is interactively reauthenticated; no provider mutation ran.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,
