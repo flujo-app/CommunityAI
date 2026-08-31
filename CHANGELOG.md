@@ -30,10 +30,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   IAP SSH and an explicit noninteractive PowerShell wrapper proved it remained usable only on E2 and
   contained no install archive or lifecycle state. The replacement exact-binds its operator SSH key
   and ACL, Python 3.12.9 controller installer, and commit-pinned Google GPU installer before create.
-  The bounded continuation therefore replaces only that boot configuration with one fresh
-  G2-compatible Windows Qwen client, followed by one uniquely
-  named Linux Gemma replacement under the unchanged USD 98 combined ceiling; real completed lifecycle
-  evidence remains required.
+  The fresh G2-compatible Windows Qwen client passed exact SSH, Python, L4-driver, audit,
+  and package delivery, then failed closed before install because the helper reused its 1 MiB
+  lifecycle-output bound for the 1,241,883-byte production provenance input. Cleanup proved no
+  workroot, persistent data, credential, or product process. Pushed source `4a9c51e` separates a
+  2 MiB JSON-input bound from the unchanged 1 MiB output bound and passes the exact production
+  provenance plus an above-bound rejection. Same-host Windows continuation and the uniquely named
+  Linux Gemma replacement remain inside the unchanged USD 98 combined ceiling; real completed
+  lifecycle evidence remains required.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,

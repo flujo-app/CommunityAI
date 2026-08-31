@@ -4,7 +4,7 @@
   "run_id": "gate13-20260830-c",
   "gate": 13,
   "result": "planned",
-  "authorization_revision": 10,
+  "authorization_revision": 11,
   "cost_authorization_only": true,
   "source": {
     "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
@@ -15,7 +15,7 @@
     "workflow_result": "passed",
     "qualification_helper_commit": "6787272575f45c4f66ccab7a822bb56bf13b5de6",
     "linux_lifecycle_helper_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
-    "windows_lifecycle_helper_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36"
+    "windows_lifecycle_helper_commit": "4a9c51ea397a8ee4c6c518041c79a349d4b542f9"
   },
   "immutable_inputs": {
     "catalog_bundle_sha256": "sha256:d1d67591607f3f98bb3359cc9f6591d4fccf0469b52499e9b28b3929fb608537",
@@ -70,7 +70,7 @@
       }
     },
     "lifecycle_helper_correction": {
-      "latest_source_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
+      "latest_source_commit": "4a9c51ea397a8ee4c6c518041c79a349d4b542f9",
       "linux": {
         "source_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
         "path": "scripts/gate13_linux_packaged_lifecycle.py",
@@ -78,10 +78,12 @@
         "bytes": 113260
       },
       "windows": {
-        "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
+        "source_commit": "4a9c51ea397a8ee4c6c518041c79a349d4b542f9",
         "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
-        "sha256": "179af29d2118f6bdd3c8992f113cafdb278f3184defb6ec0e703954ebc132881",
-        "bytes": 129438
+        "sha256": "0ca33b88fe4b9d633faa0e72d009f4ba238f1fd6d204908875f296e93d2da2b4",
+        "bytes": 129494,
+        "json_input_limit_bytes": 2097152,
+        "lifecycle_output_limit_bytes": 1048576
       },
       "production_release_metadata_sha256": "6a434cf14100572954452052b8a1e6e8565b2930e3251b1b8327cfdcd7383a25",
       "production_provenance_sha256": "c9b5e47017b003f6b2d81c9ab8273fcbf3c72f7743f1ebbf99383ae7cd5accda",
@@ -94,6 +96,8 @@
       "claim_type_strict_recursive": true,
       "duplicate_keys_rejected": true,
       "nonfinite_values_rejected": true,
+      "production_provenance_bytes": 1241883,
+      "windows_focused_tests_passed": 13,
       "linux_focused_tests_passed": 33,
       "gate13_matrix_tests_passed": 140,
       "independent_review": "passed"
@@ -187,6 +191,18 @@
       "replacement_instance_absent": true,
       "replacement_disk_absent": true,
       "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "fresh Windows G2 production-audit boundary",
+      "result": "failed-closed-before-install-or-model-acquisition",
+      "reason": "the exact helper reused its 1 MiB lifecycle-output bound for JSON inputs and rejected the independently audited 1,241,883-byte production provenance before install; source 4a9c51e separates a 2 MiB input bound from the unchanged 1 MiB output bound and independently passes the exact production document plus an above-bound rejection",
+      "package_redownload_required": false,
+      "model_cache_bytes": 0,
+      "credential_retained": false,
+      "workroot_cleanup_proved": true,
+      "process_and_job_cleanup_proved": true,
+      "instance_reuse_authorized_within_original_deadline": true,
+      "maximum_cost_change_usd": "0.00"
     }
   ],
   "budget": {
@@ -200,7 +216,7 @@
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:56b06dc2e0988dc19f49f1cc0e502b2e8a2dc9958c3ce003b3cf88f2d6ab9372",
+  "provider_plan_digest": "sha256:2f26e7443b9d8577aefd593facf41d91ad6c6f13c6e74626d562b51703475120",
   "ledger_purpose": "Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 first to one fresh G2-compatible Windows client and then one replacement Linux client",
   "provider_plan": {
     "provider": "GCP",
@@ -317,12 +333,14 @@
         "bytes": 113260
       },
       "windows_lifecycle_helper": {
-        "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
+        "source_commit": "4a9c51ea397a8ee4c6c518041c79a349d4b542f9",
         "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
-        "sha256": "179af29d2118f6bdd3c8992f113cafdb278f3184defb6ec0e703954ebc132881",
-        "bytes": 129438
+        "sha256": "0ca33b88fe4b9d633faa0e72d009f4ba238f1fd6d204908875f296e93d2da2b4",
+        "bytes": 129494,
+        "json_input_limit_bytes": 2097152,
+        "lifecycle_output_limit_bytes": 1048576
       },
-      "operator_transport": "gcloud scp of audit records, the exact helper/config files bound at source 6787272575f45c4f66ccab7a822bb56bf13b5de6, the corrected Linux lifecycle helper bound at source c3dc9234af7980bcaffd481c6f8e4e974ed117d4, the corrected Windows lifecycle helper bound at source ad5f60be053dba99eed2653a6cd8ad35a1956d36, and configuration",
+      "operator_transport": "gcloud scp of audit records, the exact helper/config files bound at source 6787272575f45c4f66ccab7a822bb56bf13b5de6, the corrected Linux lifecycle helper bound at source c3dc9234af7980bcaffd481c6f8e4e974ed117d4, the corrected Windows lifecycle helper bound at source 4a9c51ea397a8ee4c6c518041c79a349d4b542f9, and configuration",
       "archive_transport": "one-time GitHub-signed artifact URL resolved only by the authenticated operator and delivered through stdin to the fixed bound host downloader",
       "helper_and_platform_config_sha256_and_bytes_verified_before_execution": true,
       "actions_wrapper_exact_bytes_and_single_regular_stored_member_required": true,
@@ -334,9 +352,9 @@
       "model_registry_or_cache_mirror": false
     },
     "topology_revision": {
-      "revision": 10,
-      "previous_topology_result": "the preserved Windows client's staged boot disk failed before OS startup on G2, returned cleanly to E2, passed fixed-host-key IAP SSH with an explicit PowerShell wrapper, and contained no install archive or lifecycle state",
-      "reason": "replace only the unusable Windows boot configuration with one uniquely named fresh G2-compatible host whose SSH, controller-Python, and GPU-driver bootstrap bytes are now exact-bound; retain the unchanged USD 26 Gate 13 maximum, finish Windows first, then create the already-authorized unique Linux replacement",
+      "revision": 11,
+      "previous_topology_result": "the fresh Windows G2/L4 host passed exact SSH, Python, driver, package, and audit transfer but the helper rejected the 1,241,883-byte production provenance before install or model acquisition; cleanup proved no workroot, persistent data, credential, or product process",
+      "reason": "reuse the same bounded fresh host and exact package, restage only pushed helper source 4a9c51e with a separate 2 MiB JSON input bound, finish Windows first, then create the already-authorized unique Linux replacement without changing the USD 26 Gate 13 maximum",
       "gate11_lesson_applied": "reuse the exact product-node L4 resource class and immutable package/model inputs, but rebuild disposable host configuration instead of debugging a non-portable boot disk; retain native containment and exact cleanup",
       "gate13_scope": "clean packaged install, localhost inference, contribution controls, replacement, uninstall, and cleanup",
       "gate14_real_gpu_control_claim_deferred": true,
