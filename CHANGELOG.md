@@ -18,10 +18,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   all 16 phases with exact worker/descendant absence and bounded acquisition. Exact-source
   production run 33338872342 publishes independently audited Windows and Linux CUDA 12.4 archives.
   A fail-closed, stdin-only qualification downloader now validates the exact Actions wrapper and
-  inner release archive without retaining its signed URL or a host GitHub credential. Linux release
+  inner release archive without retaining its signed URL or a host GitHub credential. Native release
   evidence accepts insignificant JSON whitespace while recursively rejecting bool/int/float claim
-  substitution, duplicate keys, non-finite values, and any exact digest or size mismatch; real
-  clean-host lifecycle and provider-cleanup evidence remain required before Gate 13 passes.
+  substitution, duplicate keys, non-finite values, and exact digest or size mismatches. Catalog and
+  bootstrap semantic digests remain canonical prefixed identities distinct from the exact bootstrap
+  file digest on both platforms; real lifecycle and cleanup evidence remain required for Gate 13.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,

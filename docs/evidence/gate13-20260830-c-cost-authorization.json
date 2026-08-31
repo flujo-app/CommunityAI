@@ -4,7 +4,7 @@
   "run_id": "gate13-20260830-c",
   "gate": 13,
   "result": "planned",
-  "authorization_revision": 5,
+  "authorization_revision": 6,
   "cost_authorization_only": true,
   "source": {
     "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
@@ -14,7 +14,8 @@
     "workflow_run_id": 33338872342,
     "workflow_result": "passed",
     "qualification_helper_commit": "6787272575f45c4f66ccab7a822bb56bf13b5de6",
-    "linux_lifecycle_helper_commit": "8cfe3b21cab616f72cdd5466460ca04f8e1e4af0"
+    "linux_lifecycle_helper_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
+    "windows_lifecycle_helper_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36"
   },
   "immutable_inputs": {
     "catalog_bundle_sha256": "sha256:d1d67591607f3f98bb3359cc9f6591d4fccf0469b52499e9b28b3929fb608537",
@@ -68,20 +69,29 @@
         "bytes": 294
       }
     },
-    "linux_lifecycle_helper_correction": {
-      "source_commit": "8cfe3b21cab616f72cdd5466460ca04f8e1e4af0",
-      "path": "scripts/gate13_linux_packaged_lifecycle.py",
-      "sha256": "5cdc29c9b34c8047dda2a629c2616a252d7469562da89315290a4ff9845c3b9a",
-      "bytes": 113305,
+    "lifecycle_helper_correction": {
+      "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
+      "linux": {
+        "path": "scripts/gate13_linux_packaged_lifecycle.py",
+        "sha256": "73b23ecf83e71c9f212924752f0981fa4a3ea32111556dd87fe07b6e1fc90f8a",
+        "bytes": 113263
+      },
+      "windows": {
+        "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+        "sha256": "179af29d2118f6bdd3c8992f113cafdb278f3184defb6ec0e703954ebc132881",
+        "bytes": 129438
+      },
       "production_release_metadata_sha256": "6a434cf14100572954452052b8a1e6e8565b2930e3251b1b8327cfdcd7383a25",
       "production_provenance_sha256": "c9b5e47017b003f6b2d81c9ab8273fcbf3c72f7743f1ebbf99383ae7cd5accda",
       "production_desktop_metrics_sha256": "5d2b261505e949a15c332c6e5bb817611e340bf897f9b1952ebde8e573e07bd2",
       "production_whitespace_independent": true,
+      "semantic_and_file_bootstrap_digests_distinct": true,
+      "canonical_prefixed_digest_case_sensitive": true,
       "claim_type_strict_recursive": true,
       "duplicate_keys_rejected": true,
       "nonfinite_values_rejected": true,
-      "focused_tests_passed": 31,
-      "gate13_matrix_tests_passed": 138,
+      "focused_tests_passed": 44,
+      "gate13_matrix_tests_passed": 139,
       "independent_review": "passed"
     },
     "qwen": {
@@ -120,6 +130,16 @@
       "model_cache_bytes": 0,
       "product_process_started": false,
       "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Linux G2/L4 signed-bootstrap pre-model boundary",
+      "result": "failed-closed-before-model-acquisition",
+      "reason": "the helper stripped canonical sha256 prefixes from semantic catalog and bootstrap digests, conflating publication identity with the separate exact bootstrap file digest; source ad5f60b preserves both identities and binds each independently",
+      "package_redownload_required": false,
+      "model_cache_bytes": 0,
+      "product_process_started": false,
+      "attempt_cleanup_proved": true,
+      "maximum_cost_change_usd": "0.00"
     }
   ],
   "budget": {
@@ -133,7 +153,7 @@
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:3db4ab47e5581503f3d210901dd6e41f644d20abdbb201edc9a9a6dd43e7c79e",
+  "provider_plan_digest": "sha256:958adaa897f7ca570a869c4a3f632c772f40ad8ad6ae448119f3eea1b2a02dc4",
   "ledger_purpose": "Gate 13 sequential clean packaged Gemma Linux and Qwen Windows lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 to the existing isolated clients in place",
   "provider_plan": {
     "provider": "GCP",
@@ -223,12 +243,18 @@
         "linux_config_bytes": 294
       },
       "linux_lifecycle_helper": {
-        "source_commit": "8cfe3b21cab616f72cdd5466460ca04f8e1e4af0",
+        "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
         "path": "scripts/gate13_linux_packaged_lifecycle.py",
-        "sha256": "5cdc29c9b34c8047dda2a629c2616a252d7469562da89315290a4ff9845c3b9a",
-        "bytes": 113305
+        "sha256": "73b23ecf83e71c9f212924752f0981fa4a3ea32111556dd87fe07b6e1fc90f8a",
+        "bytes": 113263
       },
-      "operator_transport": "gcloud scp of audit records, the exact helper/config files bound at source 6787272575f45c4f66ccab7a822bb56bf13b5de6, the corrected Linux lifecycle helper bound at source 8cfe3b21cab616f72cdd5466460ca04f8e1e4af0, and configuration",
+      "windows_lifecycle_helper": {
+        "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
+        "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+        "sha256": "179af29d2118f6bdd3c8992f113cafdb278f3184defb6ec0e703954ebc132881",
+        "bytes": 129438
+      },
+      "operator_transport": "gcloud scp of audit records, the exact helper/config files bound at source 6787272575f45c4f66ccab7a822bb56bf13b5de6, the corrected native lifecycle helpers bound at source ad5f60be053dba99eed2653a6cd8ad35a1956d36, and configuration",
       "archive_transport": "one-time GitHub-signed artifact URL resolved only by the authenticated operator and delivered through stdin to the fixed bound host downloader",
       "helper_and_platform_config_sha256_and_bytes_verified_before_execution": true,
       "actions_wrapper_exact_bytes_and_single_regular_stored_member_required": true,
@@ -240,9 +266,9 @@
       "model_registry_or_cache_mirror": false
     },
     "topology_revision": {
-      "revision": 5,
-      "previous_topology_result": "Linux L4 and exact production package ready; audit failed closed before product start on helper-only metadata then provenance formatting mismatches",
-      "reason": "source 8cfe3b2 accepts the exact production metadata, provenance, and metrics bytes while preserving duplicate-key, nonfinite, altered-claim, and recursive bool/int/float spoof rejection",
+      "revision": 6,
+      "previous_topology_result": "Linux L4 package audit, extraction, and packaged self-tests passed; signed bootstrap failed closed before model acquisition on semantic digest prefix loss",
+      "reason": "source ad5f60b keeps canonical prefixed semantic catalog/bootstrap digests distinct from the exact bootstrap file digest on both platforms and binds each independently",
       "gate11_lesson_applied": "reuse the exact product-node L4 resource class, direct immutable model acquisition, native process containment, and cleanup discipline that passed the live route",
       "gate13_scope": "clean packaged install, localhost inference, contribution controls, replacement, uninstall, and cleanup",
       "gate14_real_gpu_control_claim_deferred": true,
