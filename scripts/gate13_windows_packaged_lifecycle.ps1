@@ -36,6 +36,7 @@ $script:LifecycleProcess = $null
 $script:LifecycleAcquisitionInvoked = $false
 $script:LifecycleOwnWorkRoot = $false
 $script:LifecycleOwnPersistentRoot = $false
+$script:LifecycleFailurePhase = "initialization"
 
 function Initialize-Gate13NativeHost {
     if ($null -ne ("Gate13.NativeHost" -as [type])) {
@@ -1147,6 +1148,7 @@ function Measure-Gate13Phase {
         [Parameter(Mandatory = $true)] [string] $Name,
         [Parameter(Mandatory = $true)] [scriptblock] $Action
     )
+    $script:LifecycleFailurePhase = $Name
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     $facts = & $Action
     $timer.Stop()
@@ -3212,6 +3214,7 @@ function Invoke-Gate13WindowsPackagedLifecycle {
         }
     }))
 
+    $script:LifecycleFailurePhase = "evidence_validation"
     $document = [ordered]@{
         schema_version = 1
         run_id = $state.Audit.RunId
@@ -3278,10 +3281,19 @@ function Start-Gate13WindowsPackagedLifecycle {
         return 0
     }
     catch {
+        $failurePhase = [string]$script:LifecycleFailurePhase
+        if ($failurePhase -notmatch '^[a-z_]{1,64}$') {
+            $failurePhase = "initialization"
+        }
         Invoke-Gate13FailureCleanup
-        [Console]::Out.WriteLine(
-            '{"failure_code":"windows_packaged_lifecycle_failed","result":"failed","schema_version":1}'
-        )
+        [Console]::Out.WriteLine((
+            [ordered]@{
+                failure_code = "windows_packaged_lifecycle_failed"
+                failure_phase = $failurePhase
+                result = "failed"
+                schema_version = 1
+            } | ConvertTo-Json -Compress
+        ))
         return 2
     }
     finally {
