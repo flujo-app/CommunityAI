@@ -4,7 +4,7 @@
   "run_id": "gate13-20260830-c",
   "gate": 13,
   "result": "planned",
-  "authorization_revision": 6,
+  "authorization_revision": 7,
   "cost_authorization_only": true,
   "source": {
     "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
@@ -14,7 +14,7 @@
     "workflow_run_id": 33338872342,
     "workflow_result": "passed",
     "qualification_helper_commit": "6787272575f45c4f66ccab7a822bb56bf13b5de6",
-    "linux_lifecycle_helper_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
+    "linux_lifecycle_helper_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
     "windows_lifecycle_helper_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36"
   },
   "immutable_inputs": {
@@ -70,13 +70,15 @@
       }
     },
     "lifecycle_helper_correction": {
-      "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
+      "latest_source_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
       "linux": {
+        "source_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
         "path": "scripts/gate13_linux_packaged_lifecycle.py",
-        "sha256": "73b23ecf83e71c9f212924752f0981fa4a3ea32111556dd87fe07b6e1fc90f8a",
-        "bytes": 113263
+        "sha256": "f50497fa06f465e8dba8b146e963faa11d102bc7c7fc8e5073e6c0b9e1beaf94",
+        "bytes": 113260
       },
       "windows": {
+        "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
         "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
         "sha256": "179af29d2118f6bdd3c8992f113cafdb278f3184defb6ec0e703954ebc132881",
         "bytes": 129438
@@ -87,11 +89,13 @@
       "production_whitespace_independent": true,
       "semantic_and_file_bootstrap_digests_distinct": true,
       "canonical_prefixed_digest_case_sensitive": true,
+      "credential_store_input_pipe_exact": true,
+      "credential_secret_in_argv_environment_or_output": false,
       "claim_type_strict_recursive": true,
       "duplicate_keys_rejected": true,
       "nonfinite_values_rejected": true,
-      "focused_tests_passed": 44,
-      "gate13_matrix_tests_passed": 139,
+      "linux_focused_tests_passed": 33,
+      "gate13_matrix_tests_passed": 140,
       "independent_review": "passed"
     },
     "qwen": {
@@ -140,6 +144,18 @@
       "product_process_started": false,
       "attempt_cleanup_proved": true,
       "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Linux G2/L4 exact Gemma acquisition then credential-store boundary",
+      "result": "failed-closed-after-exact-acquisition-before-product-start",
+      "reason": "the helper supplied both input and stdin to subprocess.run for secret-tool store, which Python rejected before starting the credential subprocess; source c3dc923 passes the secret only through the input pipe",
+      "exact_selected_artifact_bytes_acquired": 10278818149,
+      "credential_subprocess_started": false,
+      "credential_retained": false,
+      "workroot_cleanup_proved": true,
+      "process_and_cgroup_cleanup_proved": true,
+      "gpu_memory_after_mib": 0,
+      "maximum_cost_change_usd": "0.00"
     }
   ],
   "budget": {
@@ -153,7 +169,7 @@
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:958adaa897f7ca570a869c4a3f632c772f40ad8ad6ae448119f3eea1b2a02dc4",
+  "provider_plan_digest": "sha256:2d26f439894396dea1613d7d8c139245d95abec0bd7224225826483989c02082",
   "ledger_purpose": "Gate 13 sequential clean packaged Gemma Linux and Qwen Windows lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 to the existing isolated clients in place",
   "provider_plan": {
     "provider": "GCP",
@@ -243,10 +259,10 @@
         "linux_config_bytes": 294
       },
       "linux_lifecycle_helper": {
-        "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
+        "source_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
         "path": "scripts/gate13_linux_packaged_lifecycle.py",
-        "sha256": "73b23ecf83e71c9f212924752f0981fa4a3ea32111556dd87fe07b6e1fc90f8a",
-        "bytes": 113263
+        "sha256": "f50497fa06f465e8dba8b146e963faa11d102bc7c7fc8e5073e6c0b9e1beaf94",
+        "bytes": 113260
       },
       "windows_lifecycle_helper": {
         "source_commit": "ad5f60be053dba99eed2653a6cd8ad35a1956d36",
@@ -254,7 +270,7 @@
         "sha256": "179af29d2118f6bdd3c8992f113cafdb278f3184defb6ec0e703954ebc132881",
         "bytes": 129438
       },
-      "operator_transport": "gcloud scp of audit records, the exact helper/config files bound at source 6787272575f45c4f66ccab7a822bb56bf13b5de6, the corrected native lifecycle helpers bound at source ad5f60be053dba99eed2653a6cd8ad35a1956d36, and configuration",
+      "operator_transport": "gcloud scp of audit records, the exact helper/config files bound at source 6787272575f45c4f66ccab7a822bb56bf13b5de6, the corrected Linux lifecycle helper bound at source c3dc9234af7980bcaffd481c6f8e4e974ed117d4, the corrected Windows lifecycle helper bound at source ad5f60be053dba99eed2653a6cd8ad35a1956d36, and configuration",
       "archive_transport": "one-time GitHub-signed artifact URL resolved only by the authenticated operator and delivered through stdin to the fixed bound host downloader",
       "helper_and_platform_config_sha256_and_bytes_verified_before_execution": true,
       "actions_wrapper_exact_bytes_and_single_regular_stored_member_required": true,
@@ -266,9 +282,9 @@
       "model_registry_or_cache_mirror": false
     },
     "topology_revision": {
-      "revision": 6,
-      "previous_topology_result": "Linux L4 package audit, extraction, and packaged self-tests passed; signed bootstrap failed closed before model acquisition on semantic digest prefix loss",
-      "reason": "source ad5f60b keeps canonical prefixed semantic catalog/bootstrap digests distinct from the exact bootstrap file digest on both platforms and binds each independently",
+      "revision": 7,
+      "previous_topology_result": "Linux package audit, extraction, self-tests, signed bootstrap, and exact empty-cache Gemma acquisition passed; credential storage failed before product start on conflicting subprocess stdin arguments",
+      "reason": "source c3dc923 supplies credential bytes only through subprocess input, never argv/environment/output, while lookup and clear remain noninteractive DEVNULL operations",
       "gate11_lesson_applied": "reuse the exact product-node L4 resource class, direct immutable model acquisition, native process containment, and cleanup discipline that passed the live route",
       "gate13_scope": "clean packaged install, localhost inference, contribution controls, replacement, uninstall, and cleanup",
       "gate14_real_gpu_control_claim_deferred": true,

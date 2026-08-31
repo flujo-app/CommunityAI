@@ -22,7 +22,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   evidence accepts insignificant JSON whitespace while recursively rejecting bool/int/float claim
   substitution, duplicate keys, non-finite values, and exact digest or size mismatches. Catalog and
   bootstrap semantic digests remain canonical prefixed identities distinct from the exact bootstrap
-  file digest on both platforms; real lifecycle and cleanup evidence remain required for Gate 13.
+  file digest on both platforms. Linux credential storage sends the secret only through the child
+  input pipe while lookup and cleanup stay noninteractive; real lifecycle evidence remains required.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,
