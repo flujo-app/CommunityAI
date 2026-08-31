@@ -299,6 +299,11 @@ def load_config(path: Path) -> HostJobConfig:
     expected_lifecycle_name = "gate13-windows-run.json" if platform == "windows" else "gate13-linux-run.json"
     if values["lifecycle_config_path"].name != expected_lifecycle_name:
         raise HostJobError("lifecycle config path changed")
+    if platform == "windows" and not _same_path(
+        values["lifecycle_config_path"],
+        values["entrypoint_path"].parent / expected_lifecycle_name,
+    ):
+        raise HostJobError("Windows lifecycle config is not beside its entrypoint")
     if not _same_path(values["python_executable"], HOST_PYTHON[platform]):
         raise HostJobError("Python executable changed")
     if not _same_path(values["adapter_path"], ADAPTER_PATH):
@@ -953,6 +958,30 @@ def _parse_systemd_seconds(value: str) -> float:
     return sum(float(number) * factors[unit] for number, unit in parts)
 
 
+def _systemd_exec_start_matches(config: HostJobConfig, value: str) -> bool:
+    if not value or any(character in value for character in ("\r", "\n", "\x00")):
+        return False
+    normalized = " ".join(value.split())
+    matched = re.fullmatch(
+        (
+            r"\{ path=(?P<path>\S+) ; argv\[\]=(?P<argv>[^;]+) ; "
+            r"ignore_errors=(?P<ignore>yes|no) ; "
+            r"start_time=\[[^\]]+\] ; stop_time=\[[^\]]+\] ; "
+            r"pid=(?P<pid>\d+) ; code=(?P<code>\(null\)|[a-z-]+) ; "
+            r"status=(?P<status>[A-Za-z0-9()/+.-]+) \}"
+        ),
+        normalized,
+    )
+    if matched is None:
+        return False
+    expected_argv = f"{config.python_executable} {config.adapter_path} " f"execute --config {config.config_path}"
+    return (
+        matched["path"] == os.fspath(config.python_executable)
+        and matched["argv"] == expected_argv
+        and matched["ignore"] == "no"
+    )
+
+
 def _linux_snapshot(config: HostJobConfig, runner: Runner) -> Mapping[str, Any]:
     argv = [
         "sudo",
@@ -1007,17 +1036,11 @@ def _linux_snapshot(config: HostJobConfig, runner: Runner) -> Mapping[str, Any]:
         raise HostJobError("native supervisor inventory is incomplete")
     if fields["LoadState"] == "not-found":
         return {"native_state": "absent", "binding_ok": False}
-    command = " ".join(fields["ExecStart"].split())
-    expected_command_prefix = (
-        f"{{ path={config.python_executable} ; "
-        f"argv[]={config.python_executable} {config.adapter_path} "
-        f"execute --config {config.config_path} ; ignore_errors="
-    )
     binding = (
         fields["LoadState"] == "loaded"
         and fields["User"] == config.host_user
         and fields["Group"] == config.host_user
-        and command.startswith(expected_command_prefix)
+        and _systemd_exec_start_matches(config, fields["ExecStart"])
         and fields["WorkingDirectory"] == os.fspath(config.working_directory)
         and fields["Restart"] == "no"
         and fields["KillMode"] == "control-group"

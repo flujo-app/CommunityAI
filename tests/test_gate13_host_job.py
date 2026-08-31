@@ -123,6 +123,20 @@ def test_lifecycle_config_tampering_fails_closed(config_factory):
         host_job.load_config(path)
 
 
+def test_windows_lifecycle_config_must_be_beside_entrypoint(config_factory):
+    path, raw = config_factory("windows")
+    nested = path.parent / "nested"
+    nested.mkdir()
+    nominated = nested / "gate13-windows-run.json"
+    nominated.write_text('{"bound":true}\n', encoding="utf-8")
+    raw["lifecycle_config_path"] = str(nominated.resolve())
+    raw["lifecycle_config_sha256"] = sha256(nominated)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(host_job.HostJobError, match="not beside"):
+        host_job.load_config(path)
+
+
 def test_windows_task_is_bounded_ordinary_user_single_instance(config_factory):
     path, _raw = config_factory("windows")
     config = host_job.load_config(path)
@@ -455,7 +469,8 @@ def test_linux_snapshot_binds_exact_service_command(config_factory):
                 "ExecStart={ path="
                 f"{config.python_executable} ; argv[]={config.python_executable} "
                 f"{config.adapter_path} execute --config {config.config_path} ; "
-                "ignore_errors=no ; }"
+                "ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; "
+                "pid=0 ; code=(null) ; status=0/0 }"
             ),
             f"WorkingDirectory={config.working_directory}",
             "Restart=no",
@@ -490,6 +505,20 @@ def test_linux_snapshot_binds_exact_service_command(config_factory):
         "native_state": "running",
         "binding_ok": False,
     }
+
+    for foreign_stdout in (
+        stdout.replace("ignore_errors=no", "ignore_errors=yes"),
+        stdout.replace("status=0/0 }", "status=0/0 ; arbitrary=value }"),
+    ):
+
+        def foreign_metadata_runner(_argv, timeout):
+            assert timeout == 60
+            return subprocess.CompletedProcess([], 0, stdout=foreign_stdout, stderr="")
+
+        assert host_job._linux_snapshot(config, foreign_metadata_runner) == {
+            "native_state": "running",
+            "binding_ok": False,
+        }
 
 
 def test_public_cli_failure_is_bounded_and_path_free(capsys, tmp_path):
