@@ -228,6 +228,7 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
             build_workflow="desktop.yaml@refs/heads/test",
             build_pyinstaller="6.11.1",
             publication_evidence=publication_evidence,
+            install_platform="Linux",
         )
         return output_root, bundle_root, summary
 
@@ -366,7 +367,7 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         )
 
     def test_release_output_verifies_in_a_fresh_process(self):
-        install_platform = build_desktop.platform.system()
+        install_platform = "Linux"
         executable_name = f"{build_desktop.NODE_NAME}{'.exe' if install_platform == 'Windows' else ''}"
         output_root, bundle_root = self._bundle(
             "fresh-process",
@@ -380,6 +381,7 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
             build_workflow="desktop.yaml@refs/heads/test",
             build_pyinstaller="6.11.1",
             publication_evidence=None,
+            install_platform=install_platform,
         )
         self._finalize_metrics(output_root, bundle_root, expected)
         environment = os.environ.copy()
