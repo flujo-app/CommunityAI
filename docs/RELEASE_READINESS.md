@@ -65,10 +65,14 @@ binds the pushed source and independently reproduced 217-test Gate 13/desktop re
 created no cloud resources and authorizes no paid run. [Run `gate13-20260831-b`](evidence/gate13-20260831-b-failed-start-and-cleanup.json)
 failed before VM creation when the operator shell collapsed two IAP target tags into one value;
 its exact firewall cleanup and every instance/disk/firewall absence passed. Its USD 56 maximum
-remains committed. Fresh [run `gate13-20260831-c`](evidence/gate13-20260831-c-cost-authorization.json)
-reserves another USD 56 at plan `sha256:07b6cd399ef7a9733602dfc19a741feddec8d15e5f4b5bac7347a192675f6d9c`,
-leaving USD 336; no run-C resource has been created. No later mandatory gate is unblocked until
-the fresh run produces both complete 16-phase records and exact cleanup.
+remains committed. Run `gate13-20260831-c` was armed locally but reached terminal controller absence without a
+durable provider execution record. Its [terminal-state and cleanup proof](evidence/gate13-20260831-c-terminal-state-and-cleanup.json)
+retires the run ID, proves every exact resource absent, global GPU usage zero, and the protected
+bootstrap running; its USD 56 maximum remains committed. Fresh
+[run `gate13-20260831-d`](evidence/gate13-20260831-d-cost-authorization.json) reserves another
+USD 56 at plan `sha256:d32050a51b8f696aa224fc7e748c9113e174e3c3069c1f8b2bc769b0c5ecea18`, leaving
+USD 280. No later mandatory gate is unblocked until the fresh run produces both complete
+16-phase records and exact cleanup.
 
 Do not work on the post-alpha items in the deferred table while an alpha gate can progress.
 Missing Docker, snapshots, local GPU hardware, or local host capacity is not an external
@@ -125,9 +129,9 @@ longer consume the new authorization; later billing should still be recorded for
 Authorization applies only to CommunityAI qualification and public-alpha infrastructure.
 The [owner-authorized ceiling](evidence/owner-budget-authorization-20260831.json) is USD 500
 combined across new temporary GCP and Fly resources in the current accounting epoch. The
-existing USD 52 committed maximum and cleaned-failed run B's USD 56 maximum remain charged.
-The fresh USD 56 `gate13-20260831-c` reservation brings the committed maximum to USD 164 and
-leaves USD 336 unreserved. The existing
+existing USD 52 committed maximum and the three cleaned-failed USD 56 Gate 13 runs remain
+charged. The fresh USD 56 `gate13-20260831-d` reservation brings the committed maximum to USD 220
+and leaves USD 280 unreserved. The existing
 GCP bootstrap's ordinary baseline cost is tracked separately; never delete it as test cleanup.
 
 Before every paid run, add an entry with a conservative maximum. After cleanup, replace
@@ -140,7 +144,8 @@ maximum still consumes the current epoch because no reset or observed charge has
 
 | Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| gate13-20260831-c | GCP | Fresh Gate 13 durable route-first lifecycle with the same bounded 16-hour route and sequential 6-hour clients, new exact resources, and corrected explicit IAP target-tag arguments [plan `sha256:07b6cd399ef7a9733602dfc19a741feddec8d15e5f4b5bac7347a192675f6d9c`] | USD 56.00 | — | [Cost authorization](evidence/gate13-20260831-c-cost-authorization.json) records fresh native/provider preflight, exact absence, L4 quota 1/0, protected-bootstrap health, distinct names, hard deadlines, and the unchanged simple execution sequence. No resource has been created. | RESERVED |
+| gate13-20260831-d | GCP | Fresh Gate 13 route-first lifecycle using the already-qualified durable controller and host jobs, one bounded 16-hour route, sequential fresh 6-hour Windows/Qwen and Linux/Gemma clients, and explicit provider argument arrays [plan `sha256:d32050a51b8f696aa224fc7e748c9113e174e3c3069c1f8b2bc769b0c5ecea18`] | USD 56.00 | — | [Cost authorization](evidence/gate13-20260831-d-cost-authorization.json) records native/provider preflight at 2026-08-31T21:38:14Z, every exact target absent, L4 quota 1/0, protected-bootstrap health, immutable inputs, hard deadlines, and the unchanged route → Windows → Linux → cleanup sequence. | RESERVED |
+| gate13-20260831-c | GCP | Gate 13 durable route-first lifecycle with the same bounded 16-hour route and sequential 6-hour clients, new exact resources, and corrected explicit IAP target-tag arguments [plan `sha256:07b6cd399ef7a9733602dfc19a741feddec8d15e5f4b5bac7347a192675f6d9c`] | USD 56.00 | — | [Terminal-state and cleanup proof](evidence/gate13-20260831-c-terminal-state-and-cleanup.json) records a local terminal absence state without a durable provider execution record, retires the run ID without reset or reuse, proves every exact target absent, global GPU usage zero, and the protected bootstrap running. | CLEANED-COMMITTED |
 | gate13-20260831-b | GCP | Gate 13 durable route-first lifecycle: one 16-hour G2/L4 product route, then sequential fresh 6-hour Windows/Qwen and Linux/Gemma CPU clients at controller source `ee0c05f83035ad22015fb089f5cb30f1713076e6`, host-job source `0e16ac2aa088e0719e9c3c89451176544602bab3`, route source `f64a388a47b098ac7f69d2affc59816376b43bb1`, package source `1971f106cc5bf90724d938c986a719ce2744f3e7`, and plan `sha256:3f3f921ded6eed1729aff175f5c91b4effe1966a31c82bdbe41ed69075442d64` | USD 56.00 | — | [Failed start and cleanup](evidence/gate13-20260831-b-failed-start-and-cleanup.json) records passed preflight and persisted intent, one transient DHT firewall, IAP-tag argument rejection before VM creation, exact firewall cleanup, all run resources absent, and protected-bootstrap health. | CLEANED-COMMITTED |
 | gate13-20260831-a | GCP | Gate 13 replacement product-node route plus fresh CPU Windows/Linux packaged lifecycles at route source `f64a388a47b098ac7f69d2affc59816376b43bb1` and exact package source `1971f106cc5bf90724d938c986a719ce2744f3e7` [plan sha256:313f5d34eefd64c71e265bdb7044d8ef5f56550360a7e9a7104265434292fd69] | USD 52.00 | — | [Failed attempt and cleanup proof](evidence/gate13-20260831-a-failed-attempt-and-cleanup.json) records verified archive downloads but no completed lifecycle, the non-durable orchestration failure, consumed-client semantics, and exact absence of the route, both clients, all three disks, and both firewalls while the protected bootstrap remains running. The USD 52 maximum remains committed; after the owner raised the epoch ceiling to USD 500, USD 448 remains before a new reservation. | CLEANED-COMMITTED |
 | gate13-20260830-c | GCP | Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source `1971f106cc5bf90724d938c986a719ce2744f3e7`, temporarily suspending and later restoring the Gate 11 route while reusing its sole global L4 allocation on uniquely named fresh Windows and Linux clients [plan sha256:427bc1ed8a6645ad0650d91aaba7aa753d398fa84f56d57b50aca04c4e0cc955] | USD 26.00 | — | [Cost authorization](evidence/gate13-20260830-c-cost-authorization.json) binds the passed production archives/audits, pushed download-helper/config identities, exact Actions wrapper/inner archives, exact Qwen/Gemma manifests, no service accounts/scopes, direct model transfer, native credential stores, whole-tree containment, all 16 phases, exact cleanup targets, and zero Fly/image/mirror/credits/macOS work. Revision 13 records the final Windows pre-acquisition failure, pushed correction `4818da3`, complete native cleanup, all four exact client instance/disk absences, and successful Gate 11 route restoration. [Privacy-safe final state](evidence/gate13-20260830-c-windows-attempt-and-route-restore.json) proves the package audit and install boundary, zero model-cache bytes, no retained credential/process/path/endpoint/provider output, protected-bootstrap health, active Qwen/Gemma route services, and fresh primary/fallback/restoration inference. The two required 16-phase lifecycles remain incomplete. Complete cleanup permits the explicit owner reset on 2026-08-31; its USD 26 maximum is historical and delayed billing remains informational. This record authorizes no later provisioning. | CLEANED-RELEASED |
