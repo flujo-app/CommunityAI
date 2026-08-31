@@ -4,7 +4,7 @@
   "run_id": "gate13-20260830-c",
   "gate": 13,
   "result": "planned",
-  "authorization_revision": 7,
+  "authorization_revision": 8,
   "cost_authorization_only": true,
   "source": {
     "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
@@ -156,21 +156,32 @@
       "process_and_cgroup_cleanup_proved": true,
       "gpu_memory_after_mib": 0,
       "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Linux G2/L4 corrected product startup",
+      "result": "provider-backstop-deleted-during-startup",
+      "reason": "the original client's fixed 90-minute DELETE backstop expired after exact acquisition and corrected credential storage while packaged product startup was still bounded",
+      "instance_absent": true,
+      "auto_delete_disk_absent": true,
+      "protected_bootstrap_running": true,
+      "gate11_route_preserved_terminated": true,
+      "lifecycle_success_claimed": false,
+      "maximum_cost_change_usd": "0.00"
     }
   ],
   "budget": {
     "combined_cloud_ceiling_usd": "100.00",
     "committed_before_run_usd": "72.00",
     "committed_before_run_reason": "USD 46 cleaned-pending-billing Gate 9 maximum plus USD 26 live-bounded Gate 11 route maximum",
-    "maximum_estimate_usd": "18.00",
-    "combined_committed_maximum_usd": "90.00",
-    "remaining_after_run_maximum_usd": "10.00",
+    "maximum_estimate_usd": "26.00",
+    "combined_committed_maximum_usd": "98.00",
+    "remaining_after_run_maximum_usd": "2.00",
     "observed_cost_usd": null,
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:2d26f439894396dea1613d7d8c139245d95abec0bd7224225826483989c02082",
-  "ledger_purpose": "Gate 13 sequential clean packaged Gemma Linux and Qwen Windows lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 to the existing isolated clients in place",
+  "provider_plan_digest": "sha256:75acc0d14183fcd034e92884b9deee0eba84b8bc8698fa174b0dbad4a5a1e056",
+  "ledger_purpose": "Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 first to the preserved Windows client and then one replacement Linux client",
   "provider_plan": {
     "provider": "GCP",
     "project": "community-ai-506321",
@@ -217,9 +228,9 @@
       {
         "platform": "linux",
         "model": "Gemma 4 E2B IT",
-        "lifecycle_run_id": "gate13-linux-gemma-c",
-        "instance": "gate13-20260830-c-linux",
-        "disk": "gate13-20260830-c-linux",
+        "lifecycle_run_id": "gate13-linux-gemma-d",
+        "instance": "gate13-20260830-d-linux",
+        "disk": "gate13-20260830-d-linux",
         "zone": "us-east1-b",
         "machine_type": "g2-standard-8",
         "accelerator": "1 x NVIDIA L4",
@@ -234,7 +245,7 @@
         "max_run_seconds": 5400,
         "termination_action": "DELETE",
         "gpu_driver_bootstrap": true,
-        "execution_class": "single-L4 clean-host lifecycle after in-place stop, machine-type change, driver verification, and restart; the already-verified package and empty model cache stay on the same auto-delete disk",
+        "execution_class": "new unique single-L4 clean host after the prior exact client and auto-delete disk were proved absent; deliver the same digest-bound production package and corrected helper before one empty-cache lifecycle",
         "empty_persistent_cache_required": true,
         "native_credential_store": "Secret Service",
         "os_containment": "systemd system cgroup-v2 service with KillMode=control-group and LimitCORE=0"
@@ -282,13 +293,13 @@
       "model_registry_or_cache_mirror": false
     },
     "topology_revision": {
-      "revision": 7,
-      "previous_topology_result": "Linux package audit, extraction, self-tests, signed bootstrap, and exact empty-cache Gemma acquisition passed; credential storage failed before product start on conflicting subprocess stdin arguments",
-      "reason": "source c3dc923 supplies credential bytes only through subprocess input, never argv/environment/output, while lookup and clear remain noninteractive DEVNULL operations",
+      "revision": 8,
+      "previous_topology_result": "the corrected Linux run passed credential storage and reached packaged product startup, then the original provider DELETE backstop expired; instance and disk absence are proved",
+      "reason": "finish the already-staged Windows client first, then create one uniquely named replacement Linux client with a fresh 90-minute deletion backstop; no other resource class or parallel L4 is added",
       "gate11_lesson_applied": "reuse the exact product-node L4 resource class, direct immutable model acquisition, native process containment, and cleanup discipline that passed the live route",
       "gate13_scope": "clean packaged install, localhost inference, contribution controls, replacement, uninstall, and cleanup",
       "gate14_real_gpu_control_claim_deferred": true,
-      "cost_ceiling_changed": false
+      "cost_ceiling_changed": true
     },
     "resource_limits": {
       "one_model_per_host": true,
@@ -302,8 +313,8 @@
     "sequencing": {
       "concurrent_platform_models": 1,
       "gpu_order": [
-        "gate13-20260830-c-linux",
-        "gate13-20260830-c-windows"
+        "gate13-20260830-c-windows",
+        "gate13-20260830-d-linux"
       ],
       "route_stopped_before_first_client_gpu_start": true,
       "route_restored_only_after_both_client_deletions": true,
@@ -319,11 +330,13 @@
       "delete_only_exact_run_client_instances_and_auto_delete_disks": true,
       "verify_instances_absent": [
         "gate13-20260830-c-windows",
-        "gate13-20260830-c-linux"
+        "gate13-20260830-c-linux",
+        "gate13-20260830-d-linux"
       ],
       "verify_disks_absent": [
         "gate13-20260830-c-windows",
-        "gate13-20260830-c-linux"
+        "gate13-20260830-c-linux",
+        "gate13-20260830-d-linux"
       ],
       "protected_resources": [
         "communityai-bootstrap-1",

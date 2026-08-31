@@ -23,7 +23,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   substitution, duplicate keys, non-finite values, and exact digest or size mismatches. Catalog and
   bootstrap semantic digests remain canonical prefixed identities distinct from the exact bootstrap
   file digest on both platforms. Linux credential storage sends the secret only through the child
-  input pipe while lookup and cleanup stay noninteractive; real lifecycle evidence remains required.
+  input pipe while lookup and cleanup stay noninteractive. A real clean Linux attempt reached
+  packaged product startup after exact empty-cache Gemma acquisition, then its original fixed
+  provider deadline deleted the client and auto-delete disk; both are absent and no lifecycle
+  success is claimed. The bounded continuation finishes the already-staged Windows Qwen client
+  first, then creates one uniquely named Linux Gemma replacement under a USD 98 combined ceiling;
+  real completed lifecycle evidence remains required.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,
