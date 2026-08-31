@@ -4,7 +4,7 @@
   "run_id": "gate13-20260830-c",
   "gate": 13,
   "result": "planned",
-  "authorization_revision": 8,
+  "authorization_revision": 9,
   "cost_authorization_only": true,
   "source": {
     "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
@@ -167,6 +167,18 @@
       "gate11_route_preserved_terminated": true,
       "lifecycle_success_claimed": false,
       "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Windows staged E2-to-G2 in-place conversion",
+      "result": "canceled-before-lifecycle-after-boot-configuration-failure",
+      "reason": "a bounded capacity retry obtained the planned L4, but the staged boot disk repeatedly returned from Windows Boot Manager before OS or SSH startup on G2; it was reverted fail-closed to E2, where fixed-host-key IAP SSH and exact-key authentication passed under an explicit noninteractive PowerShell wrapper and the disk proved to contain no install archive or lifecycle state",
+      "gpu_workload_started": false,
+      "model_acquisition_started": false,
+      "credential_created": false,
+      "lifecycle_success_claimed": false,
+      "original_client_preserved_for_exact_cleanup": true,
+      "replacement_windows_client_authorized_within_existing_maximum": true,
+      "maximum_cost_change_usd": "0.00"
     }
   ],
   "budget": {
@@ -180,8 +192,8 @@
     "billing_state": "delayed",
     "fly_credit_counted": false
   },
-  "provider_plan_digest": "sha256:75acc0d14183fcd034e92884b9deee0eba84b8bc8698fa174b0dbad4a5a1e056",
-  "ledger_purpose": "Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 first to the preserved Windows client and then one replacement Linux client",
+  "provider_plan_digest": "sha256:26b04ac8735781904002c3fcae7b1f29726af78ce821a6f33710b1ffcdd76cae",
+  "ledger_purpose": "Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 first to one fresh G2-compatible Windows client and then one replacement Linux client",
   "provider_plan": {
     "provider": "GCP",
     "project": "community-ai-506321",
@@ -203,9 +215,9 @@
       {
         "platform": "windows",
         "model": "Qwen3.5 2B",
-        "lifecycle_run_id": "gate13-windows-qwen-c",
-        "instance": "gate13-20260830-c-windows",
-        "disk": "gate13-20260830-c-windows",
+        "lifecycle_run_id": "gate13-windows-qwen-d",
+        "instance": "gate13-20260830-d-windows",
+        "disk": "gate13-20260830-d-windows",
         "zone": "us-west1-a",
         "machine_type": "g2-standard-8",
         "accelerator": "1 x NVIDIA L4",
@@ -220,7 +232,7 @@
         "max_run_seconds": 5400,
         "termination_action": "DELETE",
         "gpu_driver_bootstrap": true,
-        "execution_class": "single-L4 clean-host lifecycle after in-place stop, machine-type change, driver verification, and restart; no disk replacement or package retransfer",
+        "execution_class": "new unique single-L4 clean G2-compatible Windows host after the preserved staged disk failed before OS startup on G2; deliver the same digest-bound production package and corrected helper before one empty-cache lifecycle",
         "empty_persistent_cache_required": true,
         "native_credential_store": "Windows Credential Manager",
         "os_containment": "kill-on-close Job Object assigned before child execution"
@@ -293,27 +305,27 @@
       "model_registry_or_cache_mirror": false
     },
     "topology_revision": {
-      "revision": 8,
-      "previous_topology_result": "the corrected Linux run passed credential storage and reached packaged product startup, then the original provider DELETE backstop expired; instance and disk absence are proved",
-      "reason": "finish the already-staged Windows client first, then create one uniquely named replacement Linux client with a fresh 90-minute deletion backstop; no other resource class or parallel L4 is added",
-      "gate11_lesson_applied": "reuse the exact product-node L4 resource class, direct immutable model acquisition, native process containment, and cleanup discipline that passed the live route",
+      "revision": 9,
+      "previous_topology_result": "the preserved Windows client's staged boot disk failed before OS startup on G2, returned cleanly to E2, passed fixed-host-key IAP SSH with an explicit PowerShell wrapper, and contained no install archive or lifecycle state",
+      "reason": "replace only that unusable boot configuration with one uniquely named fresh G2-compatible Windows host, retain the unchanged USD 26 Gate 13 maximum, finish Windows first, then create the already-authorized unique Linux replacement",
+      "gate11_lesson_applied": "reuse the exact product-node L4 resource class and immutable package/model inputs, but rebuild disposable host configuration instead of debugging a non-portable boot disk; retain native containment and exact cleanup",
       "gate13_scope": "clean packaged install, localhost inference, contribution controls, replacement, uninstall, and cleanup",
       "gate14_real_gpu_control_claim_deferred": true,
-      "cost_ceiling_changed": true
+      "cost_ceiling_changed": false
     },
     "resource_limits": {
       "one_model_per_host": true,
       "one_contribution_worker_maximum": true,
       "max_disk_space": "20GiB",
       "max_vram": "24GiB",
-      "max_bandwidth_mbps": 100.0,
-      "max_power_watts": 250.0,
-      "pause_timeout_seconds": 30.0
+      "max_bandwidth_mbps": 100,
+      "max_power_watts": 250,
+      "pause_timeout_seconds": 30
     },
     "sequencing": {
       "concurrent_platform_models": 1,
       "gpu_order": [
-        "gate13-20260830-c-windows",
+        "gate13-20260830-d-windows",
         "gate13-20260830-d-linux"
       ],
       "route_stopped_before_first_client_gpu_start": true,
@@ -330,11 +342,13 @@
       "delete_only_exact_run_client_instances_and_auto_delete_disks": true,
       "verify_instances_absent": [
         "gate13-20260830-c-windows",
+        "gate13-20260830-d-windows",
         "gate13-20260830-c-linux",
         "gate13-20260830-d-linux"
       ],
       "verify_disks_absent": [
         "gate13-20260830-c-windows",
+        "gate13-20260830-d-windows",
         "gate13-20260830-c-linux",
         "gate13-20260830-d-linux"
       ],

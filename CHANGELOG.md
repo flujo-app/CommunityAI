@@ -26,9 +26,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   input pipe while lookup and cleanup stay noninteractive. A real clean Linux attempt reached
   packaged product startup after exact empty-cache Gemma acquisition, then its original fixed
   provider deadline deleted the client and auto-delete disk; both are absent and no lifecycle
-  success is claimed. The bounded continuation finishes the already-staged Windows Qwen client
-  first, then creates one uniquely named Linux Gemma replacement under a USD 98 combined ceiling;
-  real completed lifecycle evidence remains required.
+  success is claimed. The preserved Windows disk then failed before OS startup on G2; fixed-host-key
+  IAP SSH and an explicit noninteractive PowerShell wrapper proved it remained usable only on E2 and
+  contained no install archive or lifecycle state. The bounded continuation therefore replaces only
+  that boot configuration with one fresh G2-compatible Windows Qwen client, followed by one uniquely
+  named Linux Gemma replacement under the unchanged USD 98 combined ceiling; real completed lifecycle
+  evidence remains required.
 - Persistent multi-model local node with authenticated OpenAI-compatible inference and a
   separately authorized control API.
 - PySide desktop foundation with native credential ownership, model and route status,
