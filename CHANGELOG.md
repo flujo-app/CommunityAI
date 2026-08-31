@@ -97,6 +97,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   bound to a canonical target and its exact bytes; the fresh-process verifier rejects changed,
   missing, extra, external, absolute, broken, directory-linked, special, or case-colliding
   payloads and any overstated signing, update, platform, credits, or qualification claim.
+  Generic release-artifact fixtures now select a supported Linux archive target explicitly,
+  so an out-of-matrix CI host cannot change the tested release target or expand support claims.
 - Authoritative opt-in contribution policies for model admission, storage, scheduling,
   VRAM, bandwidth, power, and bounded pause behavior.
 - Provider-neutral separate-machine qualification controller and a Fly Machines adapter
