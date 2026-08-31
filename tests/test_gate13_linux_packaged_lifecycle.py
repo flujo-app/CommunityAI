@@ -1,3 +1,4 @@
+import hashlib
 import json
 import signal
 import sys
@@ -15,6 +16,40 @@ import gate13_packaged_lifecycle as controller  # noqa: E402
 MODEL_ID = "Qwen3.5 2B"
 PROFILE = controller.MODEL_PROFILES[MODEL_ID]
 DIGEST = PROFILE["manifest_digest"]
+
+
+def test_release_metadata_accepts_exact_production_format_and_rejects_changed_claims():
+    expected = linux_lifecycle._release_metadata()
+    production_payload = (json.dumps(expected, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    assert hashlib.sha256(production_payload).hexdigest() == (
+        "6a434cf14100572954452052b8a1e6e8565b2930e3251b1b8327cfdcd7383a25"
+    )
+    assert linux_lifecycle._validate_release_metadata(production_payload) == expected
+
+    altered = dict(expected, credits_enabled=True)
+    with pytest.raises(linux_lifecycle.LifecycleRunError):
+        linux_lifecycle._validate_release_metadata(json.dumps(altered).encode("utf-8"))
+
+    with pytest.raises(linux_lifecycle.LifecycleRunError):
+        linux_lifecycle._validate_release_metadata(b'{"schema_version":1,"schema_version":1}')
+
+
+@pytest.mark.parametrize(
+    ("field", "spoofed"),
+    [
+        ("schema_version", True),
+        ("schema_version", 1.0),
+        ("unsigned", 1),
+        ("publisher_signature", 0),
+        ("automatic_updates", 0),
+        ("install_archive_required", 1),
+    ],
+)
+def test_release_metadata_rejects_bool_int_float_type_spoofs(field, spoofed):
+    altered = dict(linux_lifecycle._release_metadata())
+    altered[field] = spoofed
+    with pytest.raises(linux_lifecycle.LifecycleRunError):
+        linux_lifecycle._validate_release_metadata(json.dumps(altered).encode("utf-8"))
 
 
 def acquisition_record():

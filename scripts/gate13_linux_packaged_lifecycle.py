@@ -1111,6 +1111,13 @@ def _release_metadata() -> Mapping[str, Any]:
     }
 
 
+def _validate_release_metadata(payload: bytes) -> Mapping[str, Any]:
+    metadata = _strict_json(payload)
+    if _canonical_json(metadata) != _canonical_json(_release_metadata()):
+        raise LifecycleRunError("release metadata contains altered alpha claims")
+    return metadata
+
+
 def _validate_artifact(raw: object) -> Mapping[str, Any]:
     if not isinstance(raw, dict):
         raise LifecycleRunError("package artifact inventory is invalid")
@@ -1373,10 +1380,7 @@ def _audit_package(root: Path, expected_digest: str, expected_bytes: int) -> Pac
     metrics_path = root / "desktop-metrics.json"
     if not all(_regular_file(path) for path in (archive, metadata_path, provenance_path, checksums_path, metrics_path)):
         raise LifecycleRunError("release package inputs are missing or unsafe")
-    metadata_bytes = metadata_path.read_bytes()
-    metadata = _strict_json(metadata_bytes)
-    if metadata != _release_metadata() or metadata_bytes != _canonical_json(metadata).encode("utf-8"):
-        raise LifecycleRunError("release metadata contains altered alpha claims")
+    metadata = _validate_release_metadata(metadata_path.read_bytes())
     provenance_bytes = provenance_path.read_bytes()
     provenance = _strict_json(provenance_bytes)
     if provenance_bytes != _canonical_json(provenance).encode("utf-8"):
