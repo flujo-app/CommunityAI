@@ -8,10 +8,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 ### Added
 
 - The owner raised the current combined GCP/Fly public-alpha accounting epoch to USD 500 on
-  2026-08-31. The existing USD 52 committed maximum remains charged. Fresh run
-  `gate13-20260831-b` now reserves USD 56 for a 16-hour route and sequential 6-hour Windows/Linux
-  clients, leaving USD 392; no resource has been created. Per-run preflight, hard deadlines,
-  exact cleanup, protected-resource, and evidence requirements are unchanged.
+  2026-08-31. The existing USD 52 committed maximum remains charged. Run
+  `gate13-20260831-b` reserved USD 56 but failed before VM creation when its two IAP tags reached
+  gcloud as one value; exact cleanup passed. Fresh run `gate13-20260831-c` reserves USD 56 with
+  corrected explicit tag arguments, leaving USD 336. Per-run preflight, hard deadlines, exact
+  cleanup, protected-resource, and evidence requirements are unchanged.
 - Gate 13 paid qualification now has durable source-bound native host jobs: an exact-current-user
   Windows Scheduled Task and a non-root transient Linux systemd service persist one attempt across
   operator disconnects, bound output, terminate the complete process tree on timeout or overflow,
