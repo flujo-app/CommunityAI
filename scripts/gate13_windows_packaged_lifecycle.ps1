@@ -1585,6 +1585,7 @@ function Test-Gate13PackageAudit {
     $publicationCatalogDigest = Get-Gate13Property $publication "catalog_digest"
     $publicationBootstrapDigest = Get-Gate13Property $publication "bootstrap_digest"
     $memberDigests = Get-Gate13Property $publication "member_digests"
+    $bootstrapMemberDigest = Get-Gate13Property $memberDigests "catalog-bootstrap.json"
     $memberProperties = @($memberDigests.PSObject.Properties)
     if (
         $memberProperties.Count -ne [int](Get-Gate13Property $publication "member_count") -or
@@ -1592,7 +1593,7 @@ function Test-Gate13PackageAudit {
             -not ($_.Name -is [string]) -or
             -not (Test-Gate13SafeArtifactPath ("CommunityAI/" + $_.Name)) -or
             -not ($_.Value -is [string]) -or
-            $_.Value -notmatch "^[0-9a-f]{64}$"
+            $_.Value -cnotmatch "^sha256:[0-9a-f]{64}$"
         }).Count -ne 0
     ) {
         throw "catalog publication member inventory rejected"
@@ -1604,11 +1605,11 @@ function Test-Gate13PackageAudit {
         $publicationCatalogId -notmatch "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$" -or
         [int64](Get-Gate13Property $publication "catalog_sequence") -lt 1 -or
         -not ($publicationCatalogDigest -is [string]) -or
-        $publicationCatalogDigest -notmatch "^[0-9a-f]{64}$" -or
+        $publicationCatalogDigest -cnotmatch "^sha256:[0-9a-f]{64}$" -or
         -not ($publicationBootstrapDigest -is [string]) -or
-        $publicationBootstrapDigest -notmatch "^[0-9a-f]{64}$" -or
+        $publicationBootstrapDigest -cnotmatch "^sha256:[0-9a-f]{64}$" -or
         -not ((Get-Gate13Property $publication "bundle_index_digest") -is [string]) -or
-        (Get-Gate13Property $publication "bundle_index_digest") -notmatch "^[0-9a-f]{64}$" -or
+        (Get-Gate13Property $publication "bundle_index_digest") -cnotmatch "^sha256:[0-9a-f]{64}$" -or
         [int64](Get-Gate13Property $publication "member_count") -lt 1 -or
         (Get-Gate13Property $publication "complete_release_qualification") -ne $false
     ) {
@@ -1667,6 +1668,16 @@ function Test-Gate13PackageAudit {
     }
     if ($artifactMap.Count -lt 1) {
         throw "artifact inventory rejected"
+    }
+    $bootstrapArtifactPath = "CommunityAI/_internal/bootstrap/catalog-bootstrap.json"
+    if (
+        -not $artifactMap.ContainsKey($bootstrapArtifactPath) -or
+        -not ($bootstrapMemberDigest -is [string]) -or
+        $bootstrapMemberDigest -cnotmatch "^sha256:[0-9a-f]{64}$" -or
+        (Get-Gate13Property $artifactMap[$bootstrapArtifactPath] "sha256") -cne
+            $bootstrapMemberDigest.Substring(7)
+    ) {
+        throw "catalog bootstrap artifact binding rejected"
     }
 
     $checksumMap = New-Object "System.Collections.Generic.Dictionary[string,string]" (
@@ -1785,6 +1796,7 @@ function Test-Gate13PackageAudit {
         PublicationCatalogSequence = [int64](Get-Gate13Property $publication "catalog_sequence")
         PublicationCatalogDigest = $publicationCatalogDigest
         PublicationBootstrapDigest = $publicationBootstrapDigest
+        PublicationBootstrapFileDigest = $bootstrapMemberDigest
         MetricsPackageVersion = (Get-Gate13Property $metricsNodeRuntime "drift")
         MetricsTorchVersion = (Get-Gate13Property $metricsNodeRuntime "torch")
     }
@@ -1936,7 +1948,7 @@ function Invoke-Gate13Bootstrap {
               (Get-Gate13Property $result "catalog_sequence") -is [long]) -or
         [int64](Get-Gate13Property $result "catalog_sequence") -lt 1 -or
         -not ($catalogDigest -is [string]) -or
-        $catalogDigest -notmatch "^[0-9a-f]{64}$" -or
+        $catalogDigest -cnotmatch "^sha256:[0-9a-f]{64}$" -or
         -not ((Get-Gate13Property $result "model_count") -is [int] -or
               (Get-Gate13Property $result "model_count") -is [long]) -or
         [int64](Get-Gate13Property $result "model_count") -lt 2 -or
@@ -1949,7 +1961,7 @@ function Invoke-Gate13Bootstrap {
         CatalogId = $catalogId
         CatalogSequence = [int64](Get-Gate13Property $result "catalog_sequence")
         CatalogDigest = $catalogDigest
-        BootstrapDigest = Get-Gate13Sha256 $script:LifecycleBootstrap
+        BootstrapFileDigest = "sha256:" + (Get-Gate13Sha256 $script:LifecycleBootstrap)
     }
 }
 
@@ -2759,8 +2771,8 @@ function Invoke-Gate13WindowsPackagedLifecycle {
                 [int64]$state.Audit.PublicationCatalogSequence -or
             $state.Bootstrap.CatalogDigest -cne
                 $state.Audit.PublicationCatalogDigest -or
-            $state.Bootstrap.BootstrapDigest -cne
-                $state.Audit.PublicationBootstrapDigest
+            $state.Bootstrap.BootstrapFileDigest -cne
+                $state.Audit.PublicationBootstrapFileDigest
         ) {
             throw "installed bootstrap did not match release provenance"
         }
@@ -2779,7 +2791,7 @@ function Invoke-Gate13WindowsPackagedLifecycle {
             catalog_sequence = [int64]$state.Bootstrap.CatalogSequence
             catalog_digest = $state.Bootstrap.CatalogDigest
             catalog_signature_verified = $true
-            bootstrap_digest = $state.Bootstrap.BootstrapDigest
+            bootstrap_digest = $state.Audit.PublicationBootstrapDigest
             bootstrap_verified = $true
             manifest_digest = $state.Profile.ManifestDigest
             model_id = $state.Profile.ModelId

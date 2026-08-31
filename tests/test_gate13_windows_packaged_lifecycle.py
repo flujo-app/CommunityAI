@@ -605,18 +605,21 @@ def test_package_audit_verifies_archive_inventory_metrics_and_publication(tmp_pa
     archive_body = archive_path.read_bytes()
 
     checksum_text = "".join(f"{item['sha256']}  {item['path']}\n" for item in artifacts)
-    catalog_digest = "c" * 64
-    bootstrap_digest = hashlib.sha256(files["CommunityAI/_internal/bootstrap/catalog-bootstrap.json"]).hexdigest()
+    catalog_digest = "sha256:" + "c" * 64
+    bootstrap_digest = "sha256:" + "d" * 64
+    bootstrap_file_digest = (
+        "sha256:" + hashlib.sha256(files["CommunityAI/_internal/bootstrap/catalog-bootstrap.json"]).hexdigest()
+    )
     publication = {
         "schema_version": 1,
-        "scope": "communityai-public-alpha",
+        "scope": "catalog-publication-bundle",
         "catalog_id": "communityai-public-alpha-v1",
         "catalog_sequence": 1,
         "catalog_digest": catalog_digest,
         "bootstrap_digest": bootstrap_digest,
-        "bundle_index_digest": "e" * 64,
+        "bundle_index_digest": "sha256:" + "e" * 64,
         "member_count": 1,
-        "member_digests": {"catalog.json": catalog_digest},
+        "member_digests": {"catalog-bootstrap.json": bootstrap_file_digest},
         "complete_release_qualification": False,
     }
     install_archive = {
@@ -797,6 +800,8 @@ $result = Test-Gate13PackageAudit
     weight_count = $result.WeightCount
     package_digest = $result.PackageDigest
     catalog_digest = $result.PublicationCatalogDigest
+    bootstrap_digest = $result.PublicationBootstrapDigest
+    bootstrap_file_digest = $result.PublicationBootstrapFileDigest
 }} | ConvertTo-Json -Compress))
 """
     result = _run_powershell(source, tmp_path)
@@ -806,7 +811,32 @@ $result = Test-Gate13PackageAudit
         "weight_count": 0,
         "package_digest": hashlib.sha256(archive_body).hexdigest(),
         "catalog_digest": catalog_digest,
+        "bootstrap_digest": bootstrap_digest,
+        "bootstrap_file_digest": bootstrap_file_digest,
     }
+
+    def rewrite_bound_audit() -> None:
+        current_metrics_body = json.dumps(metrics, separators=(",", ":"), sort_keys=True).encode()
+        (audit / "desktop-metrics.json").write_bytes(current_metrics_body)
+        provenance["desktop_metrics"]["sha256"] = hashlib.sha256(current_metrics_body).hexdigest()
+        provenance["desktop_metrics"]["size_bytes"] = len(current_metrics_body)
+        (audit / "provenance.json").write_text(
+            json.dumps(provenance, separators=(",", ":"), sort_keys=True),
+            encoding="utf-8",
+        )
+
+    publication["bootstrap_digest"] = bootstrap_digest.upper()
+    rewrite_bound_audit()
+    uppercase_digest = _run_powershell(source, tmp_path)
+    assert uppercase_digest.returncode != 0
+    publication["bootstrap_digest"] = bootstrap_digest
+
+    publication["member_digests"]["catalog-bootstrap.json"] = "sha256:" + "0" * 64
+    rewrite_bound_audit()
+    mismatched_bootstrap_file = _run_powershell(source, tmp_path)
+    assert mismatched_bootstrap_file.returncode != 0
+    publication["member_digests"]["catalog-bootstrap.json"] = bootstrap_file_digest
+    rewrite_bound_audit()
 
     tampered_run = dict(run_record)
     tampered_run["package_sha256"] = "0" * 64

@@ -76,6 +76,57 @@ def test_release_evidence_accepts_pretty_json_with_exact_recursive_types():
         linux_lifecycle._strict_release_json(b'{"schema_version":NaN}')
 
 
+def test_bootstrap_binds_prefixed_catalog_and_publication_digests(tmp_path):
+    product_root = tmp_path / "product"
+    bootstrap = product_root / "_internal" / "bootstrap" / "catalog-bootstrap.json"
+    bootstrap.parent.mkdir(parents=True)
+    bootstrap.write_bytes(b"bootstrap")
+    persistent_root = tmp_path / "persistent"
+    persistent_root.mkdir()
+    manifest_digest = "b" * 64
+    catalog_digest = "sha256:" + "c" * 64
+    bootstrap_digest = "sha256:" + "d" * 64
+    package = SimpleNamespace(
+        catalog_id="communityai-public-alpha-v1",
+        catalog_sequence=1,
+        catalog_digest=catalog_digest,
+        bootstrap_digest=bootstrap_digest,
+        bootstrap_file_sha256=hashlib.sha256(b"bootstrap").hexdigest(),
+    )
+
+    class Owner:
+        def run_capture(self, command, *, cwd, timeout):
+            config = Path(command[command.index("--node_config") + 1])
+            config.write_text("{}", encoding="utf-8")
+            manifest = persistent_root / "manifests" / f"{manifest_digest}.json"
+            manifest.parent.mkdir()
+            manifest.write_text("{}", encoding="utf-8")
+            return json.dumps(
+                {
+                    "schema_version": 1,
+                    "config_path": str(config),
+                    "catalog_id": package.catalog_id,
+                    "catalog_sequence": package.catalog_sequence,
+                    "catalog_digest": catalog_digest,
+                    "model_count": 2,
+                    "source": "https://example.invalid/catalog.json",
+                    "created": True,
+                }
+            ).encode("utf-8")
+
+    facts, manifest = linux_lifecycle._bootstrap(
+        Owner(),
+        product_root,
+        persistent_root,
+        "Gemma 4 E2B IT",
+        manifest_digest,
+        package,
+    )
+    assert facts["catalog_digest"] == catalog_digest
+    assert facts["bootstrap_digest"] == bootstrap_digest
+    assert manifest.is_file()
+
+
 def acquisition_record():
     count = PROFILE["selected_artifact_count"]
     size = PROFILE["selected_artifact_bytes"]
