@@ -26,6 +26,13 @@
     "pricing_basis": "same-day previously accepted 14-hour G2/L4 route ceiling plus the same client ceiling; both new clients are CPU-only e2-standard-8 rather than the prior L4 client class"
   },
   "immutable_inputs": {
+    "route_runtime_wheel": {
+      "filename": "drift-2.3.0.dev2-py3-none-any.whl",
+      "source_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
+      "sha256": "2a4f30bad7ae897fed019bc7da330a09965adb35685d11abaeaebf7a1d40aa60",
+      "bytes": 389107,
+      "model_artifacts_embedded": false
+    },
     "windows_package": {
       "sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
       "bytes": 2695065068
