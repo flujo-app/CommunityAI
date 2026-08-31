@@ -92,12 +92,12 @@
       "bytes": 3371
     }
   },
-  "provider_plan_digest": "sha256:32ac935c0163aa8afb080e87eb65bed234610bde1609b36bb651e9f4346b5221",
+  "provider_plan_digest": "sha256:0b8c423090e27ec792c55287676d753db4042a5817d25d550d2ef5f2e4b4119b",
   "provider_plan": {
     "project": "community-ai-506321",
     "route": {
       "instance": "route-20260831-e-node",
-      "zone": "us-central1-a",
+      "zone": "us-central1-b",
       "machine_type": "g2-standard-8",
       "accelerator": "1 x NVIDIA L4",
       "image": "deeplearning-platform-release/common-cu129-ubuntu-2404-nvidia-580-v20260831",
@@ -173,7 +173,7 @@
     }
   },
   "preflight": {
-    "read_only_checked_at": "2026-08-31T22:35:03Z",
+    "read_only_checked_at": "2026-08-31T22:40:11Z",
     "native_gcloud_token_refresh": true,
     "compute_api_access": true,
     "exact_target_instances_absent": true,
@@ -221,9 +221,9 @@
     "private_paths_retained": false
   },
   "plan_revision": {
-    "revision": 2,
-    "previous_provider_plan_digest": "sha256:d32050a51b8f696aa224fc7e748c9113e174e3c3069c1f8b2bc769b0c5ecea18",
-    "reason": "fresh replacement after run d consumed Windows without a downloaded archive; exact resources change, the fixed S4U/SID host adapter is pinned, and each archive must be downloaded and verified before host-job start",
+    "revision": 3,
+    "previous_provider_plan_digest": "sha256:32ac935c0163aa8afb080e87eb65bed234610bde1609b36bb651e9f4346b5221",
+    "reason": "the exact us-central1-a route request created no VM or disk and returned L4 stockout with provider-reported capacity in us-central1-b; only the route zone changes at unchanged cost while clients remain in us-central1-a",
     "resource_set_changed": true,
     "cost_ceiling_changed": false
   }
