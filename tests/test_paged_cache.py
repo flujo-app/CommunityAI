@@ -119,7 +119,10 @@ def test_paged_pool_mla_asymmetric_head_dims():
 
     torch.manual_seed(0)
     cfg = _deepseek_config()
-    block = WrappedDeepseekV3Block(cfg, layer_idx=1).eval()  # MoE layer, MLA attention
+    # Isolate MLA cache gather/scatter from MoE top-k routing: tiny CPU rounding
+    # differences between batched prefill and one-token decode can flip an expert tie.
+    # The dedicated DeepSeek block tests cover both dense and MoE layers.
+    block = WrappedDeepseekV3Block(cfg, layer_idx=0).eval()  # dense layer, same MLA attention
     pool = _pool_from_strategy(MLACache(cfg), cfg, page_size=4, batch_size=1)
     assert pool.k_head_dim != pool.v_head_dim  # 24 (qk_nope+qk_rope) vs 16 (v_head_dim)
 
