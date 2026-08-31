@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -101,12 +102,78 @@ def test_load_plan_binds_exact_cost_and_resources(plan):
     assert plan.clients_may_run_concurrently is False
 
 
+def test_load_plan_accepts_only_documented_owner_ceiling(tmp_path):
+    raw = json.loads(AUTHORIZATION.read_text(encoding="utf-8"))
+    raw["provider_plan"]["sequencing"]["clients_may_run_concurrently"] = False
+    old_digest = raw["provider_plan_digest"]
+    new_digest = controller._provider_digest(raw["provider_plan"])
+    raw["provider_plan_digest"] = new_digest
+    raw["authorization"].update(
+        {
+            "combined_cloud_ceiling_usd": "500.00",
+            "ledger_committed_before_run_usd": "52.00",
+            "maximum_estimate_usd": "56.00",
+            "remaining_after_run_maximum_usd": "392.00",
+        }
+    )
+    authorization = tmp_path / "authorization.json"
+    authorization.write_text(json.dumps(raw), encoding="utf-8")
+    ledger = tmp_path / "ledger.md"
+    ledger.write_text(
+        LEDGER.read_text(encoding="utf-8")
+        .replace(old_digest, new_digest, 1)
+        .replace("| CLEANED-COMMITTED |", "| RESERVED |", 1),
+        encoding="utf-8",
+    )
+
+    raised_plan = controller.load_plan(authorization, ledger)
+    assert raised_plan.ledger_state == "RESERVED"
+    assert controller.initial_state(raised_plan)["next_action"] == "start_route"
+
+    raw["authorization"]["combined_cloud_ceiling_usd"] = "499.00"
+    raw["authorization"]["remaining_after_run_maximum_usd"] = "391.00"
+    authorization.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(controller.RunControllerError, match="inconsistent"):
+        controller.load_plan(authorization, ledger)
+
+
 def test_cleaned_committed_ledger_cannot_start_a_new_run():
     historical_plan = controller.load_plan(AUTHORIZATION, LEDGER)
 
     assert historical_plan.ledger_state == "CLEANED-COMMITTED"
     with pytest.raises(controller.RunControllerError, match="not reserved"):
         controller.initial_state(historical_plan)
+
+
+def test_non_reserved_ledger_allows_cleanup_only():
+    historical_plan = controller.load_plan(AUTHORIZATION, LEDGER)
+    reserved_plan = replace(
+        historical_plan,
+        ledger_state="RESERVED",
+        clients_may_run_concurrently=False,
+    )
+    reserved_state = controller.initial_state(reserved_plan)
+
+    forward_actions = controller.ACTION_STATES - controller.CLEANUP_ACTIONS - {"none"}
+    for action in forward_actions:
+        with pytest.raises(controller.RunControllerError, match="not reserved"):
+            controller.begin_action(reserved_state, historical_plan, action=action)
+
+    cleanup_state = dict(reserved_state)
+    cleanup_state.update(
+        {
+            "phase": "CLEANING_FAILED",
+            "failure_code": "operator_cleanup",
+            "next_action": "cleanup_failure",
+        }
+    )
+    cleaning = controller.begin_action(
+        cleanup_state,
+        historical_plan,
+        action="cleanup_failure",
+    )
+    assert cleaning["phase"] == "CLEANING_FAILED"
+    assert cleaning["next_action"] == "none"
 
 
 def test_reserved_parallel_client_plan_cannot_start(tmp_path):

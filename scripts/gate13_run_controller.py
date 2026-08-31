@@ -31,6 +31,7 @@ STATE_SCHEMA_VERSION = 1
 MAX_JSON_BYTES = 1_048_576
 MAX_STATE_BYTES = 262_144
 MIN_ROUTE_RUNWAY_SECONDS = 3_600
+ALLOWED_COMBINED_CLOUD_CEILINGS = frozenset({100.0, 500.0})
 PROTECTED_INSTANCE = "communityai-bootstrap-1"
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
@@ -71,6 +72,7 @@ ACTION_STATES = {
     "cleanup_failure",
     "none",
 }
+CLEANUP_ACTIONS = frozenset({"delete_windows", "delete_linux", "delete_route", "cleanup_failure"})
 
 _STATE_FIELDS = {
     "schema_version",
@@ -248,7 +250,7 @@ def load_plan(authorization_path: Path, ledger_path: Path) -> RunPlan:
         raise RunControllerError("cost authorization is invalid") from exc
     if (
         not all(math.isfinite(value) for value in (ceiling, before, maximum, remaining))
-        or ceiling != 100.0
+        or ceiling not in ALLOWED_COMBINED_CLOUD_CEILINGS
         or before < 0
         or maximum <= 0
         or before + maximum > ceiling
@@ -535,6 +537,8 @@ def begin_action(state: Mapping[str, Any], plan: RunPlan, *, action: str) -> dic
     """
 
     current = validate_state(state, plan)
+    if plan.ledger_state != "RESERVED" and action not in CLEANUP_ACTIONS:
+        raise RunControllerError("authorization is not reserved for forward action")
     if action != current["next_action"] or action not in ACTION_STATES - {"none"}:
         raise RunControllerError("action intent is out of order")
     phases = {
