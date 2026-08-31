@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-failed-attempt-and-cleanup",
+  "run_id": "gate13-20260831-d",
+  "recorded_at": "2026-08-31T22:29:33Z",
+  "result": "failed_cleanup_verified",
+  "gate": 13,
+  "route_acceptance": {
+    "completed_before_client_create": true,
+    "result": "passed",
+    "evidence_digest": "sha256:1a8f1adc3bdf876466e4c4a6f66e35a1650286476cc0fd499092bd393f333624",
+    "primary_model": "Qwen3.5 2B",
+    "standby_model": "Gemma 4 E2B IT",
+    "fallback_and_restoration_passed": true,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "credentials_retained": false
+  },
+  "windows_attempt": {
+    "lifecycle_run_id": "gate13-20260831-d-windows",
+    "attempt_ordinal": 1,
+    "result": "failed",
+    "failure_code": "windows_packaged_lifecycle_failed",
+    "terminal_failure_code": "lifecycle_failed",
+    "terminal_exit_code": 2,
+    "canonical_lifecycle_evidence_present": false,
+    "failure_record_sha256": "sha256:8d44d0f9529cf358e8941d1114265d654f537ab1cdc75a6944abe6a3b7f9b53e",
+    "linux_client_created": false
+  },
+  "findings": [
+    {
+      "class": "host_supervisor",
+      "cause": "The Interactive scheduled task never ran from a headless SSH session, and principal observation compared a scheduler-normalized leaf name to a qualified identity.",
+      "proof": "The old task remained Ready with Task Scheduler result 0x41303 and no status, terminal, evidence, or stderr record.",
+      "correction_commit": "3a1d1fcaa8430e3c0bfc47910666f11989eb0a3d",
+      "correction": "Use S4U with Limited run level and compare resolved principal SID to the current identity SID.",
+      "repaired_before_lifecycle_attempt": true
+    },
+    {
+      "class": "client_prerequisite",
+      "cause": "The exact package downloader and config were staged, but the 2,695,065,068-byte archive itself was not downloaded before the one-attempt job was armed.",
+      "proof": "The repaired S4U supervisor ran, wrote its status and terminal records, and the lifecycle failed immediately with its bounded failure record; no canonical phase record was produced.",
+      "correction": "Download and verify the exact archive on the fresh client before host-job start; verify its fixed size and SHA-256 before consuming the attempt.",
+      "gcp_related": false
+    }
+  ],
+  "gate11_comparison": {
+    "repeated_gate11_gcp_issue": false,
+    "gate11_quota_fix_reused": true,
+    "route_product_acceptance_passed": true,
+    "gcp_route_or_quota_blocker": false,
+    "delay_class": "gate13_operator_and_supervisor_orchestration"
+  },
+  "cleanup": {
+    "native_windows_task_absent": true,
+    "exact_instances_absent": true,
+    "exact_disks_absent": true,
+    "exact_firewalls_absent": true,
+    "regional_l4_limit": 1,
+    "regional_l4_usage": 0,
+    "verified_at": "2026-08-31T22:29:33Z",
+    "protected_bootstrap_deleted": false
+  },
+  "cost": {
+    "maximum_committed_usd": "56.00",
+    "observed_cost_usd": null,
+    "additional_supervisor_repair_cost_usd": "0.00"
+  },
+  "claims": {
+    "gate_13_passed": false,
+    "windows_lifecycle_passed": false,
+    "linux_lifecycle_started": false,
+    "run_id_reusable": false,
+    "resources_reusable": false
+  }
+}

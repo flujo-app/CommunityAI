@@ -68,11 +68,17 @@ its exact firewall cleanup and every instance/disk/firewall absence passed. Its 
 remains committed. Run `gate13-20260831-c` was armed locally but reached terminal controller absence without a
 durable provider execution record. Its [terminal-state and cleanup proof](evidence/gate13-20260831-c-terminal-state-and-cleanup.json)
 retires the run ID, proves every exact resource absent, global GPU usage zero, and the protected
-bootstrap running; its USD 56 maximum remains committed. Fresh
-[run `gate13-20260831-d`](evidence/gate13-20260831-d-cost-authorization.json) reserves another
-USD 56 at plan `sha256:d32050a51b8f696aa224fc7e748c9113e174e3c3069c1f8b2bc769b0c5ecea18`, leaving
-USD 280. No later mandatory gate is unblocked until the fresh run produces both complete
-16-phase records and exact cleanup.
+bootstrap running; its USD 56 maximum remains committed. [Run `gate13-20260831-d`](evidence/gate13-20260831-d-failed-attempt-and-cleanup.json)
+accepted the complete replacement product route before creating Windows, then exposed two
+Gate 13 orchestration defects: the Interactive scheduled task could not start headlessly and
+its observer compared noncanonical account names; source `3a1d1fc` changes the task to S4U
+and binds its principal by SID. The repaired supervisor then ran, but the one-attempt lifecycle
+failed immediately because the operator had staged the downloader without first downloading
+the exact archive. Windows, route, disks, and firewalls are absent, L4 usage is zero, and the
+protected bootstrap remains running. Its USD 56 maximum remains committed, bringing the epoch
+total to USD 220 and leaving USD 280. No later mandatory gate is unblocked until a fresh run
+downloads each exact archive before arming its host job and produces both complete 16-phase
+records plus exact cleanup.
 
 Do not work on the post-alpha items in the deferred table while an alpha gate can progress.
 Missing Docker, snapshots, local GPU hardware, or local host capacity is not an external
@@ -144,7 +150,7 @@ maximum still consumes the current epoch because no reset or observed charge has
 
 | Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| gate13-20260831-d | GCP | Fresh Gate 13 route-first lifecycle using the already-qualified durable controller and host jobs, one bounded 16-hour route, sequential fresh 6-hour Windows/Qwen and Linux/Gemma clients, and explicit provider argument arrays [plan `sha256:d32050a51b8f696aa224fc7e748c9113e174e3c3069c1f8b2bc769b0c5ecea18`] | USD 56.00 | — | [Cost authorization](evidence/gate13-20260831-d-cost-authorization.json) records native/provider preflight at 2026-08-31T21:38:14Z, every exact target absent, L4 quota 1/0, protected-bootstrap health, immutable inputs, hard deadlines, and the unchanged route → Windows → Linux → cleanup sequence. | RESERVED |
+| gate13-20260831-d | GCP | Fresh Gate 13 route-first lifecycle using the durable controller and host jobs, one bounded route and sequential clients [plan `sha256:d32050a51b8f696aa224fc7e748c9113e174e3c3069c1f8b2bc769b0c5ecea18`] | USD 56.00 | — | [Failed attempt and cleanup](evidence/gate13-20260831-d-failed-attempt-and-cleanup.json) records passed route acceptance, the corrected headless S4U supervisor, one consumed Windows attempt that failed because its archive had not been downloaded, no Linux create, and exact instance/disk/firewall cleanup with L4 usage zero. | CLEANED-COMMITTED |
 | gate13-20260831-c | GCP | Gate 13 durable route-first lifecycle with the same bounded 16-hour route and sequential 6-hour clients, new exact resources, and corrected explicit IAP target-tag arguments [plan `sha256:07b6cd399ef7a9733602dfc19a741feddec8d15e5f4b5bac7347a192675f6d9c`] | USD 56.00 | — | [Terminal-state and cleanup proof](evidence/gate13-20260831-c-terminal-state-and-cleanup.json) records a local terminal absence state without a durable provider execution record, retires the run ID without reset or reuse, proves every exact target absent, global GPU usage zero, and the protected bootstrap running. | CLEANED-COMMITTED |
 | gate13-20260831-b | GCP | Gate 13 durable route-first lifecycle: one 16-hour G2/L4 product route, then sequential fresh 6-hour Windows/Qwen and Linux/Gemma CPU clients at controller source `ee0c05f83035ad22015fb089f5cb30f1713076e6`, host-job source `0e16ac2aa088e0719e9c3c89451176544602bab3`, route source `f64a388a47b098ac7f69d2affc59816376b43bb1`, package source `1971f106cc5bf90724d938c986a719ce2744f3e7`, and plan `sha256:3f3f921ded6eed1729aff175f5c91b4effe1966a31c82bdbe41ed69075442d64` | USD 56.00 | — | [Failed start and cleanup](evidence/gate13-20260831-b-failed-start-and-cleanup.json) records passed preflight and persisted intent, one transient DHT firewall, IAP-tag argument rejection before VM creation, exact firewall cleanup, all run resources absent, and protected-bootstrap health. | CLEANED-COMMITTED |
 | gate13-20260831-a | GCP | Gate 13 replacement product-node route plus fresh CPU Windows/Linux packaged lifecycles at route source `f64a388a47b098ac7f69d2affc59816376b43bb1` and exact package source `1971f106cc5bf90724d938c986a719ce2744f3e7` [plan sha256:313f5d34eefd64c71e265bdb7044d8ef5f56550360a7e9a7104265434292fd69] | USD 52.00 | — | [Failed attempt and cleanup proof](evidence/gate13-20260831-a-failed-attempt-and-cleanup.json) records verified archive downloads but no completed lifecycle, the non-durable orchestration failure, consumed-client semantics, and exact absence of the route, both clients, all three disks, and both firewalls while the protected bootstrap remains running. The USD 52 maximum remains committed; after the owner raised the epoch ceiling to USD 500, USD 448 remains before a new reservation. | CLEANED-COMMITTED |
