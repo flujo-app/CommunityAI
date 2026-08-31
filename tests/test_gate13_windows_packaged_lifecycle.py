@@ -44,6 +44,44 @@ def _run_powershell(source: str, tmp_path: Path, *, timeout: int = 120) -> subpr
 
 
 @pytest.mark.skipif(not POWERSHELL.is_file(), reason="native Windows PowerShell is required")
+def test_json_input_bound_accepts_production_scale_and_rejects_above_limit(tmp_path):
+    accepted = tmp_path / "production-provenance.json"
+    accepted.write_text(
+        json.dumps({"padding": "a" * 1_241_800}),
+        encoding="utf-8",
+        newline="\n",
+    )
+    rejected = tmp_path / "oversized-provenance.json"
+    rejected.write_bytes(b"{" + b" " * (2 * 1024 * 1024) + b"}")
+    source = f"""
+. {_ps_literal(LIFECYCLE)}
+$accepted = $false
+$rejected = $false
+try {{
+    $value = Read-Gate13JsonFile -Path {_ps_literal(accepted)}
+    $accepted = ($value.padding.Length -eq 1241800)
+}}
+catch {{ }}
+try {{
+    [void](Read-Gate13JsonFile -Path {_ps_literal(rejected)})
+}}
+catch {{
+    $rejected = ($_.Exception.Message -ceq 'JSON input rejected')
+}}
+[Console]::Out.WriteLine((@{{
+    production_scale_accepted = $accepted
+    above_limit_rejected = $rejected
+}} | ConvertTo-Json -Compress))
+"""
+    result = _run_powershell(source, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "production_scale_accepted": True,
+        "above_limit_rejected": True,
+    }
+
+
+@pytest.mark.skipif(not POWERSHELL.is_file(), reason="native Windows PowerShell is required")
 def test_native_interop_compiles_and_compound_collision_falls_back(tmp_path):
     service = "org.communityai.desktop"
     account = "local-node-control-v1"

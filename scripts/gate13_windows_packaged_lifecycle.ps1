@@ -30,6 +30,7 @@ $script:LifecycleNodeExe = Join-Path $script:LifecycleProductRoot "node\Communit
 $script:LifecycleBootstrap = Join-Path $script:LifecycleProductRoot "_internal\bootstrap\catalog-bootstrap.json"
 $script:LifecyclePersistentRoot = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".drift\node"
 $script:LifecycleNodeConfig = Join-Path $script:LifecyclePersistentRoot "node-config.json"
+$script:LifecycleMaxJsonInputBytes = 2 * 1024 * 1024
 $script:LifecycleMaxOutputBytes = 1048576
 $script:LifecycleProcess = $null
 $script:LifecycleAcquisitionInvoked = $false
@@ -1164,7 +1165,7 @@ function Get-Gate13Sha256 {
 function Read-Gate13JsonFile {
     param([Parameter(Mandatory = $true)] [string] $Path)
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-    if ($item.Length -lt 2 -or $item.Length -gt $script:LifecycleMaxOutputBytes) {
+    if ($item.Length -lt 2 -or $item.Length -gt $script:LifecycleMaxJsonInputBytes) {
         throw "JSON input rejected"
     }
     $bytes = [System.IO.File]::ReadAllBytes($item.FullName)
