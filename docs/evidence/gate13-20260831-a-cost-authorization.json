@@ -54,7 +54,7 @@
       "bytes": 113260
     }
   },
-  "provider_plan_digest": "sha256:d3854d047beba36d1415382b296f90f2aaf0fc135d45c7613852c69b85ccf5a1",
+  "provider_plan_digest": "sha256:313f5d34eefd64c71e265bdb7044d8ef5f56550360a7e9a7104265434292fd69",
   "provider_plan": {
     "project": "community-ai-506321",
     "route": {
@@ -79,7 +79,11 @@
         "route-20260831-a-iap"
       ],
       "service_account": false,
-      "scopes": []
+      "scopes": [],
+      "operator_access_target_tags": [
+        "route-20260831-a-node",
+        "gate13-20260831-a-client"
+      ]
     },
     "clients": [
       {
@@ -96,7 +100,10 @@
         "max_run_seconds": 21600,
         "termination_action": "DELETE",
         "lifecycle_run_id": "gate13-windows-qwen-e",
-        "device_profile": "cpu"
+        "device_profile": "cpu",
+        "network": "communityai-discovery",
+        "subnet": "communityai-us-central1",
+        "network_tag": "gate13-20260831-a-client"
       },
       {
         "platform": "linux",
@@ -112,7 +119,10 @@
         "max_run_seconds": 21600,
         "termination_action": "DELETE",
         "lifecycle_run_id": "gate13-linux-gemma-e",
-        "device_profile": "cpu"
+        "device_profile": "cpu",
+        "network": "communityai-discovery",
+        "subnet": "communityai-us-central1",
+        "network_tag": "gate13-20260831-a-client"
       }
     ],
     "sequencing": {
@@ -165,5 +175,12 @@
     "endpoints_retained": false,
     "provider_output_retained": false,
     "private_paths_retained": false
+  },
+  "plan_revision": {
+    "revision": 2,
+    "previous_provider_plan_digest": "sha256:d3854d047beba36d1415382b296f90f2aaf0fc135d45c7613852c69b85ccf5a1",
+    "reason": "target both fresh client hosts through the same exact run-scoped IAP-only firewall without reusing the route DHT tag or creating another resource",
+    "resource_set_changed": false,
+    "cost_ceiling_changed": false
   }
 }
