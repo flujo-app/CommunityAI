@@ -82,6 +82,22 @@ catch {{
 
 
 @pytest.mark.skipif(not POWERSHELL.is_file(), reason="native Windows PowerShell is required")
+def test_sha256_does_not_depend_on_powershell_module_autoload(tmp_path):
+    target = tmp_path / "payload.bin"
+    target.write_bytes(b"clean-host-hash")
+    source = f"""
+. {_ps_literal(LIFECYCLE)}
+Remove-Module Microsoft.PowerShell.Utility -Force -ErrorAction Stop
+$PSModuleAutoLoadingPreference = 'None'
+[Console]::Out.WriteLine((Get-Gate13Sha256 -Path {_ps_literal(target)}))
+"""
+
+    result = _run_powershell(source, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == hashlib.sha256(target.read_bytes()).hexdigest()
+
+
+@pytest.mark.skipif(not POWERSHELL.is_file(), reason="native Windows PowerShell is required")
 def test_windows_build_platform_accepts_production_runner_and_rejects_spoofs(tmp_path):
     source = f"""
 . {_ps_literal(LIFECYCLE)}

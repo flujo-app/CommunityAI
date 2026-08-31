@@ -1199,7 +1199,33 @@ function Get-Gate13Sha256 {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "required file missing"
     }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    $stream = $null
+    $hasher = $null
+    $digest = $null
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $Path,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read,
+            1048576,
+            [System.IO.FileOptions]::SequentialScan
+        )
+        $hasher = [System.Security.Cryptography.SHA256]::Create()
+        $digest = $hasher.ComputeHash($stream)
+        return [System.BitConverter]::ToString($digest).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        if ($null -ne $digest) {
+            [Array]::Clear($digest, 0, $digest.Length)
+        }
+        if ($null -ne $hasher) {
+            $hasher.Dispose()
+        }
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
 }
 
 function Read-Gate13JsonFile {

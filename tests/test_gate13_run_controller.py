@@ -20,16 +20,22 @@ LINUX_DIGEST = "sha256:" + "c" * 64
 
 @pytest.fixture
 def plan(tmp_path):
+    raw = json.loads(AUTHORIZATION.read_text(encoding="utf-8"))
+    raw["provider_plan"]["sequencing"]["clients_may_run_concurrently"] = False
+    old_digest = raw["provider_plan_digest"]
+    new_digest = controller._provider_digest(raw["provider_plan"])
+    raw["provider_plan_digest"] = new_digest
+    authorization = tmp_path / "authorization.json"
+    authorization.write_text(json.dumps(raw), encoding="utf-8")
+
     ledger = tmp_path / "ledger.md"
     ledger.write_text(
-        LEDGER.read_text(encoding="utf-8").replace(
-            "| CLEANED-COMMITTED |",
-            "| RESERVED |",
-            1,
-        ),
+        LEDGER.read_text(encoding="utf-8")
+        .replace(old_digest, new_digest, 1)
+        .replace("| CLEANED-COMMITTED |", "| RESERVED |", 1),
         encoding="utf-8",
     )
-    return controller.load_plan(AUTHORIZATION, ledger)
+    return controller.load_plan(authorization, ledger)
 
 
 def observation(
@@ -92,6 +98,7 @@ def test_load_plan_binds_exact_cost_and_resources(plan):
         "gate13-20260831-a-linux",
     )
     assert controller.PROTECTED_INSTANCE not in plan.instance_names
+    assert plan.clients_may_run_concurrently is False
 
 
 def test_cleaned_committed_ledger_cannot_start_a_new_run():
@@ -100,6 +107,22 @@ def test_cleaned_committed_ledger_cannot_start_a_new_run():
     assert historical_plan.ledger_state == "CLEANED-COMMITTED"
     with pytest.raises(controller.RunControllerError, match="not reserved"):
         controller.initial_state(historical_plan)
+
+
+def test_reserved_parallel_client_plan_cannot_start(tmp_path):
+    ledger = tmp_path / "ledger.md"
+    ledger.write_text(
+        LEDGER.read_text(encoding="utf-8").replace(
+            "| CLEANED-COMMITTED |",
+            "| RESERVED |",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    parallel = controller.load_plan(AUTHORIZATION, ledger)
+
+    with pytest.raises(controller.RunControllerError, match="concurrent clients"):
+        controller.initial_state(parallel)
 
 
 def test_changed_authorization_fails_closed(tmp_path):
@@ -180,6 +203,120 @@ def test_failed_or_ambiguous_windows_is_consumed_and_never_resumed(plan, job_sta
     assert state["next_action"] == "cleanup_failure"
 
 
+def test_action_intent_is_persisted_before_mutation_and_cannot_relaunch(plan):
+    state = controller.initial_state(plan)
+    started = controller.begin_action(state, plan, action="start_route")
+
+    assert started["phase"] == "ROUTE_STARTING"
+    assert started["next_action"] == "none"
+    missing = controller.reconcile(started, observation(plan), plan, now_unix=NOW)
+    assert missing["phase"] == "CLEANED_FAILURE"
+    assert missing["failure_code"] == "resources_disappeared_before_completion"
+    with pytest.raises(controller.RunControllerError, match="out of order"):
+        controller.begin_action(started, plan, action="start_route")
+
+
+def test_route_acceptance_intent_cannot_rearm_after_dispatch(plan):
+    ready = controller.reconcile(
+        controller.initial_state(plan),
+        observation(plan, route=True, route_job="absent"),
+        plan,
+        now_unix=NOW,
+    )
+    dispatched = controller.begin_action(ready, plan, action="accept_route")
+
+    running = controller.reconcile(
+        dispatched,
+        observation(plan, route=True, route_job="running"),
+        plan,
+        now_unix=NOW,
+    )
+    assert running["phase"] == "ROUTE_ACCEPTING"
+    assert running["next_action"] == "none"
+
+    missing = controller.reconcile(
+        dispatched,
+        observation(plan, route=True, route_job="absent"),
+        plan,
+        now_unix=NOW,
+    )
+
+    assert missing["phase"] == "CLEANING_FAILED"
+    assert missing["failure_code"] == "route_acceptance_disappeared"
+    assert missing["next_action"] == "cleanup_failure"
+
+
+def test_client_start_intent_cannot_rearm_after_dispatch(plan):
+    route_ready = controller.reconcile(
+        controller.initial_state(plan),
+        observation(plan, route=True, route_job="passed"),
+        plan,
+        now_unix=NOW,
+    )
+    windows_dispatched = controller.begin_action(route_ready, plan, action="start_windows")
+
+    provisioning = controller.reconcile(
+        windows_dispatched,
+        observation(plan, route=True, windows=True, route_job="passed", windows_job="absent"),
+        plan,
+        now_unix=NOW,
+    )
+    assert provisioning["phase"] == "WINDOWS_RUNNING"
+    assert provisioning["next_action"] == "none"
+
+    missing = controller.reconcile(
+        windows_dispatched,
+        observation(plan, route=True, route_job="passed"),
+        plan,
+        now_unix=NOW,
+    )
+    assert missing["phase"] == "CLEANING_FAILED"
+    assert missing["failure_code"] == "windows_disappeared_after_start_intent"
+
+    linux_ready = dict(route_ready)
+    linux_ready.update(
+        {
+            "phase": "WINDOWS_COLLECTED",
+            "windows_evidence_digest": WINDOWS_DIGEST,
+            "windows_consumed": True,
+            "next_action": "start_linux",
+        }
+    )
+    linux_dispatched = controller.begin_action(linux_ready, plan, action="start_linux")
+    linux_provisioning = controller.reconcile(
+        linux_dispatched,
+        observation(plan, route=True, linux=True, route_job="passed", linux_job="absent"),
+        plan,
+        now_unix=NOW,
+    )
+    assert linux_provisioning["phase"] == "LINUX_RUNNING"
+    assert linux_provisioning["next_action"] == "none"
+
+    linux_missing = controller.reconcile(
+        linux_dispatched,
+        observation(plan, route=True, route_job="passed"),
+        plan,
+        now_unix=NOW,
+    )
+    assert linux_missing["phase"] == "CLEANING_FAILED"
+    assert linux_missing["failure_code"] == "linux_disappeared_after_start_intent"
+
+
+def test_observed_attempt_cannot_disappear_and_relaunch(plan):
+    state = controller.reconcile(
+        controller.initial_state(plan),
+        observation(plan, route=True, route_job="passed"),
+        plan,
+        now_unix=NOW,
+    )
+    disappeared = observation(plan, route=True, route_job="passed")
+    disappeared["clients"]["windows"]["attempt_ordinal"] = 1
+
+    failed = controller.reconcile(state, disappeared, plan, now_unix=NOW)
+    assert failed["phase"] == "CLEANING_FAILED"
+    assert failed["failure_code"] == "windows_attempt_disappeared"
+
+
 def test_active_host_job_is_observed_not_relaunched(plan):
     state = controller.reconcile(
         controller.initial_state(plan),
@@ -227,10 +364,28 @@ def test_collect_binds_canonical_evidence_then_deletes_windows(monkeypatch, plan
     assert collected["next_action"] == "delete_windows"
     assert collected["windows_consumed"] is True
 
-    after_delete = controller.reconcile(
+    deleting = observation(plan, route=True, route_job="passed")
+    deleting["clients"]["windows"]["attempt_ordinal"] = 1
+    deleting["disks"][plan.windows_disk] = True
+    still_present = controller.reconcile(collected, deleting, plan, now_unix=NOW)
+    assert still_present["phase"] == "WINDOWS_DELETING"
+    assert still_present["next_action"] == "delete_windows"
+    with pytest.raises(controller.RunControllerError, match="absence is not proved"):
+        controller.mark_client_absent(
+            collected,
+            plan,
+            platform="windows",
+            observation=deleting,
+            now_unix=NOW,
+        )
+
+    absent = observation(plan, route=True, route_job="passed")
+    absent["clients"]["windows"]["attempt_ordinal"] = 1
+    after_delete = controller.mark_client_absent(
         collected,
-        observation(plan, route=True, route_job="passed"),
         plan,
+        platform="windows",
+        observation=absent,
         now_unix=NOW,
     )
     assert after_delete["phase"] == "WINDOWS_COLLECTED"

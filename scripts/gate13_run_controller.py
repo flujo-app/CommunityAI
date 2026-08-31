@@ -137,6 +137,7 @@ class RunPlan:
     linux_package_bytes: int
     qwen_manifest: str
     gemma_manifest: str
+    clients_may_run_concurrently: bool
 
     @property
     def instance_names(self) -> tuple[str, str, str]:
@@ -353,12 +354,18 @@ def load_plan(authorization_path: Path, ledger_path: Path) -> RunPlan:
         linux_package_bytes=_integer(linux_package.get("bytes"), "Linux package bytes", minimum=1),
         qwen_manifest=qwen_manifest,
         gemma_manifest=gemma_manifest,
+        clients_may_run_concurrently=_boolean(
+            sequencing.get("clients_may_run_concurrently"),
+            "client concurrency policy",
+        ),
     )
 
 
 def initial_state(plan: RunPlan) -> dict[str, Any]:
     if plan.ledger_state != "RESERVED":
         raise RunControllerError("authorization is not reserved for provisioning")
+    if plan.clients_may_run_concurrently:
+        raise RunControllerError("concurrent clients are forbidden")
     return {
         "schema_version": STATE_SCHEMA_VERSION,
         "run_id": plan.run_id,
@@ -519,6 +526,36 @@ def _fail(state: dict[str, Any], code: str, observation: Mapping[str, Any]) -> d
     return state
 
 
+def begin_action(state: Mapping[str, Any], plan: RunPlan, *, action: str) -> dict[str, Any]:
+    """Persist an action intent before its first provider or host mutation.
+
+    A missing resource after one of these transitions is a consumed failed attempt, not
+    permission to recreate it. Repeating ``start`` must inventory and reconcile the
+    durable job instead of calling this function again.
+    """
+
+    current = validate_state(state, plan)
+    if action != current["next_action"] or action not in ACTION_STATES - {"none"}:
+        raise RunControllerError("action intent is out of order")
+    phases = {
+        "start_route": "ROUTE_STARTING",
+        "accept_route": "ROUTE_ACCEPTING",
+        "start_windows": "WINDOWS_RUNNING",
+        "collect_windows": "WINDOWS_COLLECTING",
+        "delete_windows": "WINDOWS_DELETING",
+        "start_linux": "LINUX_RUNNING",
+        "collect_linux": "LINUX_COLLECTING",
+        "delete_linux": "LINUX_DELETING",
+        "delete_route": "ROUTE_DELETING",
+        "cleanup_failure": "CLEANING_FAILED",
+    }
+    result = dict(current)
+    result["phase"] = phases[action]
+    result["next_action"] = "none"
+    result["revision"] += 1
+    return validate_state(result, plan)
+
+
 def reconcile(
     state: Mapping[str, Any],
     observation: Mapping[str, Any],
@@ -536,7 +573,9 @@ def reconcile(
         return result
 
     if _all_resources_absent(observed):
-        if current["phase"] in {"CLEANING_FAILED", "ROUTE_DELETING", "LINUX_COLLECTED"}:
+        if current["phase"] == "ABSENT":
+            result["next_action"] = "start_route"
+        elif current["phase"] in {"CLEANING_FAILED", "ROUTE_DELETING", "LINUX_COLLECTED", "LINUX_DELETING"}:
             passed = (
                 current["failure_code"] is None
                 and current["route_acceptance_digest"] is not None
@@ -547,8 +586,10 @@ def reconcile(
             result["cleanup_verified"] = True
             result["next_action"] = "none"
         else:
-            result["phase"] = "ABSENT"
-            result["next_action"] = "start_route"
+            result["phase"] = "CLEANED_FAILURE"
+            result["failure_code"] = "resources_disappeared_before_completion"
+            result["cleanup_verified"] = True
+            result["next_action"] = "none"
         result["revision"] += 1
         return validate_state(result, plan)
 
@@ -558,6 +599,8 @@ def reconcile(
     route_job = observed["route_acceptance"]["job_state"]
     windows_job = observed["clients"]["windows"]["job_state"]
     linux_job = observed["clients"]["linux"]["job_state"]
+    windows_attempt = observed["clients"]["windows"]["attempt_ordinal"]
+    linux_attempt = observed["clients"]["linux"]["attempt_ordinal"]
 
     if not route_present or route_job in {"failed", "ambiguous"}:
         return _fail(result, "route_failed_or_ambiguous", observed)
@@ -568,16 +611,38 @@ def reconcile(
     if route_job != "passed":
         if windows_present or linux_present:
             return _fail(result, "client_started_before_route_acceptance", observed)
-        result["phase"] = "ROUTE_ACCEPTING"
-        result["next_action"] = "accept_route"
+        if current["phase"] == "ROUTE_ACCEPTING" and current["next_action"] == "none":
+            if route_job == "absent":
+                return _fail(result, "route_acceptance_disappeared", observed)
+            result["phase"] = "ROUTE_ACCEPTING"
+            result["next_action"] = "none"
+        else:
+            result["phase"] = "ROUTE_ACCEPTING"
+            result["next_action"] = "accept_route"
     else:
         route_digest = observed["route_acceptance"]["evidence_digest"]
         if route_digest is None:
             return _fail(result, "route_acceptance_digest_absent", observed)
         result["route_acceptance_digest"] = route_digest
+        if current["windows_evidence_digest"] is None and windows_attempt == 1 and windows_job == "absent":
+            return _fail(result, "windows_attempt_disappeared", observed)
+        if current["linux_evidence_digest"] is None and linux_attempt == 1 and linux_job == "absent":
+            return _fail(result, "linux_attempt_disappeared", observed)
         if linux_present and current["windows_evidence_digest"] is None:
             return _fail(result, "linux_started_before_windows_evidence", observed)
-        if windows_present:
+        if current["phase"] == "WINDOWS_DELETING":
+            if windows_present or observed["disks"][plan.windows_disk]:
+                result["next_action"] = "delete_windows"
+            else:
+                result["phase"] = "WINDOWS_COLLECTED"
+                result["next_action"] = "start_linux"
+        elif current["phase"] == "LINUX_DELETING":
+            if linux_present or observed["disks"][plan.linux_disk]:
+                result["next_action"] = "delete_linux"
+            else:
+                result["phase"] = "LINUX_COLLECTED"
+                result["next_action"] = "delete_route"
+        elif windows_present:
             result["windows_consumed"] = windows_job != "absent"
             if windows_job in {"failed", "ambiguous"}:
                 return _fail(result, "windows_failed_or_ambiguous", observed)
@@ -585,14 +650,20 @@ def reconcile(
                 result["phase"] = "WINDOWS_COLLECTING"
                 result["next_action"] = "collect_windows"
             elif windows_job == "absent":
-                result["phase"] = "ROUTE_ACCEPTED"
-                result["next_action"] = "start_windows"
+                if current["phase"] == "WINDOWS_RUNNING" and current["next_action"] == "none":
+                    result["phase"] = "WINDOWS_RUNNING"
+                    result["next_action"] = "none"
+                else:
+                    result["phase"] = "ROUTE_ACCEPTED"
+                    result["next_action"] = "start_windows"
             else:
                 result["phase"] = "WINDOWS_RUNNING"
                 result["next_action"] = "none"
         elif current["windows_evidence_digest"] is None:
             if current["windows_consumed"]:
                 return _fail(result, "windows_consumed_without_evidence", observed)
+            if current["phase"] == "WINDOWS_RUNNING" and current["next_action"] == "none":
+                return _fail(result, "windows_disappeared_after_start_intent", observed)
             result["phase"] = "ROUTE_ACCEPTED"
             result["next_action"] = "start_windows"
         elif linux_present:
@@ -603,14 +674,20 @@ def reconcile(
                 result["phase"] = "LINUX_COLLECTING"
                 result["next_action"] = "collect_linux"
             elif linux_job == "absent":
-                result["phase"] = "WINDOWS_COLLECTED"
-                result["next_action"] = "start_linux"
+                if current["phase"] == "LINUX_RUNNING" and current["next_action"] == "none":
+                    result["phase"] = "LINUX_RUNNING"
+                    result["next_action"] = "none"
+                else:
+                    result["phase"] = "WINDOWS_COLLECTED"
+                    result["next_action"] = "start_linux"
             else:
                 result["phase"] = "LINUX_RUNNING"
                 result["next_action"] = "none"
         elif current["linux_evidence_digest"] is None:
             if current["linux_consumed"]:
                 return _fail(result, "linux_consumed_without_evidence", observed)
+            if current["phase"] == "LINUX_RUNNING" and current["next_action"] == "none":
+                return _fail(result, "linux_disappeared_after_start_intent", observed)
             result["phase"] = "WINDOWS_COLLECTED"
             result["next_action"] = "start_linux"
         else:
@@ -676,11 +753,25 @@ def collect_platform(
     return validate_state(result, plan)
 
 
-def mark_client_absent(state: Mapping[str, Any], plan: RunPlan, *, platform: str) -> dict[str, Any]:
+def mark_client_absent(
+    state: Mapping[str, Any],
+    plan: RunPlan,
+    *,
+    platform: str,
+    observation: Mapping[str, Any],
+    now_unix: int,
+) -> dict[str, Any]:
     current = validate_state(state, plan)
     expected = "WINDOWS_DELETING" if platform == "windows" else "LINUX_DELETING"
     if current["phase"] != expected or current[f"{platform}_evidence_digest"] is None:
         raise RunControllerError("client deletion is out of order")
+    observed = validate_observation(observation, plan, now_unix)
+    instance = plan.windows_instance if platform == "windows" else plan.linux_instance
+    disk = plan.windows_disk if platform == "windows" else plan.linux_disk
+    if _instance_present(observed, instance) or observed["disks"][disk]:
+        raise RunControllerError("client absence is not proved")
+    if not _instance_present(observed, plan.route_instance):
+        raise RunControllerError("route disappeared during client deletion")
     result = dict(current)
     if platform == "windows":
         result["phase"] = "WINDOWS_COLLECTED"
