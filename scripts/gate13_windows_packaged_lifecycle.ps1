@@ -1210,6 +1210,14 @@ function Assert-Gate13String {
     }
 }
 
+function Test-Gate13WindowsBuildPlatform {
+    param([Parameter(Mandatory = $true)] [object] $Value)
+    return (
+        $Value -is [string] -and
+        $Value -cmatch "\AWindows(?:-[A-Za-z0-9._-]{1,127})?\z"
+    )
+}
+
 function Test-Gate13SafeWindowsPathSegment {
     param([Parameter(Mandatory = $true)] [string] $Segment)
     if (
@@ -1381,6 +1389,7 @@ function Test-Gate13PackageAudit {
     )
     $sourceCommit = Get-Gate13Property $provenance "source_commit"
     $sourceTree = Get-Gate13Property $provenance "source_tree"
+    $buildPlatform = Get-Gate13Property $provenance "build_platform"
     Assert-Gate13String -Value $sourceCommit -Pattern "^[0-9a-f]{40}$"
     Assert-Gate13String -Value $sourceTree -Pattern "^[0-9a-f]{40}$"
     if (
@@ -1389,7 +1398,7 @@ function Test-Gate13PackageAudit {
         (Get-Gate13Property $provenance "package") -cne "communityai-desktop" -or
         (Get-Gate13Property $provenance "release_channel") -cne "public-alpha" -or
         $sourceCommit -cne $expectedSourceCommit -or
-        (Get-Gate13Property $provenance "build_platform") -cne "Windows" -or
+        -not (Test-Gate13WindowsBuildPlatform -Value $buildPlatform) -or
         (Get-Gate13Property $provenance "artifact_root") -cne "CommunityAI" -or
         (Get-Gate13Property $provenance "checksum_manifest") -cne "SHA256SUMS" -or
         (Get-Gate13Property $provenance "unsigned") -ne $true -or

@@ -82,6 +82,34 @@ catch {{
 
 
 @pytest.mark.skipif(not POWERSHELL.is_file(), reason="native Windows PowerShell is required")
+def test_windows_build_platform_accepts_production_runner_and_rejects_spoofs(tmp_path):
+    source = f"""
+. {_ps_literal(LIFECYCLE)}
+$values = [ordered]@{{
+    canonical = Test-Gate13WindowsBuildPlatform -Value 'Windows'
+    production = Test-Gate13WindowsBuildPlatform -Value 'Windows-2025Server-10.0.26100-SP0'
+    linux = Test-Gate13WindowsBuildPlatform -Value 'Linux-6.8.0'
+    wrong_case = Test-Gate13WindowsBuildPlatform -Value 'windows-2025Server'
+    empty_suffix = Test-Gate13WindowsBuildPlatform -Value 'Windows-'
+    newline = Test-Gate13WindowsBuildPlatform -Value ("Windows-valid" + [char]10)
+    non_string = Test-Gate13WindowsBuildPlatform -Value 1
+}}
+[Console]::Out.WriteLine(($values | ConvertTo-Json -Compress))
+"""
+    result = _run_powershell(source, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "canonical": True,
+        "production": True,
+        "linux": False,
+        "wrong_case": False,
+        "empty_suffix": False,
+        "newline": False,
+        "non_string": False,
+    }
+
+
+@pytest.mark.skipif(not POWERSHELL.is_file(), reason="native Windows PowerShell is required")
 def test_native_interop_compiles_and_compound_collision_falls_back(tmp_path):
     service = "org.communityai.desktop"
     account = "local-node-control-v1"
