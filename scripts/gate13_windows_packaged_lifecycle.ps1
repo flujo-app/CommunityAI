@@ -215,6 +215,11 @@ namespace Gate13
         private const UInt32 JobObjectBasicAccountingInformation = 1;
         private const UInt32 JobObjectLimitKillOnJobClose = 0x00002000;
         private const UInt32 StdInputHandle = 0xfffffff6;
+        private const UInt32 GenericWrite = 0x40000000;
+        private const UInt32 FileShareRead = 0x00000001;
+        private const UInt32 FileShareWrite = 0x00000002;
+        private const UInt32 OpenExisting = 3;
+        private const UInt32 FileAttributeNormal = 0x00000080;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct SecurityAttributes
@@ -379,6 +384,17 @@ namespace Gate13
             IntPtr handle,
             UInt32 mask,
             UInt32 flags
+        );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateFile(
+            string fileName,
+            UInt32 desiredAccess,
+            UInt32 shareMode,
+            ref SecurityAttributes securityAttributes,
+            UInt32 creationDisposition,
+            UInt32 flagsAndAttributes,
+            IntPtr templateFile
         );
 
         [DllImport("kernel32.dll")]
@@ -604,6 +620,7 @@ namespace Gate13
             IntPtr job = IntPtr.Zero;
             IntPtr readPipe = IntPtr.Zero;
             IntPtr writePipe = IntPtr.Zero;
+            IntPtr errorSink = IntPtr.Zero;
             IntPtr inputRead = IntPtr.Zero;
             IntPtr inputWrite = IntPtr.Zero;
             ProcessInformation process = new ProcessInformation();
@@ -627,6 +644,20 @@ namespace Gate13
                     {
                         throw new Win32Exception(Marshal.GetLastWin32Error());
                     }
+                    errorSink = CreateFile(
+                        "NUL",
+                        GenericWrite,
+                        FileShareRead | FileShareWrite,
+                        ref pipeAttributes,
+                        OpenExisting,
+                        FileAttributeNormal,
+                        IntPtr.Zero
+                    );
+                    if (errorSink == new IntPtr(-1))
+                    {
+                        errorSink = IntPtr.Zero;
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    }
                     startup.flags = StartfUseStdHandles;
                     startup.standardInput = GetStdHandle(StdInputHandle);
                     if (redirectInput)
@@ -642,7 +673,7 @@ namespace Gate13
                         startup.standardInput = inputRead;
                     }
                     startup.standardOutput = writePipe;
-                    startup.standardError = writePipe;
+                    startup.standardError = errorSink;
                     inheritHandles = true;
                     flags |= CreateNoWindow;
                 }
@@ -677,6 +708,11 @@ namespace Gate13
                     CloseHandle(writePipe);
                     writePipe = IntPtr.Zero;
                 }
+                if (errorSink != IntPtr.Zero)
+                {
+                    CloseHandle(errorSink);
+                    errorSink = IntPtr.Zero;
+                }
                 if (inputRead != IntPtr.Zero)
                 {
                     CloseHandle(inputRead);
@@ -710,6 +746,10 @@ namespace Gate13
                 if (writePipe != IntPtr.Zero)
                 {
                     CloseHandle(writePipe);
+                }
+                if (errorSink != IntPtr.Zero)
+                {
+                    CloseHandle(errorSink);
                 }
                 if (inputRead != IntPtr.Zero)
                 {

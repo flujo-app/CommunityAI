@@ -243,6 +243,28 @@ $aliveAfter = $null -ne (Get-Process -Id $pidValue -ErrorAction SilentlyContinue
 
 
 @pytest.mark.skipif(not POWERSHELL.is_file(), reason="native Windows PowerShell is required")
+def test_contained_json_capture_discards_stderr_logs(tmp_path):
+    child_command = (
+        '[Console]::Out.Write(\'{"result":"passed"}\');' "[Console]::Error.Write('Aug 30 worker guard armed')"
+    )
+    source = f"""\
+. {_ps_literal(LIFECYCLE)}
+$captured = Invoke-Gate13Contained -Executable {_ps_literal(POWERSHELL)} -Arguments ([string[]]@(
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    {_ps_literal(child_command)}
+)) -WorkingDirectory {_ps_literal(tmp_path)} -TimeoutSeconds 30
+[Console]::Out.WriteLine($captured)
+"""
+    result = _run_powershell(source, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == {"result": "passed"}
+
+
+@pytest.mark.skipif(not POWERSHELL.is_file(), reason="native Windows PowerShell is required")
 def test_partial_key_create_cleanup_targets_reserved_label_only(tmp_path):
     control = "drift_control_" + "A" * 43
     source = f"""
