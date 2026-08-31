@@ -7,6 +7,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Gate 13 paid qualification now has a persisted authorization-bound run-state contract that
+  inventories exact resources before every transition, accepts the product route before any
+  client, runs Windows/Qwen before Linux/Gemma, permanently consumes a failed or ambiguous
+  lifecycle host, rejects stale/foreign/deadline-expired observations, validates digest-bound
+  canonical 16-phase records, and permits a pass only after both records and exact provider
+  absence. The failed `gate13-20260831-a` attempt is cleanup-proved: its route, clients, disks,
+  and firewalls are absent while the protected bootstrap remains running. No lifecycle pass is
+  claimed, and the run's USD 52 maximum remains committed in the current budget epoch.
 - Gate 13 packaged-lifecycle prerequisites now emit deterministic self-contained Windows ZIP
   and Linux tar.gz archives, preserve or reject platform filesystem semantics fail-closed, and
   bind the archive plus strict desktop metrics into exact-type release provenance. The local

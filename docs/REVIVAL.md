@@ -200,6 +200,30 @@ On every implementation run:
    ends, the release is complete, or that narrow definition applies to every permitted
    task on the current critical path.
 
+### Durable paid-run contract
+
+A multi-hour paid qualification must not depend on an operator terminal, SSH/IAP session,
+or untracked repair script remaining alive. Before its first create, it must have one
+source-bound, persisted, idempotent controller with `start`, `status`, `collect`, and
+`cleanup` operations. Every operation begins by inventorying the exact authorized
+instances, disks, firewalls, ownership metadata, and absolute deadlines. Matching resources
+are reattached; foreign or ambiguous exact-name resources fail closed; missing resources are
+never recreated merely because local state was lost.
+
+Long-running work runs as one named host-local durable service or task and writes only a
+bounded sanitized status plus a digest-bound terminal record. Repeating `start` observes the
+existing job; it does not launch a second lifecycle. Once a packaged product lifecycle or a
+diagnostic product launch begins, any non-pass consumes that client for acceptance. Removing
+its files or credentials does not make it fresh again, and phase-level lifecycle resumption
+is prohibited.
+
+For Gate 13, accept the complete product route before creating a client. Run the higher-risk
+Windows/Qwen lifecycle first; collect its canonical 16-phase record and delete that client
+before creating Linux/Gemma. This is an operational cost/risk sequence, not a relaxation of
+the two-platform acceptance contract. Any route failure, ambiguous host job, expired runway,
+or client failure goes directly to exact cleanup. A gate passes only after both complete
+fresh-host records and final provider absence proof exist.
+
 ### Cloud safety rules
 
 - Before provisioning, record a conservative maximum estimate in the spend ledger and
