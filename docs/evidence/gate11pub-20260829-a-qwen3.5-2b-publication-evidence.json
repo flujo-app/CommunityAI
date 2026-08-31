@@ -1,0 +1,128 @@
+{
+  "artifact_hashes_verified": true,
+  "attestation_manifest_digest": "sha256:7ea11837ef5f94f76f3efa50e01a28ba00619fdba2691ded5c114588c4150c7c",
+  "attestation_manifest_size": 1112,
+  "candidate": "qwen3.5-2b",
+  "carrier_evidence_digest": "sha256:47c767121a6a01fb69a7b802809701e4ebbd330cf4afb4a469014d543a7e0714",
+  "carrier_evidence_verified": true,
+  "carrier_index_reference": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed",
+  "carrier_runtime_image": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:5ad01b9ea9fea6adb5e2c60cc804685ba3bfa2a4f09d5ff48b56a762f3df1770",
+  "complete_release_qualification": false,
+  "compressed_layer_bytes": 6913950955,
+  "contract_digest": "sha256:e92e83741dbb5339594b89fd1e143debae2fe77978098a4555f551449f174241",
+  "cuda_version": "12.4",
+  "device": "cuda",
+  "dockerfile_digest": "sha256:04eb0c95af84412439d5d32ff29a0e88301beb3e3593839013f45cb3864ae89a",
+  "full_block_span": "0:24",
+  "health_state_path": "/run/communityai/health.json",
+  "image_built": true,
+  "image_published": true,
+  "image_reference": "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b@sha256:a62d7100cf2179a362cf8973d3c397ccd216f11a05af9354bc44fd1250024764",
+  "image_tag": "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b:source-d2ea7dea5f3541b86293279b0a650bb46ab82583",
+  "index_digest": "sha256:a62d7100cf2179a362cf8973d3c397ccd216f11a05af9354bc44fd1250024764",
+  "index_size": 857,
+  "layers": [
+    {
+      "compressed_size": 28232590,
+      "digest": "sha256:039e6f9f9752f74a3ff4a6a224f64c7c864da16ed98f882107704328f41b9c42",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 3520804,
+      "digest": "sha256:e8e392f3681c10ad9c2b19ab6614fd158f6d5a03e0f71694aea9429d38813dbd",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 13667988,
+      "digest": "sha256:8e0b0d5a4a0425bc991b95b78af125c6005a0a82a89011f076802a0265d8ff32",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 248,
+      "digest": "sha256:1634f3c69c84a41815c187086e80cf5fdec289c6ce620014ef3ca9b54c019279",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 24607088,
+      "digest": "sha256:f042764fd2109ef54e53a6df3cab4609211410499c8a4c11334b2a5bf7a6531d",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 99,
+      "digest": "sha256:21854c3d58794ed2f3f7fbe02666711377bbf2096f1ab9d177fd29c9427d655b",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 163437,
+      "digest": "sha256:53da9489537c08fd7437c5a8b0829f80d5898a535a5ee1e81b9ee327272f6d66",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 282502,
+      "digest": "sha256:e6d316b7a71532d3df86824ca83c8722baa2098b5a3c2014e27c0c292cb04560",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 17418,
+      "digest": "sha256:53a28ec1c45d2231412f9cd21c35fd5bdacb5fb9ab965fe36ebb927326c194b9",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 462719,
+      "digest": "sha256:b535753c3b2da723f7ee1b091a2b53fbd2779d3e6cc915f2b855f7e2b7dec8df",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 9318,
+      "digest": "sha256:d0abd9e0caec27d10e75fb9dbecb59593ee1b65413a71c53b14550cc490f8b0b",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 1081,
+      "digest": "sha256:1059e5c0ec5688db8296069861c7d561f5dfb97779894292491924f7dafa3db5",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 1836,
+      "digest": "sha256:1127253875de1aea79a6b7e21d7db5365fb2d23139da7340b7d81df31eb09c9e",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 3572741519,
+      "digest": "sha256:419b08e74b6c95563fed2eb7e76be31aaee391475556e4e78c9f6a0515c88b53",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    },
+    {
+      "compressed_size": 3270242308,
+      "digest": "sha256:5ecb91d22dce24d9f104f9c0c0ee1832962c960520eee90a70ea940b0ade6326",
+      "media_type": "application/vnd.oci.image.layer.v1.tar+gzip"
+    }
+  ],
+  "limits": {
+    "combined_route_disk_ceiling_bytes": 171798691840,
+    "ghcr_max_layer_bytes": 10000000000,
+    "maximum_compressed_bytes": 24000000000,
+    "maximum_uncompressed_bytes": 42949672960,
+    "planned_boot_disk_bytes": 214748364800
+  },
+  "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+  "model_repository": "Qwen/Qwen3.5-2B",
+  "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "nonroot_uid": 65532,
+  "platform": "linux/amd64",
+  "provenance": "slsa-build-arguments-and-materials-verified",
+  "result": "passed",
+  "runtime_image_reference": "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b@sha256:dac280c6b13825a95e1df1944909ed80fd3f271bb82865ed8aae31ba7892cb35",
+  "runtime_manifest_digest": "sha256:dac280c6b13825a95e1df1944909ed80fd3f271bb82865ed8aae31ba7892cb35",
+  "runtime_manifest_size": 3156,
+  "sbom": "spdx-2.3-required-cuda-packages-verified",
+  "schema_version": 1,
+  "scope": "public-route-image-publication-evidence",
+  "source_commit": "d2ea7dea5f3541b86293279b0a650bb46ab82583",
+  "source_hashes_verified": true,
+  "source_tree_digest": "sha256:d21a32b4700ec97f5228be11df7ccd6f01942b3d92b5c4cd6c799a71882e84f2",
+  "torch_version": "2.6.0+cu124",
+  "training_rpcs": "disabled",
+  "uncompressed_image_bytes": 6913972002,
+  "uv_lock_digest": "sha256:26056576fdb25cbb2cffd13b928edd78625a3468e5e165c051f7c4c0a17fe0fd"
+}

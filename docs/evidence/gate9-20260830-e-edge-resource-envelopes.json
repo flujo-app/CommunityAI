@@ -1,0 +1,1153 @@
+{
+  "schema_version": 1,
+  "scope": "edge-resource-envelopes",
+  "run_id": "gate9-20260830-e",
+  "gate": 9,
+  "result": "passed",
+  "source": {
+    "commit": "ba410f74f1cf625f1e1c34734b53e4514fa7c5ec",
+    "branch": "codex/gate-v-auto-selection",
+    "runtime_version": "2.3.0.dev2",
+    "wheel_sha256": "sha256:3087b8a7ec8d401833a8e577b1bd8bc280d98ad2c3ddd1ff2b22cfd17f740b7a",
+    "cost_authorization": "docs/evidence/gate9-20260830-e-cost-authorization.json",
+    "provider_plan_digest": "sha256:04ba77ee68f4a895ae080a4ddcbf6805b502da6a95a4146734acbddff92de307"
+  },
+  "candidates": {
+    "qwen": {
+      "name": "Qwen3.5 2B",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+    },
+    "gemma": {
+      "name": "Gemma 4 E2B IT",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+    }
+  },
+  "controls": {
+    "parallel_platform_and_model_execution": true,
+    "empty_persistent_cache_per_acquisition": true,
+    "selected_whole_shards_only": true,
+    "maximum_artifact_resumptions": 3,
+    "resumptions_observed": 0,
+    "one_warm_cache_benchmark_per_passing_cell": true,
+    "windows_containment": "windows_job_object",
+    "linux_containment": "posix_process_group",
+    "fly_operations": 0,
+    "model_specific_image_builds_pushes_pulls": 0,
+    "registry_or_cache_mirrors": 0,
+    "qualification_or_recovery_reruns": 0,
+    "macos_work": 0,
+    "credits_or_payments_work": 0
+  },
+  "run_notes": {
+    "local_windows_downloads": "Stopped and excluded from evidence after measured throughput could not meet the model window; all associated Python acquisition processes were proved absent.",
+    "cloud_windows_bootstrap": "The same bounded clients added pinned MinGit and the Microsoft Visual C++ runtime before acquisition. The dedicated cloud caches did not exist before the successful cold acquisitions.",
+    "gemma_windows_retry": "The exact e2-standard-4 client completed and verified the cold acquisition, but its first supervised child exited without a result. A pushed zero-ceiling-increase amendment authorized one in-place e2-standard-8 resize using the retained verified cache; the warm benchmark then passed. No new resource was created."
+  },
+  "client_results": {
+    "qwen_linux": {
+      "result": "passed",
+      "profile": {
+        "provider": "GCP",
+        "operating_system": "linux",
+        "machine_type": "e2-standard-4",
+        "accelerator": "none"
+      },
+      "acquisition_record_sha256": "sha256:ba06efdfcc9800cf524dd3a8cb6faa1a28768f6e6c1213fbcf3afb6637b887d3",
+      "resource_envelope_sha256": "sha256:3d12908a535abc5fd02f632ace2efd6d95be1617dd5cecebb5d033507f686979",
+      "acquisition_record": {
+        "acquired_at_unix": 1788114949,
+        "artifacts": [
+          {
+            "elapsed_seconds": 0.5579077209999923,
+            "materialization_attempts": 1,
+            "path": "chat_template.jinja",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "chat_template",
+            "sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+            "size_bytes": 7755
+          },
+          {
+            "elapsed_seconds": 0.16496016499991129,
+            "materialization_attempts": 1,
+            "path": "config.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "config",
+            "sha256": "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4",
+            "size_bytes": 2908
+          },
+          {
+            "elapsed_seconds": 0.34119126300004154,
+            "materialization_attempts": 1,
+            "path": "merges.txt",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+            "size_bytes": 3353259
+          },
+          {
+            "elapsed_seconds": 285.24452513999995,
+            "materialization_attempts": 1,
+            "path": "model.safetensors-00001-of-00001.safetensors",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "weight",
+            "sha256": "aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1",
+            "size_bytes": 4548221488
+          },
+          {
+            "elapsed_seconds": 0.15488678200006234,
+            "materialization_attempts": 1,
+            "path": "model.safetensors.index.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "weight_index",
+            "sha256": "aca8afed9da75b0f050b408d270766fd77627f1af401e240f61c3b47d0db02f9",
+            "size_bytes": 64460
+          },
+          {
+            "elapsed_seconds": 0.6762358290000066,
+            "materialization_attempts": 1,
+            "path": "tokenizer.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+            "size_bytes": 12807982
+          },
+          {
+            "elapsed_seconds": 0.13920727799995802,
+            "materialization_attempts": 1,
+            "path": "tokenizer_config.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+            "size_bytes": 16709
+          },
+          {
+            "elapsed_seconds": 0.3155776060000335,
+            "materialization_attempts": 1,
+            "path": "vocab.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+            "size_bytes": 6722759
+          }
+        ],
+        "model": {
+          "dtype": "bfloat16",
+          "id": "Qwen3.5 2B",
+          "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+          "repository": "Qwen/Qwen3.5-2B",
+          "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+        },
+        "privacy": {
+          "credentials_retained": false,
+          "local_paths_retained": false,
+          "response_bodies_retained": false,
+          "urls_retained": false
+        },
+        "runtime": {
+          "drift": "2.3.0.dev2",
+          "platform": "Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39",
+          "python": "3.12.3"
+        },
+        "schema_version": 1,
+        "selection": {
+          "artifact_bytes": 4571197320,
+          "artifact_count": 8,
+          "startup_artifact_paths": [
+            "chat_template.jinja",
+            "config.json",
+            "merges.txt",
+            "model.safetensors.index.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json"
+          ],
+          "weight_artifact_bytes": 4548221488,
+          "weight_artifact_paths": [
+            "model.safetensors-00001-of-00001.safetensors"
+          ]
+        },
+        "storage": {
+          "cache_bytes_after": 4571197320,
+          "cache_bytes_before": 0,
+          "cache_growth_bytes": 4571197320,
+          "cold_start": true,
+          "verified": true
+        },
+        "transfer": {
+          "completed": true,
+          "elapsed_seconds": 287.61333424200006,
+          "max_resumptions": 3,
+          "resumptions": 0
+        }
+      },
+      "resource_envelope": {
+        "cleanup": {
+          "accelerators": {
+            "clean": true,
+            "devices": {}
+          },
+          "memory": {
+            "clean": false,
+            "diagnostic_only": true,
+            "native_heap_trimmed": true,
+            "process_tree_rss_baseline_bytes": 621101056,
+            "process_tree_rss_post_close_bytes": 646909952,
+            "process_tree_rss_post_close_delta_bytes": 25808896,
+            "rss_tolerance_bytes": 16777216
+          },
+          "passed": true,
+          "process_tree": {
+            "additional_child_processes_post_close": 0,
+            "child_processes_baseline": 0,
+            "child_processes_post_close": 0,
+            "clean": true
+          },
+          "route_manager": {
+            "clean": true,
+            "dht_process_alive": false,
+            "observed": true,
+            "sequence_manager_update_thread_alive": false
+          },
+          "runtime_close": {
+            "available": true,
+            "clean": true,
+            "error_type": null,
+            "invoked": true
+          },
+          "stabilization": {
+            "deadline_reached": true,
+            "elapsed_seconds": 5.0069951939999555,
+            "poll_interval_seconds": 0.05,
+            "samples": 84,
+            "timeout_seconds": 5
+          },
+          "supervisor": {
+            "all_contained_processes_absent": true,
+            "all_tracked_processes_absent": true,
+            "child_exit_code": 0,
+            "child_exited": true,
+            "clean": true,
+            "containment": "posix_process_group",
+            "descendants_exited": true,
+            "forced_cleanup_required": false,
+            "forced_cleanup_succeeded": true,
+            "peak_process_count": 3,
+            "process_tree_rss_peak_bytes": 2832244736,
+            "sample_interval_seconds": 0.02,
+            "samples": 1725
+          }
+        },
+        "latency": {
+          "decode_seconds_after_first_token": 8.754316395999922,
+          "decode_tokens_per_second": 0.7996055526618258,
+          "first_token_seconds": 2.9728617600001144,
+          "load_seconds": 17.115370596000048,
+          "total_generation_seconds": 11.730687518999957
+        },
+        "measured_at_unix": 1788115083,
+        "memory": {
+          "accelerators": {},
+          "child_reported_process_tree_rss_peak_bytes": 2831785984,
+          "client_components": {
+            "components": {
+              "input_embeddings": {
+                "devices": [
+                  "cpu"
+                ],
+                "dtypes": [
+                  "bfloat16"
+                ],
+                "parameter_bytes": 1017118720,
+                "parameter_count": 508559360
+              },
+              "output_head": {
+                "devices": [
+                  "cpu"
+                ],
+                "dtypes": [
+                  "bfloat16"
+                ],
+                "parameter_bytes": 1017118720,
+                "parameter_count": 508559360
+              }
+            },
+            "unique_parameter_bytes": 1017118720
+          },
+          "process_tree_rss_baseline_bytes": 621101056,
+          "process_tree_rss_loaded_bytes": 1520189440,
+          "process_tree_rss_peak_bytes": 2832244736,
+          "process_tree_rss_peak_delta_bytes": 2211143680,
+          "process_tree_rss_post_close_bytes": 646909952,
+          "process_tree_rss_post_close_delta_bytes": 25808896
+        },
+        "model": {
+          "dtype": "bfloat16",
+          "id": "Qwen3.5 2B",
+          "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+          "repository": "Qwen/Qwen3.5-2B",
+          "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+        },
+        "privacy": {
+          "credentials_retained": false,
+          "local_paths_retained": false,
+          "output_retained": false,
+          "prompt_retained": false
+        },
+        "runtime": {
+          "drift": "2.3.0.dev2",
+          "platform": "Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39",
+          "python": "3.12.3",
+          "torch": "2.6.0+cu124"
+        },
+        "schema_version": 3,
+        "storage": {
+          "cache_bytes_after": 4571197320,
+          "cache_bytes_before": 4571197320,
+          "cache_growth_bytes": 0,
+          "cold_start": false
+        },
+        "workload": {
+          "generated_tokens": 8,
+          "output_retained": false,
+          "prompt_retained": false,
+          "prompt_tokens": 1,
+          "requested_new_tokens": 8
+        }
+      }
+    },
+    "gemma_linux": {
+      "result": "passed",
+      "profile": {
+        "provider": "GCP",
+        "operating_system": "linux",
+        "machine_type": "e2-standard-4",
+        "accelerator": "none"
+      },
+      "acquisition_record_sha256": "sha256:1628f87f1baaa2f562ca6c7340d2863034cdb0d17dbdf8995e38d9ae792fe0b5",
+      "resource_envelope_sha256": "sha256:2eb0bcf6419ba085665fad34310453a1b9dc2e89d90e9177f41566df012996c8",
+      "acquisition_record": {
+        "acquired_at_unix": 1788115395,
+        "artifacts": [
+          {
+            "elapsed_seconds": 0.33717927499992584,
+            "materialization_attempts": 1,
+            "path": "chat_template.jinja",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "chat_template",
+            "sha256": "0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5",
+            "size_bytes": 18569
+          },
+          {
+            "elapsed_seconds": 0.13096556799996506,
+            "materialization_attempts": 1,
+            "path": "config.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "config",
+            "sha256": "1b28f3d2c3100f6c594754b81107428bd7b822a7f48272ca681dae9d2ec38330",
+            "size_bytes": 4954
+          },
+          {
+            "elapsed_seconds": 176.108007231,
+            "materialization_attempts": 1,
+            "path": "model.safetensors",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "weight",
+            "sha256": "2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550",
+            "size_bytes": 10246621918
+          },
+          {
+            "elapsed_seconds": 0.9241830830000026,
+            "materialization_attempts": 1,
+            "path": "tokenizer.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+            "size_bytes": 32169626
+          },
+          {
+            "elapsed_seconds": 0.14216011300004538,
+            "materialization_attempts": 1,
+            "path": "tokenizer_config.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "9f4fec4b1dc6ecddf8f4a92e9caea5971c0e67d81309f3f9066a2bee8c362633",
+            "size_bytes": 3082
+          }
+        ],
+        "model": {
+          "dtype": "bfloat16",
+          "id": "Gemma 4 E2B IT",
+          "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+          "repository": "google/gemma-4-E2B-it",
+          "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+        },
+        "privacy": {
+          "credentials_retained": false,
+          "local_paths_retained": false,
+          "response_bodies_retained": false,
+          "urls_retained": false
+        },
+        "runtime": {
+          "drift": "2.3.0.dev2",
+          "platform": "Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39",
+          "python": "3.12.3"
+        },
+        "schema_version": 1,
+        "selection": {
+          "artifact_bytes": 10278818149,
+          "artifact_count": 5,
+          "startup_artifact_paths": [
+            "chat_template.jinja",
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json"
+          ],
+          "weight_artifact_bytes": 10246621918,
+          "weight_artifact_paths": [
+            "model.safetensors"
+          ]
+        },
+        "storage": {
+          "cache_bytes_after": 10278818149,
+          "cache_bytes_before": 0,
+          "cache_growth_bytes": 10278818149,
+          "cold_start": true,
+          "verified": true
+        },
+        "transfer": {
+          "completed": true,
+          "elapsed_seconds": 177.6527956,
+          "max_resumptions": 3,
+          "resumptions": 0
+        }
+      },
+      "resource_envelope": {
+        "cleanup": {
+          "accelerators": {
+            "clean": true,
+            "devices": {}
+          },
+          "memory": {
+            "clean": false,
+            "diagnostic_only": true,
+            "native_heap_trimmed": true,
+            "process_tree_rss_baseline_bytes": 620982272,
+            "process_tree_rss_post_close_bytes": 661598208,
+            "process_tree_rss_post_close_delta_bytes": 40615936,
+            "rss_tolerance_bytes": 16777216
+          },
+          "passed": true,
+          "process_tree": {
+            "additional_child_processes_post_close": 0,
+            "child_processes_baseline": 0,
+            "child_processes_post_close": 0,
+            "clean": true
+          },
+          "route_manager": {
+            "clean": true,
+            "dht_process_alive": false,
+            "observed": true,
+            "sequence_manager_update_thread_alive": false
+          },
+          "runtime_close": {
+            "available": true,
+            "clean": true,
+            "error_type": null,
+            "invoked": true
+          },
+          "stabilization": {
+            "deadline_reached": true,
+            "elapsed_seconds": 5.0094943579999835,
+            "poll_interval_seconds": 0.05,
+            "samples": 80,
+            "timeout_seconds": 5
+          },
+          "supervisor": {
+            "all_contained_processes_absent": true,
+            "all_tracked_processes_absent": true,
+            "child_exit_code": 0,
+            "child_exited": true,
+            "clean": true,
+            "containment": "posix_process_group",
+            "descendants_exited": true,
+            "forced_cleanup_required": false,
+            "forced_cleanup_succeeded": true,
+            "peak_process_count": 3,
+            "process_tree_rss_peak_bytes": 2818523136,
+            "sample_interval_seconds": 0.02,
+            "samples": 2411
+          }
+        },
+        "latency": {
+          "decode_seconds_after_first_token": 8.067284416999996,
+          "decode_tokens_per_second": 0.8677021458731599,
+          "first_token_seconds": 2.0248757709999836,
+          "load_seconds": 38.808144581999954,
+          "total_generation_seconds": 10.096072023000033
+        },
+        "measured_at_unix": 1788115607,
+        "memory": {
+          "accelerators": {},
+          "child_reported_process_tree_rss_peak_bytes": 2818723840,
+          "client_components": {
+            "components": {
+              "input_embeddings": {
+                "devices": [
+                  "cpu"
+                ],
+                "dtypes": [
+                  "bfloat16"
+                ],
+                "parameter_bytes": 805306368,
+                "parameter_count": 402653184
+              },
+              "output_head": {
+                "devices": [
+                  "cpu"
+                ],
+                "dtypes": [
+                  "bfloat16"
+                ],
+                "parameter_bytes": 805306368,
+                "parameter_count": 402653184
+              }
+            },
+            "unique_parameter_bytes": 805306368
+          },
+          "process_tree_rss_baseline_bytes": 620982272,
+          "process_tree_rss_loaded_bytes": 1759318016,
+          "process_tree_rss_peak_bytes": 2818523136,
+          "process_tree_rss_peak_delta_bytes": 2197540864,
+          "process_tree_rss_post_close_bytes": 661598208,
+          "process_tree_rss_post_close_delta_bytes": 40615936
+        },
+        "model": {
+          "dtype": "bfloat16",
+          "id": "Gemma 4 E2B IT",
+          "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+          "repository": "google/gemma-4-E2B-it",
+          "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+        },
+        "privacy": {
+          "credentials_retained": false,
+          "local_paths_retained": false,
+          "output_retained": false,
+          "prompt_retained": false
+        },
+        "runtime": {
+          "drift": "2.3.0.dev2",
+          "platform": "Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39",
+          "python": "3.12.3",
+          "torch": "2.6.0+cu124"
+        },
+        "schema_version": 3,
+        "storage": {
+          "cache_bytes_after": 10278818149,
+          "cache_bytes_before": 10278818149,
+          "cache_growth_bytes": 0,
+          "cold_start": false
+        },
+        "workload": {
+          "generated_tokens": 8,
+          "output_retained": false,
+          "prompt_retained": false,
+          "prompt_tokens": 1,
+          "requested_new_tokens": 8
+        }
+      }
+    },
+    "qwen_windows": {
+      "result": "passed",
+      "profile": {
+        "provider": "GCP",
+        "operating_system": "windows",
+        "machine_type": "e2-standard-4",
+        "accelerator": "none"
+      },
+      "acquisition_record_sha256": "sha256:557c9a5a5441d095f780bfe20620450502a1b941fd7e33fe72b83bec5e147c52",
+      "resource_envelope_sha256": "sha256:cd68afb67d9b0f3cb8c82db0d3314ad89b558c20880998ea4d8c4493e9f4bc9f",
+      "acquisition_record": {
+        "acquired_at_unix": 1788117631,
+        "artifacts": [
+          {
+            "elapsed_seconds": 1.0969828000000064,
+            "materialization_attempts": 1,
+            "path": "chat_template.jinja",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "chat_template",
+            "sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+            "size_bytes": 7755
+          },
+          {
+            "elapsed_seconds": 0.39981939999998417,
+            "materialization_attempts": 1,
+            "path": "config.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "config",
+            "sha256": "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4",
+            "size_bytes": 2908
+          },
+          {
+            "elapsed_seconds": 0.5624023999999963,
+            "materialization_attempts": 1,
+            "path": "merges.txt",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+            "size_bytes": 3353259
+          },
+          {
+            "elapsed_seconds": 243.09767270000003,
+            "materialization_attempts": 1,
+            "path": "model.safetensors-00001-of-00001.safetensors",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "weight",
+            "sha256": "aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1",
+            "size_bytes": 4548221488
+          },
+          {
+            "elapsed_seconds": 0.39792690000001585,
+            "materialization_attempts": 1,
+            "path": "model.safetensors.index.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "weight_index",
+            "sha256": "aca8afed9da75b0f050b408d270766fd77627f1af401e240f61c3b47d0db02f9",
+            "size_bytes": 64460
+          },
+          {
+            "elapsed_seconds": 1.119038599999982,
+            "materialization_attempts": 1,
+            "path": "tokenizer.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+            "size_bytes": 12807982
+          },
+          {
+            "elapsed_seconds": 0.4087379999999996,
+            "materialization_attempts": 1,
+            "path": "tokenizer_config.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+            "size_bytes": 16709
+          },
+          {
+            "elapsed_seconds": 0.5691125999999826,
+            "materialization_attempts": 1,
+            "path": "vocab.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+            "size_bytes": 6722759
+          }
+        ],
+        "model": {
+          "dtype": "bfloat16",
+          "id": "Qwen3.5 2B",
+          "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+          "repository": "Qwen/Qwen3.5-2B",
+          "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+        },
+        "privacy": {
+          "credentials_retained": false,
+          "local_paths_retained": false,
+          "response_bodies_retained": false,
+          "urls_retained": false
+        },
+        "runtime": {
+          "drift": "2.3.0.dev2",
+          "platform": "Windows-2022Server-10.0.20348-SP0",
+          "python": "3.12.9"
+        },
+        "schema_version": 1,
+        "selection": {
+          "artifact_bytes": 4571197320,
+          "artifact_count": 8,
+          "startup_artifact_paths": [
+            "chat_template.jinja",
+            "config.json",
+            "merges.txt",
+            "model.safetensors.index.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json"
+          ],
+          "weight_artifact_bytes": 4548221488,
+          "weight_artifact_paths": [
+            "model.safetensors-00001-of-00001.safetensors"
+          ]
+        },
+        "storage": {
+          "cache_bytes_after": 4571197320,
+          "cache_bytes_before": 0,
+          "cache_growth_bytes": 4571197320,
+          "cold_start": true,
+          "verified": true
+        },
+        "transfer": {
+          "completed": true,
+          "elapsed_seconds": 247.6816919,
+          "max_resumptions": 3,
+          "resumptions": 0
+        }
+      },
+      "resource_envelope": {
+        "cleanup": {
+          "accelerators": {
+            "clean": true,
+            "devices": {}
+          },
+          "memory": {
+            "clean": false,
+            "diagnostic_only": true,
+            "native_heap_trimmed": false,
+            "process_tree_rss_baseline_bytes": 341413888,
+            "process_tree_rss_post_close_bytes": 661958656,
+            "process_tree_rss_post_close_delta_bytes": 320544768,
+            "rss_tolerance_bytes": 16777216
+          },
+          "passed": true,
+          "process_tree": {
+            "additional_child_processes_post_close": 0,
+            "child_processes_baseline": 0,
+            "child_processes_post_close": 0,
+            "clean": true
+          },
+          "route_manager": {
+            "clean": true,
+            "dht_process_alive": false,
+            "observed": true,
+            "sequence_manager_update_thread_alive": false
+          },
+          "runtime_close": {
+            "available": true,
+            "clean": true,
+            "error_type": null,
+            "invoked": true
+          },
+          "stabilization": {
+            "deadline_reached": true,
+            "elapsed_seconds": 5.006678500000021,
+            "poll_interval_seconds": 0.05,
+            "samples": 89,
+            "timeout_seconds": 5
+          },
+          "supervisor": {
+            "all_contained_processes_absent": true,
+            "all_tracked_processes_absent": true,
+            "child_exit_code": 0,
+            "child_exited": true,
+            "clean": true,
+            "containment": "windows_job_object",
+            "descendants_exited": true,
+            "forced_cleanup_required": false,
+            "forced_cleanup_succeeded": true,
+            "peak_process_count": 3,
+            "process_tree_rss_peak_bytes": 1883205632,
+            "sample_interval_seconds": 0.02,
+            "samples": 2325
+          }
+        },
+        "latency": {
+          "decode_seconds_after_first_token": 5.029869200000007,
+          "decode_tokens_per_second": 1.3916862887806287,
+          "first_token_seconds": 1.7852876000000037,
+          "load_seconds": 25.89568220000001,
+          "total_generation_seconds": 6.830937399999982
+        },
+        "measured_at_unix": 1788117704,
+        "memory": {
+          "accelerators": {},
+          "child_reported_process_tree_rss_peak_bytes": 1874808832,
+          "client_components": {
+            "components": {
+              "input_embeddings": {
+                "devices": [
+                  "cpu"
+                ],
+                "dtypes": [
+                  "bfloat16"
+                ],
+                "parameter_bytes": 1017118720,
+                "parameter_count": 508559360
+              },
+              "output_head": {
+                "devices": [
+                  "cpu"
+                ],
+                "dtypes": [
+                  "bfloat16"
+                ],
+                "parameter_bytes": 1017118720,
+                "parameter_count": 508559360
+              }
+            },
+            "unique_parameter_bytes": 1017118720
+          },
+          "process_tree_rss_baseline_bytes": 341413888,
+          "process_tree_rss_loaded_bytes": 554209280,
+          "process_tree_rss_peak_bytes": 1883205632,
+          "process_tree_rss_peak_delta_bytes": 1541791744,
+          "process_tree_rss_post_close_bytes": 661958656,
+          "process_tree_rss_post_close_delta_bytes": 320544768
+        },
+        "model": {
+          "dtype": "bfloat16",
+          "id": "Qwen3.5 2B",
+          "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+          "repository": "Qwen/Qwen3.5-2B",
+          "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+        },
+        "privacy": {
+          "credentials_retained": false,
+          "local_paths_retained": false,
+          "output_retained": false,
+          "prompt_retained": false
+        },
+        "runtime": {
+          "drift": "2.3.0.dev2",
+          "platform": "Windows-2022Server-10.0.20348-SP0",
+          "python": "3.12.9",
+          "torch": "2.6.0+cpu"
+        },
+        "schema_version": 3,
+        "storage": {
+          "cache_bytes_after": 4571197320,
+          "cache_bytes_before": 4571197320,
+          "cache_growth_bytes": 0,
+          "cold_start": false
+        },
+        "workload": {
+          "generated_tokens": 8,
+          "output_retained": false,
+          "prompt_retained": false,
+          "prompt_tokens": 1,
+          "requested_new_tokens": 8
+        }
+      }
+    },
+    "gemma_windows": {
+      "result": "passed",
+      "profile": {
+        "provider": "GCP",
+        "operating_system": "windows",
+        "machine_type": "e2-standard-8",
+        "accelerator": "none",
+        "in_place_resize_from": "e2-standard-4",
+        "resize_reason": "The first supervised benchmark child exited without a result after the cold acquisition; one authorized cache-preserving memory retry passed."
+      },
+      "acquisition_record_sha256": "sha256:b25bd21440fdf0d6b99f2740b6a60245c4db0d04b0edb200be6262d2b1a23b58",
+      "resource_envelope_sha256": "sha256:20e067a8312cbbe6b4072a2f88682984da650005c8c55b0a2763dde68d34597e",
+      "acquisition_record": {
+        "acquired_at_unix": 1788117532,
+        "artifacts": [
+          {
+            "elapsed_seconds": 1.011630199999999,
+            "materialization_attempts": 1,
+            "path": "chat_template.jinja",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "chat_template",
+            "sha256": "0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5",
+            "size_bytes": 18569
+          },
+          {
+            "elapsed_seconds": 0.38607879999999284,
+            "materialization_attempts": 1,
+            "path": "config.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "config",
+            "sha256": "1b28f3d2c3100f6c594754b81107428bd7b822a7f48272ca681dae9d2ec38330",
+            "size_bytes": 4954
+          },
+          {
+            "elapsed_seconds": 199.66730470000002,
+            "materialization_attempts": 1,
+            "path": "model.safetensors",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "weight",
+            "sha256": "2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550",
+            "size_bytes": 10246621918
+          },
+          {
+            "elapsed_seconds": 1.6602086000000043,
+            "materialization_attempts": 1,
+            "path": "tokenizer.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+            "size_bytes": 32169626
+          },
+          {
+            "elapsed_seconds": 0.4988895000000184,
+            "materialization_attempts": 1,
+            "path": "tokenizer_config.json",
+            "resumed_from_bytes": [],
+            "resumptions": 0,
+            "role": "tokenizer",
+            "sha256": "9f4fec4b1dc6ecddf8f4a92e9caea5971c0e67d81309f3f9066a2bee8c362633",
+            "size_bytes": 3082
+          }
+        ],
+        "model": {
+          "dtype": "bfloat16",
+          "id": "Gemma 4 E2B IT",
+          "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+          "repository": "google/gemma-4-E2B-it",
+          "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+        },
+        "privacy": {
+          "credentials_retained": false,
+          "local_paths_retained": false,
+          "response_bodies_retained": false,
+          "urls_retained": false
+        },
+        "runtime": {
+          "drift": "2.3.0.dev2",
+          "platform": "Windows-2022Server-10.0.20348-SP0",
+          "python": "3.12.9"
+        },
+        "schema_version": 1,
+        "selection": {
+          "artifact_bytes": 10278818149,
+          "artifact_count": 5,
+          "startup_artifact_paths": [
+            "chat_template.jinja",
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json"
+          ],
+          "weight_artifact_bytes": 10246621918,
+          "weight_artifact_paths": [
+            "model.safetensors"
+          ]
+        },
+        "storage": {
+          "cache_bytes_after": 10278818149,
+          "cache_bytes_before": 0,
+          "cache_growth_bytes": 10278818149,
+          "cold_start": true,
+          "verified": true
+        },
+        "transfer": {
+          "completed": true,
+          "elapsed_seconds": 203.236088,
+          "max_resumptions": 3,
+          "resumptions": 0
+        }
+      },
+      "resource_envelope": {
+        "cleanup": {
+          "accelerators": {
+            "clean": true,
+            "devices": {}
+          },
+          "memory": {
+            "clean": false,
+            "diagnostic_only": true,
+            "native_heap_trimmed": false,
+            "process_tree_rss_baseline_bytes": 343347200,
+            "process_tree_rss_post_close_bytes": 596467712,
+            "process_tree_rss_post_close_delta_bytes": 253120512,
+            "rss_tolerance_bytes": 16777216
+          },
+          "passed": true,
+          "process_tree": {
+            "additional_child_processes_post_close": 0,
+            "child_processes_baseline": 0,
+            "child_processes_post_close": 0,
+            "clean": true
+          },
+          "route_manager": {
+            "clean": true,
+            "dht_process_alive": false,
+            "observed": true,
+            "sequence_manager_update_thread_alive": false
+          },
+          "runtime_close": {
+            "available": true,
+            "clean": true,
+            "error_type": null,
+            "invoked": true
+          },
+          "stabilization": {
+            "deadline_reached": true,
+            "elapsed_seconds": 5.0088011999999935,
+            "poll_interval_seconds": 0.05,
+            "samples": 89,
+            "timeout_seconds": 5
+          },
+          "supervisor": {
+            "all_contained_processes_absent": true,
+            "all_tracked_processes_absent": true,
+            "child_exit_code": 0,
+            "child_exited": true,
+            "clean": true,
+            "containment": "windows_job_object",
+            "descendants_exited": true,
+            "forced_cleanup_required": false,
+            "forced_cleanup_succeeded": true,
+            "peak_process_count": 3,
+            "process_tree_rss_peak_bytes": 1728995328,
+            "sample_interval_seconds": 0.02,
+            "samples": 4195
+          }
+        },
+        "latency": {
+          "decode_seconds_after_first_token": 3.5923313999999777,
+          "decode_tokens_per_second": 1.948595277150667,
+          "first_token_seconds": 1.386367000000007,
+          "load_seconds": 64.2857467,
+          "total_generation_seconds": 4.984895899999998
+        },
+        "measured_at_unix": 1788118431,
+        "memory": {
+          "accelerators": {},
+          "child_reported_process_tree_rss_peak_bytes": 1734987776,
+          "client_components": {
+            "components": {
+              "input_embeddings": {
+                "devices": [
+                  "cpu"
+                ],
+                "dtypes": [
+                  "bfloat16"
+                ],
+                "parameter_bytes": 805306368,
+                "parameter_count": 402653184
+              },
+              "output_head": {
+                "devices": [
+                  "cpu"
+                ],
+                "dtypes": [
+                  "bfloat16"
+                ],
+                "parameter_bytes": 805306368,
+                "parameter_count": 402653184
+              }
+            },
+            "unique_parameter_bytes": 805306368
+          },
+          "process_tree_rss_baseline_bytes": 343347200,
+          "process_tree_rss_loaded_bytes": 655867904,
+          "process_tree_rss_peak_bytes": 1728995328,
+          "process_tree_rss_peak_delta_bytes": 1385648128,
+          "process_tree_rss_post_close_bytes": 596467712,
+          "process_tree_rss_post_close_delta_bytes": 253120512
+        },
+        "model": {
+          "dtype": "bfloat16",
+          "id": "Gemma 4 E2B IT",
+          "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+          "repository": "google/gemma-4-E2B-it",
+          "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+        },
+        "privacy": {
+          "credentials_retained": false,
+          "local_paths_retained": false,
+          "output_retained": false,
+          "prompt_retained": false
+        },
+        "runtime": {
+          "drift": "2.3.0.dev2",
+          "platform": "Windows-2022Server-10.0.20348-SP0",
+          "python": "3.12.9",
+          "torch": "2.6.0+cpu"
+        },
+        "schema_version": 3,
+        "storage": {
+          "cache_bytes_after": 10278818149,
+          "cache_bytes_before": 10278818149,
+          "cache_growth_bytes": 0,
+          "cold_start": false
+        },
+        "workload": {
+          "generated_tokens": 8,
+          "output_retained": false,
+          "prompt_retained": false,
+          "prompt_tokens": 1,
+          "requested_new_tokens": 8
+        }
+      }
+    }
+  },
+  "acceptance": {
+    "matrix_cells_required": 4,
+    "matrix_cells_passed": 4,
+    "all_acquisitions_verified": true,
+    "all_acquisitions_cold": true,
+    "all_artifact_counts_and_bytes_exact": true,
+    "all_artifact_sha256_values_verified": true,
+    "all_envelopes_schema_version": 3,
+    "all_inference_workloads_completed": true,
+    "all_prompts_and_outputs_omitted": true,
+    "all_route_and_dht_cleanup_passed": true,
+    "all_accelerator_cleanup_passed": true,
+    "all_containment_empty": true
+  },
+  "cost": {
+    "combined_cloud_ceiling_usd": "100.00",
+    "separately_authorized_route_maximum_usd": "26.00",
+    "gate9_maximum_estimate_usd": "46.00",
+    "combined_committed_maximum_usd": "72.00",
+    "remaining_uncommitted_usd": "28.00",
+    "observed_cost_usd": null,
+    "billing_state": "delayed",
+    "state": "CLEANED-RESERVED-PENDING-BILLING"
+  },
+  "cleanup": {
+    "verified_at": "2026-08-30T19:36:26.263Z",
+    "exact_client_instances": [
+      "gate9-20260830-e-qwen-linux",
+      "gate9-20260830-e-gemma-linux",
+      "gate9-20260830-e-qwen-windows",
+      "gate9-20260830-e-gemma-windows"
+    ],
+    "all_exact_client_instances_absent": true,
+    "all_exact_auto_delete_boot_disks_absent": true,
+    "local_edge_acquire_python_processes_absent": true,
+    "protected_bootstrap": "communityai-bootstrap-1",
+    "protected_bootstrap_state": "RUNNING",
+    "separately_authorized_route": "route-20260830-j-node",
+    "separately_authorized_route_state": "RUNNING",
+    "protected_resources_unchanged": true
+  },
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_ids_retained": false,
+    "private_paths_retained": false,
+    "private_endpoints_retained": false,
+    "provider_output_retained": false,
+    "command_argv_retained": false
+  }
+}

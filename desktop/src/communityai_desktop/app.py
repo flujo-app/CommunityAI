@@ -168,6 +168,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     connect=connect,
                     start_minimized=args.started_at_login,
                     activate_existing_instance=not args.started_at_login,
+                    before_termination_restore=None if lifecycle is None else lifecycle.close,
                 )
                 or 0
             )

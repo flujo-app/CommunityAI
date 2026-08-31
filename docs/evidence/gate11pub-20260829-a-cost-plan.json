@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "scope": "gate11-public-route-image-publication-cost-plan",
+  "result": "planned",
+  "run_id": "gate11pub-20260829-a",
+  "created_at": "2026-08-29T18:05:54Z",
+  "provider": "gcp",
+  "project": "community-ai-506321",
+  "purpose": "Publish and verify the exact source-d2ea7de Qwen3.5 2B and Gemma 4 E2B CUDA public-route images sequentially from an adequate-bandwidth CPU builder.",
+  "source_commit": "d2ea7dea5f3541b86293279b0a650bb46ab82583",
+  "resources": {
+    "instance": "gate11pub-20260829-a-builder",
+    "zone": "us-central1-a",
+    "machine_type": "e2-standard-4",
+    "image_family": "ubuntu-2404-lts-amd64",
+    "image_project": "ubuntu-os-cloud",
+    "service_account": false,
+    "disk_type": "pd-balanced",
+    "disk_gb": 200,
+    "boot_disk_auto_delete": true,
+    "max_runtime_seconds": 21600,
+    "instance_termination_action": "DELETE"
+  },
+  "image_tags": [
+    "ghcr.io/flujo-app/communityai-public-route-qwen3.5-2b:source-d2ea7dea5f3541b86293279b0a650bb46ab82583",
+    "ghcr.io/flujo-app/communityai-public-route-gemma-4-e2b:source-d2ea7dea5f3541b86293279b0a650bb46ab82583"
+  ],
+  "cost_basis_usd": {
+    "maximum": 10,
+    "vm_and_ip_maximum": 2,
+    "balanced_disk_maximum": 1,
+    "internet_egress_maximum": 5.76,
+    "internet_egress_gib_bound": 48,
+    "contingency": 1.24
+  },
+  "budget": {
+    "combined_ceiling_usd": 100,
+    "committed_before_run_usd": 84,
+    "remaining_before_run_usd": 16,
+    "remaining_after_reservation_usd": 6
+  },
+  "provider_commands_permitted": [
+    "read-only native preflight",
+    "create exact named builder",
+    "SSH/SCP only to exact named builder",
+    "delete exact named builder and exact boot disk",
+    "read-only absence and protected-bootstrap checks"
+  ],
+  "cleanup": {
+    "always_attempt": true,
+    "exact_instance_absent_required": true,
+    "exact_disk_absent_required": true,
+    "protected_resource": "communityai-bootstrap-1",
+    "protected_resource_must_be_running": true,
+    "registry_logout_required": true,
+    "credential_file_absent_required": true
+  },
+  "qualification_evidence": false,
+  "complete_release_qualification": false
+}

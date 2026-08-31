@@ -13,7 +13,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from humanfriendly import parse_size
 
+from drift.node.contribution_planner import MAX_AUTOMATIC_PLACEMENT_BLOCKS, MAX_AUTOMATIC_PLACEMENT_CANDIDATES
+
 NODE_CONFIG_SCHEMA_VERSION = 1
+MAX_ROUTE_DEMAND_AUTHORITY_ROOTS = 32
+_ROUTE_DEMAND_KEY_ID_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class NodeConfigError(ValueError):
@@ -81,6 +85,17 @@ def _require_model_list(value: Any, field: str) -> Tuple[str, ...]:
     normalized = [item.casefold() for item in result]
     if len(set(normalized)) != len(normalized):
         raise NodeConfigError(f"{field} must not contain case-insensitive duplicates")
+    return result
+
+
+def _require_route_demand_authority_roots(value: Any, field: str) -> Tuple[str, ...]:
+    result = _require_string_list(value, field)
+    if result and not 2 <= len(result) <= MAX_ROUTE_DEMAND_AUTHORITY_ROOTS:
+        raise NodeConfigError(f"{field} must be empty or contain between 2 and {MAX_ROUTE_DEMAND_AUTHORITY_ROOTS} keys")
+    if any(_ROUTE_DEMAND_KEY_ID_RE.fullmatch(item) is None for item in result):
+        raise NodeConfigError(f"{field} must contain only canonical sha256 key identifiers")
+    if result != tuple(sorted(result)):
+        raise NodeConfigError(f"{field} must be sorted by key id")
     return result
 
 
@@ -416,10 +431,13 @@ class WorkerConfig:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", worker_id):
             raise NodeConfigError(f"{field}.id must match [A-Za-z0-9][A-Za-z0-9._-]{{0,63}}")
 
+        model = _require_string(source["model"], f"{field}.model")
         num_blocks_value = source.get("num_blocks")
         block_indices_value = source.get("block_indices")
         if (num_blocks_value is None) == (block_indices_value is None):
             raise NodeConfigError(f"{field} must provide exactly one of num_blocks or block_indices")
+        if model.casefold() == "auto" and block_indices_value is not None:
+            raise NodeConfigError(f"{field} automatic model placement requires num_blocks")
         num_blocks = (
             None if num_blocks_value is None else _require_positive_int(num_blocks_value, f"{field}.num_blocks")
         )
@@ -463,7 +481,7 @@ class WorkerConfig:
             max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
         return cls(
             worker_id=worker_id,
-            model=_require_string(source["model"], f"{field}.model"),
+            model=model,
             identity_path=_resolve_path(source["identity_path"], f"{field}.identity_path", base_dir),
             num_blocks=num_blocks,
             block_indices=block_indices,
@@ -501,6 +519,7 @@ class NodeConfig:
     max_loaded_models: int
     models: Tuple[NodeModelConfig, ...]
     auto_model_priority: Tuple[str, ...] = ()
+    route_demand_authority_roots: Tuple[str, ...] = ()
     workers: Tuple[WorkerConfig, ...] = ()
     contribution_policy: ContributionPolicyConfig = ContributionPolicyConfig()
     discovery_update_period: float = 30.0
@@ -520,6 +539,7 @@ class NodeConfig:
                 "workers",
                 "contribution_policy",
                 "auto_model_priority",
+                "route_demand_authority_roots",
             ),
         )
         schema_version = _require_positive_int(source["schema_version"], "schema_version")
@@ -543,6 +563,17 @@ class NodeConfig:
         worker_ids = [worker.worker_id.casefold() for worker in workers]
         if len(set(worker_ids)) != len(worker_ids):
             raise NodeConfigError("worker ids must be unique case-insensitively")
+        automatic_workers = tuple(worker for worker in workers if worker.model.casefold() == "auto")
+        if len(automatic_workers) > 1:
+            raise NodeConfigError("public-alpha automatic placement supports at most one auto worker")
+        if automatic_workers and len(models) > MAX_AUTOMATIC_PLACEMENT_CANDIDATES:
+            raise NodeConfigError(
+                f"automatic placement supports at most {MAX_AUTOMATIC_PLACEMENT_CANDIDATES} configured models"
+            )
+        if automatic_workers and automatic_workers[0].num_blocks > MAX_AUTOMATIC_PLACEMENT_BLOCKS:
+            raise NodeConfigError(
+                f"automatic placement supports at most {MAX_AUTOMATIC_PLACEMENT_BLOCKS} blocks per worker"
+            )
         policy_value = source.get("contribution_policy")
         contribution_policy = (
             ContributionPolicyConfig() if policy_value is None else ContributionPolicyConfig.from_dict(policy_value)
@@ -552,6 +583,9 @@ class NodeConfig:
             max_loaded_models=_require_positive_int(source.get("max_loaded_models", 1), "max_loaded_models"),
             models=models,
             auto_model_priority=_require_model_list(source.get("auto_model_priority", []), "auto_model_priority"),
+            route_demand_authority_roots=_require_route_demand_authority_roots(
+                source.get("route_demand_authority_roots", []), "route_demand_authority_roots"
+            ),
             workers=workers,
             contribution_policy=contribution_policy,
             discovery_update_period=_require_positive_number(

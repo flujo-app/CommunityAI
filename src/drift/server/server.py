@@ -39,6 +39,12 @@ from drift.server.backend import TransformerBackend, merge_inference_pools_inpla
 from drift.server.block_utils import get_block_size, resolve_block_dtype
 from drift.server.from_pretrained import load_pretrained_block
 from drift.server.handler import TransformerConnectionHandler
+from drift.server.health import (
+    HealthStateError,
+    build_public_worker_health,
+    validate_health_state_path,
+    write_public_worker_health,
+)
 from drift.server.memory_cache import MemoryCache
 from drift.server.reachability import ReachabilityProtocol, check_direct_reachability
 from drift.server.throughput import get_dtype_name, get_server_throughput
@@ -149,6 +155,7 @@ class Server:
         use_relay: bool = True,
         use_auto_relay: bool = True,
         adapters: Sequence[str] = (),
+        health_state_path: Optional[str] = None,
         **kwargs,
     ):
         """Create a server with one or more bloom blocks. See run_server.py for documentation."""
@@ -189,6 +196,11 @@ class Server:
         if model_manifest is not None:
             model_manifest.validate_model_config(self.block_config)
         self.model_manifest = model_manifest
+        if health_state_path is not None and model_manifest is None:
+            raise ValueError("machine-readable public health is only valid with --model_manifest")
+        self.health_state_path = (
+            validate_health_state_path(health_state_path) if health_state_path is not None else None
+        )
         self.admission_policy = (
             (admission_policy if admission_policy is not None else AdmissionPolicy())
             if model_manifest is not None
@@ -548,71 +560,84 @@ class Server:
         )
         return num_blocks
 
+    def _create_module_container(self, block_indices: List[int]) -> ModuleContainer:
+        return ModuleContainer.create(
+            dht=self.dht,
+            dht_prefix=self.dht_prefix,
+            converted_model_name_or_path=self.converted_model_name_or_path,
+            block_config=self.block_config,
+            attn_cache_bytes=self.attn_cache_bytes,
+            server_info=self.server_info,
+            model_info=self.model_info,
+            block_indices=block_indices,
+            num_handlers=self.num_handlers,
+            min_batch_size=self.min_batch_size,
+            max_batch_size=self.max_batch_size,
+            max_chunk_size_bytes=self.max_chunk_size_bytes,
+            max_alloc_timeout=self.max_alloc_timeout,
+            paged_cache=self.paged_cache,
+            page_size=self.page_size,
+            inference_max_length=self.inference_max_length,
+            torch_dtype=self.torch_dtype,
+            cache_dir=self.cache_dir,
+            max_disk_space=self.max_disk_space,
+            device=self.device,
+            compression=self.compression,
+            stats_report_interval=self.stats_report_interval,
+            update_period=self.update_period,
+            expiration=self.expiration,
+            request_timeout=self.request_timeout,
+            session_timeout=self.session_timeout,
+            step_timeout=self.step_timeout,
+            prefetch_batches=self.prefetch_batches,
+            sender_threads=self.sender_threads,
+            revision=self.revision,
+            token=self.token,
+            model_manifest=self.model_manifest,
+            admission_policy=self.admission_policy,
+            protocol_identity=self.protocol_identity,
+            manifest_execution_profile=self.manifest_execution_profile,
+            revocations=self.revocations,
+            replay_guard=self.announcement_replay_guard,
+            quant_type=self.quant_type,
+            tensor_parallel_devices=self.tensor_parallel_devices,
+            ready_timeout=self.ready_timeout,
+            health_state_path=self.health_state_path,
+            start=True,
+        )
+
+    def _run_module_container(self, block_indices: List[int]) -> bool:
+        self.module_container = self._create_module_container(block_indices)
+        try:
+            self.module_container.ready.wait()
+            if self.stop.wait(0):
+                return True
+            if self.health_state_path is not None and not self.module_container.is_healthy():
+                logger.warning("Public worker failed its initial aggregate health check")
+                return False
+
+            while True:
+                timeout = random.random() * 2 * self.mean_balance_check_period
+                if self.stop.wait(timeout):
+                    return True
+
+                if not self.module_container.is_healthy():
+                    logger.warning("One of subprocesses crashed, restarting the server")
+                    return False
+
+                if self._should_choose_other_blocks():
+                    logger.info("Swarm is imbalanced, server will load other blocks")
+                    return False
+        finally:
+            try:
+                self.module_container.shutdown()
+            finally:
+                self._clean_memory_and_fds()
+
     def run(self):
         while True:
-            block_indices = self._choose_blocks()
-            self.module_container = ModuleContainer.create(
-                dht=self.dht,
-                dht_prefix=self.dht_prefix,
-                converted_model_name_or_path=self.converted_model_name_or_path,
-                block_config=self.block_config,
-                attn_cache_bytes=self.attn_cache_bytes,
-                server_info=self.server_info,
-                model_info=self.model_info,
-                block_indices=block_indices,
-                num_handlers=self.num_handlers,
-                min_batch_size=self.min_batch_size,
-                max_batch_size=self.max_batch_size,
-                max_chunk_size_bytes=self.max_chunk_size_bytes,
-                max_alloc_timeout=self.max_alloc_timeout,
-                paged_cache=self.paged_cache,
-                page_size=self.page_size,
-                inference_max_length=self.inference_max_length,
-                torch_dtype=self.torch_dtype,
-                cache_dir=self.cache_dir,
-                max_disk_space=self.max_disk_space,
-                device=self.device,
-                compression=self.compression,
-                stats_report_interval=self.stats_report_interval,
-                update_period=self.update_period,
-                expiration=self.expiration,
-                request_timeout=self.request_timeout,
-                session_timeout=self.session_timeout,
-                step_timeout=self.step_timeout,
-                prefetch_batches=self.prefetch_batches,
-                sender_threads=self.sender_threads,
-                revision=self.revision,
-                token=self.token,
-                model_manifest=self.model_manifest,
-                admission_policy=self.admission_policy,
-                protocol_identity=self.protocol_identity,
-                manifest_execution_profile=self.manifest_execution_profile,
-                revocations=self.revocations,
-                replay_guard=self.announcement_replay_guard,
-                quant_type=self.quant_type,
-                tensor_parallel_devices=self.tensor_parallel_devices,
-                ready_timeout=self.ready_timeout,
-                start=True,
-            )
-            try:
-                self.module_container.ready.wait()
-
-                while True:
-                    timeout = random.random() * 2 * self.mean_balance_check_period
-                    if self.stop.wait(timeout):
-                        return
-
-                    if not self.module_container.is_healthy():
-                        logger.warning("One of subprocesses crashed, restarting the server")
-                        break
-
-                    if self._should_choose_other_blocks():
-                        logger.info("Swarm is imbalanced, server will load other blocks")
-                        break  # Stop serving this set of modules
-            finally:
-                self.module_container.shutdown()
-
-            self._clean_memory_and_fds()
+            if self._run_module_container(self._choose_blocks()):
+                return
 
     def _clean_memory_and_fds(self):
         self.module_container = None
@@ -848,6 +873,7 @@ class ModuleContainer(threading.Thread):
         session_timeout: float,
         step_timeout: float,
         ready_timeout: float = 120,
+        health_state_path: Optional[str] = None,
         start: bool,
         **kwargs,
     ):
@@ -855,6 +881,7 @@ class ModuleContainer(threading.Thread):
         # readiness timeout aborts the process; graceful teardown always goes through shutdown().
         super().__init__(daemon=True)
         self.ready_timeout = ready_timeout
+        self.health_state_path = health_state_path
 
         self.dht, self.module_backends = dht, module_backends
         self.server_info, self.update_period, self.expiration = server_info, update_period, expiration
@@ -983,14 +1010,11 @@ class ModuleContainer(threading.Thread):
         return self.runtime.ready  # mp.Event that is true if self is ready to process batches
 
     def is_healthy(self) -> bool:
-        admission_healthy = True
+        admission_snapshot = None
+        admission_healthy = self.admission_state is None
         if self.admission_state is not None:
             try:
                 admission_snapshot = self.admission_state.snapshot()
-            except AdmissionRejected:
-                admission_healthy = False
-                logger.error("Public admission health is unavailable; the worker will restart")
-            else:
                 admission_healthy = admission_snapshot["healthy"]
                 logger.info(
                     "Public admission health: active=%d tracked_peers=%d routes=%d pending_pushes=%d "
@@ -1003,12 +1027,39 @@ class ModuleContainer(threading.Thread):
                     admission_snapshot["rejected_sessions"],
                     admission_snapshot["healthy"],
                 )
-        return (
-            admission_healthy
-            and self.dht_announcer.is_alive()
-            and all(handler.is_alive() for handler in self.conn_handlers)
-            and all(pool.is_alive() for pool in self.runtime.pools)
-        )
+            except AdmissionRejected:
+                admission_snapshot = None
+                logger.error("Public admission health is unavailable; the worker will restart")
+            except Exception:
+                admission_snapshot = None
+                admission_healthy = False
+                logger.error("Unexpected public admission health failure; the worker will restart")
+
+        announcer_alive = self.dht_announcer.is_alive()
+        handlers_alive = all(handler.is_alive() for handler in self.conn_handlers)
+        pools_alive = all(pool.is_alive() for pool in self.runtime.pools)
+        previous_health = admission_healthy and announcer_alive and handlers_alive and pools_alive
+        if self.health_state_path is None:
+            return previous_health
+
+        ready = self.ready.is_set()
+        healthy = previous_health and ready
+        try:
+            payload = build_public_worker_health(
+                manifest_digest=self.server_info.manifest_digest,
+                start_block=self.server_info.start_block,
+                end_block=self.server_info.end_block,
+                admission_snapshot=admission_snapshot,
+                ready=ready,
+                announcer_alive=announcer_alive,
+                handlers_alive=handlers_alive,
+                pools_alive=pools_alive,
+            )
+            write_public_worker_health(self.health_state_path, payload)
+        except HealthStateError:
+            logger.error("Machine-readable public health is unavailable; the worker will restart")
+            return False
+        return healthy
 
     def shutdown(self):
         """

@@ -1,0 +1,71 @@
+{
+  "cleanup": {
+    "absence_checks": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "all_absent": true,
+    "delete_commands_passed": 5
+  },
+  "co_located_fallback_not_redundancy": true,
+  "complete_release_qualification": false,
+  "elapsed_seconds": 839.969,
+  "failure_stage": "startup_health",
+  "health_sample_count": 0,
+  "lifecycle_source_commit": "0ea140f3fe764a6772a3b4217ead4bcd7e93562f",
+  "observed_maxima_bytes": {},
+  "privacy": {
+    "command_argv_retained": false,
+    "credentials_retained": false,
+    "endpoints_retained": false,
+    "outputs_retained": false,
+    "paths_retained": false,
+    "peer_ids_retained": false,
+    "prompts_retained": false,
+    "provider_ids_retained": false,
+    "provider_output_retained": false,
+    "token_ids_retained": false
+  },
+  "protected_bootstrap_running": true,
+  "provider_plan_digest": "sha256:dc11838569220a3fd7d7afbd3e8e70f49ac9034994071252b11931dd9ad45947",
+  "result": "failed",
+  "route_bindings": [
+    {
+      "candidate": "qwen3.5-2b",
+      "image_digest": "sha256:a62d7100cf2179a362cf8973d3c397ccd216f11a05af9354bc44fd1250024764",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "publication_evidence_digest": "sha256:66af8b125e275dd34dd3d7acaf97d5a2b2d4b1b4352bd321578ec6c6e211cbdc",
+      "role": "primary"
+    },
+    {
+      "candidate": "gemma-4-e2b",
+      "image_digest": "sha256:bfa183a7e2b7bb03cdc45dcd6bc14dfe4a02d2872813f7b466165470e076a796",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "publication_evidence_digest": "sha256:9d6a631176f47b6fda13edaf48848a1d058d453b25968469179e0a98a18ac585",
+      "role": "standby"
+    }
+  ],
+  "run_id": "route-20260830-a",
+  "schema_version": 1,
+  "scope": "gcp-public-route-lifecycle-evidence",
+  "stages": {
+    "auto_fallback": false,
+    "auto_primary": false,
+    "auto_restored": false,
+    "bootstrap": true,
+    "cleanup": true,
+    "create": true,
+    "local_validation": true,
+    "monitor": false,
+    "native_authentication": true,
+    "primary_disabled": false,
+    "primary_inference": false,
+    "primary_restored": false,
+    "provider_preflight": true,
+    "standby_inference": false
+  }
+}

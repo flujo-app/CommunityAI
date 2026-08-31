@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/desktop.yaml"
       - "desktop/**"
+      - "public-alpha/**"
       - "pyproject.toml"
       - "src/**"
       - "scripts/build_hivemind_windows.py"
@@ -19,7 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         # Public-alpha packaging is Windows/Linux only; macOS is explicitly deferred.
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            install_archive: communityai-desktop-linux.tar.gz
+          - os: windows-latest
+            platform: windows
+            install_archive: communityai-desktop-windows.zip
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
     defaults:
@@ -51,24 +58,61 @@ jobs:
           $wheel = Get-ChildItem ../dist/hivemind-1.1.12-*-win_amd64.whl | Select-Object -Last 1
           if (-not $wheel) { throw "Hivemind wheel build produced no artifact" }
           python -m pip install $wheel.FullName
+      - name: Install qualified Windows CUDA runtime
+        if: runner.os == 'Windows'
+        run: >-
+          python -m pip install
+          --index-url https://download.pytorch.org/whl/cu124
+          torch==2.6.0+cu124
       - name: Install production desktop and node runtime
         run: |
           python -m pip install -e "..[api]"
           python -m pip install -e ".[dev]"
+      - name: Verify qualified Windows CUDA runtime
+        if: runner.os == 'Windows'
+        run: python -c "import torch; assert torch.__version__ == '2.6.0+cu124'"
       - name: Run protocol and runtime-boundary tests
+        working-directory: .
         run: |
-          python -m unittest discover -s tests -v
+          python -m unittest discover -s desktop/tests -v
           communityai-desktop --self-test
-      - name: Build and smoke unsigned production bundle
-        run: python build_desktop.py
+      - name: Reverify qualified CUDA runtime before bundling
+        run: python -c "import torch; assert torch.__version__ == '2.6.0+cu124'"
+      - name: Build and smoke unsigned public-alpha bundle
+        run: >-
+          python build_desktop.py
+          --publication-bundle ../public-alpha/catalog-v1
+          --source-commit "${{ github.sha }}"
+          --build-workflow "${{ github.workflow_ref }}"
+      - name: Independently verify release checksums and expected provenance
+        run: >-
+          python build_desktop.py
+          --verify-release-output dist/desktop
+          --publication-bundle ../public-alpha/catalog-v1
+          --source-commit "${{ github.sha }}"
+          --build-workflow "${{ github.workflow_ref }}"
+          --verify-build-environment
       - name: Exercise packaged node, native credentials, and public seed
         if: runner.os == 'Windows'
         run: >-
           python ../scripts/smoke_desktop_managed_node.py
           --node-command dist/desktop/CommunityAI/node/CommunityAI-Node.exe
-      - name: Upload unsigned bundle and metrics
+      - name: Upload self-contained install archive
         uses: actions/upload-artifact@v6
         with:
-          name: communityai-desktop-${{ matrix.os }}
-          path: desktop/dist/desktop
+          name: communityai-desktop-install-${{ matrix.platform }}
+          path: desktop/dist/desktop/${{ matrix.install_archive }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload archive-bound audit evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: communityai-desktop-audit-${{ matrix.platform }}
+          path: |
+            desktop/dist/desktop/SHA256SUMS
+            desktop/dist/desktop/provenance.json
+            desktop/dist/desktop/release-metadata.json
+            desktop/dist/desktop/desktop-metrics.json
+          if-no-files-found: error
           retention-days: 7

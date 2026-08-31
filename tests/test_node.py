@@ -77,6 +77,7 @@ def test_node_status_requires_auth_and_reports_lazy_model():
             aliases=("tiny",),
             manifest_digest="sha256:" + "a" * 64,
             repository="org/tiny",
+            selected_whole_shard_bytes=1_234_567,
         ),
         lambda: loads.append(True) or ModelRuntime(FakeModel(), FakeTokenizer()),
     )
@@ -102,8 +103,12 @@ def test_node_status_requires_auth_and_reports_lazy_model():
         assert body["runtime_budget"] == {"max_loaded_models": 1, "resident_models": 0}
         assert body["models"][0]["state"] == "known"
         assert body["models"][0]["aliases"] == ["tiny"]
+        assert body["models"][0]["download"] == {
+            "schema_version": 1,
+            "selected_whole_shard_bytes": 1_234_567,
+        }
         assert body["contribution"] == {
-            "schema_version": 2,
+            "schema_version": 3,
             "configured": False,
             "editable": False,
             "policy": {
@@ -312,6 +317,11 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
         status = client.get("/control/v1/status", headers=headers).json()
         assert status["workers"] == [{"id": "worker", "model": "model", "state": "paused", "desired_running": False}]
         status_worker = status["contribution"]["workers"][0]
+        assert status_worker["placement"] == {
+            "automatic": False,
+            "block_indices": None,
+            "reason": None,
+        }
         assert status_worker["policy"] == {"admitted": True, "reason": None, "preferred": True}
         assert status_worker["resources"]["limits"]["vram_bytes"] == 4 * 1024**3
         assert status_worker["resources"]["measurements"]["power_watts"] == 125.0

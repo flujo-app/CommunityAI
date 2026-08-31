@@ -1,0 +1,47 @@
+{
+  "builder_cleanup": {
+    "absence_checks": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "all_absent": true,
+    "delete_commands_succeeded": 6
+  },
+  "builder_identity": {
+    "ephemeral": true,
+    "key_created": false,
+    "removed": true
+  },
+  "cached_manifest_count": 0,
+  "complete_release_qualification": false,
+  "elapsed_seconds": 1653.422,
+  "failure_stage": "cache_warm",
+  "maximum_estimate_usd": "10.00",
+  "privacy": {
+    "command_argv_retained": false,
+    "credentials_retained": false,
+    "paths_retained": false,
+    "provider_ids_retained": false,
+    "provider_output_retained": false
+  },
+  "protected_bootstrap_running": true,
+  "provider_plan_digest": "sha256:fc13db74e107795c6d2896e0135c4a669a3fd7618a9ef1c4feab54f2425cf948",
+  "repository": {
+    "absent_after_failure": true,
+    "location": "us-central1",
+    "mode": "REMOTE_REPOSITORY",
+    "private": false,
+    "retained": false,
+    "upstream": "https://ghcr.io"
+  },
+  "result": "failed",
+  "run_id": "cache-20260830-e",
+  "schema_version": 1,
+  "scope": "gcp-public-route-cache-lifecycle",
+  "source_commit": "c0bd81e4e3ced3cd05a642740e343da41d05aceb",
+  "temporary_public_access_used": false
+}

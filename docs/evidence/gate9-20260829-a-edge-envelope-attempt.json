@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "scope": "edge-resource-envelope-attempt",
+  "run_id": "gate9-20260829-a",
+  "gate": 9,
+  "result": "failed",
+  "source_commit": "ba256641a2696b35dcca86ce83fadbf9fc443e28",
+  "candidates": {
+    "qwen": {
+      "name": "Qwen3.5 2B",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+    },
+    "gemma": {
+      "name": "Gemma 4 E2B IT",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+      "attempted": false
+    }
+  },
+  "stop_reason": "Two independently launched Windows Qwen cold-client benchmark processes overlapped with separate empty caches. The one-attempt contract required both processes to be stopped before either produced a report; Linux and Gemma were not started.",
+  "setup": {
+    "route_profile": {
+      "provider": "gcp",
+      "operating_system": "linux",
+      "machine_type": "g2-standard-8",
+      "accelerator": "NVIDIA L4",
+      "gpu_memory_mib": 23034
+    },
+    "linux_client_profile": {
+      "provider": "gcp",
+      "operating_system": "linux",
+      "machine_type": "e2-standard-4",
+      "accelerator": "none"
+    },
+    "source_and_runtime_verified": true,
+    "qwen_route_ready_at": "2026-08-29T02:56:00Z",
+    "initial_windows_remote_script_transfer_failed_closed": true,
+    "corrected_transfer_byte_verified_lf_no_bom": true
+  },
+  "controls": {
+    "fly_operations": 0,
+    "docker_builds": 0,
+    "docker_pushes": 0,
+    "registry_mirrors": 0,
+    "qualification_or_recovery_reruns": 0,
+    "max_run_duration_seconds": 5400,
+    "instance_termination_action": "DELETE",
+    "boot_disks_auto_delete": true,
+    "artifact_watchdog_interval_seconds": 30,
+    "artifact_no_progress_limit_seconds": 300,
+    "qwen_model_deadline": "2026-08-29T03:43:31Z",
+    "watchdog_observed_route_ready": true
+  },
+  "client_results": {
+    "qwen_windows": {
+      "result": "stopped",
+      "distinct_processes_detected": 2,
+      "report_written": false
+    },
+    "qwen_linux": {
+      "result": "not_started"
+    },
+    "gemma_windows": {
+      "result": "not_started"
+    },
+    "gemma_linux": {
+      "result": "not_started"
+    }
+  },
+  "local_verification": {
+    "edge_benchmark_tests": {
+      "passed": 6
+    },
+    "focused_gate9_tests": {
+      "passed": 62,
+      "skipped": 1
+    },
+    "declared_windows_linux_offline_selection": {
+      "passed": 555,
+      "skipped": 11
+    },
+    "independent_tester_review": "failed-run stop condition and cleanup verified"
+  },
+  "cost": {
+    "combined_ceiling_usd": 100,
+    "maximum_estimate_usd": 28,
+    "observed_cost_usd": null,
+    "billing_state": "delayed",
+    "state_after_owner_directed_epoch_reset": "CLEANED-RELEASED"
+  },
+  "cleanup": {
+    "verified_at": "2026-08-29T03:04:40.6024677Z",
+    "run_instances_absent": true,
+    "run_boot_disks_absent": true,
+    "run_firewalls_absent": true,
+    "run_model_service_absent": true,
+    "edge_benchmark_processes_absent": true,
+    "project_gpu_usage_zero": true,
+    "protected_bootstrap_present": true,
+    "protected_bootstrap_state": "RUNNING"
+  },
+  "privacy": {
+    "prompt_retained": false,
+    "decoded_output_retained": false,
+    "credentials_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false,
+    "network_endpoints_retained": false
+  }
+}

@@ -1,3 +1,5 @@
+import hashlib
+import re
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -13,6 +15,29 @@ FLY_IMAGE = guard.FLY_DISCOVERY_IMAGE_REPOSITORY + "@sha256:" + "b" * 64
 FLY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "c" * 64
 WINDOWS_IMAGE = "windows-server-2022-dc-v20260814"
 LINUX_IMAGE = "ubuntu-2404-noble-amd64-v20260826"
+PRIMARY_IMAGE = guard.GCP_PRIMARY_IMAGE_REPOSITORY + "@sha256:" + "d" * 64
+STANDBY_IMAGE = guard.GCP_STANDBY_IMAGE_REPOSITORY + "@sha256:" + "e" * 64
+PRIMARY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "f" * 64
+STANDBY_IMAGE_EVIDENCE_DIGEST = "sha256:" + "1" * 64
+PRIMARY_PUBLICATION_IMAGE = guard.GCP_PRIMARY_PUBLICATION_IMAGE_REPOSITORY + "@sha256:" + "d" * 64
+STANDBY_PUBLICATION_IMAGE = guard.GCP_STANDBY_PUBLICATION_IMAGE_REPOSITORY + "@sha256:" + "e" * 64
+CACHE_BOOTSTRAP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "gcp_public_route_cache_startup.sh"
+CACHE_BOOTSTRAP_PAYLOAD = CACHE_BOOTSTRAP_PATH.read_bytes()
+CACHE_BOOTSTRAP_DIGEST = "sha256:" + hashlib.sha256(CACHE_BOOTSTRAP_PAYLOAD).hexdigest()
+CACHE_BOOTSTRAP_BYTES = len(CACHE_BOOTSTRAP_PAYLOAD)
+RUNTIME_BOOTSTRAP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "gcp_public_route_startup.sh"
+RUNTIME_BOOTSTRAP_PAYLOAD = RUNTIME_BOOTSTRAP_PATH.read_bytes()
+RUNTIME_BOOTSTRAP_DIGEST = "sha256:" + hashlib.sha256(RUNTIME_BOOTSTRAP_PAYLOAD).hexdigest()
+RUNTIME_BOOTSTRAP_BYTES = len(RUNTIME_BOOTSTRAP_PAYLOAD)
+HOST_CONTROLLER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "gcp_public_route_host.py"
+HOST_CONTROLLER_PAYLOAD = HOST_CONTROLLER_PATH.read_bytes()
+HOST_CONTROLLER_DIGEST = "sha256:" + hashlib.sha256(HOST_CONTROLLER_PAYLOAD).hexdigest()
+HOST_CONTROLLER_BYTES = len(HOST_CONTROLLER_PAYLOAD)
+ACCEPTANCE_PROBE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "public_route_acceptance.py"
+ACCEPTANCE_PROBE_PAYLOAD = ACCEPTANCE_PROBE_PATH.read_bytes()
+ACCEPTANCE_PROBE_DIGEST = "sha256:" + hashlib.sha256(ACCEPTANCE_PROBE_PAYLOAD).hexdigest()
+ACCEPTANCE_PROBE_BYTES = len(ACCEPTANCE_PROBE_PAYLOAD)
+INITIAL_PEER = "/ip4/34.42.181.232/tcp/31337/p2p/QmYwAPJzv5CZsnAzt8auVZRnGi2Cj8Xn4K6q5V9z8M2w7P"
 
 
 def _ledger(*rows: str) -> str:
@@ -78,6 +103,71 @@ def _fly_discovery_authorization(entries=(), **overrides):
     return guard.build_authorization(**values)
 
 
+def _gcp_public_route_authorization(entries=(), **overrides):
+    values = {
+        "entries": entries,
+        "run_id": "route-20260829-a",
+        "provider": "gcp",
+        "workload": guard.GCP_PUBLIC_ROUTE_WORKLOAD,
+        "purpose": "Gate 11 finite Qwen primary and Gemma standby routes",
+        "source_commit": SOURCE_COMMIT,
+        "maximum_hours": Decimal("14"),
+        "project": "community-ai-506321",
+        "zone": "us-central1-a",
+        "windows_image": None,
+        "linux_image": LINUX_IMAGE,
+        "cuda_fallback_zone": None,
+        "cuda_shape": "g2-l4",
+        "manual_maximum_usd": None,
+        "fly_app": None,
+        "fly_region": None,
+        "fly_image": None,
+        "fly_image_evidence_digest": None,
+        "primary_image": PRIMARY_IMAGE,
+        "primary_image_evidence_digest": PRIMARY_IMAGE_EVIDENCE_DIGEST,
+        "standby_image": STANDBY_IMAGE,
+        "standby_image_evidence_digest": STANDBY_IMAGE_EVIDENCE_DIGEST,
+        "runtime_bootstrap_digest": RUNTIME_BOOTSTRAP_DIGEST,
+        "runtime_bootstrap_bytes": RUNTIME_BOOTSTRAP_BYTES,
+        "initial_peer": INITIAL_PEER,
+        "host_controller_digest": HOST_CONTROLLER_DIGEST,
+        "host_controller_bytes": HOST_CONTROLLER_BYTES,
+        "acceptance_probe_digest": ACCEPTANCE_PROBE_DIGEST,
+        "acceptance_probe_bytes": ACCEPTANCE_PROBE_BYTES,
+        "today": date(2026, 8, 29),
+    }
+    values.update(overrides)
+    return guard.build_authorization(**values)
+
+
+def _gcp_public_route_cache_authorization(entries=(), **overrides):
+    values = {
+        "entries": entries,
+        "run_id": "cache-20260830-a",
+        "provider": "gcp",
+        "workload": guard.GCP_PUBLIC_ROUTE_CACHE_WORKLOAD,
+        "purpose": "Gate 11 private same-region route image cache",
+        "source_commit": SOURCE_COMMIT,
+        "maximum_hours": Decimal("6"),
+        "project": guard.GCP_ARTIFACT_REGISTRY_PROJECT,
+        "zone": "us-central1-a",
+        "windows_image": None,
+        "linux_image": LINUX_IMAGE,
+        "cuda_fallback_zone": None,
+        "cuda_shape": "n1-t4",
+        "manual_maximum_usd": None,
+        "primary_image": PRIMARY_PUBLICATION_IMAGE,
+        "primary_image_evidence_digest": PRIMARY_IMAGE_EVIDENCE_DIGEST,
+        "standby_image": STANDBY_PUBLICATION_IMAGE,
+        "standby_image_evidence_digest": STANDBY_IMAGE_EVIDENCE_DIGEST,
+        "cache_bootstrap_digest": CACHE_BOOTSTRAP_DIGEST,
+        "cache_bootstrap_bytes": CACHE_BOOTSTRAP_BYTES,
+        "today": date(2026, 8, 29),
+    }
+    values.update(overrides)
+    return guard.build_authorization(**values)
+
+
 def test_empty_placeholder_ledger_has_no_commitment():
     entries = guard.parse_spend_ledger(_ledger("| No new paid run recorded | — | — | USD 0 | USD 0 | — | READY |"))
 
@@ -95,6 +185,23 @@ def test_ledger_counts_unresolved_maximum_and_cleaned_observed_cost():
     assert entries[0].committed_usd == Decimal("20")
     assert entries[1].committed_usd == Decimal("3.25")
     assert sum((entry.committed_usd for entry in entries), Decimal("0")) == Decimal("23.25")
+
+
+def test_canceled_unprovisioned_run_commits_observed_zero_not_stale_maximum():
+    entries = guard.parse_spend_ledger(
+        _ledger("| canceled | GCP | stopped before create | USD 10 | USD 0 | no resources created | CANCELED |")
+    )
+
+    assert entries[0].committed_usd == Decimal("0")
+
+    with pytest.raises(guard.CostGuardError, match="requires cleanup proof"):
+        guard.parse_spend_ledger(
+            _ledger("| canceled | GCP | stopped before create | USD 10 | USD 0 | Not provisioned | CANCELED |")
+        )
+    with pytest.raises(guard.CostGuardError, match="observed cost"):
+        guard.parse_spend_ledger(
+            _ledger("| canceled | GCP | stopped before create | USD 10 | — | no resources created | CANCELED |")
+        )
 
 
 @pytest.mark.parametrize(
@@ -594,6 +701,269 @@ def test_fly_discovery_exact_reservation_binds_every_mutable_plan_input():
 def test_fly_discovery_seed_plan_rejects_unsafe_targets(overrides, message):
     with pytest.raises(guard.CostGuardError, match=message):
         _fly_discovery_authorization(**overrides)
+
+
+def test_gcp_public_route_cache_plan_is_private_bounded_and_exact():
+    report = _gcp_public_route_cache_authorization()
+
+    assert report["workload"] == guard.GCP_PUBLIC_ROUTE_CACHE_WORKLOAD
+    assert report["maximum_estimate_usd"] == "10.00"
+    assert report["remaining_after_run_maximum_usd"] == "90.00"
+    assert report["persistent_resources_after_pass"] is True
+    plan = report["provider_plan"]
+    assert plan["repository"] == {
+        "name": guard.GCP_ARTIFACT_REGISTRY_REPOSITORY,
+        "format": "DOCKER",
+        "mode": "REMOTE_REPOSITORY",
+        "upstream": "https://ghcr.io",
+        "host": guard.GCP_ARTIFACT_REGISTRY_HOST,
+        "private_after_prewarm": True,
+        "temporary_public_access": False,
+        "vulnerability_scanning": False,
+        "retained_after_pass": True,
+    }
+    builder = plan["builder"]
+    assert re.fullmatch(
+        r"ca-[0-9a-f]{20}@community-ai-506321\.iam\.gserviceaccount\.com",
+        builder["service_account"],
+    )
+    assert builder["repository_member"] == f"serviceAccount:{builder['service_account']}"
+    assert builder["service_account_key_created"] is False
+    assert builder["metadata_token_auth"] is True
+    assert builder["scopes"] == ["https://www.googleapis.com/auth/cloud-platform"]
+    assert builder["max_run_seconds"] == 21600
+    assert plan["images"][0]["source"] == PRIMARY_PUBLICATION_IMAGE
+    assert plan["images"][0]["cached"] == PRIMARY_IMAGE
+    assert plan["images"][1]["source"] == STANDBY_PUBLICATION_IMAGE
+    assert plan["images"][1]["cached"] == STANDBY_IMAGE
+    create = plan["create_commands"]
+    assert plan["required_services"] == [
+        "artifactregistry.googleapis.com",
+        "iam.googleapis.com",
+    ]
+    assert len(plan["verify_api_enabled_commands"]) == 2
+    assert all(
+        command[:4] == ["gcloud", "services", "list", "--enabled"] for command in plan["verify_api_enabled_commands"]
+    )
+    assert any("artifactregistry.googleapis.com" in command for command in create)
+    assert any("iam.googleapis.com" in command for command in create)
+    assert any("https://ghcr.io" in command for command in create)
+    assert not any("allUsers" in command for command in create + plan["cleanup_commands"])
+    assert builder["repository_member"] in create[4]
+    assert builder["repository_member"] in plan["revoke_builder_reader_command"]
+    flattened = {part for command in create + plan["cleanup_commands"] for part in command}
+    assert "communityai-bootstrap-1" not in flattened
+    assert len(plan["verify_cleanup_commands"]) == 6
+
+
+@pytest.mark.parametrize(
+    "overrides,message",
+    (
+        ({"maximum_hours": Decimal("6.01")}, "no more than 6"),
+        ({"project": "other-project"}, "reviewed us-central1 project"),
+        ({"zone": "us-east1-b"}, "reviewed us-central1 project"),
+        ({"primary_image": PRIMARY_IMAGE}, "immutable published Qwen"),
+        ({"standby_image": STANDBY_IMAGE}, "immutable published Gemma"),
+        ({"cache_bootstrap_digest": "SHA256:" + "1" * 64}, "canonical digest"),
+        ({"cache_bootstrap_bytes": 0}, "between 1 and 16384"),
+        ({"runtime_bootstrap_digest": RUNTIME_BOOTSTRAP_DIGEST}, "fixed CPU prewarm"),
+        ({"cuda_shape": "g2-l4"}, "fixed CPU prewarm"),
+    ),
+)
+def test_gcp_public_route_cache_rejects_unreviewed_inputs(overrides, message):
+    with pytest.raises(guard.CostGuardError, match=message):
+        _gcp_public_route_cache_authorization(**overrides)
+
+
+def test_gcp_public_route_plan_binds_finite_routes_health_and_cleanup():
+    report = _gcp_public_route_authorization()
+
+    assert report["workload"] == guard.GCP_PUBLIC_ROUTE_WORKLOAD
+    assert report["maximum_estimate_usd"] == "26.00"
+    assert report["remaining_after_run_maximum_usd"] == "74.00"
+    assert report["provisioning_authorized"] is False
+    assert report["cleanup_required_for_pass"] is False
+    assert report["failure_cleanup_required"] is True
+    assert report["persistent_resources_after_pass"] is True
+
+    plan = report["provider_plan"]
+    assert plan["maximum_runtime_hours"] == "14"
+    assert plan["machine"] == {
+        "machine_type": "g2-standard-8",
+        "accelerator": "NVIDIA L4",
+        "boot_disk_gib": 200,
+        "boot_disk_type": "pd-balanced",
+        "os_image": LINUX_IMAGE,
+        "service_account": False,
+        "scopes": [],
+        "public_ipv4": "ephemeral and bound to the instance lifetime",
+        "public_tcp_ports": [31337, 31338],
+        "max_run_seconds": 50400,
+        "termination_action": "DELETE",
+    }
+    assert [(route["role"], route["candidate"], route["manifest_digest"]) for route in plan["routes"]] == [
+        ("primary", "qwen3.5-2b", guard.GCP_PRIMARY_MANIFEST_DIGEST),
+        ("standby", "gemma-4-e2b", guard.GCP_STANDBY_MANIFEST_DIGEST),
+    ]
+    assert plan["routes"][0]["image"] == PRIMARY_IMAGE
+    assert plan["routes"][1]["image"] == STANDBY_IMAGE
+    assert plan["runtime_bootstrap"] == {
+        "relative_path": "scripts/gcp_public_route_startup.sh",
+        "sha256": RUNTIME_BOOTSTRAP_DIGEST,
+        "byte_size": RUNTIME_BOOTSTRAP_BYTES,
+        "source_commit_bound": True,
+        "validated_by_cost_guard": False,
+    }
+    assert plan["host_controller"] == {
+        "relative_path": "scripts/gcp_public_route_host.py",
+        "sha256": HOST_CONTROLLER_DIGEST,
+        "byte_size": HOST_CONTROLLER_BYTES,
+        "source_commit_bound": True,
+        "validated_by_cost_guard": False,
+    }
+    assert plan["acceptance_probe"] == {
+        "relative_path": "scripts/public_route_acceptance.py",
+        "sha256": ACCEPTANCE_PROBE_DIGEST,
+        "byte_size": ACCEPTANCE_PROBE_BYTES,
+        "source_commit_bound": True,
+        "validated_by_cost_guard": False,
+    }
+    assert plan["initial_peer"] == INITIAL_PEER
+    assert plan["operating_contract"]["resource_ceilings"] == {
+        "qwen_device_memory_gib": 7,
+        "gemma_device_memory_gib": 15,
+        "combined_device_memory_gib": 22,
+        "host_memory_gib": 30,
+        "route_storage_gib": 160,
+        "combined_logs_gib": 1,
+        "qualification_claim": False,
+    }
+    assert "not independent redundancy" in plan["topology"]
+    assert plan["operating_contract"]["health_sample_period_seconds"] == 300
+    assert any("auto selects Qwen" in item for item in plan["operating_contract"]["required_ready_evidence"])
+    assert any("unavailable" in item for item in plan["operating_contract"]["stop_conditions"])
+    assert "both routes" in plan["operating_contract"]["disable_contract"]
+    assert "no redundancy claim" in plan["operating_contract"]["degraded_contract"]
+    assert len(plan["create_commands"]) == 5
+    assert len(plan["cleanup_commands"]) == 5
+    assert len(plan["verify_cleanup_commands"]) == 6
+    iap_firewall = plan["create_commands"][-2]
+    assert "tcp:22" in iap_firewall
+    assert guard.GCP_IAP_SOURCE_RANGE in iap_firewall
+    create_instance = plan["create_commands"][-1]
+    assert "startup-script=scripts/gcp_public_route_startup.sh" in create_instance
+    verify_instance = plan["verify_create_commands"][0]
+    assert verify_instance[verify_instance.index("--format") + 1] == (
+        "json(status,machineType,scheduling.maxRunDuration," "networkInterfaces[0].accessConfigs[0].natIP)"
+    )
+    assert ["--max-run-duration", "50400s"] == create_instance[
+        create_instance.index("--max-run-duration") : create_instance.index("--max-run-duration") + 2
+    ]
+    assert ["--instance-termination-action", "DELETE"] == create_instance[
+        create_instance.index("--instance-termination-action") : create_instance.index("--instance-termination-action")
+        + 2
+    ]
+    flattened_cleanup = {part for command in plan["cleanup_commands"] for part in command}
+    assert "communityai-bootstrap-1" not in flattened_cleanup
+    assert report["provider_plan_digest"] in report["ledger_purpose"]
+
+
+def test_gcp_public_route_exact_reservation_binds_every_mutable_input():
+    planned = _gcp_public_route_authorization()
+    reservation = guard.LedgerEntry(
+        run_id=planned["run_id"],
+        provider="GCP",
+        purpose=planned["ledger_purpose"],
+        maximum_usd=Decimal("26"),
+        observed_usd=None,
+        cleanup_proof="Not provisioned",
+        state="PLANNED",
+    )
+
+    authorized = _gcp_public_route_authorization(entries=(reservation,))
+    assert authorized["provisioning_authorized"] is True
+    assert authorized["remaining_after_run_maximum_usd"] == "74.00"
+
+    mutations = (
+        {"zone": "us-east1-b"},
+        {"maximum_hours": Decimal("13")},
+        {"primary_image": guard.GCP_PRIMARY_IMAGE_REPOSITORY + "@sha256:" + "2" * 64},
+        {"primary_image_evidence_digest": "sha256:" + "3" * 64},
+        {"standby_image": guard.GCP_STANDBY_IMAGE_REPOSITORY + "@sha256:" + "4" * 64},
+        {"standby_image_evidence_digest": "sha256:" + "5" * 64},
+        {"runtime_bootstrap_digest": "sha256:" + "6" * 64},
+        {"runtime_bootstrap_bytes": RUNTIME_BOOTSTRAP_BYTES - 1},
+        {"initial_peer": INITIAL_PEER.replace("34.42.181.232", "35.42.181.232")},
+        {"host_controller_digest": "sha256:" + "7" * 64},
+        {"host_controller_bytes": HOST_CONTROLLER_BYTES - 1},
+        {"acceptance_probe_digest": "sha256:" + "8" * 64},
+        {"acceptance_probe_bytes": ACCEPTANCE_PROBE_BYTES - 1},
+    )
+    for mutation in mutations:
+        with pytest.raises(guard.CostGuardError, match="purpose/source/plan"):
+            _gcp_public_route_authorization(entries=(reservation,), **mutation)
+
+
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        ({"windows_image": WINDOWS_IMAGE}, "does not accept Windows"),
+        ({"cuda_shape": "n1-t4"}, "requires g2-l4"),
+        ({"maximum_hours": Decimal("0")}, "greater than zero"),
+        ({"maximum_hours": Decimal("14.01")}, "no more than 14"),
+        ({"primary_image": guard.GCP_PRIMARY_IMAGE_REPOSITORY + ":latest"}, "immutable Qwen"),
+        ({"standby_image": guard.GCP_STANDBY_IMAGE_REPOSITORY + ":latest"}, "immutable Gemma"),
+        (
+            {"primary_image": "ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:" + "2" * 64},
+            "immutable Qwen CUDA route",
+        ),
+        (
+            {"standby_image": "ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:" + "3" * 64},
+            "immutable Gemma CUDA route",
+        ),
+        ({"primary_image_evidence_digest": "SHA256:" + "f" * 64}, "publication-evidence digest"),
+        ({"standby_image_evidence_digest": None}, "immutable images, evidence digests"),
+        ({"runtime_bootstrap_digest": "SHA256:" + "4" * 64}, "canonical source digest"),
+        ({"runtime_bootstrap_bytes": 0}, "between 1 and 16384 bytes"),
+        ({"runtime_bootstrap_bytes": 16_385}, "between 1 and 16384 bytes"),
+        ({"initial_peer": "/ip4/127.0.0.1/tcp/1"}, "authenticated multiaddr"),
+        ({"initial_peer": INITIAL_PEER.replace("/tcp", " /tcp")}, "authenticated multiaddr"),
+        ({"initial_peer": INITIAL_PEER.replace("/tcp", "\t/tcp")}, "authenticated multiaddr"),
+        ({"initial_peer": INITIAL_PEER + "\n"}, "authenticated multiaddr"),
+        ({"host_controller_digest": "SHA256:" + "5" * 64}, "canonical source digest"),
+        ({"host_controller_bytes": 0}, "between 1 and 131072 bytes"),
+        ({"acceptance_probe_digest": "SHA256:" + "6" * 64}, "canonical source digest"),
+        ({"acceptance_probe_bytes": 65_537}, "between 1 and 65536 bytes"),
+    ],
+)
+def test_gcp_public_route_plan_rejects_unsafe_or_incomplete_targets(overrides, message):
+    with pytest.raises(guard.CostGuardError, match=message):
+        _gcp_public_route_authorization(**overrides)
+
+
+def test_gcp_public_route_peer_allows_dns_names_containing_s():
+    peer = INITIAL_PEER.replace("/ip4/34.42.181.232/", "/dns4/seed.communityai.example/")
+
+    authorization = _gcp_public_route_authorization(initial_peer=peer)
+
+    assert authorization["provider_plan"]["initial_peer"] == peer
+
+
+def test_gcp_public_route_plan_respects_existing_combined_commitments():
+    entries = (
+        guard.LedgerEntry(
+            run_id="existing-run",
+            provider="GCP",
+            purpose="previous run",
+            maximum_usd=Decimal("75"),
+            observed_usd=None,
+            cleanup_proof="cleanup pending",
+            state="CLEANED",
+        ),
+    )
+
+    with pytest.raises(guard.CostGuardError, match="USD 100"):
+        _gcp_public_route_authorization(entries=entries)
 
 
 def test_provider_and_workload_must_match():

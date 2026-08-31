@@ -59,6 +59,10 @@ class ManifestError(ValueError):
     """A manifest is malformed, incompatible, or does not match its artifacts."""
 
 
+class ManifestTransferInterrupted(ManifestError):
+    """An immutable artifact transfer stopped before verification and may be resumed."""
+
+
 _WINDOWS_SHARING_VIOLATION = 32
 _VERIFIED_REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0)
 
@@ -599,6 +603,8 @@ class ManifestArtifactVerifier:
                             max_disk_space=self.max_disk_space,
                         )
                         resolved = self._resumable_hub_download(artifact, destination=candidate)
+            except ManifestTransferInterrupted:
+                raise
             except Exception as exc:
                 raise ManifestError(
                     f"Could not materialize declared artifact {artifact.path} from "
@@ -647,6 +653,17 @@ class ManifestArtifactVerifier:
             finally:
                 if temporary.exists():
                     temporary.unlink()
+
+    def partial_size(self, path: str) -> int:
+        """Return resumable bytes retained for one declared artifact, without exposing its local path."""
+        artifact = self.manifest.get_artifact(path)
+        if self.cache_dir is None:
+            return 0
+        partial, _, _ = self._resumable_paths(artifact)
+        try:
+            return partial.stat().st_size if partial.is_file() and not partial.is_symlink() else 0
+        except OSError:
+            return 0
 
     def _resumable_paths(self, artifact: ManifestArtifact) -> Tuple[Path, Path, Path]:
         """Return deterministic partial, final, and lock paths for one manifested artifact."""
@@ -725,7 +742,9 @@ class ManifestArtifactVerifier:
                 # Keep a bounded partial for a later Range request, but never expose it as a model file.
                 if partial.exists() and partial.stat().st_size > artifact.size:
                     partial.unlink()
-                raise ManifestError(f"Interrupted download of {artifact.path} at byte {offset}: {exc}") from exc
+                raise ManifestTransferInterrupted(
+                    f"Interrupted download of {artifact.path} at byte {offset}: {type(exc).__name__}"
+                ) from exc
             finally:
                 if "response" in locals():
                     response.close()

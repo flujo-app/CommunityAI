@@ -1,6 +1,6 @@
 # Revival baseline results
 
-Test dates: 2026-08-21 through 2026-08-28
+Test dates: 2026-08-21 through 2026-08-29
 
 These tests exercise `Maykeye/TinyLLama-v0` as an eight-block model and compare
 greedy distributed generation with the stock Transformers implementation. The
@@ -1371,6 +1371,271 @@ was executed, and the cloud ledger remains USD 0. Gate 16 remains `IN PROGRESS` 
 the malicious-load canary, monitored limited rollout, and disable/rollback drill
 produce immutable evidence.
 
+## Gate 11 finite public-route operating contract
+
+On 2026-08-29, the first current-critical-path Gate 11 slice added the
+`gcp-public-route` workload to the shared schema-v2 cloud guard. Its canonical
+provider-plan digest now binds one isolated `g2-standard-8`/L4 host, a 200 GiB
+balanced disk, an instance-lifetime ephemeral IPv4, a run-derived network/subnet and two firewalls, public TCP 31337-31338,
+and a hard maximum 14-hour `DELETE` deadline. The same plan binds the exact qualified
+Qwen3.5 2B primary and Gemma 4 E2B standby image and manifest digests and the SHA-256
+digests of both publication-evidence files.
+
+The operating contract requires a 60-minute startup bound, five-minute privacy-safe
+aggregate health, complete exact-manifest announcements, one primary and one standby
+inference, deliberate Qwen disable with Gemma fallback, Qwen restoration, explicit
+degraded/unavailable states, and immediate cleanup on a stop condition. The topology
+is deliberately honest: both routes may share the bounded host for the first alpha,
+so it is fallback coverage rather than independent redundancy and host loss removes
+both routes. Exact reverse-order cleanup and six empty-output absence checks cannot
+target the protected bootstrap or unnamed resources.
+
+The next software slice exposed a canonical machine-readable health boundary for
+manifested workers. `--health_state_path` must be absolute, regular, bounded,
+and below an existing non-symlink directory. Every internal health cycle atomically
+writes at most 4 KiB of mode-private JSON containing the exact manifest and block range,
+bounded admission aggregates, admission availability, component liveness, a UTC
+observation time, and the overall health bit. Missing/unhealthy admission state, a dead
+component, or an unsafe/unwritable target fails the worker health check. Legacy workers
+cannot enable the file and retain their previous health semantics. The focused health,
+admission, and manifest matrix passes 104 tests; the broader node/configuration/API
+matrix passes 174 tests with 2 skips. Independent review passed a 104-test focus and
+an expanded 231-test matrix with 2 skips, including native-Windows atomic replacement,
+unsafe-target, stop/cleanup-order, legacy-compatibility, and privacy probes. Formatting,
+import-order, import-smoke, and diff checks pass.
+
+Review then found a deployment-blocking distinction before any provider call: both
+pinned qualification images are CPU-only immutable snapshot carriers. Their Dockerfile
+explicitly excludes CUDA packages and installs `torch==2.6.0+cpu`, while their
+entrypoint rejects the complete manifested range needed by either route. The Ubuntu
+startup script installs a driver but no container runtime. The USD 26 plan therefore
+must remain unreserved until separately published CUDA public-route images and a
+fresh-VM container bootstrap are digest-bound and verified.
+
+The next source slice implements the separate CUDA route-image boundary. A strict
+tracked-archive contract accepts only the exact Qwen and Gemma carrier indexes and
+Linux runtime digests from their committed Gate 4 publication evidence, reconstructs
+the exact carrier reference, and verifies the exact candidate manifest and complete
+artifact inventory. The Buildx plan uses distinct
+`communityai-public-route-qwen3.5-2b` and
+`communityai-public-route-gemma-4-e2b` repositories, a source-commit-only tag,
+Linux amd64, maximum provenance, SPDX SBOM, push, and a fixed metadata output. It
+cannot substitute the CPU qualification repositories as route targets.
+
+`Dockerfile.public-route-cuda` copies only `/cache/model` from the immutable carrier
+into a fresh digest-pinned Python base. After the exact frozen environment is installed,
+the build re-verifies the source tree, Dockerfile, lock file, manifest, carrier evidence,
+and every model artifact before accepting the final image. The final image asserts Drift
+`2.3.0.dev2`, Torch `2.6.0+cu124`, CUDA 12.4, and the reviewed SM 86/90
+kernel set, then removes build inputs and runs as UID 65532 with offline model access,
+one exact full-range candidate, bounded admission and health, and training disabled.
+The wrapper builds the server argv without a shell and rejects any missing fixed image
+identity, non-global public address, unauthenticated bootstrap, or mutable path/input.
+
+A separate collector resolves the pushed immutable OCI index and exact Linux runtime,
+checks bounded layers and local uncompressed size, requires an exact build-argument
+schema plus exact structured source/carrier/base materials in SLSA provenance and an
+SPDX 2.3 SBOM with the exact Drift/Torch/NVIDIA runtime packages, and verifies non-root
+config/labels/environment/entrypoint. It binds those facts to the source and Dockerfile
+whose in-image build verifier re-hashed the complete snapshot; it does not execute the
+published GPU entrypoint or independently re-hash runtime files. Qwen and Gemma retain individual
+compressed/uncompressed bounds and a combined 160 GiB route-storage ceiling. This is
+publication machinery only: no image has yet been built or published, and there is no
+claim that the 4.6 GB and 10.3 GB snapshots fit concurrently inside the planned GPU
+allocation.
+
+The source slice also adds a fail-closed Ubuntu fresh-VM bootstrap. It pins the reviewed
+Ubuntu prerequisite versions, verifies the exact Google GPU installer generation and
+SHA-256 before requesting NVIDIA driver `570.211.01`, pins Docker
+`29.1.3`, containerd `2.2.1`, and NVIDIA Container Toolkit `1.20.0-1`,
+and verifies the installed packages, services, default NVIDIA runtime, exact driver,
+and visible GPU before atomically writing a private bounded readiness record. It
+removes any prior readiness record before the first check and traps partial temporary
+state, so a failed rerun cannot leave stale `ready:true` evidence. It neither
+authenticates a provider nor pulls or starts a route.
+
+The cost plan now binds that bootstrap's exact committed SHA-256 and byte count into
+the provider-plan digest and reservation identity, rejects both qualification
+repositories as route images, and fixes explicit 7 GiB Qwen, 15 GiB Gemma, 22 GiB
+combined device, 30 GiB host-memory, 160 GiB route-storage, and 1 GiB combined-log
+stop ceilings. These are operational limits, not qualified envelopes.
+
+The worker, image contract, evidence collector, bootstrap, and cost-guard matrix passes
+120 focused tests; the shared qualification/public-image superset passes 167 and the
+expanded cost contract alone passes 61. Independent verification reproduced all three
+results plus Black, isort, AST/import, Bash syntax, and diff checks. Adversarial
+provenance probes accepted a realistic reordered exact five-material BuildKit shape and
+rejected extra secret arguments, material digests hidden outside structured dependencies,
+correct digests under wrong URIs, extra or malformed materials, and config-source drift.
+Bootstrap probes proved stale readiness is removed before setup and the bounded record is
+published only after NVIDIA is observed as Docker's default runtime. At the pinned pricing
+snapshot, 14 hours of the single host, disk, and address with 25% headroom and the
+fixed USD 10 contingency round to a conservative USD 26. It fits the current USD 44
+balance but remains unreserved. No provider call was made, no image, resource, or route
+was created, no cloud state changed, and this slice spent USD 0. Gate 11 remains
+`IN PROGRESS`: first commit and push this verified source, publish both exact-source
+CUDA images and retain their bounded evidence, then implement and review the lifecycle
+runner before any exact plan may be reserved or operated.
+
+
+## Gate 11 CUDA publication attempt and fail-closed lifecycle
+
+On 2026-08-29, the first exact-source public-route build exposed a local Docker
+storage failure before publication: recursively changing the copied snapshot's mode
+forced a second copy of the multi-gigabyte carrier layer. Pushed source
+`d2ea7dea5f3541b86293279b0a650bb46ab82583` removes that copy-up and instead
+requires every root-owned snapshot entry to already be world-readable/traversable and
+non-writable. The 28-test image-contract focus passes.
+
+The exact Qwen context then completed a local OCI build and probe. It verified all
+4,571,197,320 declared artifact bytes, the snapshot permission contract, provenance,
+SBOM, 15 compressed layers below the 10 GB per-layer ceiling, local index
+`sha256:94d651088c8c65325a13084c79b0dcedef6793f18367a872569ad94c87bf96dc`,
+and Linux runtime manifest
+`sha256:1b6c995c98f985e7252f2418744d2243c678113dea47bf5a3e36a65e931620c4`.
+The largest model and CUDA layers were 3,572,741,562 and 3,270,207,187 bytes.
+
+The [bounded Qwen publication attempt](evidence/gate11-20260829-qwen-publication-attempt.json)
+executed only the emitted Buildx argv against its distinct source-bound GHCR tag.
+Docker reproduced the probed runtime manifest and authenticated the push, but the final
+five-minute transfer delta was 50,511,460 bytes. After 2,386 seconds, the still
+uncommitted upload session was stopped at the bounded transport limit and tag absence
+was verified. Gemma was not built or published after that external transport result.
+The attempt made no GCP or Fly call, created no cloud resource, and spent USD 0.
+
+The next provider-call-free slice implements the lifecycle boundary. The cost plan now
+also binds the exact initial discovery peer and committed host-controller and acceptance-
+probe SHA-256/byte identities. The lifecycle recomputes the complete authorization from
+the live ledger and canonical plan, requires exact passed publication evidence for both
+immutable route images, and validates every bound source file before provider
+authentication. Its native preflight requires active GCP and GitHub authentication,
+the exact G2/L4 shape, one free regional L4 and global GPU quota slot, the protected
+bootstrap running, and every run-scoped resource absent.
+
+After exact creation and bootstrap verification, only fixed host actions are accepted.
+The host controller starts digest-pinned Qwen primary and Gemma standby containers
+non-root with a read-only root filesystem, private persistent identity storage, training
+disabled, and the exact complete block spans. The lifecycle requires fresh monotonic
+machine-readable health, exact privacy-safe one-token primary, standby, automatic,
+fallback, and restored-primary acceptance, zero container restarts and unattributed GPU
+memory, and the plan's 7/15/22 GiB GPU, 30 GiB RAM, 160 GiB route-storage, and 1 GiB
+log ceilings. Any stop condition enters an unconditional cleanup path that attempts all
+five deletes and all six absence checks. Its bounded report retains no prompt, output,
+token ID, credential, path, endpoint, peer/provider ID, provider output, or command argv.
+
+The lifecycle/cost/host focus passes 102 tests, including altered local bindings before
+authentication, whitespace/control-bearing peer rejection plus DNS names containing
+`s`, quota schema/headroom, exact GCP duration parsing, one anchored 60-minute startup
+deadline propagated through both remote starts and health, separately bounded acceptance
+probes, shell-free fixed actions, mandatory pre-Docker acceptance binding, distinct
+root-executable and non-root-readable helper modes, helper-install compilation, pinned
+live-driver verification, fail-closed regular absolute log accounting, health
+freshness/identity/counter monotonicity, resource/restart stop boundaries, first-create-
+failure cleanup, protected-bootstrap revalidation, cleanup continuation, and evidence
+privacy. The stable shared startup/node/image-evidence/cost/lifecycle/host subset passes
+146 tests. Independent review reproduced all 102 focused tests with only two external
+SWIG deprecation warnings; Black, isort, and the diff check passed. Earlier inclusion of
+the unchanged image-contract materialization tests produced one or two intermittent
+Windows directory-rename failures in the FLUJO temporary root; each affected test passed
+alone. No provider call, reservation, route, or cloud spend occurred in the lifecycle
+slice.
+
+The earlier USD 26 estimate was unreserved. After the three cleaned Gate 9 maxima,
+the live authorization epoch had only USD 16 remaining, so the lifecycle deliberately
+could not regenerate a reservable plan.
+
+## Gate 11 exact-source CUDA image publication
+
+On 2026-08-29, bounded publisher `gate11pub-20260829-a` used one source-bound
+`e2-standard-4` builder with a 200 GB balanced auto-delete boot disk and a six-hour
+provider DELETE deadline. It executed only the image contract's exact emitted Buildx
+arguments for source `d2ea7dea5f3541b86293279b0a650bb46ab82583`. No route or GPU
+resource was created.
+
+The strict [Qwen publication evidence](evidence/gate11pub-20260829-a-qwen3.5-2b-publication-evidence.json)
+passes at immutable index
+`sha256:a62d7100cf2179a362cf8973d3c397ccd216f11a05af9354bc44fd1250024764`
+and Linux runtime
+`sha256:dac280c6b13825a95e1df1944909ed80fd3f271bb82865ed8aae31ba7892cb35`.
+It verifies all declared artifacts, the exact carrier and committed source hashes,
+15 bounded layers, non-root CUDA 12.4 / Torch 2.6.0 configuration, the fixed full block
+span, SLSA build arguments and materials, and required SPDX 2.3 CUDA packages. The
+published runtime is 6,913,972,002 measured uncompressed bytes.
+
+The strict [Gemma publication evidence](evidence/gate11pub-20260829-a-gemma-4-e2b-publication-evidence.json)
+passes at immutable index
+`sha256:bfa183a7e2b7bb03cdc45dcd6bc14dfe4a02d2872813f7b466165470e076a796`
+and Linux runtime
+`sha256:b59f737e19db25513e3eb34d43d45ef5be5c287eb5184f5587d648dd491634b3`.
+It verifies the same fail-closed contract for Gemma's exact manifest, revision, carrier,
+full block span, and 15 bounded layers; the published runtime is 11,011,575,237 measured
+uncompressed bytes. The first immutable carrier pull received a GHCR 429. A bounded retry
+reused the unchanged exact build plan and published successfully. Strict collector retry
+two passed after one registry-command failure.
+
+Current BuildKit provenance emits a digest-only carrier purl without a redundant
+`@sha256:<digest>` version segment. Collector commit
+`3088f3c801733e73c88f1336e03075871da5980e` canonicalizes only that exact equivalent
+form; repository or digest drift still fails. Its evidence/contract focus passes 30 tests,
+and Black, isort, and diff checks pass. The Qwen and Gemma reports both have
+`result: passed`, exact source commit and tree identities, artifact/source/carrier
+verification, required attestations, and immutable runtime references.
+
+The [publication attempt record](evidence/gate11pub-20260829-a-publication-attempt.json)
+proves registry logout and absence of both root and operator credential files. Immediate
+exact-builder deletion was attempted after evidence capture, but the existing local GCP
+credential initially required interactive reauthentication and no application-default
+credential was available. A later [sanitized cleanup verification](evidence/gate11pub-20260829-a-cleanup-verification-attempt.json)
+at 2026-08-30T00:36:31Z refreshed native authentication, observed the exact builder and
+auto-delete boot disk absent, and revalidated the protected bootstrap running. It created
+or deleted no resource, reserved no additional spend, and proves cleanup independently
+of the elapsed provider DELETE deadline. The USD 10 maximum remained fully committed while
+billing was delayed and left USD 6 at verification time. After cleanup was proved, the
+owner explicitly reset the combined authorization epoch to USD 100 on 2026-08-30 and
+prioritized the shortest authorized critical path. Gate 11 remains `IN PROGRESS`; its
+USD 26 route now fits but still requires an exact source-bound authorization, matching
+ledger reservation, fresh fail-closed preflight, bounded operation, and complete cleanup.
+
+## Gate 12 best-effort alpha publication contract
+
+A local Gate 12 review found that the publication preflight still imposed two HTTPS
+mirrors, two public seeds, two replicas, and two independent routes even though the
+settled alpha contract explicitly defers independent mirror/seed operators and
+production-SLO route redundancy. The preflight now accepts the honest alpha minimum of
+one pinned public HTTPS mirror, one public seed, one complete replica, one route, and
+one surviving replica. Exact signature threshold and expiry, catalog/manifest digests,
+weight totals, selector uniqueness, public endpoint validation, and distinct hosts,
+addresses, and peer identities for every additional endpoint remain fail-closed. The
+report explicitly leaves mirror/seed redundancy, independent operator ownership,
+public-route redundancy/soak, real qualification, and packaged inference unproved.
+
+The focused publication suite passes 32 tests, and the catalog/bootstrap/model/desktop
+publication superset passes 92. Coverage includes a one-mirror/one-seed/one-route alpha
+vector plus the existing duplicate-endpoint, unsafe transport, altered manifest,
+noncanonical bundle, symlink, overwrite, signature, and expiry boundaries.
+
+Run [`gate12-20260829-a`](evidence/gate12-20260829-alpha-catalog-publication.json)
+then generated a separate ignored Ed25519 release key and published the threshold-one
+[`communityai-public-alpha-v1` bundle](../public-alpha/catalog-v1/bundle.json) from
+source `26be579d27135424f495cfa56bb5e0e27ec6fbf8`. Sequence 1 binds exact
+Qwen primary manifest `sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`
+and Gemma standby manifest
+`sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd`,
+one pinned public HTTPS mirror, one public seed, and no route-demand roots. The canonical
+five-member bundle index is
+`sha256:d1d67591607f3f98bb3359cc9f6591d4fccf0469b52499e9b28b3929fb608537`
+and explicitly retains `complete_release_qualification=false`.
+
+After the bundle commit was pushed, the catalog and both digest-addressed manifests each
+returned HTTP 200 with their exact bundled sizes. A fresh consumer with no node
+configuration fetched the public catalog and manifests, verified the threshold signature,
+expiry, exact digests, and rollback sequence, then generated the two-model `auto`
+configuration with one bounded automatic worker and remote demand disabled. The private
+key remained ignored and uncommitted; the evidence retains no credential, private path,
+or endpoint. No cloud resource was created and the run spent USD 0. Gate 12 passes
+without claiming Gate 11 route operation, redundancy/soak, independent operators, or
+packaged clean-install inference.
+
 ## Follow-up issues
 
 1. Provision and register the four uniquely labelled Windows/Linux qualification hosts
@@ -1395,3 +1660,634 @@ Hivemind P2P cleanup no longer queries a closed global uvloop; legacy
 Transformers compatibility state while other unconsumed checkpoint keys still warn;
 and the CUDA smoke now asserts and reports the client embeddings/head's actual
 device and dtype.
+
+## Gate 11 framed lifecycle interruption and exact cleanup
+
+On 2026-08-30, the source-bound framed acknowledgement retry used source
+`0ea140f3fe764a6772a3b4217ead4bcd7e93562f` and the existing USD 26 Gate 11
+reservation. At workflow continuation, no lifecycle process or framed-attempt lifecycle
+report remained, while an exact read-only provider query found the run-scoped route host
+`RUNNING`. The retained attempt log contained only the local `uv --no-sync` environment
+warning, so the interrupted attempt makes no bootstrap, inference, fallback, monitoring,
+or Gate 11 pass claim. The older untracked generic lifecycle JSON was source-bound to
+`33d6545` and was excluded as stale evidence for this attempt.
+
+The recovery used only the authorization's five exact cleanup targets. All five delete
+commands succeeded. Fresh native-authenticated queries then returned six ordered absence
+checks—instance, auto-delete disk, network, subnet, public-route firewall, and IAP
+firewall—as `true`, and exactly one protected `communityai-bootstrap-1` remained
+`RUNNING`. The sanitized
+[interruption and cleanup evidence](evidence/gate11route-20260830-a-framed-interrupted-cleanup.json)
+retains no provider output, endpoint, credential, prompt, token, path, peer ID, or command
+argv. Gate 11 remains `IN PROGRESS`; the matching USD 26 reservation remains active for a
+fresh-preflight retry using a detached controller that survives workflow handoff.
+
+## Gate 11 detached bootstrap and first route-start failure
+
+On 2026-08-30, the first detached retry correctly failed before create because an older
+relative-path lifecycle controller still owned the exact run-scoped targets; its
+[provider-preflight report](evidence/gate11route-20260830-a-detached-retry-lifecycle.json)
+made no create or route claim. The process audit was widened from repository-qualified
+command lines to the exact lifecycle script name. After the older controller stopped,
+manual exact cleanup again proved all six resource classes absent and the protected
+bootstrap `RUNNING`, and a zero-controller check preceded retry B.
+
+[Detached retry B](evidence/gate11route-20260830-a-detached-retry-b-lifecycle.json)
+used source `0ea140f3fe764a6772a3b4217ead4bcd7e93562f`. It passed local validation,
+native/provider preflight, exact instance create, helper upload, and the pinned driver,
+Docker, containerd, toolkit, and GPU bootstrap. The first fixed route-start action then
+returned nonzero before any health sample. Cleanup passed all five exact delete commands,
+six ordered absence checks, and the protected-bootstrap check. The attempt therefore makes
+no inference, fallback, monitoring, or Gate 11 pass claim.
+
+Earlier Gate 11 publication had already observed a transient GHCR 429, while host startup
+performed each immutable digest pull only once. The fixed host controller now retries only
+`CommandError` pull failures at 5 and 15 seconds, never changes the digest, never extends the
+existing action/startup deadline, and still fails closed after the bounded window. Lifecycle
+evidence now distinguishes `start_primary`, `start_standby`, and later `startup_health`.
+Two new retry/deadline tests plus the existing host/lifecycle focus pass 53 tests; Black,
+isort, and `git diff --check` pass. The authorization must be regenerated against the pushed
+source and new helper digest before another provider call.
+
+## Gate 11 NVIDIA apt keyring permission boundary
+
+A concurrent source-`0ea140f` bootstrap attempt deterministically verified the pinned
+NVIDIA toolkit key digest but failed before any container or inference because the global
+bootstrap `umask 077` left the dearmored apt keyring unreadable to apt's unprivileged
+repository method. Its sanitized
+[keyring failure and cleanup evidence](evidence/gate11route-20260830-a-keyring-failure-cleanup.json)
+proves no duplicate create, no route start, five exact cleanup targets processed, six
+resource classes absent, and the protected bootstrap `RUNNING`.
+
+The pinned startup script now changes only the verified dearmored keyring to mode 0644
+immediately after `gpg --dearmor` and before apt reads the signed NVIDIA repository. The
+source key digest, repository URL, distribution selector, package versions, driver/runtime
+checks, root-only bootstrap state, and fail-closed cleanup remain unchanged. The startup
+test fixes that ordering, and the full 186-test Gate 11 lifecycle/host/startup/node/cost
+focus passes with Black, isort, and diff checks. The exact startup digest is included with
+the host pull-retry digest in the current route-C authorization.
+
+## Gate 11 corrected route authorization
+
+The startup-hardening code and cleanup evidence were first pushed as source `5ef5c5a`. A
+provider-free route-B plan then bound the exact bootstrap, host controller, acceptance probe,
+publication evidence, and isolated resource identity. Independent verification caught a
+Windows float-rounding edge before any provider call: `ceil(deadline - monotonic())` could
+produce a 3,571-second pull timeout for a validated 3,570-second action. Route B was canceled
+with USD 0 observed and no resource created.
+
+Source `47dadde939cc869f4b56ea1713127674350ece10` clamps every pull subprocess to the
+original validated action timeout and adds an exact infinitesimal-boundary regression. The
+129-test focused host/lifecycle/cost/startup set and expanded 186-test Gate 11 matrix pass;
+independent verification reproduced the clamp, retry schedule, immutable argv, single-action
+contract, formatting, import order, and diff checks. The provider-call-free route-C plan binds
+the exact 4,994-byte bootstrap, 28,920-byte host controller, unchanged acceptance probe,
+both immutable publication-evidence digests, and a new isolated six-resource identity. Its
+exact USD 26 ledger row was committed and pushed as `a870ea1` before reauthorization.
+
+The second identical guard pass emitted the
+[reserved route-C authorization](evidence/gate11route-20260830-c-cost-authorization.json)
+with `reservation_recorded=true`, `provisioning_authorized=true`, USD 100 available before
+the run, and USD 74 maximum headroom afterward. A real provider-free `load_bound_plan`
+rehashed every bound input and accepted the Qwen `(0, 24)` and Gemma `(0, 35)` complete
+spans. This remains cost authorization only: native authentication, quota/capacity, exact
+initial absence, zero competing controllers, and the protected-bootstrap check are mandatory
+immediately before the next provider call.
+
+## Gate 11 route-C primary-start failure
+
+The single detached route-C controller used the exact source-`47dadde` authorization after
+a zero-controller check. Native/provider preflight, exact create and verification, helper
+upload, and the pinned bootstrap passed. The first fixed primary-start action failed after
+584.578 seconds before any health sample or inference, fallback, restoration, or monitoring
+claim. Its sanitized
+[lifecycle evidence](evidence/gate11route-20260830-c-lifecycle.json) records failure stage
+`start_primary`, no retained provider output or command argv, five passed delete commands,
+all six resource classes absent, and the protected bootstrap still `RUNNING`.
+
+The route-C reservation is released after proved cleanup. Because the action boundary
+intentionally discarded raw host/provider output, the next source must expose only a fixed
+allowlisted failure code that distinguishes immutable image pull exhaustion from a later
+host-command failure. It may broaden retries only inside the immutable digest pull and the
+existing one-hour action deadline; it must not retry the whole non-idempotent start action or
+`docker run`.
+
+## Gate 11 privacy-safe host failure classification
+
+Source `cc2cbb393f19e203a4c7eb5e5abfdfe772dacddc` preserves the 0/5/15-second
+immutable pull schedule until live evidence distinguishes the boundary. Only pull exhaustion
+becomes `image_pull`; only a post-pull fixed Docker command failure becomes `host_command`,
+and `docker run` remains single-shot. The host returns nonzero with one bounded marker-framed
+failure acknowledgement. The lifecycle accepts it only with the exact schema, scope, action,
+details, and allowlisted code; zero-exit failure frames, nonzero success frames, wrong actions,
+unknown/extra/malformed/missing/duplicate frames fail generically. Raw stdout and stderr are
+discarded, while schema-v2 lifecycle evidence stores only the allowlisted code or null and
+still executes finally-based cleanup.
+
+The 137-test host/lifecycle/cost/startup focus, 194-test expanded Gate 11 matrix, and an
+8-case adversarial acknowledgement matrix pass. Independent verification reproduced the
+retry/no-retry, classification, privacy, cleanup, Black, isort, and diff contracts. The
+provider-call-free [route-D authorization](evidence/gate11route-20260830-d-cost-authorization.json)
+binds that exact source and 30,213-byte host helper, the unchanged 4,994-byte bootstrap and
+6,913-byte acceptance probe, both immutable publication records, a USD 26 maximum, and USD
+74 headroom. Its ledger row was committed as `bca3305`; the identical second guard pass set
+`reservation_recorded=true` and `provisioning_authorized=true`, and a real `load_bound_plan`
+accepted both complete spans.
+
+## Gate 11 route-D classified image-pull failure
+
+The single detached route-D controller first revalidated zero competing controllers, native
+GCP/GH authentication, quota/capacity, all six exact initial absences, and the protected
+bootstrap. Its [schema-v2 lifecycle evidence](evidence/gate11route-20260830-d-lifecycle.json)
+records successful provider preflight, exact create, and bootstrap before the first fixed
+primary-start action failed after 532.828 seconds with the allowlisted `image_pull` code.
+No health sample, inference, fallback, restoration, monitoring, raw output, endpoint, provider
+identifier, command argv, path, prompt, token ID, or credential was retained. Finally-based
+cleanup passed all five exact delete commands and six absence checks, and revalidated the
+protected bootstrap `RUNNING`; the route-D USD 26 reservation is therefore released.
+
+That real diagnosis permits one narrow retry change: immutable digest pulls use fixed
+0/5/15/60/120-second attempts, with every sleep and subprocess timeout clamped to the same
+original one-hour action deadline. The whole start action and post-pull `docker run` remain
+single-shot. Regression coverage proves success on the final attempt, persistent failure after
+all five identical-digest attempts retains `image_pull`, short deadlines skip unaffordable
+backoffs, float rounding cannot exceed the validated timeout, and post-pull failure remains
+`host_command` without retry. The focused host/lifecycle/startup/cost matrix passes 139 tests;
+the expanded image-contract/evidence/node matrix passes 196, with Black and isort checks.
+
+## Gate 11 route-E authorization
+
+The provider-call-free first guard pass generated route E from exact pushed source
+`22b468ad7901edaf85c0ff1c81594c1e90a102bd`, the 30,226-byte host helper, unchanged
+4,994-byte bootstrap and 6,913-byte acceptance probe, both immutable publication records,
+and a new isolated six-resource identity. It emitted plan
+`sha256:d80db65e522e6955b8d1df9853e961e0c8f0ed7e687152a26fb9d62f7dc1b016`
+with a USD 26 maximum, USD 100 available before the run, USD 74 maximum headroom after it,
+and `provisioning_authorized=false`. The exact `PLANNED` ledger row was then committed and
+pushed as `78fba04` before the identical second guard pass emitted the
+[authorized plan](evidence/gate11route-20260830-e-cost-authorization.json) with both
+reservation and provisioning booleans true.
+
+A real `load_bound_plan` rehashed the committed source inputs and accepted Qwen `(0, 24)`
+and Gemma `(0, 35)` complete spans. The lifecycle/cost matrix passes 113 tests. Independent
+provider-free verification reproduced the source, ledger, plan, file-size/digest,
+publication, six-resource, protected-bootstrap exclusion, 14-hour provider-DELETE, budget,
+privacy, and span bindings with no blocker or provider/authentication call.
+
+## Gate 11 route-E bounded-pull failure
+
+The single detached route-E controller used the pushed authorization after a zero-controller
+check. Native/provider preflight, exact create, and bootstrap passed. The fixed primary-start
+action retained the same immutable Qwen digest through all 0/5/15/60/120-second pull attempts,
+then failed after 729.609 seconds with the allowlisted `image_pull` code. Its
+[schema-v2 lifecycle evidence](evidence/gate11route-20260830-e-lifecycle.json) makes no health,
+inference, fallback, restoration, monitoring, or resource-maximum claim and retains none of
+the prohibited privacy fields or raw command/provider output. Finally-based cleanup passed
+five deletes and all six exact absence checks, and the protected bootstrap remained `RUNNING`.
+The route-E USD 26 reservation is released. A fresh read-only provider check confirmed the
+same absence and protected-bootstrap state. The unchanged plan must not be retried.
+
+## Gate 11 serialized immutable-image delivery
+
+Route E exceeded route D by 196.781 seconds, nearly the 180 seconds added by its final two
+backoffs, but failed at the same `image_pull` boundary. The Qwen publication contains
+6,913,950,955 compressed bytes with 3.57 GB and 3.27 GB layers; Gemma contains
+11,011,554,181 compressed bytes with 7.67 GB and 3.27 GB layers, and publication history
+already records a sanitized registry 429. Longer sleeps would consume the one-hour deadline
+shared by both route starts and health without addressing simultaneous blob requests.
+
+The pinned startup now loads the regular NVIDIA-managed Docker JSON, preserves its runtime
+keys, deterministically sets `max-concurrent-downloads` to integer `1`, writes a bounded
+mode-private temporary file with fsync and atomic replacement, validates the installed config,
+and only then restarts Docker and emits readiness with the same fixed value. Host preflight
+requires both that exact readiness field and the bounded regular daemon config before live
+Docker/NVIDIA checks. Missing, boolean, or non-one concurrency fails closed. The immutable
+pull schedule remains 0/5/15/60/120, every pull uses the same digest and deadline, and
+`docker run` plus the whole start action remain single-shot. The focused
+host/lifecycle/startup/cost matrix passes 140 tests; the expanded image-contract/evidence/node
+matrix passes 197. Bash syntax, Black, isort, and diff checks pass.
+
+## Gate 11 route-F authorization
+
+The provider-call-free first guard pass bound pushed source
+`77eaa8ad683477ac07498d4c2420d8a959afc1e7`, the 30,862-byte host helper, 6,938-byte
+serialized-download bootstrap, unchanged 6,913-byte acceptance probe, both immutable
+publication records, and a new isolated six-resource identity. It emitted plan
+`sha256:49b182a304b1cd4dd527345cd9f64c1ec80a74dfedda740b2a198c81279e6ece`
+with USD 100 before, USD 26 maximum, USD 74 maximum headroom after, and provisioning false.
+The exact reservation row was committed and pushed as `437ecf6`; the identical second pass
+then emitted the [authorized plan](evidence/gate11route-20260830-f-cost-authorization.json)
+with reservation and provisioning true.
+
+The real lifecycle loader rehashed every bound input and accepted Qwen `(0, 24)` and Gemma
+`(0, 35)` complete spans; 113 lifecycle/cost tests pass. Independent provider-free audit
+reproduced the source/ledger/plan/file/publication/resource/cleanup/14-hour DELETE/budget/privacy
+bindings and found no blocker or provider/authentication call.
+
+## Gate 11 route-F live result
+
+The [route-F lifecycle evidence](evidence/gate11route-20260830-f-lifecycle.json) passed local
+validation, native authentication, provider preflight, exact create, and pinned bootstrap,
+then failed closed at `start_primary` with `failure_code=image_pull` after 727.938 seconds.
+No health sample, inference, automatic selection, fallback, restoration, or monitoring claim
+was made. Serializing Docker to one concurrent blob download therefore did not change the
+route-E failure boundary or elapsed duration materially and the unchanged plan must not be
+retried.
+
+Finally-based cleanup passed all five exact delete commands and all six resource-absence
+checks; the protected bootstrap remained `RUNNING`. The schema-v2 record retains no command
+argv, credentials, endpoints, outputs, paths, peer/provider IDs, prompts, provider output, or
+token IDs. The route-F USD 26 reservation is released.
+
+## Gate 11 authenticated immutable-image prefetch
+
+Route F rules out both longer registry cooldowns and concurrent blob downloads as the cause
+of the repeated anonymous primary pull failure. The next source uses existing native `gh`
+authentication before paid creation: it resolves one strictly validated GitHub login and
+visible-ASCII token and rejects BOM/CR/NUL/whitespace/multiple-line/oversized payloads. The
+token never enters argv, environment, logs, or evidence.
+
+After pinned bootstrap, a non-secret sentinel must first survive the exact canonical-base64
+protected-file path. The lifecycle creates a random per-upload Windows directory, verifies an
+exact current-user-only protected DACL before any bytes are written, writes one binary no-BOM
+file, verifies its matching DACL and bytes, and invokes fixed `gcloud compute scp` with
+`shell=False`, IAP, discarded output, and no token argv or environment. The fixed `sudo -n`
+helper prepares an owner-only mode-0700 Linux staging directory, accepts only the exact bounded
+regular single-link owner-matched file, and removes the staging directory before decoding. One
+source-bound prefetch action then creates an exact root-owned mode-0700 Docker config under
+`/run`, authenticates to GHCR with `--password-stdin`, pulls the Qwen and Gemma immutable
+digests sequentially under the existing 0/5/15/60/120 retry and shared one-hour deadline,
+verifies both local digest inventories, and logs out/removes the config in its own `finally`.
+The outer lifecycle repeats idempotent registry cleanup before deleting provider resources.
+Evidence records `registry_credentials_removed` only when local file removal, remote staging
+and config removal or complete instance/disk absence, and in-memory zeroing all pass.
+
+Primary and standby start actions no longer pull; they require the exact local digest before
+their single fixed `docker run`. Registry login failure is allowlisted as `registry_auth`,
+pull exhaustion remains `image_pull`, and post-verification start failure remains
+`host_command`. The focused host/lifecycle suite passes 94 tests with two Linux ownership tests
+skipped on Windows, including malformed secret bytes, identity binding, sentinel failure,
+protected DACL/no-BOM creation, exact SCP/`sudo -n` sequencing, hardlink rejection, discarded
+secret runner output, allowlisted failures, both digest pulls, local digest verification, and
+credential removal on success and failure. A regression proves six provider absences cannot
+mask failed local removal. The expanded qualification-cost, image-contract/evidence, and
+route-node matrix passes 221 tests with the same two platform skips; six additional
+startup-contract tests pass. Black, isort, Python compilation, and diff checks pass. A live provider-free invocation of the exact native `gh`
+identity/token loaders reported only `identity_valid=true`, `token_valid=true`, and
+`token_retained=false`; no token bytes, login, provider call, or cloud mutation were emitted.
+
+## Gate 11 route-G registry-transport result
+
+The [source-bound route-G authorization](evidence/gate11route-20260830-g-cost-authorization.json)
+reserved USD 26 with USD 74 headroom. Its
+[live lifecycle evidence](evidence/gate11route-20260830-g-lifecycle.json) passed local validation,
+native authentication, provider preflight, exact create, and pinned bootstrap, then failed
+closed at `registry_transport` after 494.718 seconds when the native Windows GCP/IAP binary-stdin
+sentinel transfer returned nonzero. No health sample, inference, automatic selection, fallback,
+restoration, or monitoring claim was made.
+
+Finally-based cleanup passed all five exact delete commands and all six resource-absence checks;
+registry cleanup passed and the protected bootstrap remained `RUNNING`. The schema-v2 record
+retains no command argv, credentials, endpoints, outputs, paths, peer/provider IDs, prompts,
+provider output, or token IDs. Route G is `CLEANED-RELEASED`; the binary-stdin transport must not
+be retried. The protected-file repair described above is provider-call-free and requires a new
+source-bound authorization and reservation before another live route.
+
+## Gate 11 route-H startup-health result
+
+The [source-bound route-H authorization](evidence/gate11route-20260830-h-cost-authorization.json)
+bound historical sequential-prefetch source `c09552e`, reserved USD 26, and retained USD 74
+headroom. Its
+[live lifecycle evidence](evidence/gate11route-20260830-h-lifecycle.json) passed local
+validation, native authentication, provider preflight, exact create, pinned bootstrap, the
+protected-file registry transport, authenticated registry prefetch, and exact local inventory
+checks for both immutable images. Sequential Qwen and Gemma pulls consumed the shared startup
+window, so the controller failed closed at `startup_health` after 3,819.484 seconds. It emitted
+zero health samples and made no primary, standby, automatic-selection, fallback, restoration,
+or monitoring claim.
+
+Finally-based cleanup passed all five exact delete commands and all six resource-absence
+checks; registry credentials were removed and the protected bootstrap remained `RUNNING`.
+The schema-v2 record retains no command argv, credentials, endpoints, outputs, paths,
+peer/provider IDs, prompts, provider output, or token IDs. Route H is `CLEANED-RELEASED` and
+the unchanged sequential-prefetch plan must not be retried.
+
+## Gate 11 concurrent immutable-image prefetch
+
+Pushed source `fc4c18b` starts the exact Qwen and Gemma immutable pulls concurrently under the
+same shared 60-minute startup deadline and the existing bounded retry policy. It waits for both
+pull results, verifies both exact local digest inventories, and only then reports prefetch
+success. The isolated registry config remains root-owned mode 0700 and is still removed in the
+same `finally`, including when either pull fails. No deadline, image, credential, route, cleanup,
+or cost boundary changed.
+
+A regression requires both pull workers to rendezvous, so a sequential implementation fails.
+The focused host/lifecycle suite passes 95 tests with two Linux ownership checks skipped on
+Windows. The expanded host/lifecycle/startup/cost/image-contract/image-evidence/route-node
+matrix passes 228 tests with the same two skips. Black, isort, and diff checks pass. This repair
+made no provider call and requires independent verification plus a new source-bound run
+identity before another live route.
+
+## Gate 11 route-I concurrent-prefetch result
+
+The independently verified
+[route-I authorization](evidence/gate11route-20260830-i-cost-authorization.json) bound pushed
+source `fc4c18b`, plan `sha256:c17ca0aa19f3eb79f1ae837f240b4972a17c821c5c4b8521582e2d38fbd6b99a`,
+the exact helper/bootstrap/probe and Qwen/Gemma publication records, a USD 26 maximum,
+and USD 74 headroom. Its [live lifecycle evidence](evidence/gate11route-20260830-i-lifecycle.json)
+passed local validation, native authentication, provider preflight, exact create, pinned
+bootstrap, protected-file registry transport, authenticated concurrent prefetch, and both
+exact local digest inventories. The direct GHCR path still consumed the shared startup
+window, so the run failed closed at `startup_health` after 3,812.266 seconds with zero health
+samples and no primary, standby, automatic-selection, fallback, restoration, or monitoring
+claim.
+
+Finally-based cleanup passed all five exact delete commands and all six resource-absence
+checks; registry credentials were removed and the protected bootstrap remained `RUNNING`.
+Every privacy retention flag is false and complete release qualification remains false. Route I
+is `CLEANED-RELEASED`. Direct GHCR delivery, whether sequential or concurrent, must not be
+retried; the next route requires a bounded exact-digest GCP-local artifact path under the same
+60-minute startup contract.
+
+## Gate 11 private route-cache attempt A
+
+Pushed source `a41d9ed` added a provider-call-free USD 10 cache plan and a fail-closed
+`us-central1` Artifact Registry remote-cache lifecycle. It binds the original Qwen and
+Gemma GHCR publication evidence to fixed same-region cached references, uses one six-hour
+auto-deleting no-identity CPU builder, permits `allUsers` reader access only during prewarm,
+and retains the repository only after revocation, private-policy and scanning-disabled
+verification, all four index/runtime digest checks, five builder/perimeter absences, and
+protected-bootstrap health. Partial provider application at repository-create and IAM-add
+boundaries is cleanup-owned after exact initial absence; tests cover nonzero responses after
+applied mutations, including a repository delete that applies while returning nonzero.
+
+The first provider-call-free authorization required its exact ledger row, then bound plan
+`sha256:271778431c7553f93d674dffb5131c60133449478d4103c46f366129d7eae2ab`,
+a USD 10 maximum, and USD 90 headroom. Independent preflight passed the strict real loader
+against the pushed source, ledger, 1,534-byte bootstrap, and both publication records. The
+[live attempt](evidence/cache-20260830-a-lifecycle.json) revalidated native authentication,
+the protected bootstrap, and all five initial builder absences, then failed closed at
+`api_enablement` after 61.156 seconds. GCP applied the API enablement but the CLI returned
+nonzero; no repository or builder was created. The subsequent
+[sanitized read-only verification](evidence/cache-20260830-a-post-failure-verification.json)
+proved the API enabled, the exact repository absent, every builder/perimeter target absent,
+and `communityai-bootstrap-1` still `RUNNING`. The reservation is released.
+
+The lifecycle now source-binds a fixed enabled-service query and, after the fixed enable
+call, requires exactly `artifactregistry.googleapis.com` from that query. An ambiguous
+enable return is accepted only when the subsequent state is proved; empty, malformed, or
+failed verification still stops before repository creation. The full focused Gate 11 matrix
+passes 250 tests with two provider/platform skips; Black, isort, Bash syntax, and diff checks
+remain clean. Independent verification passed 187 tests with two skips, reproduced exact
+success and fail-closed service-query cases, and proved the old plan cannot regenerate under
+the corrected provider-plan shape. A new run identity and exact reservation are required
+before retrying the prewarm.
+
+## Gate 11 private route-cache attempt B
+
+Pushed source `4481963` and the source-bound
+[retry-B authorization](evidence/cache-20260830-b-cost-authorization.json) bound plan
+`sha256:861ebeaa2af38e563bdfb736d955b23ea87bd579188636a5512577ee6b35dd52`,
+the exact corrected lifecycle/bootstrap/publication inputs, a USD 10 maximum, and USD 90
+headroom. Its [live lifecycle](evidence/cache-20260830-b-lifecycle.json) passed local
+binding, native authentication, protected-bootstrap health, and all five initial builder
+absences. It then failed closed at `api_enablement` after 38 seconds because the planned
+Service Usage query filtered and projected the generic `name` field, which returned no row
+for the enabled service. No repository or builder was created.
+
+The [sanitized post-failure verification](evidence/cache-20260830-b-post-failure-verification.json)
+uses GCP's actual `config.name` field and proves exactly one enabled Artifact Registry
+service, the exact cache repository absent, all five retry-B builder/perimeter targets absent,
+and the protected bootstrap still `RUNNING`. It made no mutation and retained no provider
+output, identifier, argv, path, or credential. The retry-B reservation is released.
+
+The fixed provider plan now exact-binds
+`--filter config.name=artifactregistry.googleapis.com --format value(config.name)`;
+the lifecycle still accepts only one exact bare `artifactregistry.googleapis.com` result.
+The 250-test Gate 11 matrix passes with two provider/platform skips, formatting/import-order
+and diff checks pass, and the live read-only diagnostic proves the exact command shape.
+Independent verification passes 187 tests with two skips, matches both evidence records, and
+proves retry B cannot regenerate under the corrected plan. A new run identity, source-bound
+plan, and reservation are required before the next prewarm.
+
+## Gate 11 private route-cache attempt C
+
+Pushed source `42241d6` and the source-bound
+[retry-C authorization](evidence/cache-20260830-c-cost-authorization.json) bound plan
+`sha256:634c4d9db1474655065b1d4d6c2bb4066aeb6c48afa3e2eda7e85d980282104e`,
+the exact corrected API query, cache bootstrap, and Qwen/Gemma publication inputs, a USD 10
+maximum, and USD 90 headroom. Its
+[live lifecycle](evidence/cache-20260830-c-lifecycle.json) passed local binding, native
+authentication, protected-bootstrap health, exact API verification, and all initial absence
+checks. It created the exact remote repository, then failed closed at `repository_create`
+after 60.594 seconds because the strict verifier expected
+`remoteRepositoryConfig.dockerRepository.customRepository` while GCP returned
+`remoteRepositoryConfig.commonRepository`. No temporary public binding or builder was
+created.
+
+The [bounded provider-schema diagnostic](evidence/cache-20260830-c-repository-schema-diagnostic.json)
+proved the exact returned object has only `commonRepository.uri == "https://ghcr.io"`,
+deleted the exact diagnostic repository, re-proved final absence, and revalidated the
+protected bootstrap. The subsequent
+[sanitized read-only verification](evidence/cache-20260830-c-post-failure-verification.json)
+proved the API enabled, repository absent, all five retry-C builder/perimeter targets absent,
+and `communityai-bootstrap-1` still `RUNNING`. No prompt, output, endpoint, account,
+credential, provider response, path, or command argv is retained. Retry C is
+`CLEANED-RELEASED`.
+
+Both cache creation and route consumption now validate the exact provider-returned
+`commonRepository` shape and reject the legacy nesting or a trailing-slash URI. The focused
+cache/route lifecycle suite passes 75 tests; the expanded provider-free Gate 11 matrix passes
+254 tests with two provider/platform skips. Black, isort, and diff checks pass. A new source-
+bound run identity and reservation are required before another prewarm.
+
+## Gate 11 private route-cache attempt D
+
+The independently verified
+[retry-D authorization](evidence/cache-20260830-d-cost-authorization.json) bound pushed
+source `3ae7a09`, plan
+`sha256:2387d038386ea64e6301d70133aaee4dceedb2c8279e1a341b744ffb1f9fdbc4`,
+the corrected provider schema, exact bootstrap/publication inputs, a USD 10 maximum, and
+USD 90 headroom. Its [live lifecycle](evidence/cache-20260830-d-lifecycle.json) passed
+source/ledger binding, native authentication, protected-bootstrap health, exact API and
+initial-absence checks, repository creation, and the observed `commonRepository.uri`
+configuration. It then failed closed at `temporary_public_binding` after 55.5 seconds
+because the project's domain-restricted-sharing policy rejected `allUsers`. The binding
+did not apply and no builder was created.
+
+The [bounded policy diagnostic](evidence/cache-20260830-d-domain-policy-diagnostic.json)
+recreated only the exact repository, reproduced the policy rejection without retaining raw
+output, proved no binding was present, deleted the repository, re-proved absence, and
+revalidated the protected bootstrap. The subsequent
+[sanitized read-only verification](evidence/cache-20260830-d-post-failure-verification.json)
+proved Artifact Registry enabled, IAM not yet enabled, the repository and all five D
+builder/perimeter targets absent, and `communityai-bootstrap-1` still `RUNNING`.
+Retry D is `CLEANED-RELEASED`.
+
+The replacement design does not weaken or bypass the domain policy. It never requests a
+public principal. The provider plan enables and exact-verifies Artifact Registry and IAM,
+derives one run-bound ephemeral service account, creates no key, grants only repository
+reader, and assigns that identity to the builder. Startup accepts only the derived metadata
+identity and one bounded metadata token, passes it to Docker only over stdin, pulls both
+immutable digests, removes the isolated Docker credential config, and acknowledges
+readiness only after credential removal. The lifecycle then deletes the builder, revokes the
+reader binding, deletes the service account, proves six resource/identity absences, requires
+an empty repository policy and all four cached digests, and checks the protected bootstrap.
+The consuming route now also rejects any residual repository binding. The focused
+cost/cache/route lifecycle suite passes 158 tests; the expanded provider-free Gate 11 matrix
+passes 257 with two provider/platform skips. Black, isort, Bash syntax, and diff checks pass.
+A fresh source-bound run identity and reservation are required before retrying prewarm.
+
+## Gate 11 private cache attempt E and atomic readiness repair
+
+Cache run `cache-20260830-e` bound source
+`c0bd81e4e3ced3cd05a642740e343da41d05aceb`, plan
+`sha256:fc13db74e107795c6d2896e0135c4a669a3fd7618a9ef1c4feab54f2425cf948`,
+and a USD 10 maximum with USD 90 headroom. The
+[live lifecycle](evidence/cache-20260830-e-lifecycle.json) passed native/provider preflight,
+created the exact private remote repository, deterministic keyless ephemeral identity, exact
+repository-reader binding, and CPU builder, then failed closed at `cache_warm` after
+1,653.422 seconds. It claimed zero cached manifests and retained no repository. Cleanup passed
+all six builder/perimeter/identity absence checks, deleted the ephemeral identity and exact
+repository, retained no service-account key, public access, or registry credential, and
+revalidated the protected bootstrap. Retry E is `CLEANED-RELEASED`.
+
+The [bounded acknowledgement diagnostic](evidence/cache-20260830-e-acknowledgement-diagnostic.json)
+uses the same native bounded runner and fixed no-write IAP path to prove that a known exact
+readiness JSON is accepted without stdout framing drift. The failed remote acknowledgement
+bytes were intentionally not retained, so the exact remote cause is not claimed. Code review
+isolated one remaining local race: readiness was written directly while the poller did not
+first exclude an empty or partial file. The bootstrap now writes a mode-private temporary file
+and atomically renames it on the same filesystem; the fixed probe requires a nonempty regular,
+non-symlink readiness file before reading. A completed malformed schema still fails closed.
+The cache-lifecycle focus passes 12 tests and the cost/cache/route lifecycle focus passes 159.
+The expanded provider-free Gate 11 matrix passes 258 with two expected platform skips. Black,
+isort, Bash syntax, and the scoped diff check pass.
+
+
+## Gate 11 cache F upstream-visibility failure and fail-fast cleanup
+
+On 2026-08-30, cache run `cache-20260830-f` used source
+`bff0c3203191725928246ad3e13deb01ffbab8de`, provider plan
+`sha256:735cfd847291229571529c8f640fc76005e340a29680806295dad33a7e1a1fb6`,
+and a USD 10 maximum. It passed exact private repository creation, the keyless ephemeral
+reader identity, and builder creation before entering concurrent Qwen/Gemma cache warm.
+
+After approximately one hour, a bounded serial classification proved that both image pulls
+had emitted authentication/daemon failures and the startup script had exited nonzero. No
+readiness acknowledgement existed, so the old controller would have waited for its four-hour
+deadline despite a terminal bootstrap result. Native `gh` metadata then proved both exact
+GHCR public-route packages were still `private`; Artifact Registry's credential-free remote
+upstream therefore could not pull them anonymously. No raw serial/provider response,
+credential, endpoint, path, command argv, or account identity is retained.
+
+The controller was interrupted only after the terminal startup failure was proved.
+[Sanitized post-failure verification](evidence/cache-20260830-f-post-failure-verification.json)
+records all six exact cleanup commands and absence checks passing, the fixed repository
+deleted and absent, the ephemeral identity removed with no key, no public access or retained
+credential, and `communityai-bootstrap-1` still running. The USD 10 reservation is
+`CLEANED-RELEASED`.
+
+The corrected cache bootstrap now removes its isolated Docker credentials and atomically
+publishes a strict failure acknowledgement on every nonzero exit. The lifecycle recognizes
+only that exact credential-clean failure envelope and begins cleanup on the next poll.
+Before any GCP mutation it also revalidates native GitHub authentication and requires both
+fixed GHCR packages to report `public` visibility. A private or malformed response fails
+before protected-bootstrap or resource creation checks.
+
+Verification:
+
+- focused cache lifecycle: 14 passed;
+- expanded provider-free Gate 11 matrix: 260 passed, 2 expected platform skips;
+- Black and isort checks passed;
+- Git Bash syntax validation passed for the cache bootstrap;
+- `git diff --check` passed (existing Windows line-ending warnings only).
+
+The next cache reservation remains blocked until the two GHCR package settings are
+explicitly changed from private to public. GitHub documents that transition as irreversible,
+so no automated visibility mutation was attempted.
+
+## Gate 11 cache G public-upstream run and cleanup
+
+The owner changed both exact GHCR public-route packages to `public`; authenticated metadata
+and anonymous immutable-index retrieval then passed for Qwen and Gemma. The source-bound
+[cache-G authorization](evidence/cache-20260830-g-cost-authorization.json) retained the USD 10
+maximum, USD 90 headroom, exact plan
+`sha256:109d2b6958ac8ced31e7202c8eb230387d29615f964d32d6726564b9366eafd7`, and the
+previously reviewed private keyless-cache contract.
+
+The first invocation [failed before GCP mutation](evidence/cache-20260830-g-preflight-failure.json)
+at `upstream_visibility` because the new native GitHub reads were sent through the lifecycle's
+GCP-only runner. Source `0280dc0` added a separate exact allowlist for native `gh auth status`
+and the two fixed package-visibility reads, using shell-free bounded execution while preserving
+the injected test runner. Independent review passed 16 focused cache tests, 96 cost/cache tests,
+Black, isort, diff, allowlist, executable-resolution, timeout, output-bound, and artifact checks.
+
+The repaired controller's [live lifecycle](evidence/cache-20260830-g-lifecycle.json) passed
+native GitHub/GCP authentication, both public-package checks, exact private repository creation,
+the keyless ephemeral reader identity and binding, and builder creation. During `cache_warm` it
+received the bootstrap's generic credential-clean failure acknowledgement and failed closed
+after 572.531 seconds. It claimed zero cached manifests and no release qualification.
+
+Cleanup passed all six exact delete commands and all six absence checks, removed the ephemeral
+identity and repository, retained no service-account key, public access, registry credential,
+provider output, path, provider identifier, or command argv, and revalidated
+`communityai-bootstrap-1` as `RUNNING`. Cache G is `CLEANED-RELEASED`; the accounting epoch
+again has USD 100 available. The unchanged bootstrap must not be retried because its single
+failure category cannot distinguish setup, metadata, token, registry-authentication, timeout,
+or either immutable pull. The next source must add bounded privacy-safe failure categories and
+deterministic provider-free shell coverage before a new identity, plan, and reservation.
+
+## Gate 11 product-node route acceptance
+
+Run `route-20260830-j` replaced the model-specific OCI delivery path with the actual
+CommunityAI product node. A bounded G2/L4 VM installed only the generic `2.3.0.dev2` wheel,
+verified the signed public catalog and exact Qwen/Gemma manifests, downloaded model artifacts
+directly from Hugging Face, and reused one persistent verified cache across both node roles.
+No model image, private mirror, embedded weight, or operator-transferred model artifact was
+used.
+
+The run exposed and repaired five product-path issues without changing the authorized host,
+deadline, or USD 26 ceiling: native throughput-cache initialization, standby bootstrap
+ordering, cross-role cache reuse, a privacy-safe acceptance probe, and hot peer-list
+reconciliation that had restarted healthy workers. The final generic wheel is bound to source
+`4cef141746705c3ee8bc8e017693855e0bc4871e` and
+`sha256:589bbe3eacee01af773f5eeda47cd5575c1be02b720f08c9299ac7aeafa884ee`.
+
+The [sanitized lifecycle evidence](evidence/gate11node-20260830-a-lifecycle.json) proves a
+complete 24/24 Qwen primary and 35/35 Gemma standby, stable workers, primary one-token
+inference, deliberate primary pause, automatic Gemma selection and standby inference,
+automatic Qwen restoration, and restored inference. Fallback took 58.073 seconds and
+restoration took 32.042 seconds. Both services and routes remain live under the fixed 14-hour
+automatic-delete deadline, and the protected bootstrap is running. The same-host standby is
+an alpha fallback, not independent infrastructure redundancy. Gate 11 is `PASSED`; complete
+release qualification remains false and Gate 9 still blocks packaged Gate 13 work.
+
+## Gate 11 architecture conclusion and Gate 9 transfer
+
+Gate 11 passed by removing model-image delivery from the product path, not by accelerating
+registry pulls. The accepted architecture now separates a small generic runtime, signed catalog
+approval, exact manifest integrity, direct immutable Hugging Face transport, and persistent
+verified local state. The catalog remains necessary and unchanged as a trust/rollback/policy
+layer; it never becomes a container registry or weight bundle. The decision is recorded in
+[ADR 0003](adr/0003-direct-manifested-artifact-delivery.md).
+
+The implementation already minimizes acquisition at upstream checkpoint-file granularity. A
+client requests only shards containing its local embeddings, final normalization, and head; a
+worker requests only shards containing its assigned blocks. Run `route-20260830-j` used full
+Qwen and Gemma ranges, so those workers legitimately selected all weight shards. A smaller
+desktop contribution range should select fewer files, but an upstream file that mixes required
+and unrelated tensors must still be downloaded in full and verified as one artifact.
+
+This changes the next Gate 9 attempt. The revised
+[edge-envelope runbook](EDGE_RESOURCE_ENVELOPE_RUNBOOK.md) requires one resumable acquisition
+record and one verified-warm-cache steady-state envelope for each Qwen/Gemma Windows/Linux cell.
+It removes the old five-minute directory-growth heuristic and uses the manifest artifact's
+bounded partial/request state instead. It also replaces allocator-sensitive in-process RSS return
+as the pass boundary with a fresh supervised benchmark child whose complete process-tree exit
+proves operating-system memory reclamation; route-manager/DHT and accelerator cleanup must still
+pass inside the child.
+
+This is a documented method change, not a Gate 9 result. Before another paid run, the acquisition
+record and schema-v3 benchmark supervisor must be implemented and tested, then bound to a fresh
+authorization. The four real platform/model envelopes remain required.

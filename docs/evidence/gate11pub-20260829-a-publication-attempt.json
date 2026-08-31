@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "scope": "gate11-public-route-image-publication-attempt",
+  "run_id": "gate11pub-20260829-a",
+  "gate": 11,
+  "result": "publication_passed_cleanup_pending",
+  "recorded_at": "2026-08-29T19:13:44Z",
+  "source_commit": "d2ea7dea5f3541b86293279b0a650bb46ab82583",
+  "collector_commit": "3088f3c801733e73c88f1336e03075871da5980e",
+  "candidates": {
+    "qwen3_5_2b": {
+      "result": "passed",
+      "image_index_digest": "sha256:a62d7100cf2179a362cf8973d3c397ccd216f11a05af9354bc44fd1250024764",
+      "runtime_manifest_digest": "sha256:dac280c6b13825a95e1df1944909ed80fd3f271bb82865ed8aae31ba7892cb35",
+      "publication_evidence": "gate11pub-20260829-a-qwen3.5-2b-publication-evidence.json"
+    },
+    "gemma_4_e2b": {
+      "result": "passed",
+      "image_index_digest": "sha256:bfa183a7e2b7bb03cdc45dcd6bc14dfe4a02d2872813f7b466165470e076a796",
+      "runtime_manifest_digest": "sha256:b59f737e19db25513e3eb34d43d45ef5be5c287eb5184f5587d648dd491634b3",
+      "publication_evidence": "gate11pub-20260829-a-gemma-4-e2b-publication-evidence.json"
+    }
+  },
+  "execution": {
+    "exact_emitted_build_argv_only": true,
+    "exact_source_and_carrier_contracts_verified": true,
+    "qwen_build_attempts": 1,
+    "gemma_build_attempts": 2,
+    "gemma_first_attempt_failure_class": "registry_rate_limit_429",
+    "qwen_strict_collection_passed": true,
+    "gemma_strict_collection_attempts": 2,
+    "gemma_first_collection_failure_class": "registry_command_nonzero",
+    "registry_retry_inputs_changed": false,
+    "route_created": false
+  },
+  "cost": {
+    "combined_ceiling_usd": 100,
+    "maximum_estimate_usd": 10,
+    "observed_cost_usd": null,
+    "billing_state": "delayed",
+    "remaining_authorization_usd": 6,
+    "state": "CLEANUP_PENDING"
+  },
+  "cleanup": {
+    "registry_logout_completed": true,
+    "registry_credential_files_absent": true,
+    "verified_at": "2026-08-29T19:13:46Z",
+    "exact_builder_delete_attempted": true,
+    "exact_builder_delete_result": "blocked_local_gcloud_interactive_reauthentication_required",
+    "application_default_credentials_available": false,
+    "exact_builder_absent": false,
+    "exact_boot_disk_absent": false,
+    "provider_state_at_recording": "builder_reachable",
+    "max_runtime_seconds": 21600,
+    "instance_termination_action": "DELETE",
+    "boot_disk_auto_delete": true,
+    "estimated_provider_delete_deadline": "2026-08-30T00:09:18Z",
+    "estimated_deadline_basis": "guest UTC time minus monotonic uptime plus the configured 21600-second maximum",
+    "protected_bootstrap_state_after_attempt": "unverified_after_gcloud_reauthentication_failure"
+  },
+  "privacy": {
+    "prompt_retained": false,
+    "decoded_output_retained": false,
+    "token_ids_retained": false,
+    "credentials_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false,
+    "network_endpoints_retained": false
+  },
+  "complete_release_qualification": false
+}

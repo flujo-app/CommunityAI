@@ -19,11 +19,12 @@ import json
 import math
 import os
 import secrets
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 import multihash
 from cryptography import exceptions
@@ -39,6 +40,9 @@ SIGNATURE_ALGORITHM = "rsa-pss-sha256"
 TRANSPORT_SECURITY = "libp2p-tls1.3"
 MAX_SIGNED_RECORD_TTL_SECONDS = 60 * 60
 MAX_CLOCK_SKEW_SECONDS = 60
+REPLAY_HISTORY_SCHEMA_VERSION = 1
+MAX_REPLAY_HISTORY_BYTES = 256 * 1024
+MAX_REPLAY_HISTORY_ENTRIES = 256
 
 _RSA_PADDING = padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH)
 _RSA_HASH = hashes.SHA256()
@@ -325,9 +329,158 @@ def _validate_lifetime(payload: Mapping[str, Any], *, now: Optional[float]) -> T
 
 @dataclass
 class ReplayGuard:
-    """Reject older records while allowing one signed announcement to cover many blocks."""
+    """Reject older records and optionally preserve the live ordering window across restarts."""
 
-    _latest: Dict[Tuple[str, str], Tuple[int, int, str, int]] = field(default_factory=dict)
+    path: Optional[Path | str] = None
+    max_entries: int = MAX_REPLAY_HISTORY_ENTRIES
+    clock: Callable[[], float] = time.time
+    _latest: Dict[Tuple[str, str], Tuple[int, int, str, int]] = field(default_factory=dict, init=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_entries, bool) or not isinstance(self.max_entries, int) or self.max_entries <= 0:
+            raise ValueError("replay history entry limit must be a positive integer")
+        if self.path is None:
+            return
+        self.path = Path(os.path.abspath(os.fspath(Path(self.path).expanduser())))
+        self._reload()
+
+    def _reload(self) -> None:
+        try:
+            self._latest = self._load()
+        except ProtocolSecurityError:
+            raise
+        except (OSError, UnicodeError, TypeError, ValueError) as exc:
+            raise ProtocolSecurityError("replay history could not be loaded safely") from exc
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Serialize state across Hivemind's DHT process boundary without the thread lock."""
+
+        with self._lock:
+            state = dict(self.__dict__)
+        state.pop("_lock", None)
+        return state
+
+    def __setstate__(self, state: Mapping[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+        # The DHT subprocess may receive an older parent snapshot after another
+        # call advanced the on-disk watermark, so persistent guards reload it.
+        if self.path is not None:
+            self._reload()
+
+    @staticmethod
+    def _strict_json(source: str) -> Mapping[str, Any]:
+        def reject_duplicate_keys(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ProtocolSecurityError(f"replay history contains duplicate key {key!r}")
+                result[key] = value
+            return result
+
+        def reject_non_finite(value):
+            raise ProtocolSecurityError(f"replay history contains non-finite number {value}")
+
+        value = json.loads(source, object_pairs_hook=reject_duplicate_keys, parse_constant=reject_non_finite)
+        if not isinstance(value, dict):
+            raise ProtocolSecurityError("replay history must be a JSON object")
+        return value
+
+    def _load(self) -> Dict[Tuple[str, str], Tuple[int, int, str, int]]:
+        if self.path is None:
+            return {}
+        if self.path.parent.exists() and (self.path.parent.is_symlink() or not self.path.parent.is_dir()):
+            raise ProtocolSecurityError("replay history directory is not a regular directory")
+        if self.path.is_symlink():
+            raise ProtocolSecurityError("replay history path is not a regular file")
+        if not self.path.exists():
+            return {}
+        if not self.path.is_file():
+            raise ProtocolSecurityError("replay history path is not a regular file")
+        if self.path.stat().st_size > MAX_REPLAY_HISTORY_BYTES:
+            raise ProtocolSecurityError("replay history exceeds its byte limit")
+        source = self._strict_json(self.path.read_text(encoding="utf-8"))
+        schema_version = source.get("schema_version")
+        if (
+            set(source) != {"schema_version", "entries"}
+            or isinstance(schema_version, bool)
+            or schema_version != REPLAY_HISTORY_SCHEMA_VERSION
+        ):
+            raise ProtocolSecurityError("replay history schema is invalid")
+        entries = source["entries"]
+        if not isinstance(entries, list) or len(entries) > self.max_entries:
+            raise ProtocolSecurityError("replay history entry list is invalid")
+
+        latest: Dict[Tuple[str, str], Tuple[int, int, str, int]] = {}
+        now_ms = int(self.clock() * 1000)
+        fields = {"kind", "key_id", "issued_at_ms", "sequence", "record_digest", "retain_until_ms"}
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != fields:
+                raise ProtocolSecurityError("replay history entry schema is invalid")
+            kind = _require_text(entry["kind"], name="replay history kind")
+            if len(kind) > 64:
+                raise ProtocolSecurityError("replay history kind is too long")
+            key_id = _require_key_id(entry["key_id"], name="replay history key_id")
+            issued_at_ms = _require_int(entry["issued_at_ms"], name="issued_at_ms", minimum=0)
+            sequence = _require_int(entry["sequence"], name="sequence", minimum=0)
+            digest = _require_digest(entry["record_digest"], name="record_digest")
+            retain_until_ms = _require_int(entry["retain_until_ms"], name="retain_until_ms", minimum=0)
+            if retain_until_ms <= issued_at_ms:
+                raise ProtocolSecurityError("replay history entry retention ends before it was issued")
+            replay_scope = (kind, key_id)
+            if replay_scope in latest:
+                raise ProtocolSecurityError("replay history contains a duplicate identity scope")
+            if retain_until_ms > now_ms:
+                latest[replay_scope] = (issued_at_ms, sequence, digest, retain_until_ms)
+        return latest
+
+    def _persist(self, latest: Mapping[Tuple[str, str], Tuple[int, int, str, int]]) -> None:
+        if self.path is None:
+            return
+        if self.path.is_symlink() or (self.path.exists() and not self.path.is_file()):
+            raise ProtocolSecurityError("replay history path is not a regular file")
+        entries = [
+            {
+                "kind": kind,
+                "key_id": key_id,
+                "issued_at_ms": item[0],
+                "sequence": item[1],
+                "record_digest": item[2],
+                "retain_until_ms": item[3],
+            }
+            for (kind, key_id), item in sorted(latest.items())
+        ]
+        rendered = (
+            json.dumps(
+                {"schema_version": REPLAY_HISTORY_SCHEMA_VERSION, "entries": entries},
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        if len(rendered.encode("utf-8")) > MAX_REPLAY_HISTORY_BYTES:
+            raise ProtocolSecurityError("rendered replay history exceeds its byte limit")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.parent.is_symlink() or not self.path.parent.is_dir():
+            raise ProtocolSecurityError("replay history directory is not a regular directory")
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+        try:
+            with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+                stream.write(rendered)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                temporary.chmod(0o600)
+            except OSError:
+                pass
+            os.replace(temporary, self.path)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
     def check(self, record: SignedRecord) -> None:
         payload = record.payload
@@ -335,19 +488,37 @@ class ReplayGuard:
         expires_at_ms = _require_int(payload.get("expires_at_ms"), name="expires_at_ms", minimum=0)
         sequence = _require_int(payload.get("sequence"), name="sequence", minimum=0)
         replay_scope = (record.kind, record.key_id)
-        current = self._latest.get(replay_scope)
         order = (issued_at_ms, sequence)
-        if current is not None:
-            previous_order = current[:2]
-            if order < previous_order:
-                raise ProtocolSecurityError("signed record is older than a record already observed for this identity")
-            if order == previous_order and record.digest != current[2]:
-                raise ProtocolSecurityError("identity equivocated by signing different records at one sequence")
-        if current is None or order > current[:2]:
-            self._latest[replay_scope] = (issued_at_ms, sequence, record.digest, expires_at_ms)
-
-        now_ms = int(time.time() * 1000)
-        self._latest = {key: item for key, item in self._latest.items() if item[3] > now_ms}
+        maximum_ttl_seconds = (
+            ROUTE_DEMAND_MAX_TTL_SECONDS if record.kind == "route_demand" else MAX_SIGNED_RECORD_TTL_SECONDS
+        )
+        retain_until_ms = max(expires_at_ms, issued_at_ms + maximum_ttl_seconds * 1000)
+        with self._lock:
+            now_ms = int(self.clock() * 1000)
+            latest = {key: item for key, item in self._latest.items() if item[3] > now_ms}
+            current = latest.get(replay_scope)
+            if current is not None:
+                previous_order = current[:2]
+                if order < previous_order:
+                    raise ProtocolSecurityError(
+                        "signed record is older than a record already observed for this identity"
+                    )
+                if order == previous_order and record.digest != current[2]:
+                    raise ProtocolSecurityError("identity equivocated by signing different records at one sequence")
+            changed = latest != self._latest
+            if current is None or order > current[:2]:
+                latest[replay_scope] = (issued_at_ms, sequence, record.digest, retain_until_ms)
+                changed = True
+            if len(latest) > self.max_entries:
+                raise ProtocolSecurityError("replay history reached its active entry limit")
+            if changed:
+                try:
+                    self._persist(latest)
+                except ProtocolSecurityError:
+                    raise
+                except (OSError, UnicodeError, TypeError, ValueError) as exc:
+                    raise ProtocolSecurityError("replay history could not be persisted safely") from exc
+                self._latest = latest
 
 
 @dataclass
@@ -529,6 +700,30 @@ def verify_worker_announcement(
     return record
 
 
+INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION = 1
+
+
+def _validate_intent_resource_claims(value: Mapping[str, Any]) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ProtocolSecurityError("intent lease resource_claims must be an object")
+    fields = ("schema_version", "artifact_bytes", "block_count", "throughput_milli_rps")
+    _strict_fields(value, fields, name="intent lease resource_claims")
+    schema_version = _require_int(value["schema_version"], name="resource_claims.schema_version", minimum=1)
+    if schema_version != INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION:
+        raise ProtocolSecurityError(f"unsupported intent resource claims schema version {schema_version}")
+    artifact_bytes = _require_int(value["artifact_bytes"], name="resource_claims.artifact_bytes", minimum=0)
+    block_count = _require_int(value["block_count"], name="resource_claims.block_count", minimum=1)
+    throughput = value["throughput_milli_rps"]
+    if throughput is not None:
+        throughput = _require_int(throughput, name="resource_claims.throughput_milli_rps", minimum=1)
+    return {
+        "schema_version": schema_version,
+        "artifact_bytes": artifact_bytes,
+        "block_count": block_count,
+        "throughput_milli_rps": throughput,
+    }
+
+
 def create_intent_lease(
     identity: NodeIdentity,
     *,
@@ -545,12 +740,15 @@ def create_intent_lease(
     end_block = _require_int(end_block, name="end_block", minimum=1)
     if end_block <= start_block:
         raise ProtocolSecurityError("intent lease end_block must be greater than start_block")
+    normalized_claims = _validate_intent_resource_claims(resource_claims)
+    if normalized_claims["block_count"] != end_block - start_block:
+        raise ProtocolSecurityError("intent lease block_count does not match its block range")
     payload = {
         "peer_id": identity.peer_id.to_base58(),
         "manifest_digest": _require_digest(manifest_digest, name="manifest_digest"),
         "start_block": start_block,
         "end_block": end_block,
-        "resource_claims": _normalize_json(resource_claims, path="resource_claims"),
+        "resource_claims": normalized_claims,
         "issued_at_ms": int(issued_at * 1000),
         "expires_at_ms": int(expires_at * 1000),
         "sequence": _require_int(sequence, name="sequence", minimum=0),
@@ -591,10 +789,130 @@ def verify_intent_lease(
     end = _require_int(record.payload["end_block"], name="end_block", minimum=1)
     if end <= start:
         raise ProtocolSecurityError("intent lease end_block must be greater than start_block")
-    if not isinstance(record.payload["resource_claims"], Mapping):
-        raise ProtocolSecurityError("intent lease resource_claims must be an object")
+    resource_claims = _validate_intent_resource_claims(record.payload["resource_claims"])
+    if resource_claims["block_count"] != end - start:
+        raise ProtocolSecurityError("intent lease block_count does not match its block range")
     _require_text(record.payload["nonce"], name="nonce")
     _validate_lifetime(record.payload, now=now)
+    if revocations is not None:
+        revocations.require_active(record.key_id)
+    if replay_guard is not None:
+        replay_guard.check(record)
+    return record
+
+
+ROUTE_DEMAND_SCHEMA_VERSION = 1
+ROUTE_DEMAND_MAX_TTL_SECONDS = 90
+_ROUTE_DEMAND_FIELDS = (
+    "schema_version",
+    "manifest_digest",
+    "window_seconds",
+    "attempts_bucket",
+    "successes_bucket",
+    "useful_tokens_per_second_milli",
+    "reliability_milli",
+    "age_seconds_bucket",
+)
+_ROUTE_DEMAND_COUNT_BUCKETS = {0, 1, 2, 4, 8, 16, 32, 64}
+_ROUTE_DEMAND_THROUGHPUT_BUCKETS = {0, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000}
+
+
+def _validate_route_demand_observation(
+    value: Mapping[str, Any], *, expected_manifest_digest: Optional[str] = None
+) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ProtocolSecurityError("route demand observation must be an object")
+    _strict_fields(value, _ROUTE_DEMAND_FIELDS, name="route demand observation")
+    schema_version = _require_int(value["schema_version"], name="route demand schema_version", minimum=1)
+    if schema_version != ROUTE_DEMAND_SCHEMA_VERSION:
+        raise ProtocolSecurityError(f"unsupported route demand schema version {schema_version}")
+    manifest_digest = _require_text(value["manifest_digest"], name="route demand manifest_digest")
+    if not manifest_digest.startswith("sha256:"):
+        raise ProtocolSecurityError("route demand manifest_digest must use the sha256: prefix")
+    digest = _require_digest(manifest_digest.removeprefix("sha256:"), name="route demand manifest_digest")
+    if expected_manifest_digest is not None and digest != expected_manifest_digest:
+        raise ProtocolSecurityError("route demand is bound to a different manifest")
+    window_seconds = _require_int(value["window_seconds"], name="route demand window_seconds", minimum=60)
+    if window_seconds != 5 * 60:
+        raise ProtocolSecurityError("route demand must use a closed five-minute window")
+    attempts = _require_int(value["attempts_bucket"], name="route demand attempts_bucket", minimum=4)
+    successes = _require_int(value["successes_bucket"], name="route demand successes_bucket", minimum=0)
+    if (
+        attempts not in _ROUTE_DEMAND_COUNT_BUCKETS
+        or successes not in _ROUTE_DEMAND_COUNT_BUCKETS
+        or successes > attempts
+    ):
+        raise ProtocolSecurityError("route demand count buckets are invalid")
+    throughput = _require_int(value["useful_tokens_per_second_milli"], name="route demand throughput bucket", minimum=0)
+    if throughput not in _ROUTE_DEMAND_THROUGHPUT_BUCKETS:
+        raise ProtocolSecurityError("route demand throughput bucket is invalid")
+    reliability = _require_int(value["reliability_milli"], name="route demand reliability bucket", minimum=0)
+    if reliability > 1000 or reliability % 100:
+        raise ProtocolSecurityError("route demand reliability must use 10-percent buckets")
+    age = _require_int(value["age_seconds_bucket"], name="route demand age bucket", minimum=0)
+    if age > window_seconds or age % 15:
+        raise ProtocolSecurityError("route demand age must use bounded 15-second buckets")
+    return {
+        "schema_version": schema_version,
+        "manifest_digest": f"sha256:{digest}",
+        "window_seconds": window_seconds,
+        "attempts_bucket": attempts,
+        "successes_bucket": successes,
+        "useful_tokens_per_second_milli": throughput,
+        "reliability_milli": reliability,
+        "age_seconds_bucket": age,
+    }
+
+
+def _validate_route_demand_lifetime(payload: Mapping[str, Any], *, now: Optional[float]) -> Tuple[int, int]:
+    issued_at_ms, expires_at_ms = _validate_lifetime(payload, now=now)
+    if expires_at_ms - issued_at_ms > ROUTE_DEMAND_MAX_TTL_SECONDS * 1000:
+        raise ProtocolSecurityError("route demand lifetime exceeds 90 seconds")
+    return issued_at_ms, expires_at_ms
+
+
+def create_route_demand(
+    identity: NodeIdentity,
+    *,
+    manifest_digest: str,
+    observation: Mapping[str, Any],
+    issued_at: float,
+    expires_at: float,
+    sequence: int,
+) -> SignedRecord:
+    digest = _require_digest(manifest_digest, name="manifest_digest")
+    payload = {
+        "manifest_digest": digest,
+        "observation": _validate_route_demand_observation(observation, expected_manifest_digest=digest),
+        "issued_at_ms": int(issued_at * 1000),
+        "expires_at_ms": int(expires_at * 1000),
+        "sequence": _require_int(sequence, name="sequence", minimum=0),
+    }
+    _validate_route_demand_lifetime(payload, now=issued_at)
+    return SignedRecord.create("route_demand", payload, identity)
+
+
+def verify_route_demand(
+    source: Mapping[str, Any],
+    *,
+    expected_manifest_digest: Optional[str] = None,
+    now: Optional[float] = None,
+    revocations: Optional[RevocationStore] = None,
+    replay_guard: Optional[ReplayGuard] = None,
+) -> SignedRecord:
+    record = SignedRecord.from_dict(source)
+    record.verify(expected_kind="route_demand")
+    _strict_fields(
+        record.payload,
+        ("manifest_digest", "observation", "issued_at_ms", "expires_at_ms", "sequence"),
+        name="route demand payload",
+    )
+    digest = _require_digest(record.payload["manifest_digest"], name="manifest_digest")
+    if expected_manifest_digest is not None and digest != expected_manifest_digest:
+        raise ProtocolSecurityError("route demand is bound to a different manifest")
+    _validate_route_demand_observation(record.payload["observation"], expected_manifest_digest=digest)
+    _validate_route_demand_lifetime(record.payload, now=now)
+    _require_int(record.payload["sequence"], name="sequence", minimum=0)
     if revocations is not None:
         revocations.require_active(record.key_id)
     if replay_guard is not None:

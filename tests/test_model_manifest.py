@@ -765,3 +765,57 @@ def test_manifested_server_requires_persistent_identity(tmp_path, monkeypatch):
 
     with pytest.raises(ManifestError, match="identity_path"):
         run_server.server_from_args(args)
+
+
+def test_manifested_server_accepts_bounded_machine_readable_health_target(tmp_path, monkeypatch):
+    from drift.cli import run_server
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest_dict()), encoding="utf-8")
+    health_path = tmp_path / "health.json"
+    args = vars(
+        run_server.build_parser().parse_args(
+            [
+                "org/tiny-test",
+                "--new_swarm",
+                "--model_manifest",
+                str(manifest_path),
+                "--identity_path",
+                str(tmp_path / "worker.key"),
+                "--health_state_path",
+                str(health_path),
+                "--increase_file_limit",
+                "0",
+            ]
+        )
+    )
+    args.pop("config", None)
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+    monkeypatch.setattr(run_server, "log_version", lambda: None)
+    monkeypatch.setattr(run_server, "Server", lambda **kwargs: kwargs)
+
+    resolved = run_server.server_from_args(args)
+
+    assert resolved["health_state_path"] == str(health_path)
+
+
+def test_legacy_server_rejects_machine_readable_public_health(tmp_path, monkeypatch):
+    from drift.cli import run_server
+
+    args = vars(
+        run_server.build_parser().parse_args(
+            [
+                "org/tiny-test",
+                "--new_swarm",
+                "--health_state_path",
+                str(tmp_path / "health.json"),
+                "--increase_file_limit",
+                "0",
+            ]
+        )
+    )
+    args.pop("config", None)
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+
+    with pytest.raises(ManifestError, match="only valid with --model_manifest"):
+        run_server.server_from_args(args)

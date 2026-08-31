@@ -1,6 +1,7 @@
 import argparse
 import faulthandler
 import logging
+import os
 import signal
 from typing import Callable, Optional
 
@@ -26,6 +27,7 @@ from drift.server.admission import (
     DEFAULT_TRACKED_PEER_TTL,
     AdmissionPolicy,
 )
+from drift.server.health import validate_health_state_path
 from drift.server.server import Server
 from drift.utils.convert_block import QuantType
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
@@ -152,6 +154,8 @@ def build_parser() -> configargparse.ArgParser:
                         help='Manifest-mode aggregate queued activation-push ceiling across all handlers')
     parser.add_argument('--allow_training_rpcs', action='store_true',
                         help='Explicitly enable forward/backward training RPCs in manifest mode (disabled by default)')
+    parser.add_argument('--health_state_path', type=str, default=None,
+                        help='Absolute regular-file target for bounded manifested-worker aggregate health JSON')
     parser.add_argument('--prefetch_batches', type=int, default=1, required=False,
                         help='Pre-form this many subsequent batches while GPU is processing the current one')
     parser.add_argument('--sender_threads', type=int, default=1, required=False,
@@ -337,7 +341,11 @@ def server_from_args(args: dict) -> Server:
             raise ManifestError(
                 "--identity_path is required with --model_manifest so announcements use a stable libp2p signer"
             )
+        if args.get("health_state_path") is not None:
+            args["health_state_path"] = os.fspath(validate_health_state_path(args["health_state_path"]))
     else:
+        if args.get("health_state_path") is not None:
+            raise ManifestError("--health_state_path is only valid with --model_manifest")
         if requested_model is None:
             raise ManifestError("a model is required unless --model_manifest supplies its exact repository")
         args["converted_model_name_or_path"] = requested_model

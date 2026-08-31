@@ -7,6 +7,10 @@ from typing import Any, Dict
 from communityai_desktop.client import NodeClient
 
 
+def _download_storage_estimate(size_bytes: int) -> str:
+    return f"{size_bytes / 1_000_000_000:.1f} GB ({size_bytes:,} bytes)"
+
+
 class DesktopController:
     def __init__(self, client: NodeClient):
         self.client = client
@@ -38,6 +42,7 @@ class DesktopController:
         covered = route.get("covered_blocks")
         total = route.get("total_blocks")
         coverage = f"{covered}/{total}" if isinstance(covered, int) and isinstance(total, int) else "unknown"
+        selected_whole_shard_bytes = model["download"]["selected_whole_shard_bytes"]
         route_complete = (
             route.get("status") == "complete"
             and isinstance(covered, int)
@@ -53,6 +58,8 @@ class DesktopController:
             "total_blocks": total,
             "route_complete": route_complete,
             "peer_count": route.get("peer_count"),
+            "selected_whole_shard_bytes": selected_whole_shard_bytes,
+            "download_storage_estimate": _download_storage_estimate(selected_whole_shard_bytes),
             "active_requests": model.get("active_requests", 0),
             "last_error": model.get("last_error"),
         }

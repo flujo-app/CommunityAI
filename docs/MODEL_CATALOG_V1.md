@@ -7,11 +7,13 @@ consumption are implemented. The model-agnostic qualification runner and an exac
 bootstrap evidence pin are also implemented; Qwen3 1.7B passed full-artifact audit,
 local Windows CPU parity, and selected-worker recovery. That 2025-generation checkpoint
 proves the harness but is not a production-ladder candidate. The production backlog was
-refreshed against official publisher releases on 2026-08-23. The dense Qwen3.5 text adapter now
-has exact synthetic block, cached-decode, nested-wrapper loading, and real local Hivemind RPC
-parity. Exact current-model manifests, trust-root rotation, periodic catalog refresh, automatic worker
-migration, publication of the release bootstrap, and the primary/standby qualification
-gates remain open.
+refreshed against official publisher releases on 2026-08-23. The dense Qwen3.5 text
+adapter now has exact synthetic block, cached-decode, nested-wrapper loading, and real
+local Hivemind RPC parity. The exact Qwen3.5 2B and Gemma 4 E2B manifests and the first
+threshold-one alpha catalog/bootstrap are published. Trust-root rotation, periodic
+catalog refresh, larger-rung migration, edge envelopes, and packaged inference remain
+open. Gate 11 route operation passed through the generic product node with direct,
+manifest-verified Hugging Face artifact delivery.
 
 `ModelManifest v1` identifies one exact checkpoint and execution profile. A model
 catalog answers a separate question: which immutable manifests does one community
@@ -101,6 +103,25 @@ establish two independent routes, soak them, atomically update the default alias
 retain the previous rung as a fallback. Explicit manifest requests and in-flight
 requests remain pinned.
 
+## Catalog trust versus artifact delivery
+
+The signed catalog should not become a model package or CDN manifest. It authorizes exact
+`ModelManifest` digests, promotion policy, public manifest locations, and discovery inputs.
+The manifest separately pins the immutable Hugging Face repository revision, artifact
+inventory, byte sizes, and SHA-256 values. Nodes use that inventory to download the smallest
+whole-file shard set required for their local client tensors or assigned worker blocks.
+
+This separation keeps the catalog small, auditable, transport-independent, and suitable for
+offline threshold signing. Direct Hugging Face delivery is the alpha default, but a later
+mirror or peer source is acceptable when it returns the same verified manifest-declared
+bytes. The catalog must never sign expiring download URLs, registry credentials, cache paths,
+or a model-specific runtime image.
+
+Catalog v1 already carries exact manifest identities and manifested weight-byte totals, so
+Gate 11 requires no catalog schema change. Cache affinity, selected-shard bytes, and download
+amplification are local planning or evidence inputs, not catalog authority. See
+[ADR 0003](adr/0003-direct-manifested-artifact-delivery.md).
+
 ## Trust root and signatures
 
 Catalog keys are not worker identities, API keys, bootstrap identities, or credit
@@ -119,7 +140,8 @@ signed envelope covers a strict canonical JSON payload with:
 - `catalog_id`, monotonically increasing `sequence`, issue time, and expiry;
 - ordered promotion rungs and their complete safety/SLO policy; and
 - exact `sha256:` manifest digests, HTTPS manifest mirrors, rung and primary/standby
-  role, total and active parameter counts, and manifested weight bytes.
+  role, total and active parameter counts, and manifested weight bytes; and
+- an optional sorted, bounded set of RSA route-demand authority root key IDs.
 
 Unknown fields, duplicate JSON keys, duplicate model digests, duplicate signatures,
 untrusted signers, malformed keys, non-canonical base64, invalid signatures,
@@ -130,6 +152,31 @@ A persistent rollback guard stores the highest accepted sequence and its payload
 digest for each catalog. It rejects an older sequence and rejects a different payload
 signed at an already accepted sequence. The state is updated only after the catalog's
 schema, time, trust root, and threshold signatures have passed.
+
+### Route-demand authority roots
+
+`route_demand_authority_roots` binds the online route observers to the same offline,
+threshold-signed catalog decision as the approved manifests. The optional field is
+strictly sorted and duplicate-free. It is either empty, which disables remote demand,
+or contains between 2 and 32 canonical `sha256:` fingerprints of RSA public keys.
+Omitting it preserves the canonical bytes and safe disabled behavior of earlier signed
+catalogs.
+
+An accepted catalog installer copies the exact list into the node configuration.
+Discovery discards every unlisted DHT subkey before signature and replay processing,
+then requires two distinct listed roots and uses the conservative lower median. A
+single listed observer can suppress its own vote but cannot inflate a lower honest
+observation; any number of newly generated keys contributes no vote. The remote
+placement influence remains capped below migration and coverage margins.
+
+Observer private keys are online operational credentials, never catalog signing keys or
+release assets. A node may consume trusted observations without possessing one. It
+publishes only when `route-demand.key` was separately pre-provisioned and its public
+fingerprint is listed; node startup never creates that key. Rotation requires a new
+threshold-signed catalog list in this first slice. Only public fingerprints are added,
+not operator names, network addresses, prompts, request identifiers, or route contents.
+Real-world operator independence, collusion, and catalog-key compromise remain governance
+and canary risks rather than properties inferred from distinct keys.
 
 Trust-root rotation is deliberately not smuggled into catalog v1. A later root-update
 format must prove old-to-new authorization, expiry and rollback behavior before the
@@ -171,19 +218,20 @@ the required number of distinct signatures is present.
 
 ## Remaining integration work
 
-1. Generate exact manifests for the Qwen3.5 2B edge primary and Gemma 4 E2B standby, then
-   run the existing adapter through their real checkpoints. Complete their multi-machine,
-   cross-platform, edge-envelope, and public-route qualification. The evidence contract
-   and earlier harness proof are defined in
-   [`MODEL_QUALIFICATION_V1.md`](MODEL_QUALIFICATION_V1.md).
-2. Publish the signed catalog through interchangeable HTTPS mirrors and build the
-   release bootstrap containing its independent trust root and public seeds.
+1. Publish the Qwen3.5 2B and Gemma 4 E2B Windows/Linux Gate 9 acquisition records and
+   steady-state edge envelopes through the direct manifested-artifact path in
+   [`EDGE_RESOURCE_ENVELOPE_RUNBOOK.md`](EDGE_RESOURCE_ENVELOPE_RUNBOOK.md).
+2. Preserve the published threshold-one alpha catalog/bootstrap and migrate its
+   branch-scoped HTTPS mirror only through a newly signed sequence and packaged bootstrap
+   before deleting the branch. Multiple interchangeable mirrors and independently
+   operated seeds are post-alpha hardening.
 3. Bundle that bootstrap and pass the clean-install packaged inference gate. The
    implemented sidecar consumer fetches manifests, verifies their digest against the
    catalog, and registers them without trusting catalog display metadata.
-4. Reconstruct capacity observations from authenticated DHT records and completed
-   route probes rather than accepting a central capacity total.
-5. Add the staged promotion controller, worker intent leases, download hysteresis,
-   fallback and downgrade drills, and deterministic churn simulation.
+4. Extend placement evidence with selected-shard byte cost and verified cache affinity while
+   preserving user bandwidth/storage ceilings and the existing anti-herding margins.
+5. Reconstruct capacity observations from authenticated DHT records and completed route
+   probes rather than accepting a central capacity total; then add staged promotion,
+   fallback/downgrade drills, and deterministic churn simulation.
 6. Design and validate signed trust-root rotation before the public root has multiple
    independent maintainers.

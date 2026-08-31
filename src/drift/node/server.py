@@ -6,7 +6,7 @@ import asyncio
 import math
 import secrets
 import time
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
@@ -35,7 +35,7 @@ from drift.node.worker_supervisor import (
 )
 
 CONTROL_API_VERSION = 1
-CONTRIBUTION_STATUS_SCHEMA_VERSION = 2
+CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
 
 
 def _bounded_text(value, fallback: str, *, limit: int = 300) -> str:
@@ -88,6 +88,19 @@ def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, 
                     else "unknown"
                 ),
                 "desired_running": snapshot.get("desired_running") is True,
+                "placement": {
+                    "automatic": snapshot.get("automatic") is True,
+                    "block_indices": (
+                        _bounded_text(snapshot.get("block_indices"), "unassigned", limit=64)
+                        if snapshot.get("automatic") is True
+                        else None
+                    ),
+                    "reason": (
+                        _bounded_text(snapshot.get("placement_reason"), "placement is pending")
+                        if snapshot.get("automatic") is True
+                        else None
+                    ),
+                },
                 "policy": {
                     **_gate_status(snapshot, "policy"),
                     "preferred": snapshot.get("preferred") is True,
@@ -143,6 +156,7 @@ def create_node_app(
     worker_supervisor: Optional[WorkerSupervisor] = None,
     contribution_policy: Optional[ContributionPolicyConfig] = None,
     contribution_policy_store: Optional[ContributionPolicyStore] = None,
+    route_outcome_observer: Optional[Callable[..., None]] = None,
 ):
     """Compose the OpenAI API and authenticated local control surface."""
     if api_key_store is None and (not api_keys or any(not isinstance(key, str) or not key for key in api_keys)):
@@ -170,6 +184,7 @@ def create_node_app(
         api_key_verifier=api_key_store.verify if api_key_store is not None else None,
         max_concurrent=max_concurrent,
         default_max_tokens=default_max_tokens,
+        route_outcome_observer=route_outcome_observer,
     )
     started_at = int(time.time())
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import sys
 import time
 from importlib.metadata import version
@@ -121,6 +122,54 @@ def _single_instance_server_name(data_location: Path | str) -> str:
     return f"communityai-desktop-{digest}"
 
 
+def _install_posix_termination_bridge(application, timer_type) -> Callable[[], None]:  # noqa: ANN001
+    """Convert POSIX termination into a Qt quit so lifecycle cleanup can finish."""
+    if os.name != "posix":
+        return lambda: None
+
+    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+
+    def request_quit(_signum, _frame) -> None:  # noqa: ANN001
+        application.quit()
+
+    for signum in previous:
+        signal.signal(signum, request_quit)
+
+    # Qt's C++ event loop needs a bounded Python callback so Python dispatches
+    # pending signal handlers while the application is otherwise idle.
+    heartbeat = timer_type(application)
+    heartbeat.setInterval(250)
+    heartbeat.timeout.connect(lambda: None)
+    heartbeat.start()
+    restored = False
+
+    def restore() -> None:
+        nonlocal restored
+        if restored:
+            return
+        restored = True
+        heartbeat.stop()
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+    return restore
+
+
+def _exec_with_termination_cleanup(
+    application,  # noqa: ANN001
+    restore_termination_handlers: Callable[[], None],
+    before_termination_restore: Callable[[], None] | None,
+) -> int:
+    try:
+        return application.exec()
+    finally:
+        try:
+            if before_termination_restore is not None:
+                before_termination_restore()
+        finally:
+            restore_termination_handlers()
+
+
 def _gib_text(size_bytes: int | None) -> str:
     if not size_bytes:
         return ""
@@ -138,6 +187,7 @@ def run(
     start_minimized: bool = False,
     activate_existing_instance: bool = True,
     instance_name: str | None = None,
+    before_termination_restore: Callable[[], None] | None = None,
 ) -> int:
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
@@ -757,6 +807,12 @@ def run(
             else:
                 detail = f"{detail}  •  {availability}"
             copy.addWidget(label(detail, "bodyMuted"))
+            copy.addWidget(
+                label(
+                    f"First-use download/storage: {model['download_storage_estimate']}",
+                    "bodyMuted",
+                )
+            )
             layout.addLayout(copy, 1)
             tone = "good" if model["route_complete"] else "warn"
             badge = "Auto choice" if model.get("auto_selected") else "Ready" if tone == "good" else "Limited"
@@ -921,6 +977,12 @@ def run(
                 status_label = label(detail, "bodyMuted")
                 status_label.setWordWrap(True)
                 copy.addWidget(status_label)
+                copy.addWidget(
+                    label(
+                        f"First-use download/storage: {model['download_storage_estimate']}",
+                        "bodyMuted",
+                    )
+                )
                 row_layout.addLayout(copy, 1)
                 toggle = QCheckBox()
                 toggle.setChecked(selected)
@@ -1290,4 +1352,9 @@ def run(
         QTimer.singleShot(600, capture)
     if auto_close_seconds is not None:
         QTimer.singleShot(max(1, int(float(auto_close_seconds) * 1000)), application.quit)
-    return application.exec()
+    restore_termination_handlers = _install_posix_termination_bridge(application, QTimer)
+    return _exec_with_termination_cleanup(
+        application,
+        restore_termination_handlers,
+        before_termination_restore,
+    )

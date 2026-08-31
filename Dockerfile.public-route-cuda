@@ -1,0 +1,111 @@
+# syntax=docker/dockerfile:1.7
+
+ARG CARRIER_RUNTIME_IMAGE
+FROM ${CARRIER_RUNTIME_IMAGE} AS snapshot
+
+FROM ghcr.io/astral-sh/uv:0.11.21@sha256:6f1fa8fc4040ad7197d7e652057219871e5f6640abfe2b790f1419fdb2319e6b AS uv
+
+FROM python:3.12.13-slim-bookworm@sha256:6e13e65c55e33adf203d77ee371cf8bf5d81bd4902ef07565721f46bf44917af
+
+ARG SOURCE_COMMIT
+ARG CANDIDATE
+ARG MANIFEST_DIGEST
+ARG DECLARED_ARTIFACT_BYTES
+ARG SOURCE_TREE_DIGEST
+ARG DOCKERFILE_DIGEST
+ARG UV_LOCK_DIGEST
+ARG CARRIER_RUNTIME_IMAGE
+ARG CARRIER_EVIDENCE_DIGEST
+ARG CARRIER_INDEX_DIGEST
+ARG CARRIER_RUNTIME_DIGEST
+
+LABEL org.opencontainers.image.title="CommunityAI finite public CUDA route" \
+      org.opencontainers.image.source="https://github.com/flujo-app/CommunityAI" \
+      org.opencontainers.image.revision="${SOURCE_COMMIT}" \
+      org.opencontainers.image.base.name="python:3.12.13-slim-bookworm@sha256:6e13e65c55e33adf203d77ee371cf8bf5d81bd4902ef07565721f46bf44917af" \
+      communityai.public-route.candidate="${CANDIDATE}" \
+      communityai.public-route.device="cuda" \
+      communityai.public-route.manifest="${MANIFEST_DIGEST}" \
+      communityai.public-route.artifact-bytes="${DECLARED_ARTIFACT_BYTES}" \
+      communityai.public-route.source-tree="${SOURCE_TREE_DIGEST}" \
+      communityai.public-route.dockerfile="${DOCKERFILE_DIGEST}" \
+      communityai.public-route.uv-lock="${UV_LOCK_DIGEST}" \
+      communityai.public-route.carrier-evidence="${CARRIER_EVIDENCE_DIGEST}" \
+      communityai.public-route.carrier-index="${CARRIER_INDEX_DIGEST}" \
+      communityai.public-route.carrier-runtime="${CARRIER_RUNTIME_DIGEST}" \
+      communityai.public-route.torch="2.6.0+cu124" \
+      communityai.public-route.cuda="12.4" \
+      communityai.public-route.training="disabled" \
+      communityai.public-route.health="/run/communityai/health.json"
+
+ENV PATH=/workspace/.venv/bin:${PATH} \
+    PYTHONPATH=/workspace/src \
+    HOME=/tmp/communityai \
+    HF_HOME=/cache/huggingface \
+    DRIFT_CACHE=/cache \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    UV_NO_CACHE=1 \
+    UV_LINK_MODE=copy \
+    PYTHONDONTWRITEBYTECODE=1 \
+    COMMUNITYAI_PUBLIC_ROUTE_CANDIDATE=${CANDIDATE} \
+    COMMUNITYAI_PUBLIC_ROUTE_MANIFEST=/workspace/public-route/model-manifest.json \
+    COMMUNITYAI_PUBLIC_ROUTE_CACHE_DIR=/cache/model
+
+COPY --from=uv /uv /uvx /bin/
+
+WORKDIR /workspace
+COPY Dockerfile.public-route-cuda pyproject.toml uv.lock README.md ./
+COPY src ./src
+COPY scripts/public_route_node.py scripts/public_route_image_contract.py scripts/qualification_image_contract.py ./scripts/
+COPY . /public-route-source
+COPY --from=contract image-contract.json /workspace/public-route/image-contract.json
+COPY --from=contract model-manifest.json /workspace/public-route/model-manifest.json
+COPY --from=contract carrier-evidence.json /workspace/public-route/carrier-evidence.json
+COPY --from=snapshot --chown=0:0 /cache/model /cache/model
+
+RUN test -n "${SOURCE_COMMIT}" \
+    && test -n "${CANDIDATE}" \
+    && test -n "${MANIFEST_DIGEST}" \
+    && test -n "${DECLARED_ARTIFACT_BYTES}" \
+    && test -n "${SOURCE_TREE_DIGEST}" \
+    && test -n "${DOCKERFILE_DIGEST}" \
+    && test -n "${UV_LOCK_DIGEST}" \
+    && test -n "${CARRIER_RUNTIME_IMAGE}" \
+    && test -n "${CARRIER_EVIDENCE_DIGEST}" \
+    && test -n "${CARRIER_INDEX_DIGEST}" \
+    && test -n "${CARRIER_RUNTIME_DIGEST}" \
+    && test -z "$(find /cache/model \( ! -user root -o ! -group root -o -perm -0002 \) -print -quit)" \
+    && test -z "$(find /cache/model -type f ! -perm -0004 -print -quit)" \
+    && test -z "$(find /cache/model -type d ! -perm -0005 -print -quit)" \
+    && apt-get update \
+    && apt-get install --no-install-recommends --yes build-essential \
+    && uv sync --frozen --no-dev --no-editable --python /usr/local/bin/python \
+    && uv pip check --python /workspace/.venv/bin/python \
+    && python scripts/public_route_image_contract.py verify \
+      --contract /workspace/public-route/image-contract.json \
+      --manifest /workspace/public-route/model-manifest.json \
+      --carrier-evidence /workspace/public-route/carrier-evidence.json \
+      --snapshot-root /cache/model \
+      --source-tree-root /public-route-source \
+      --source-commit "${SOURCE_COMMIT}" \
+      --candidate "${CANDIDATE}" \
+      --manifest-digest "${MANIFEST_DIGEST}" \
+      --declared-artifact-bytes "${DECLARED_ARTIFACT_BYTES}" \
+      --source-tree-digest "${SOURCE_TREE_DIGEST}" \
+      --dockerfile-digest "${DOCKERFILE_DIGEST}" \
+      --uv-lock-digest "${UV_LOCK_DIGEST}" \
+      --carrier-runtime-image "${CARRIER_RUNTIME_IMAGE}" \
+      --carrier-evidence-digest "${CARRIER_EVIDENCE_DIGEST}" \
+      --carrier-index-digest "${CARRIER_INDEX_DIGEST}" \
+      --carrier-runtime-digest "${CARRIER_RUNTIME_DIGEST}" \
+    && python -c 'from importlib.metadata import version; from drift import __version__; raise SystemExit(0 if __version__ == version("drift") else 1)' \
+    && python -c 'import torch; arches=(torch._C._cuda_getArchFlags() or "").split(); raise SystemExit(0 if torch.__version__ == "2.6.0+cu124" and torch.version.cuda == "12.4" and "sm_86" in arches and "sm_90" in arches else 1)' \
+    && apt-get purge --auto-remove --yes build-essential \
+    && rm -rf /var/lib/apt/lists/* /public-route-source /workspace/public-route/image-contract.json /workspace/public-route/carrier-evidence.json \
+    && install -d -m 0700 -o 65532 -g 65532 /run/communityai /tmp/communityai \
+    && chmod 0444 /workspace/public-route/model-manifest.json
+
+USER 65532:65532
+
+ENTRYPOINT ["python", "-u", "/workspace/scripts/public_route_node.py"]

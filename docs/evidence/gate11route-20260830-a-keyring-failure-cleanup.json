@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "scope": "gcp-public-route-bootstrap-failure-cleanup",
+  "run_id": "route-20260830-a",
+  "attempt": "detached-keyring-retry",
+  "verified_at_utc": "2026-08-30T03:31:49.057Z",
+  "result": "failed-cleaned",
+  "failure_stage": "bootstrap_keyring_permissions",
+  "complete_release_qualification": false,
+  "authorization": {
+    "source_commit": "0ea140f3fe764a6772a3b4217ead4bcd7e93562f",
+    "evidence_digest": "sha256:c1c1ce9bd37d6ae8556eaeaa88676e5b08dabaea96554a5a765a0d6e993feedb",
+    "provider_plan_digest": "sha256:dc11838569220a3fd7d7afbd3e8e70f49ac9034994071252b11931dd9ad45947",
+    "maximum_estimate_usd": "26.00",
+    "cloud_ceiling_usd": "100.00"
+  },
+  "concurrency": {
+    "existing_exact_controller_detected": true,
+    "duplicate_controller_stopped_at_preflight": true,
+    "duplicate_controller_created_resources": false,
+    "paid_attempt_controller_stopped_after_deterministic_failure": true
+  },
+  "failure": {
+    "pinned_key_digest_verified": true,
+    "restrictive_bootstrap_umask_active": true,
+    "apt_keyring_readable": false,
+    "route_containers_started": false,
+    "inference_attempted": false,
+    "fix_required": "set the dearmored package keyring to mode 0644 before apt reads the signed repository"
+  },
+  "cleanup": {
+    "exact_delete_targets_processed": 5,
+    "absence_checks": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "all_absent": true,
+    "resource_classes": [
+      "instance",
+      "auto-delete boot disk",
+      "network",
+      "subnet",
+      "public-route firewall",
+      "IAP firewall"
+    ],
+    "protected_bootstrap_running": true,
+    "native_authentication_revalidated": true
+  },
+  "cost": {
+    "within_existing_maximum": true,
+    "additional_reservation_usd": "0.00",
+    "observed_cost_usd": null
+  },
+  "privacy": {
+    "command_argv_retained": false,
+    "credentials_retained": false,
+    "endpoints_retained": false,
+    "outputs_retained": false,
+    "paths_retained": false,
+    "peer_ids_retained": false,
+    "prompts_retained": false,
+    "provider_ids_retained": false,
+    "provider_output_retained": false,
+    "token_ids_retained": false
+  },
+  "next_action": "commit and test the keyring-mode fix, regenerate the exact source-bound authorization without increasing the USD 26 maximum, then retry after fresh fail-closed preflight"
+}

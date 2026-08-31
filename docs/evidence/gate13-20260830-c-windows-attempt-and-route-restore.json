@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-windows-preacquisition-attempt-cleanup-and-route-restoration",
+  "run_id": "gate13-20260830-c",
+  "observed_at": "2026-08-31T04:22:27.9257193Z",
+  "result": "failed-closed-cleaned-route-restored",
+  "gate": 13,
+  "package": {
+    "workflow_run_id": 33338872342,
+    "source_commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "platform": "windows",
+    "archive": "communityai-desktop-windows.zip",
+    "bytes": 2695065068,
+    "sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+    "exact_package_audit_passed": true
+  },
+  "attempted_helper": {
+    "source_commit": "5f52d735cf23fdd7a9f0cc4b90a7bcd3c2d9309d",
+    "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+    "bytes": 129779,
+    "sha256": "0a22c7d428e84069371226fcfe7d76698d714631739f8401ad90f6ab2762276c"
+  },
+  "windows_attempt": {
+    "client": "gate13-20260830-d-windows",
+    "package_audit_passed": true,
+    "clean_install_passed": true,
+    "desktop_runtime_check_passed": true,
+    "desktop_self_test_passed": true,
+    "desktop_ui_self_test_passed": true,
+    "desktop_onboarding_ui_self_test_passed": true,
+    "packaged_node_self_test_passed": true,
+    "runtime_version": "2.3.0.dev2",
+    "torch_version": "2.6.0+cu124",
+    "packaged_worker_self_test_passed": false,
+    "failure_boundary": "worker self-test emitted process-lifetime diagnostics on stderr; the Windows containment host merged stderr into captured stdout, so strict JSON parsing failed before model acquisition",
+    "model_acquisition_started": false,
+    "model_cache_bytes": 0,
+    "lifecycle_success_claimed": false,
+    "credential_retained": false,
+    "workroot_cleanup_proved": true,
+    "persistent_data_cleanup_proved": true,
+    "process_and_job_cleanup_proved": true,
+    "gpu_memory_after_mib": 0
+  },
+  "software_correction": {
+    "source_commit": "4818da304f4eeafc81978873bcdfa8a41f6cad36",
+    "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+    "bytes": 131385,
+    "sha256": "2272b3bd9a59ccbe66963558f2cee66b41f68403f611f8eff92362eebf8e22b8",
+    "behavior": "captured child stdout remains on its bounded anonymous pipe while child stderr uses a dedicated inheritable NUL sink created before resume and closed on success and every error path",
+    "native_focused_tests_passed": 15,
+    "high_volume_stderr_probe_passed": true,
+    "repeated_contained_runs_without_handle_growth": 80,
+    "descendant_timeout_and_job_cleanup_probe_passed": true,
+    "independent_review": "passed",
+    "paid_clean_host_lifecycle_exercised": false
+  },
+  "provider_cleanup": {
+    "exact_instances_absent": [
+      "gate13-20260830-c-windows",
+      "gate13-20260830-d-windows",
+      "gate13-20260830-c-linux",
+      "gate13-20260830-d-linux"
+    ],
+    "exact_auto_delete_disks_absent": [
+      "gate13-20260830-c-windows",
+      "gate13-20260830-d-windows",
+      "gate13-20260830-c-linux",
+      "gate13-20260830-d-linux"
+    ],
+    "protected_bootstrap": "RUNNING"
+  },
+  "route_restoration": {
+    "run_id": "route-20260830-j",
+    "instance": "route-20260830-j-node",
+    "provider_status": "RUNNING",
+    "configuration_and_model_cache_preserved": true,
+    "ephemeral_endpoint_rebound_without_retention": true,
+    "qwen_service": "active",
+    "gemma_service": "active",
+    "max_run_seconds": 4800,
+    "termination_action": "DELETE",
+    "start_utc": "2026-08-31T04:08:16.516Z",
+    "delete_deadline_utc": "2026-08-31T05:28:16.516Z",
+    "delete_deadline_not_later_than_original": true,
+    "final_product_acceptance": {
+      "result": "passed",
+      "primary_model": "Qwen3.5 2B",
+      "primary_blocks": 24,
+      "primary_peer_count": 1,
+      "primary_inference_duration_ms": 37222,
+      "standby_model": "Gemma 4 E2B IT",
+      "standby_blocks": 35,
+      "standby_peer_count": 1,
+      "standby_inference_duration_ms": 43008,
+      "fallback_selected_model": "Gemma 4 E2B IT",
+      "fallback_selection_wait_ms": 254301,
+      "restored_model": "Qwen3.5 2B",
+      "restoration_selection_wait_ms": 74096,
+      "restoration_inference_duration_ms": 36195,
+      "initial_selection_wait_ms": 90148,
+      "total_duration_ms": 537046
+    }
+  },
+  "budget": {
+    "combined_cloud_ceiling_usd": "100.00",
+    "combined_committed_maximum_usd": "98.00",
+    "remaining_authorization_headroom_usd": "2.00",
+    "additional_maximum_authorized_by_this_record_usd": "0.00",
+    "billing_state": "delayed"
+  },
+  "gate13_state": {
+    "status": "IN PROGRESS",
+    "missing_required_evidence": [
+      "complete 16-phase packaged lifecycle on a fresh Windows host",
+      "complete 16-phase packaged lifecycle on a fresh Linux host"
+    ],
+    "provisioning_authorized": false,
+    "reason": "all run clients are cleaned and the remaining USD 2 is not a recorded conservative maximum for another qualifying GPU clean-host run"
+  },
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_ids_retained": false,
+    "private_paths_retained": false,
+    "private_endpoints_retained": false,
+    "provider_output_retained": false,
+    "command_argv_retained": false
+  }
+}

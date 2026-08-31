@@ -1,7 +1,10 @@
+import argparse
 import time
 
+import pytest
 import torch
 
+from drift.cli.run_edge_benchmark import _parse_initial_peer
 from drift.model_manifest import ModelManifest
 from drift.node.edge_benchmark import (
     POST_CLOSE_RSS_TOLERANCE_BYTES,
@@ -11,6 +14,31 @@ from drift.node.edge_benchmark import (
     client_component_memory,
 )
 from drift.node.model_manager import ModelRuntime
+
+
+def test_edge_benchmark_rejects_msys_rewritten_initial_peer_before_loading():
+    with pytest.raises(argparse.ArgumentTypeError, match="rewritten as a filesystem path"):
+        _parse_initial_peer("C:/Program Files/Git/ip4/8.8.8.8/tcp/31337/p2p/example")
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "/",
+        "/not-a-multiaddr",
+        "/ip4/999.999.999.999/tcp/31337/p2p/" + "Qm" + "A" * 44,
+        "/ip4/8.8.8.8/tcp/0/p2p/" + "Qm" + "A" * 44,
+        "/ip4/8.8.8.8/tcp/31337/p2p/example",
+    ),
+)
+def test_edge_benchmark_rejects_noncanonical_initial_peer_before_loading(value):
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_initial_peer(value)
+
+
+def test_edge_benchmark_accepts_canonical_public_initial_peer():
+    peer = "/ip4/8.8.8.8/tcp/31337/p2p/" + "Qm" + "A" * 44
+    assert _parse_initial_peer(peer) == peer
 
 
 class _Tokenizer:
@@ -100,6 +128,31 @@ def test_edge_benchmark_reports_cache_memory_and_token_timing(tmp_path):
     assert result["cleanup"]["process_tree"]["additional_child_processes_post_close"] == 0
     assert result["cleanup"]["memory"]["clean"] is True
     assert result["cleanup"]["accelerators"]["clean"] is True
+    assert result["cleanup"]["passed"] is True
+
+
+def test_edge_benchmark_trims_native_heap_during_cleanup(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    trim_calls = []
+    monkeypatch.setattr(
+        "drift.node.edge_benchmark._trim_native_heap",
+        lambda: trim_calls.append(True) or True,
+    )
+
+    result = benchmark_client_runtime(
+        manifest,
+        lambda: ModelRuntime(
+            _Model(),
+            _Tokenizer(),
+            close=lambda: None,
+            cleanup_health=lambda: {"observed": True, "clean": True},
+        ),
+        cache_dir=tmp_path / "cache",
+        max_new_tokens=2,
+    )
+
+    assert trim_calls
+    assert result["cleanup"]["memory"]["native_heap_trimmed"] is True
     assert result["cleanup"]["passed"] is True
 
 

@@ -20,5 +20,13 @@ Community-AI is a shared Large-Language-Model, by the people, for the people.
 
 Community-AI takes care of everything else.
 
+The application ships one model-agnostic runtime. Its signed catalog approves exact model
+manifests; when a model is selected, CommunityAI downloads only the upstream Hugging Face
+checkpoint files needed by the local client components or contributed block range, verifies
+their declared size and SHA-256, and keeps them in a persistent shared cache. It does not need
+one installer or container image per model. Download minimization is currently limited to
+whole upstream checkpoint shards. See
+[`ADR 0003`](docs/adr/0003-direct-manifested-artifact-delivery.md).
+
 CommunityAI is still working toward its first public inference alpha. Credits,
 earnings, payments, and payouts are planned later and are not currently available.

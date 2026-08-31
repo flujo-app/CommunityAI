@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "scope": "gate12-minimal-signed-alpha-catalog-publication",
+  "run_id": "gate12-20260829-a",
+  "gate": 12,
+  "result": "passed",
+  "recorded_at": "2026-08-29T19:40:11Z",
+  "source_commit": "26be579d27135424f495cfa56bb5e0e27ec6fbf8",
+  "catalog": {
+    "catalog_id": "communityai-public-alpha-v1",
+    "catalog_sequence": 1,
+    "catalog_digest": "sha256:70937f0aa10aa73f158753386170c27a95c685b468c66945f05bb3929263f195",
+    "issued_at_ms": 1788032119369,
+    "expires_at_ms": 1790624119369,
+    "signing_key_id": "sha256:a8fb23c4ac71c1f29cc9991d79d16743a2a931c1911b819da0fb5432d5ac8435",
+    "signature_threshold": 1,
+    "model_count": 2,
+    "route_demand_authority_roots": 0
+  },
+  "models": {
+    "qwen3_5_2b": {
+      "role": "primary",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "weight_bytes": 4548221488
+    },
+    "gemma_4_e2b": {
+      "role": "standby",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "weight_bytes": 10246621918
+    }
+  },
+  "bootstrap": {
+    "bootstrap_digest": "sha256:9483d59b2aca127a7e07d2814827daf7c91860e79fe831e7ca559466e472df7c",
+    "catalog_mirror_count": 1,
+    "public_seed_count": 1,
+    "max_loaded_models": 1
+  },
+  "bundle": {
+    "index_digest": "sha256:d1d67591607f3f98bb3359cc9f6591d4fccf0469b52499e9b28b3929fb608537",
+    "member_count": 5,
+    "preflight_result": "passed",
+    "complete_release_qualification": false
+  },
+  "publication": {
+    "git_push_completed": true,
+    "catalog_http_status": 200,
+    "catalog_bytes": 1469,
+    "qwen_manifest_http_status": 200,
+    "qwen_manifest_bytes": 1701,
+    "gemma_manifest_http_status": 200,
+    "gemma_manifest_bytes": 1273
+  },
+  "fresh_remote_consumer": {
+    "result": "passed",
+    "created_node_config": true,
+    "catalog_sequence": 1,
+    "model_count": 2,
+    "automatic_model_priority_count": 2,
+    "automatic_worker_count": 1,
+    "route_demand_authority_root_count": 0,
+    "public_seed_count_per_model": 1,
+    "private_paths_retained_in_evidence": false,
+    "network_endpoints_retained_in_evidence": false
+  },
+  "key_safety": {
+    "private_key_committed": false,
+    "private_key_path_recorded": false,
+    "private_key_retained_offline": true,
+    "git_ignore_verified": true,
+    "private_key_material_retained_in_evidence": false
+  },
+  "cost": {
+    "cloud_resources_created": false,
+    "maximum_estimate_usd": 0,
+    "observed_cost_usd": 0
+  },
+  "not_proved": [
+    "gate11_public_route_operation",
+    "public_route_redundancy_or_soak",
+    "mirror_or_seed_redundancy",
+    "independent_operator_ownership",
+    "packaged_clean_install_inference",
+    "complete_release_qualification"
+  ],
+  "privacy": {
+    "prompt_retained": false,
+    "decoded_output_retained": false,
+    "token_ids_retained": false,
+    "credentials_retained_in_evidence": false,
+    "private_paths_retained_in_evidence": false,
+    "network_endpoints_retained_in_evidence": false
+  },
+  "complete_release_qualification": false
+}

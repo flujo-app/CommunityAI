@@ -1,0 +1,520 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-packaged-clean-install-cost-authorization",
+  "run_id": "gate13-20260830-c",
+  "gate": 13,
+  "result": "stopped-clean",
+  "authorization_revision": 13,
+  "cost_authorization_only": true,
+  "source": {
+    "commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "branch": "codex/gate-v-auto-selection",
+    "pushed": true,
+    "runtime_version": "2.3.0.dev2",
+    "workflow_run_id": 33338872342,
+    "workflow_result": "passed",
+    "qualification_helper_commit": "6787272575f45c4f66ccab7a822bb56bf13b5de6",
+    "linux_lifecycle_helper_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
+    "windows_lifecycle_helper_commit": "4818da304f4eeafc81978873bcdfa8a41f6cad36"
+  },
+  "immutable_inputs": {
+    "catalog_bundle_sha256": "sha256:d1d67591607f3f98bb3359cc9f6591d4fccf0469b52499e9b28b3929fb608537",
+    "catalog_bootstrap_sha256": "sha256:dc74ca37ac0ffd4ab02d2aac9f470e09172f5db1f86c92bee889cf36f4cf7196",
+    "signed_catalog_sha256": "sha256:54530f6ebdb3e27cab7d25762ad7db3ea0369236230a4f58a96870d83ca767c4",
+    "windows_package": {
+      "artifact": "communityai-desktop-install-windows",
+      "artifact_id": 9740183080,
+      "artifact_wrapper_bytes": 2695065244,
+      "artifact_wrapper_entries": 1,
+      "artifact_wrapper_compression": "ZIP_STORED",
+      "archive": "communityai-desktop-windows.zip",
+      "sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+      "bytes": 2695065068,
+      "audit_artifact": "communityai-desktop-audit-windows"
+    },
+    "linux_package": {
+      "artifact": "communityai-desktop-install-linux",
+      "artifact_id": 9740167594,
+      "artifact_wrapper_bytes": 3360718112,
+      "artifact_wrapper_entries": 1,
+      "artifact_wrapper_compression": "ZIP_STORED",
+      "archive": "communityai-desktop-linux.tar.gz",
+      "sha256": "f96d3ca651964380d4684855ab08682e8187b33386327ec3895cda25b43c2a00",
+      "bytes": 3360717934,
+      "audit_artifact": "communityai-desktop-audit-linux"
+    },
+    "windows_qualification_python": {
+      "version": "3.12.9",
+      "sha256": "2a52993092a19cfdffe126e2eeac46a4265e25705614546604ad44988e040c0f",
+      "bytes": 26923696,
+      "product_runtime": false
+    },
+    "artifact_download_helper": {
+      "source_commit": "6787272575f45c4f66ccab7a822bb56bf13b5de6",
+      "path": "scripts/gate13_download_artifact.py",
+      "sha256": "1174deda8af185e00b60c26af4e76fceb5bbae754f450344628ff756b5a78007",
+      "bytes": 12430,
+      "signed_url_input": "stdin-only",
+      "allowed_final_https_host": "productionresultssa7.blob.core.windows.net",
+      "proxy_use": false,
+      "redirects": false,
+      "windows_config": {
+        "path": "scripts/gate13_download_windows.json",
+        "sha256": "bf36b66bf22a8f4453ba481c5a4ad37d8e1856ad93ef25e5e105b566b39affc4",
+        "bytes": 293
+      },
+      "linux_config": {
+        "path": "scripts/gate13_download_linux.json",
+        "sha256": "c3e9dcd94ef0a8e61c95e650416a8c6ca8b169f4b6699a0acd06608e60da5550",
+        "bytes": 294
+      }
+    },
+    "lifecycle_helper_correction": {
+      "latest_source_commit": "4818da304f4eeafc81978873bcdfa8a41f6cad36",
+      "linux": {
+        "source_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
+        "path": "scripts/gate13_linux_packaged_lifecycle.py",
+        "sha256": "f50497fa06f465e8dba8b146e963faa11d102bc7c7fc8e5073e6c0b9e1beaf94",
+        "bytes": 113260
+      },
+      "windows": {
+        "source_commit": "4818da304f4eeafc81978873bcdfa8a41f6cad36",
+        "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+        "sha256": "2272b3bd9a59ccbe66963558f2cee66b41f68403f611f8eff92362eebf8e22b8",
+        "bytes": 131385,
+        "json_input_limit_bytes": 2097152,
+        "lifecycle_output_limit_bytes": 1048576,
+        "production_build_platform": "Windows-2025Server-10.0.26100-SP0",
+        "build_platform_metrics_cross_bound": true
+      },
+      "production_release_metadata_sha256": "6a434cf14100572954452052b8a1e6e8565b2930e3251b1b8327cfdcd7383a25",
+      "production_provenance_sha256": "c9b5e47017b003f6b2d81c9ab8273fcbf3c72f7743f1ebbf99383ae7cd5accda",
+      "production_desktop_metrics_sha256": "5d2b261505e949a15c332c6e5bb817611e340bf897f9b1952ebde8e573e07bd2",
+      "production_whitespace_independent": true,
+      "semantic_and_file_bootstrap_digests_distinct": true,
+      "canonical_prefixed_digest_case_sensitive": true,
+      "credential_store_input_pipe_exact": true,
+      "credential_secret_in_argv_environment_or_output": false,
+      "claim_type_strict_recursive": true,
+      "duplicate_keys_rejected": true,
+      "nonfinite_values_rejected": true,
+      "production_provenance_bytes": 1241883,
+      "windows_focused_tests_passed": 15,
+      "windows_high_volume_stderr_probe_passed": true,
+      "windows_repeated_contained_runs_without_handle_growth": 80,
+      "windows_descendant_timeout_and_job_cleanup_probe_passed": true,
+      "stderr_separated_from_captured_stdout": true,
+      "linux_focused_tests_passed": 33,
+      "gate13_matrix_tests_passed": 140,
+      "independent_review": "passed"
+    },
+    "qwen": {
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "selected_bytes": 4571197320
+    },
+    "gemma": {
+      "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "selected_bytes": 10278818149
+    }
+  },
+  "preflight_history": [
+    {
+      "topology": "parallel Windows/Linux G2/L4 clients",
+      "result": "canceled-before-resource-creation",
+      "reason": "the protected live Gate 11 route consumes the project's one global GPU quota despite free regional L4 quota",
+      "instances_created": 0,
+      "disks_created": 0,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "sequential in-place Linux then Windows G2/L4 clean clients",
+      "result": "owner-authorized",
+      "reason": "the operator explicitly directed the live Gate 11 route to stop temporarily and its sole L4 allocation to move to Gate 13",
+      "new_instances": 0,
+      "new_disks": 0,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Linux G2/L4 exact-production audit preflight",
+      "result": "failed-closed-before-product-start",
+      "reason": "the Linux helper required byte-minified release evidence while the exact production metadata, provenance, and metrics publish type-correct pretty JSON; source 8cfe3b2 now validates all three strict documents independent of whitespace with recursive exact-type binding",
+      "package_redownload_required": false,
+      "model_cache_bytes": 0,
+      "product_process_started": false,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Linux G2/L4 signed-bootstrap pre-model boundary",
+      "result": "failed-closed-before-model-acquisition",
+      "reason": "the helper stripped canonical sha256 prefixes from semantic catalog and bootstrap digests, conflating publication identity with the separate exact bootstrap file digest; source ad5f60b preserves both identities and binds each independently",
+      "package_redownload_required": false,
+      "model_cache_bytes": 0,
+      "product_process_started": false,
+      "attempt_cleanup_proved": true,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Linux G2/L4 exact Gemma acquisition then credential-store boundary",
+      "result": "failed-closed-after-exact-acquisition-before-product-start",
+      "reason": "the helper supplied both input and stdin to subprocess.run for secret-tool store, which Python rejected before starting the credential subprocess; source c3dc923 passes the secret only through the input pipe",
+      "exact_selected_artifact_bytes_acquired": 10278818149,
+      "credential_subprocess_started": false,
+      "credential_retained": false,
+      "workroot_cleanup_proved": true,
+      "process_and_cgroup_cleanup_proved": true,
+      "gpu_memory_after_mib": 0,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Linux G2/L4 corrected product startup",
+      "result": "provider-backstop-deleted-during-startup",
+      "reason": "the original client's fixed 90-minute DELETE backstop expired after exact acquisition and corrected credential storage while packaged product startup was still bounded",
+      "instance_absent": true,
+      "auto_delete_disk_absent": true,
+      "protected_bootstrap_running": true,
+      "gate11_route_preserved_terminated": true,
+      "lifecycle_success_claimed": false,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Windows staged E2-to-G2 in-place conversion",
+      "result": "canceled-before-lifecycle-after-boot-configuration-failure",
+      "reason": "a bounded capacity retry obtained the planned L4, but the staged boot disk repeatedly returned from Windows Boot Manager before OS or SSH startup on G2; it was reverted fail-closed to E2, where fixed-host-key IAP SSH and exact-key authentication passed under an explicit noninteractive PowerShell wrapper and the disk proved to contain no install archive or lifecycle state",
+      "gpu_workload_started": false,
+      "model_acquisition_started": false,
+      "credential_created": false,
+      "lifecycle_success_claimed": false,
+      "original_client_preserved_for_exact_cleanup": true,
+      "replacement_windows_client_authorized_within_existing_maximum": true,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "fresh Windows G2 bootstrap binding",
+      "result": "authorized-before-resource-creation",
+      "reason": "the replacement host now binds the exact operator startup script, Python qualification-controller installer, and commit-pinned Google Cloud GPU-driver installer before provisioning; no image, package, model, resource class, or maximum changed",
+      "replacement_instance_absent": true,
+      "replacement_disk_absent": true,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "fresh Windows G2 production-audit boundary",
+      "result": "failed-closed-before-install-or-model-acquisition",
+      "reason": "the exact helper reused its 1 MiB lifecycle-output bound for JSON inputs and rejected the independently audited 1,241,883-byte production provenance before install; source 4a9c51e separates a 2 MiB input bound from the unchanged 1 MiB output bound and independently passes the exact production document plus an above-bound rejection",
+      "package_redownload_required": false,
+      "model_cache_bytes": 0,
+      "credential_retained": false,
+      "workroot_cleanup_proved": true,
+      "process_and_job_cleanup_proved": true,
+      "instance_reuse_authorized_within_original_deadline": true,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "fresh Windows G2 exact production platform audit",
+      "result": "failed-closed-before-install-or-model-acquisition",
+      "reason": "after the production JSON-size correction, the helper rejected the exact GitHub runner identity Windows-2025Server-10.0.26100-SP0 because it required the literal Windows; source 5f52d73 accepts only canonical Windows or a bounded case-sensitive Windows runner suffix and retains exact provenance-to-metrics platform cross-binding",
+      "full_exact_package_audit_passed": true,
+      "package_redownload_required": false,
+      "model_cache_bytes": 0,
+      "credential_retained": false,
+      "workroot_cleanup_proved": true,
+      "process_and_job_cleanup_proved": true,
+      "instance_reuse_authorized_within_original_deadline": true,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "fresh Windows G2 packaged self-test boundary",
+      "result": "failed-closed-before-model-acquisition",
+      "reason": "the exact package audit, clean install, four desktop self-tests, and packaged-node self-test passed, then the packaged worker self-test exposed that the Windows containment host merged stderr process-lifetime diagnostics into captured stdout before strict JSON parsing; source 4818da3 gives stderr a dedicated inheritable NUL sink while preserving bounded stdout capture",
+      "package_redownload_required": false,
+      "model_cache_bytes": 0,
+      "credential_retained": false,
+      "workroot_cleanup_proved": true,
+      "persistent_data_cleanup_proved": true,
+      "process_and_job_cleanup_proved": true,
+      "client_instance_absent": true,
+      "auto_delete_disk_absent": true,
+      "lifecycle_success_claimed": false,
+      "maximum_cost_change_usd": "0.00"
+    },
+    {
+      "topology": "Gate 13 provider cleanup and Gate 11 route restoration",
+      "result": "passed",
+      "reason": "all four exact Gate 13 clients and disks are absent; the protected bootstrap is running; the preserved route was restarted with a corrected 4,800-second DELETE backstop no later than its original deadline, both product-node services are active, and final primary/fallback/restoration inference passed",
+      "gate13_clients_and_disks_absent": true,
+      "protected_bootstrap_running": true,
+      "gate11_route_running": true,
+      "gate11_qwen_and_gemma_coverage_reproved": true,
+      "gate13_lifecycle_success_claimed": false,
+      "maximum_cost_change_usd": "0.00"
+    }
+  ],
+  "budget": {
+    "combined_cloud_ceiling_usd": "100.00",
+    "committed_before_run_usd": "72.00",
+    "committed_before_run_reason": "USD 46 cleaned-pending-billing Gate 9 maximum plus USD 26 live-bounded Gate 11 route maximum",
+    "maximum_estimate_usd": "26.00",
+    "combined_committed_maximum_usd": "98.00",
+    "remaining_after_run_maximum_usd": "2.00",
+    "observed_cost_usd": null,
+    "billing_state": "delayed",
+    "fly_credit_counted": false
+  },
+  "provider_plan_digest": "sha256:427bc1ed8a6645ad0650d91aaba7aa753d398fa84f56d57b50aca04c4e0cc955",
+  "ledger_purpose": "Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source 1971f106cc5bf90724d938c986a719ce2744f3e7, temporarily stopping and later restoring the separately authorized Gate 11 route while reallocating the project's sole L4 first to one fresh G2-compatible Windows client and then one replacement Linux client",
+  "provider_plan": {
+    "provider": "GCP",
+    "project": "community-ai-506321",
+    "route": {
+      "action": "stop-temporarily-preserve-disk-and-restore-after-gate13",
+      "run_id": "route-20260830-j",
+      "instance": "route-20260830-j-node",
+      "zone": "us-central1-a",
+      "initial_state": "RUNNING",
+      "qualification_state": "TERMINATED",
+      "final_required_state": "RUNNING",
+      "automatic_delete_deadline": "2026-08-31T05:44:13Z",
+      "mutation_authorized_by_this_plan": true,
+      "deletion_authorized_by_this_plan": false,
+      "boot_disk_and_configuration_must_be_preserved": true,
+      "qwen_and_gemma_coverage_must_be_reproved_after_restore": true
+    },
+    "clients": [
+      {
+        "platform": "windows",
+        "model": "Qwen3.5 2B",
+        "lifecycle_run_id": "gate13-windows-qwen-d",
+        "instance": "gate13-20260830-d-windows",
+        "disk": "gate13-20260830-d-windows",
+        "zone": "us-west1-a",
+        "machine_type": "g2-standard-8",
+        "accelerator": "1 x NVIDIA L4",
+        "image_project": "windows-cloud",
+        "image": "windows-server-2022-dc-v20260814",
+        "boot_disk_gib": 100,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "service_account": false,
+        "scopes": [],
+        "provisioning_model": "STANDARD",
+        "max_run_seconds": 5400,
+        "termination_action": "DELETE",
+        "gpu_driver_bootstrap": true,
+        "execution_class": "new unique single-L4 clean G2-compatible Windows host after the preserved staged disk failed before OS startup on G2; deliver the same digest-bound production package and corrected helper before one empty-cache lifecycle",
+        "empty_persistent_cache_required": true,
+        "native_credential_store": "Windows Credential Manager",
+        "os_containment": "kill-on-close Job Object assigned before child execution",
+        "bootstrap": {
+          "startup_script_path": ".gate13-artifacts/33338872342/operator/gate13-windows-d-bootstrap.ps1",
+          "startup_script_sha256": "8b403ecb1234350f1ac55dacbd16703346b1745488a62370c35fb83ea60e9b2e",
+          "startup_script_bytes": 3592,
+          "exact_operator_public_key_only": true,
+          "protected_authorized_key_acl": true,
+          "explicit_powershell_remote_wrapper_required": true,
+          "python_controller_runtime": {
+            "version": "3.12.9",
+            "url": "https://www.python.org/ftp/python/3.12.9/python-3.12.9-amd64.exe",
+            "sha256": "2a52993092a19cfdffe126e2eeac46a4265e25705614546604ad44988e040c0f",
+            "bytes": 26923696
+          },
+          "gpu_driver_installer": {
+            "repository": "GoogleCloudPlatform/compute-gpu-installation",
+            "commit": "e4d32d90993a17795b9f6bc411d2ae6d767052ca",
+            "path": "windows/install_gpu_driver.ps1",
+            "sha256": "9d3eb7064a19aaf8e043c6eb863a490054105f0c7f8f121cdab76b100a092897",
+            "bytes": 8483
+          }
+        }
+      },
+      {
+        "platform": "linux",
+        "model": "Gemma 4 E2B IT",
+        "lifecycle_run_id": "gate13-linux-gemma-d",
+        "instance": "gate13-20260830-d-linux",
+        "disk": "gate13-20260830-d-linux",
+        "zone": "us-east1-b",
+        "machine_type": "g2-standard-8",
+        "accelerator": "1 x NVIDIA L4",
+        "image_project": "ubuntu-os-cloud",
+        "image": "ubuntu-2404-noble-amd64-v20260826",
+        "boot_disk_gib": 100,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "service_account": false,
+        "scopes": [],
+        "provisioning_model": "STANDARD",
+        "max_run_seconds": 5400,
+        "termination_action": "DELETE",
+        "gpu_driver_bootstrap": true,
+        "execution_class": "new unique single-L4 clean host after the prior exact client and auto-delete disk were proved absent; deliver the same digest-bound production package and corrected helper before one empty-cache lifecycle",
+        "empty_persistent_cache_required": true,
+        "native_credential_store": "Secret Service",
+        "os_containment": "systemd system cgroup-v2 service with KillMode=control-group and LimitCORE=0"
+      }
+    ],
+    "artifact_delivery": {
+      "operator_uses_existing_gh_authentication": true,
+      "host_github_token": false,
+      "host_persistent_github_credential": false,
+      "host_source_checkout": false,
+      "host_git_dependency": false,
+      "download_helper": {
+        "source_commit": "6787272575f45c4f66ccab7a822bb56bf13b5de6",
+        "path": "scripts/gate13_download_artifact.py",
+        "sha256": "1174deda8af185e00b60c26af4e76fceb5bbae754f450344628ff756b5a78007",
+        "bytes": 12430,
+        "windows_config_path": "scripts/gate13_download_windows.json",
+        "windows_config_sha256": "bf36b66bf22a8f4453ba481c5a4ad37d8e1856ad93ef25e5e105b566b39affc4",
+        "windows_config_bytes": 293,
+        "linux_config_path": "scripts/gate13_download_linux.json",
+        "linux_config_sha256": "c3e9dcd94ef0a8e61c95e650416a8c6ca8b169f4b6699a0acd06608e60da5550",
+        "linux_config_bytes": 294
+      },
+      "linux_lifecycle_helper": {
+        "source_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4",
+        "path": "scripts/gate13_linux_packaged_lifecycle.py",
+        "sha256": "f50497fa06f465e8dba8b146e963faa11d102bc7c7fc8e5073e6c0b9e1beaf94",
+        "bytes": 113260
+      },
+      "windows_lifecycle_helper": {
+        "source_commit": "5f52d735cf23fdd7a9f0cc4b90a7bcd3c2d9309d",
+        "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+        "sha256": "0a22c7d428e84069371226fcfe7d76698d714631739f8401ad90f6ab2762276c",
+        "bytes": 129779,
+        "json_input_limit_bytes": 2097152,
+        "lifecycle_output_limit_bytes": 1048576,
+        "production_build_platform": "Windows-2025Server-10.0.26100-SP0",
+        "build_platform_metrics_cross_bound": true
+      },
+      "operator_transport": "gcloud scp of audit records, the exact helper/config files bound at source 6787272575f45c4f66ccab7a822bb56bf13b5de6, the corrected Linux lifecycle helper bound at source c3dc9234af7980bcaffd481c6f8e4e974ed117d4, the corrected Windows lifecycle helper bound at source 5f52d735cf23fdd7a9f0cc4b90a7bcd3c2d9309d, and configuration",
+      "archive_transport": "one-time GitHub-signed artifact URL resolved only by the authenticated operator and delivered through stdin to the fixed bound host downloader",
+      "helper_and_platform_config_sha256_and_bytes_verified_before_execution": true,
+      "actions_wrapper_exact_bytes_and_single_regular_stored_member_required": true,
+      "signed_url_in_argv": false,
+      "signed_url_in_environment": false,
+      "signed_url_in_output_or_evidence": false,
+      "archive_sha256_and_bytes_verified_before_unpack": true,
+      "model_transport": "direct immutable Hugging Face revision only",
+      "model_registry_or_cache_mirror": false
+    },
+    "topology_revision": {
+      "revision": 12,
+      "previous_topology_result": "the fresh Windows G2/L4 host passed production JSON parsing but the helper rejected the exact GitHub runner platform string before install or model acquisition; cleanup remained empty, and a diagnostic-only source 5f52d73 replay then passed the full exact 2,695,065,068-byte package audit",
+      "reason": "reuse the same bounded fresh host and exact package, restage only pushed helper source 5f52d73 with strict Windows runner validation plus unchanged provenance-to-metrics cross-binding, finish Windows first, then create the already-authorized unique Linux replacement without changing the USD 26 Gate 13 maximum",
+      "gate11_lesson_applied": "reuse the exact product-node L4 resource class and immutable package/model inputs, but rebuild disposable host configuration instead of debugging a non-portable boot disk; retain native containment and exact cleanup",
+      "gate13_scope": "clean packaged install, localhost inference, contribution controls, replacement, uninstall, and cleanup",
+      "gate14_real_gpu_control_claim_deferred": true,
+      "cost_ceiling_changed": false
+    },
+    "resource_limits": {
+      "one_model_per_host": true,
+      "one_contribution_worker_maximum": true,
+      "max_disk_space": "20GiB",
+      "max_vram": "24GiB",
+      "max_bandwidth_mbps": 100,
+      "max_power_watts": 250,
+      "pause_timeout_seconds": 30
+    },
+    "sequencing": {
+      "concurrent_platform_models": 1,
+      "gpu_order": [
+        "gate13-20260830-d-windows",
+        "gate13-20260830-d-linux"
+      ],
+      "route_stopped_before_first_client_gpu_start": true,
+      "route_restored_only_after_both_client_deletions": true,
+      "windows_model": "Qwen3.5 2B",
+      "linux_model": "Gemma 4 E2B IT",
+      "maximum_transfer_resumptions": 3,
+      "acquisition_timeout_seconds": 3600,
+      "provider_deletion_backstop_seconds": 5400,
+      "manual_replacement_kind": "reinstall",
+      "all_16_phases_required": true
+    },
+    "cleanup": {
+      "delete_only_exact_run_client_instances_and_auto_delete_disks": true,
+      "verify_instances_absent": [
+        "gate13-20260830-c-windows",
+        "gate13-20260830-d-windows",
+        "gate13-20260830-c-linux",
+        "gate13-20260830-d-linux"
+      ],
+      "verify_disks_absent": [
+        "gate13-20260830-c-windows",
+        "gate13-20260830-d-windows",
+        "gate13-20260830-c-linux",
+        "gate13-20260830-d-linux"
+      ],
+      "protected_resources": [
+        "communityai-bootstrap-1",
+        "route-20260830-j-node boot disk and configuration",
+        "all resources not named by this plan"
+      ],
+      "protected_bootstrap_must_remain_running": true,
+      "route_instance_may_stop_and_restart_but_must_not_be_deleted": true,
+      "route_cleanup_owned_by_separate_authorization": true
+    },
+    "prohibited": {
+      "fly_operations": 0,
+      "model_specific_image_builds_pushes_pulls": 0,
+      "registry_or_cache_mirrors": 0,
+      "qualification_reruns": 0,
+      "macos_work": 0,
+      "credits_or_payments_work": 0
+    },
+    "stop_conditions": [
+      "package or audit digest/size mismatch",
+      "source, runtime, catalog, bootstrap, model, or manifest mismatch",
+      "native credential precondition or cleanup failure",
+      "selected artifact mismatch or transfer resumption budget exhausted",
+      "acquisition or localhost inference unsuccessful",
+      "resource limit or exact worker proof absent",
+      "forced graceful cleanup or nonempty OS containment",
+      "exact provider cleanup not proved",
+      "provider deletion deadline leaves insufficient completion and cleanup margin"
+    ]
+  },
+  "post_run_state": {
+    "evidence": "gate13-20260830-c-windows-attempt-and-route-restore.json",
+    "all_exact_gate13_clients_and_disks_absent": true,
+    "protected_bootstrap_running": true,
+    "gate11_route_running": true,
+    "gate11_qwen_and_gemma_coverage_reproved": true,
+    "gate13_status": "IN PROGRESS",
+    "windows_and_linux_16_phase_lifecycles_complete": false,
+    "new_provisioning_requires_fresh_cost_authorization": true
+  },
+  "preflight_required": [
+    "native gcloud, flyctl, and gh authentication",
+    "passed production run and audit bind exact Actions wrapper and inner package names, bytes, and SHA-256",
+    "pushed helper source plus platform config paths, bytes, and SHA-256 match on each host before the stdin-only download",
+    "exact package source and production workflow result",
+    "current route identity, deadline, state, and complete Qwen/Gemma coverage",
+    "exact target instances and disks absent",
+    "protected bootstrap running",
+    "exact g2-standard-8 machine type, one NVIDIA L4, and current driver path available sequentially in both planned zones after the route stops",
+    "focused lifecycle software tests and privacy-safe schema checks"
+  ],
+  "operator_override": {
+    "recorded_at": "2026-08-30",
+    "parallel_models_and_platforms_authorized_for_speed": true,
+    "current_l4_usage_nonblocking_within_combined_budget": true,
+    "temporary_gate11_route_stop_and_sequential_l4_reallocation_authorized": true,
+    "gate11_route_deletion_not_authorized": true,
+    "hard_cloud_ceiling_unchanged_usd": "100.00"
+  },
+  "provider_calls_authorized_without_preflight": false,
+  "provisioning_authorized": false,
+  "reservation_recorded": true,
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_ids_retained": false,
+    "private_paths_retained": false,
+    "private_endpoints_retained": false,
+    "provider_output_retained": false,
+    "command_argv_retained": false
+  }
+}

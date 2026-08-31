@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "allowed_host": "productionresultssa7.blob.core.windows.net",
+  "wrapper_bytes": 3360718112,
+  "archive_name": "communityai-desktop-linux.tar.gz",
+  "archive_bytes": 3360717934,
+  "archive_sha256": "f96d3ca651964380d4684855ab08682e8187b33386327ec3895cda25b43c2a00"
+}

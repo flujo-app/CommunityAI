@@ -180,37 +180,46 @@ def _require_https_urls(value: Any, field: str) -> Tuple[str, ...]:
     return result
 
 
+def require_public_initial_peer(value: Any, *, field: str = "initial_peer") -> str:
+    """Validate one canonical public libp2p TCP bootstrap multiaddress."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise CatalogBootstrapError(f"{field} must be a non-empty string")
+    if len(value) > 2048 or any(ord(character) <= 32 or ord(character) == 127 for character in value):
+        raise CatalogBootstrapError(f"{field} must be a bounded public libp2p multiaddress")
+    match = _PUBLIC_PEER_RE.fullmatch(value)
+    if match is None:
+        raise CatalogBootstrapError(
+            f"{field} must be a canonical public multiaddress ending in /tcp/<port>/p2p/<peer-id>"
+        )
+    protocol, host, port_text, peer_id_text = match.groups()
+    if int(port_text) > 65535:
+        raise CatalogBootstrapError(f"{field} contains an invalid TCP port")
+    if protocol.startswith("ip"):
+        _require_public_host(
+            host,
+            field,
+            ip_version=int(protocol[-1]),
+        )
+    else:
+        _require_public_host(
+            host,
+            field,
+            require_dns=True,
+        )
+    try:
+        peer_id = PeerID.from_base58(peer_id_text)
+    except (TypeError, ValueError) as exc:
+        raise CatalogBootstrapError(f"{field} contains an invalid PeerID") from exc
+    if peer_id.to_base58() != peer_id_text:
+        raise CatalogBootstrapError(f"{field} contains a noncanonical PeerID")
+    return value
+
+
 def _require_initial_peers(value: Any) -> Tuple[str, ...]:
     peers = _require_string_list(value, "initial_peers")
     for index, peer in enumerate(peers):
-        if len(peer) > 2048 or any(ord(character) <= 32 or ord(character) == 127 for character in peer):
-            raise CatalogBootstrapError(f"initial_peers[{index}] must be a bounded public libp2p multiaddress")
-        match = _PUBLIC_PEER_RE.fullmatch(peer)
-        if match is None:
-            raise CatalogBootstrapError(
-                f"initial_peers[{index}] must be a canonical public multiaddress ending in /tcp/<port>/p2p/<peer-id>"
-            )
-        protocol, host, port_text, peer_id_text = match.groups()
-        if int(port_text) > 65535:
-            raise CatalogBootstrapError(f"initial_peers[{index}] contains an invalid TCP port")
-        if protocol.startswith("ip"):
-            _require_public_host(
-                host,
-                f"initial_peers[{index}]",
-                ip_version=int(protocol[-1]),
-            )
-        else:
-            _require_public_host(
-                host,
-                f"initial_peers[{index}]",
-                require_dns=True,
-            )
-        try:
-            peer_id = PeerID.from_base58(peer_id_text)
-        except (TypeError, ValueError) as exc:
-            raise CatalogBootstrapError(f"initial_peers[{index}] contains an invalid PeerID") from exc
-        if peer_id.to_base58() != peer_id_text:
-            raise CatalogBootstrapError(f"initial_peers[{index}] contains a noncanonical PeerID")
+        require_public_initial_peer(peer, field=f"initial_peers[{index}]")
     return peers
 
 
@@ -506,7 +515,16 @@ class CatalogBootstrapInstaller:
             "max_loaded_models": self.bootstrap.max_loaded_models,
             "models": models,
             "auto_model_priority": [model.manifest_digest for _, model in ranked_models],
-            "workers": [],
+            "route_demand_authority_roots": list(catalog.route_demand_authority_roots or ()),
+            "workers": [
+                {
+                    "id": "automatic",
+                    "model": "auto",
+                    "identity_path": str(self.config_path.parent / "worker-identities" / "automatic.key"),
+                    "num_blocks": 1,
+                    "enabled": True,
+                }
+            ],
         }
         try:
             NodeConfig.from_dict(source, base_dir=self.config_path.parent)

@@ -74,6 +74,11 @@ class _FakeNodeState:
             "model": worker["model"],
             "state": worker["state"],
             "desired_running": worker["desired_running"],
+            "placement": {
+                "automatic": worker_id == "worker-b",
+                "block_indices": "0:36" if worker_id == "worker-b" else None,
+                "reason": "Selected a complete catalog route" if worker_id == "worker-b" else None,
+            },
             "policy": {
                 "admitted": not denied,
                 "reason": "Model is denied by node policy" if denied else None,
@@ -162,6 +167,10 @@ def _handler(state: _FakeNodeState):
                                 "id": "Llama 3.1 8B",
                                 "state": "ready",
                                 "active_requests": 0,
+                                "download": {
+                                    "schema_version": 1,
+                                    "selected_whole_shard_bytes": 16_000_000_000,
+                                },
                                 "route": {
                                     "status": "complete",
                                     "source": "discovery",
@@ -174,6 +183,10 @@ def _handler(state: _FakeNodeState):
                                 "id": "Qwen 3 8B",
                                 "state": "ready",
                                 "active_requests": 2,
+                                "download": {
+                                    "schema_version": 1,
+                                    "selected_whole_shard_bytes": 12_000_000_000,
+                                },
                                 "route": {
                                     "status": "complete",
                                     "source": "discovery",
@@ -186,6 +199,10 @@ def _handler(state: _FakeNodeState):
                                 "id": "Mistral Small",
                                 "state": "degraded",
                                 "active_requests": 0,
+                                "download": {
+                                    "schema_version": 1,
+                                    "selected_whole_shard_bytes": 24_000_000_000,
+                                },
                                 "route": {
                                     "status": "incomplete",
                                     "source": "discovery",
@@ -207,7 +224,7 @@ def _handler(state: _FakeNodeState):
                             ],
                         },
                         "contribution": {
-                            "schema_version": 2,
+                            "schema_version": 3,
                             "configured": True,
                             "editable": True,
                             "policy": state.policy_response(),
@@ -308,7 +325,7 @@ def run_contract(client: NodeClient) -> Dict[str, Any]:
     """Exercise every privileged protocol operation used by this desktop slice."""
     status = client.status()
     contribution = status["contribution"]
-    if contribution["schema_version"] != 2 or not contribution["configured"] or not contribution["editable"]:
+    if contribution["schema_version"] != 3 or not contribution["configured"] or not contribution["editable"]:
         raise AssertionError("acceptance node omitted the authoritative contribution contract")
     from communityai_desktop.controller import DesktopController
 

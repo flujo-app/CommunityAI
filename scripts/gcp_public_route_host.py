@@ -1,0 +1,1254 @@
+"""Fixed-action host controller for one finite Gate 11 GCP public route.
+
+The local lifecycle runner uploads this source-bound helper after the VM bootstrap is
+ready. It accepts no arbitrary command, emits bounded marker-framed JSON, and keeps provider
+identities, paths, endpoints, PeerIDs, and private identity fingerprints in a private
+host state file rather than lifecycle evidence.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import binascii
+import hashlib
+import ipaddress
+import json
+import math
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
+
+SCHEMA_VERSION = 1
+MAX_OUTPUT_BYTES = 65_536
+MAX_COMMAND_OUTPUT_BYTES = 1_000_000
+MAX_HEALTH_BYTES = 4096
+MAX_REGISTRY_PAYLOAD_BYTES = 4096
+PULL_RETRY_DELAYS_SECONDS = (5.0, 15.0, 60.0, 120.0)
+_ACTION_FAILURE_CODES = frozenset({"registry_auth", "image_pull", "host_command"})
+_ACTION_FAILURE_EXIT_CODES = {"registry_auth": 41, "image_pull": 42, "host_command": 43}
+ACK_PREFIX = b"COMMUNITYAI_HOST_ACTION="
+STATE_ROOT = Path("/var/lib/communityai-route")
+BOOTSTRAP_READY = Path("/var/lib/communityai-bootstrap/runtime-ready.json")
+DOCKER_DAEMON_CONFIG = Path("/etc/docker/daemon.json")
+ACCEPTANCE_TARGET = Path("/var/lib/communityai-route/public_route_acceptance.py")
+REGISTRY_CONFIG = Path("/run/communityai-registry")
+REGISTRY_UPLOAD_PARENT = Path("/var/tmp")
+TRANSPORT_SENTINEL = b"communityai-secret-transport-v1"
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_RUN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,39}$")
+ARTIFACT_REGISTRY_HOST = "us-central1-docker.pkg.dev"
+ARTIFACT_REGISTRY_PREFIX = f"{ARTIFACT_REGISTRY_HOST}/community-ai-506321/communityai-ghcr-cache"
+ARTIFACT_REGISTRY_USER = "oauth2accesstoken"
+_UPLOAD_RE = re.compile(r"^[0-9a-f]{32}$")
+_PEER_RE = re.compile(r"^/(?:ip4|ip6|dns|dns4|dns6)/[^\s]{1,1900}/p2p/[1-9A-HJ-NP-Za-km-z]{32,128}$")
+_IMAGE_RE = re.compile(
+    rf"^{re.escape(ARTIFACT_REGISTRY_PREFIX)}/flujo-app/"
+    r"communityai-public-route-(qwen3\.5-2b|gemma-4-e2b)@sha256:[0-9a-f]{64}$"
+)
+_CANDIDATES: Mapping[str, Mapping[str, object]] = {
+    "qwen3.5-2b": {
+        "role": "primary",
+        "manifest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+        "span": [0, 24],
+        "port": 31337,
+        "device_ceiling_bytes": 7 * 1024**3,
+    },
+    "gemma-4-e2b": {
+        "role": "standby",
+        "manifest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+        "span": [0, 35],
+        "port": 31338,
+        "device_ceiling_bytes": 15 * 1024**3,
+    },
+}
+_ACTIONS = {
+    "preflight",
+    "prepare-registry-upload",
+    "transport-sentinel-file",
+    "prefetch-images-file",
+    "cleanup-registry-upload",
+    "start-primary",
+    "start-standby",
+    "health",
+    "stop-primary",
+    "restore-primary",
+    "probe-primary",
+    "probe-standby",
+    "probe-auto",
+    "stop-all",
+    "cleanup-registry",
+    "cleanup",
+}
+
+
+class HostError(ValueError):
+    """The fixed host action cannot safely satisfy its bounded contract."""
+
+
+class CommandError(HostError):
+    """A fixed host subprocess failed or exceeded its output boundary."""
+
+
+class ActionFailure(CommandError):
+    """A fixed start action failed at one privacy-safe allowlisted boundary."""
+
+    def __init__(self, failure_code: str) -> None:
+        if failure_code not in _ACTION_FAILURE_CODES:
+            raise ValueError("host action failure code is invalid")
+        self.failure_code = failure_code
+        super().__init__("fixed host action failed")
+
+
+Runner = Callable[[Sequence[str], int], subprocess.CompletedProcess[bytes]]
+SecretRunner = Callable[[Sequence[str], int, bytes], int]
+
+
+def _run_bounded(argv: Sequence[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
+    if (
+        not argv
+        or any(
+            not isinstance(value, str) or not value or "\x00" in value or "\r" in value or "\n" in value
+            for value in argv
+        )
+        or not 1 <= timeout <= 3600
+    ):
+        raise CommandError("host command contract is invalid")
+    try:
+        completed = subprocess.run(
+            list(argv),
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CommandError("fixed host command failed or timed out") from exc
+    if len(completed.stdout) > MAX_COMMAND_OUTPUT_BYTES or len(completed.stderr) > MAX_COMMAND_OUTPUT_BYTES:
+        raise CommandError("fixed host command output exceeded its bound")
+    if completed.returncode != 0:
+        raise CommandError("fixed host command returned a nonzero status")
+    return completed
+
+
+def _run_secret_bounded(argv: Sequence[str], timeout: int, secret: bytes) -> int:
+    if (
+        len(argv) != 8
+        or tuple(argv[:6])
+        != ("docker", "--config", os.fspath(REGISTRY_CONFIG), "login", ARTIFACT_REGISTRY_HOST, "--username")
+        or argv[6] != ARTIFACT_REGISTRY_USER
+        or argv[7] != "--password-stdin"
+        or not 1 <= timeout <= 3600
+        or not secret
+        or len(secret) > MAX_REGISTRY_PAYLOAD_BYTES
+        or not secret.endswith(b"\n")
+        or secret.count(b"\n") != 1
+        or b"\x00" in secret
+        or b"\r" in secret
+        or any(value < 0x21 or value > 0x7E for value in secret[:-1])
+    ):
+        raise CommandError("registry secret command contract is invalid")
+    try:
+        completed = subprocess.run(
+            list(argv),
+            check=False,
+            input=secret,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CommandError("registry secret command failed or timed out") from exc
+    return completed.returncode
+
+
+def _pull_immutable_image(
+    *,
+    image: str,
+    deadline: float,
+    maximum_command_timeout_seconds: int,
+    runner: Runner,
+    docker_config: Path | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> None:
+    last_error: CommandError | None = None
+    for delay in (0.0, *PULL_RETRY_DELAYS_SECONDS):
+        remaining = deadline - clock()
+        if delay:
+            if remaining <= delay + 1.0:
+                break
+            sleeper(delay)
+            remaining = deadline - clock()
+        if remaining < 1.0:
+            break
+        try:
+            docker_argv = ["docker"]
+            if docker_config is not None:
+                docker_argv.extend(["--config", os.fspath(docker_config)])
+            docker_argv.extend(["pull", "--quiet", image])
+            runner(
+                tuple(docker_argv),
+                min(3600, maximum_command_timeout_seconds, max(1, math.ceil(remaining))),
+            )
+            return
+        except CommandError as exc:
+            last_error = exc
+    raise ActionFailure("image_pull") from last_error
+
+
+def _strict_base64_secret(payload: bytes | bytearray, field: str) -> bytearray:
+    if (
+        not payload
+        or len(payload) > MAX_REGISTRY_PAYLOAD_BYTES
+        or not payload.endswith(b"\n")
+        or payload.count(b"\n") != 1
+        or b"\r" in payload
+        or b"\x00" in payload
+        or payload.startswith(b"\xef\xbb\xbf")
+    ):
+        raise HostError(f"{field} framing is invalid")
+    encoded = payload[:-1]
+    if not encoded or any(value < 0x21 or value > 0x7E for value in encoded):
+        raise HostError(f"{field} encoding is invalid")
+    try:
+        decoded = bytearray(base64.b64decode(encoded, validate=True))
+    except (ValueError, binascii.Error) as exc:
+        raise HostError(f"{field} encoding is invalid") from exc
+    if not decoded or base64.b64encode(decoded) != encoded:
+        decoded[:] = b"\x00" * len(decoded)
+        raise HostError(f"{field} encoding is not canonical")
+    return decoded
+
+
+def _registry_user(value: str) -> str:
+    if value != ARTIFACT_REGISTRY_USER:
+        raise HostError("registry user is invalid")
+    return value
+
+
+def _upload_id(value: str) -> str:
+    if _UPLOAD_RE.fullmatch(value) is None:
+        raise HostError("registry upload identifier is invalid")
+    return value
+
+
+def _registry_upload_paths(run_id: str, upload_id: str) -> tuple[Path, Path]:
+    run_id = _run_id(run_id)
+    upload_id = _upload_id(upload_id)
+    root = REGISTRY_UPLOAD_PARENT / f"communityai-registry-{run_id}-{upload_id}"
+    payload = root / "credential.b64"
+    if (
+        root.parent != REGISTRY_UPLOAD_PARENT
+        or root.name != f"communityai-registry-{run_id}-{upload_id}"
+        or payload.parent != root
+        or payload.name != "credential.b64"
+    ):
+        raise HostError("registry upload path is unsafe")
+    return root, payload
+
+
+def _sudo_identity() -> tuple[int, int]:
+    raw_uid = os.environ.get("SUDO_UID", "")
+    raw_gid = os.environ.get("SUDO_GID", "")
+    if re.fullmatch(r"[0-9]{1,10}", raw_uid) is None or re.fullmatch(r"[0-9]{1,10}", raw_gid) is None:
+        raise HostError("registry upload identity is unavailable")
+    uid = int(raw_uid)
+    gid = int(raw_gid)
+    if not 1 <= uid <= 2_147_483_647 or not 1 <= gid <= 2_147_483_647:
+        raise HostError("registry upload identity is invalid")
+    return uid, gid
+
+
+def _fsync_upload_parent() -> None:
+    descriptor = -1
+    try:
+        descriptor = os.open(REGISTRY_UPLOAD_PARENT, os.O_RDONLY | os.O_DIRECTORY)
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise HostError("registry upload parent could not be synchronized") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _registry_upload_absent(run_id: str, upload_id: str) -> bool:
+    root, _payload = _registry_upload_paths(run_id, upload_id)
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        raise HostError("registry upload state is unavailable") from exc
+    return False
+
+
+def _remove_registry_upload(run_id: str, upload_id: str) -> bool:
+    root, _payload = _registry_upload_paths(run_id, upload_id)
+    try:
+        status = root.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        raise HostError("registry upload state is unavailable") from exc
+    try:
+        if stat.S_ISDIR(status.st_mode) and not stat.S_ISLNK(status.st_mode):
+            shutil.rmtree(root)
+        else:
+            root.unlink()
+        _fsync_upload_parent()
+    except HostError:
+        raise
+    except OSError as exc:
+        raise HostError("registry upload could not be removed") from exc
+    if not _registry_upload_absent(run_id, upload_id):
+        raise HostError("registry upload remains after cleanup")
+    return True
+
+
+def _prepare_registry_upload(run_id: str, upload_id: str) -> dict[str, Any]:
+    root, _payload = _registry_upload_paths(run_id, upload_id)
+    uid, gid = _sudo_identity()
+    try:
+        parent_status = REGISTRY_UPLOAD_PARENT.lstat()
+    except OSError as exc:
+        raise HostError("registry upload parent is unavailable") from exc
+    if stat.S_ISLNK(parent_status.st_mode) or not stat.S_ISDIR(parent_status.st_mode):
+        raise HostError("registry upload parent is unsafe")
+    if not _registry_upload_absent(run_id, upload_id):
+        raise HostError("registry upload already exists")
+    try:
+        root.mkdir(mode=0o700)
+        os.chown(root, uid, gid)
+        os.chmod(root, 0o700)
+        status = root.lstat()
+    except OSError as exc:
+        _remove_registry_upload(run_id, upload_id)
+        raise HostError("registry upload could not be secured") from exc
+    if (
+        stat.S_ISLNK(status.st_mode)
+        or not stat.S_ISDIR(status.st_mode)
+        or status.st_uid != uid
+        or status.st_gid != gid
+        or stat.S_IMODE(status.st_mode) != 0o700
+        or any(root.iterdir())
+    ):
+        _remove_registry_upload(run_id, upload_id)
+        raise HostError("registry upload is not an empty owner-only directory")
+    return {"registry_upload_ready": True}
+
+
+def _read_registry_upload(run_id: str, upload_id: str) -> bytearray:
+    root, payload_path = _registry_upload_paths(run_id, upload_id)
+    uid, gid = _sudo_identity()
+    descriptor = -1
+    payload = bytearray()
+    payload_ready = False
+    try:
+        root_status = root.lstat()
+        status = payload_path.lstat()
+        if (
+            stat.S_ISLNK(root_status.st_mode)
+            or not stat.S_ISDIR(root_status.st_mode)
+            or root_status.st_uid != uid
+            or root_status.st_gid != gid
+            or stat.S_IMODE(root_status.st_mode) != 0o700
+            or stat.S_ISLNK(status.st_mode)
+            or not stat.S_ISREG(status.st_mode)
+            or status.st_nlink != 1
+            or status.st_uid != uid
+            or status.st_gid != gid
+            or not 1 <= status.st_size <= MAX_REGISTRY_PAYLOAD_BYTES
+        ):
+            raise HostError("registry upload file contract is invalid")
+        descriptor = os.open(payload_path, os.O_RDONLY | os.O_NOFOLLOW)
+        os.fchmod(descriptor, 0o600)
+        opened = os.fstat(descriptor)
+        if (
+            opened.st_dev != status.st_dev
+            or opened.st_ino != status.st_ino
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != uid
+            or opened.st_gid != gid
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_size != status.st_size
+        ):
+            raise HostError("registry upload changed while opening")
+        while len(payload) <= MAX_REGISTRY_PAYLOAD_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(4096, MAX_REGISTRY_PAYLOAD_BYTES + 1 - len(payload)),
+            )
+            if not chunk:
+                break
+            payload.extend(chunk)
+        if not payload or len(payload) > MAX_REGISTRY_PAYLOAD_BYTES:
+            raise HostError("registry upload payload is invalid")
+        payload_ready = True
+    except HostError:
+        raise
+    except OSError as exc:
+        raise HostError("registry upload is unavailable") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            _remove_registry_upload(run_id, upload_id)
+        except BaseException:
+            payload[:] = b"\x00" * len(payload)
+            raise
+        if not payload_ready:
+            payload[:] = b"\x00" * len(payload)
+    return payload
+
+
+def _registry_config_absent() -> bool:
+    try:
+        REGISTRY_CONFIG.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        raise HostError("registry credential state is unavailable") from exc
+    return False
+
+
+def _remove_registry_config(runner: Runner) -> bool:
+    if _registry_config_absent():
+        return True
+    try:
+        mode = REGISTRY_CONFIG.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            REGISTRY_CONFIG.unlink()
+        elif stat.S_ISDIR(mode):
+            try:
+                runner(
+                    ("docker", "--config", os.fspath(REGISTRY_CONFIG), "logout", ARTIFACT_REGISTRY_HOST),
+                    30,
+                )
+            except HostError:
+                pass
+            shutil.rmtree(REGISTRY_CONFIG)
+        else:
+            REGISTRY_CONFIG.unlink()
+    except OSError as exc:
+        raise HostError("registry credentials could not be removed") from exc
+    if not _registry_config_absent():
+        raise HostError("registry credentials remain after cleanup")
+    return True
+
+
+def _prepare_registry_config() -> None:
+    if not _registry_config_absent():
+        raise HostError("registry credential directory already exists")
+    try:
+        REGISTRY_CONFIG.mkdir(mode=0o700)
+        status = REGISTRY_CONFIG.lstat()
+    except OSError as exc:
+        raise HostError("registry credential directory could not be secured") from exc
+    if (
+        stat.S_ISLNK(status.st_mode)
+        or not stat.S_ISDIR(status.st_mode)
+        or status.st_uid != 0
+        or stat.S_IMODE(status.st_mode) != 0o700
+    ):
+        raise HostError("registry credential directory is not root-owned mode 0700")
+
+
+def _verify_local_image(image: str, runner: Runner) -> None:
+    raw = runner(("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image), 60).stdout
+    try:
+        digests = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise HostError("local immutable image inventory is invalid") from exc
+    if not isinstance(digests, list) or image not in digests or any(not isinstance(value, str) for value in digests):
+        raise HostError("local immutable image digest is absent")
+
+
+def _transport_sentinel(payload: bytes | bytearray) -> dict[str, Any]:
+    decoded = _strict_base64_secret(payload, "transport sentinel")
+    try:
+        if bytes(decoded) != TRANSPORT_SENTINEL:
+            raise HostError("transport sentinel bytes changed")
+    finally:
+        decoded[:] = b"\x00" * len(decoded)
+    return {"transport_verified": True}
+
+
+def _prefetch_images(
+    *,
+    primary_image: str,
+    standby_image: str,
+    registry_user: str,
+    secret_payload: bytes | bytearray,
+    action_timeout_seconds: int,
+    runner: Runner,
+    secret_runner: SecretRunner,
+) -> dict[str, Any]:
+    primary = _image(primary_image, "qwen3.5-2b")
+    standby = _image(standby_image, "gemma-4-e2b")
+    username = _registry_user(registry_user)
+    token = _strict_base64_secret(secret_payload, "registry credential")
+    if any(value < 0x21 or value > 0x7E for value in token):
+        token[:] = b"\x00" * len(token)
+        raise HostError("registry credential bytes are invalid")
+    deadline = time.monotonic() + action_timeout_seconds
+    try:
+        _prepare_registry_config()
+        login_argv = (
+            "docker",
+            "--config",
+            os.fspath(REGISTRY_CONFIG),
+            "login",
+            ARTIFACT_REGISTRY_HOST,
+            "--username",
+            username,
+            "--password-stdin",
+        )
+        if secret_runner(login_argv, min(300, action_timeout_seconds), bytes(token) + b"\n") != 0:
+            raise ActionFailure("registry_auth")
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="communityai-image-pull") as executor:
+            pulls = [
+                executor.submit(
+                    _pull_immutable_image,
+                    image=image,
+                    deadline=deadline,
+                    maximum_command_timeout_seconds=action_timeout_seconds,
+                    runner=runner,
+                    docker_config=REGISTRY_CONFIG,
+                )
+                for image in (primary, standby)
+            ]
+            for pull in pulls:
+                pull.result()
+        _verify_local_image(primary, runner)
+        _verify_local_image(standby, runner)
+        return {"images_prefetched": 2, "registry_credentials_removed": True}
+    finally:
+        token[:] = b"\x00" * len(token)
+        _remove_registry_config(runner)
+
+
+def _strict_json_bytes(payload: bytes, field: str, maximum: int) -> Mapping[str, Any]:
+    if len(payload) > maximum:
+        raise HostError(f"{field} exceeds its bounded size")
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise HostError(f"{field} is not bounded JSON") from exc
+    if not isinstance(value, dict):
+        raise HostError(f"{field} must be a JSON object")
+    return value
+
+
+def _read_regular(path: Path, maximum: int, field: str) -> bytes:
+    try:
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            raise HostError(f"{field} must be a regular non-symlink file")
+        with path.open("rb") as stream:
+            payload = stream.read(maximum + 1)
+    except HostError:
+        raise
+    except OSError as exc:
+        raise HostError(f"{field} is unavailable") from exc
+    if len(payload) > maximum:
+        raise HostError(f"{field} exceeds its bounded size")
+    return payload
+
+
+def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
+    payload = (json.dumps(value, allow_nan=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(payload) > MAX_OUTPUT_BYTES:
+        raise HostError("private host state exceeds its bound")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _run_id(value: str) -> str:
+    if _RUN_RE.fullmatch(value) is None:
+        raise HostError("run ID must be one bounded lowercase run label")
+    return value
+
+
+def _action_timeout(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 120 <= value <= 3600:
+        raise HostError("action timeout must be between 120 and 3600 seconds")
+    return value
+
+
+def _candidate_for_role(role: str) -> str:
+    if role == "primary":
+        return "qwen3.5-2b"
+    if role == "standby":
+        return "gemma-4-e2b"
+    raise HostError("route role is invalid")
+
+
+def _image(value: str, candidate: str) -> str:
+    match = _IMAGE_RE.fullmatch(value)
+    if match is None or match.group(1) != candidate:
+        raise HostError("route image is not the expected immutable CUDA repository")
+    return value
+
+
+def _public_ipv4(value: str) -> str:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        raise HostError("public route address is invalid") from None
+    if not isinstance(address, ipaddress.IPv4Address) or not address.is_global:
+        raise HostError("public route address must be global unicast IPv4")
+    return address.compressed
+
+
+def _initial_peer(value: str) -> str:
+    if len(value) > 2048 or _PEER_RE.fullmatch(value) is None:
+        raise HostError("initial peer must be one bounded authenticated multiaddr")
+    return value
+
+
+def _state_path(run_id: str) -> Path:
+    return STATE_ROOT / run_id / "state.json"
+
+
+def _route_dir(run_id: str, candidate: str) -> Path:
+    return STATE_ROOT / run_id / candidate
+
+
+def _container(run_id: str, candidate: str) -> str:
+    suffix = "qwen" if candidate == "qwen3.5-2b" else "gemma"
+    return f"{run_id}-{suffix}"
+
+
+def _load_state(run_id: str) -> dict[str, Any]:
+    path = _state_path(run_id)
+    if not path.exists():
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "run_id": run_id,
+            "routes": {},
+            "private": {},
+        }
+    value = _strict_json_bytes(
+        _read_regular(path, MAX_OUTPUT_BYTES, "private host state"), "private host state", MAX_OUTPUT_BYTES
+    )
+    if set(value) != {"schema_version", "run_id", "routes", "private"}:
+        raise HostError("private host state schema is invalid")
+    if value["schema_version"] != SCHEMA_VERSION or value["run_id"] != run_id:
+        raise HostError("private host state identity is invalid")
+    routes = value["routes"]
+    private = value["private"]
+    if not isinstance(routes, dict) or not isinstance(private, dict) or len(routes) > 2:
+        raise HostError("private host state contents are invalid")
+    return dict(value)
+
+
+def _bootstrap_preflight(runner: Runner) -> dict[str, Any]:
+    ready = _strict_json_bytes(
+        _read_regular(BOOTSTRAP_READY, 4096, "bootstrap readiness"),
+        "bootstrap readiness",
+        4096,
+    )
+    expected = {
+        "container_runtime": "docker",
+        "containerd_version": "2.2.1-0ubuntu1~24.04.3",
+        "docker_max_concurrent_downloads": 1,
+        "docker_version": "29.1.3-0ubuntu3~24.04.2",
+        "gpu_driver_version": "570.211.01",
+        "nvidia_container_toolkit_version": "1.20.0-1",
+        "ready": True,
+        "schema_version": 1,
+        "scope": "communityai-public-route-bootstrap",
+    }
+    readiness_concurrency = ready.get("docker_max_concurrent_downloads")
+    if isinstance(readiness_concurrency, bool) or ready != expected:
+        raise HostError("bootstrap readiness record does not match the pinned runtime")
+    daemon_config = _strict_json_bytes(
+        _read_regular(DOCKER_DAEMON_CONFIG, 4096, "Docker daemon configuration"),
+        "Docker daemon configuration",
+        4096,
+    )
+    download_concurrency = daemon_config.get("max-concurrent-downloads")
+    if isinstance(download_concurrency, bool) or download_concurrency != 1:
+        raise HostError("Docker download concurrency does not match the pinned runtime")
+    runner(("systemctl", "is-active", "--quiet", "docker"), 30)
+    runner(("systemctl", "is-active", "--quiet", "containerd"), 30)
+    runtime = runner(("docker", "info", "--format", "{{.DefaultRuntime}}"), 30).stdout.strip()
+    if runtime != b"nvidia":
+        raise HostError("Docker default runtime is not NVIDIA")
+    driver = runner(("nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"), 30).stdout.splitlines()
+    if driver != [b"570.211.01"]:
+        raise HostError("live GPU driver does not match the pinned runtime")
+    return {
+        "bootstrap_ready": True,
+        "docker_ready": True,
+        "gpu_ready": True,
+    }
+
+
+def _identity_fingerprint(runner: Runner, container: str) -> str:
+    output = (
+        runner(
+            ("docker", "exec", container, "sha256sum", "/run/communityai/identity.key"),
+            30,
+        )
+        .stdout.decode("ascii", errors="strict")
+        .strip()
+        .split()
+    )
+    if len(output) != 2 or len(output[0]) != 64 or any(character not in "0123456789abcdef" for character in output[0]):
+        raise HostError("route identity fingerprint is unavailable")
+    return output[0]
+
+
+def _start(
+    *,
+    run_id: str,
+    candidate: str,
+    image: str,
+    public_ipv4: str,
+    initial_peer: str,
+    acceptance_digest: str,
+    action_timeout_seconds: int,
+    runner: Runner,
+) -> dict[str, Any]:
+    state = _load_state(run_id)
+    routes = dict(state["routes"])
+    if candidate in routes:
+        raise HostError("route is already present in private host state")
+    route_dir = _route_dir(run_id, candidate)
+    route_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        os.chmod(route_dir, 0o700)
+        os.chown(route_dir, 65532, 65532)
+    except OSError as exc:
+        raise HostError("route identity directory could not be secured") from exc
+    profile = _CANDIDATES[candidate]
+    container = _container(run_id, candidate)
+    port = int(profile["port"])
+    action_started = time.monotonic()
+    action_deadline = action_started + action_timeout_seconds
+    _verify_local_image(image, runner)
+    remaining = action_deadline - time.monotonic()
+    if remaining < 1:
+        raise HostError("route start exhausted its bounded action timeout")
+    try:
+        runner(
+            (
+                "docker",
+                "run",
+                "--detach",
+                "--name",
+                container,
+                "--restart",
+                "no",
+                "--gpus",
+                "all",
+                "--read-only",
+                "--security-opt",
+                "no-new-privileges",
+                "--cap-drop",
+                "ALL",
+                "--pids-limit",
+                "1024",
+                "--memory",
+                "30g",
+                "--tmpfs",
+                "/tmp/communityai:rw,nosuid,nodev,noexec,size=256m,uid=65532,gid=65532,mode=700",
+                "--mount",
+                f"type=bind,source={route_dir},target=/run/communityai",
+                "--publish",
+                f"{port}:{port}",
+                "--env",
+                f"COMMUNITYAI_PUBLIC_ROUTE_CANDIDATE={candidate}",
+                "--env",
+                f"COMMUNITYAI_PUBLIC_ROUTE_IPV4={public_ipv4}",
+                "--env",
+                f"COMMUNITYAI_PUBLIC_ROUTE_INITIAL_PEER={initial_peer}",
+                "--env",
+                "HF_HUB_OFFLINE=1",
+                "--env",
+                "TRANSFORMERS_OFFLINE=1",
+                image,
+            ),
+            min(300, max(1, math.ceil(remaining))),
+        )
+    except CommandError as exc:
+        raise ActionFailure("host_command") from exc
+    routes[candidate] = {
+        "container": container,
+        "image": image,
+        "running": True,
+    }
+    state["routes"] = routes
+    state["private"] = {
+        **dict(state["private"]),
+        "acceptance_digest": acceptance_digest,
+        "initial_peer": initial_peer,
+        "public_ipv4": public_ipv4,
+    }
+    _atomic_json(_state_path(run_id), state)
+    return {"candidate": candidate, "started": True}
+
+
+def _health_payload(runner: Runner, container: str) -> Mapping[str, Any]:
+    raw = runner(("docker", "exec", container, "cat", "/run/communityai/health.json"), 30).stdout
+    return _strict_json_bytes(raw, "worker health", MAX_HEALTH_BYTES)
+
+
+def _container_log_bytes(payload: bytes) -> int:
+    try:
+        log_text = payload.decode("utf-8").strip()
+        if not log_text:
+            raise HostError("container log accounting is unavailable")
+        resolved_log = Path(log_text)
+        mode = resolved_log.lstat().st_mode
+        if not resolved_log.is_absolute() or stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            raise HostError("container log accounting is unavailable")
+        return resolved_log.stat().st_size
+    except HostError:
+        raise
+    except (OSError, UnicodeError):
+        raise HostError("container log accounting is unavailable") from None
+
+
+def _container_pids(runner: Runner, container: str) -> set[int]:
+    raw = runner(("docker", "top", container, "-eo", "pid"), 30).stdout.decode("ascii", errors="strict")
+    values = set()
+    for line in raw.splitlines()[1:]:
+        value = line.strip()
+        if not value.isdigit():
+            raise HostError("container process inventory is invalid")
+        values.add(int(value))
+    return values
+
+
+def _resource_sample(runner: Runner, routes: Mapping[str, Any]) -> dict[str, Any]:
+    raw_gpu = runner(
+        ("nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"),
+        30,
+    ).stdout
+    try:
+        gpu_lines = raw_gpu.decode("ascii").splitlines()
+    except UnicodeError as exc:
+        raise HostError("GPU process inventory is invalid") from exc
+    gpu_processes: dict[int, int] = {}
+    for line in gpu_lines:
+        if not line.strip():
+            continue
+        fields = [part.strip() for part in line.split(",")]
+        if len(fields) != 2 or not fields[0].isdigit() or not fields[1].isdigit():
+            raise HostError("GPU process inventory is invalid")
+        gpu_processes[int(fields[0])] = int(fields[1]) * 1024**2
+
+    device_bytes: dict[str, int] = {}
+    attributed: set[int] = set()
+    for candidate, route in routes.items():
+        if not route.get("running"):
+            device_bytes[candidate] = 0
+            continue
+        pids = _container_pids(runner, str(route["container"]))
+        attributed.update(pids & set(gpu_processes))
+        device_bytes[candidate] = sum(gpu_processes[pid] for pid in pids if pid in gpu_processes)
+    unattributed = sum(size for pid, size in gpu_processes.items() if pid not in attributed)
+
+    meminfo = _read_regular(Path("/proc/meminfo"), 65_536, "host memory state").decode("ascii", errors="strict")
+    memory: dict[str, int] = {}
+    for line in meminfo.splitlines():
+        if line.startswith(("MemTotal:", "MemAvailable:")):
+            key, raw_value, unit = line.split()
+            if unit != "kB" or not raw_value.isdigit():
+                raise HostError("host memory state is invalid")
+            memory[key.rstrip(":")] = int(raw_value) * 1024
+    if set(memory) != {"MemTotal", "MemAvailable"}:
+        raise HostError("host memory state is incomplete")
+    host_used = memory["MemTotal"] - memory["MemAvailable"]
+
+    disk = shutil.disk_usage("/var/lib")
+    storage_used = disk.total - disk.free
+    log_bytes = 0
+    restart_counts: dict[str, int] = {}
+    for candidate, route in routes.items():
+        container = str(route["container"])
+        restart_raw = runner(
+            ("docker", "inspect", "--format", "{{.RestartCount}}", container),
+            30,
+        ).stdout
+        try:
+            restart_text = restart_raw.decode("ascii").strip()
+        except UnicodeError as exc:
+            raise HostError("container restart count is invalid") from exc
+        if not restart_text.isdigit():
+            raise HostError("container restart count is invalid")
+        restart_counts[candidate] = int(restart_text)
+        log_path = runner(("docker", "inspect", "--format", "{{.LogPath}}", container), 30).stdout
+        log_bytes += _container_log_bytes(log_path)
+    return {
+        "device_bytes": device_bytes,
+        "unattributed_device_bytes": unattributed,
+        "combined_device_bytes": sum(device_bytes.values()) + unattributed,
+        "host_memory_bytes": host_used,
+        "route_storage_bytes": storage_used,
+        "combined_log_bytes": log_bytes,
+        "restart_counts": restart_counts,
+    }
+
+
+def _health(run_id: str, runner: Runner) -> dict[str, Any]:
+    state = _load_state(run_id)
+    routes = state["routes"]
+    if set(routes) != set(_CANDIDATES):
+        raise HostError("both exact routes must exist before health sampling")
+    health: dict[str, Any] = {}
+    identity_continuity: dict[str, bool] = {}
+    private = dict(state["private"])
+    fingerprints = dict(private.get("identity_fingerprints", {}))
+    for candidate, route in routes.items():
+        if route.get("running") is not True:
+            health[candidate] = None
+            identity_continuity[candidate] = True
+            continue
+        container = str(route["container"])
+        health[candidate] = _health_payload(runner, container)
+        fingerprint = _identity_fingerprint(runner, container)
+        previous = fingerprints.get(candidate)
+        identity_continuity[candidate] = previous is None or previous == fingerprint
+        fingerprints[candidate] = fingerprint
+    private["identity_fingerprints"] = fingerprints
+    state["private"] = private
+    _atomic_json(_state_path(run_id), state)
+    return {
+        "health": health,
+        "identity_continuity": identity_continuity,
+        "resources": _resource_sample(runner, routes),
+    }
+
+
+def _set_primary_running(run_id: str, running: bool, runner: Runner) -> dict[str, Any]:
+    state = _load_state(run_id)
+    candidate = "qwen3.5-2b"
+    route = state["routes"].get(candidate)
+    if not isinstance(route, dict):
+        raise HostError("primary route is absent")
+    container = str(route["container"])
+    runner(("docker", "start" if running else "stop", container), 300)
+    route = dict(route)
+    route["running"] = running
+    routes = dict(state["routes"])
+    routes[candidate] = route
+    state["routes"] = routes
+    _atomic_json(_state_path(run_id), state)
+    return {"candidate": candidate, "running": running}
+
+
+def _probe(run_id: str, selection: str, action_timeout_seconds: int, runner: Runner) -> dict[str, Any]:
+    state = _load_state(run_id)
+    routes = state["routes"]
+    if selection == "auto":
+        primary = routes.get("qwen3.5-2b")
+        standby = routes.get("gemma-4-e2b")
+        if isinstance(primary, dict) and primary.get("running") is True:
+            candidate = "qwen3.5-2b"
+        elif isinstance(standby, dict) and standby.get("running") is True:
+            candidate = "gemma-4-e2b"
+        else:
+            raise HostError("no route is available for automatic selection")
+    else:
+        candidate = selection
+    route = routes.get(candidate)
+    if not isinstance(route, dict) or route.get("running") is not True:
+        raise HostError("selected acceptance route is unavailable")
+    private = state["private"]
+    initial_peer = _initial_peer(str(private.get("initial_peer", "")))
+    image = _image(str(route["image"]), candidate)
+    acceptance = _read_regular(ACCEPTANCE_TARGET, 65_536, "acceptance helper")
+    expected_digest = private.get("acceptance_digest")
+    actual_digest = "sha256:" + hashlib.sha256(acceptance).hexdigest()
+    if expected_digest != actual_digest:
+        raise HostError("acceptance helper does not match private source binding")
+    output = runner(
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "host",
+            "--read-only",
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop",
+            "ALL",
+            "--pids-limit",
+            "512",
+            "--memory",
+            "30g",
+            "--tmpfs",
+            "/tmp/communityai:rw,nosuid,nodev,noexec,size=256m,uid=65532,gid=65532,mode=700",
+            "--mount",
+            f"type=bind,source={ACCEPTANCE_TARGET},target=/acceptance.py,readonly",
+            "--entrypoint",
+            "/workspace/.venv/bin/python",
+            image,
+            "/acceptance.py",
+            "--candidate",
+            candidate,
+            "--initial-peer",
+            initial_peer,
+            "--timeout",
+            str(min(600, action_timeout_seconds - 60)),
+        ),
+        action_timeout_seconds,
+    ).stdout
+    report = _strict_json_bytes(output, "acceptance result", 65_536)
+    expected = _CANDIDATES[candidate]
+    if (
+        report.get("schema_version") != 1
+        or report.get("scope") != "public-route-acceptance"
+        or report.get("result") != "passed"
+        or report.get("candidate") != candidate
+        or report.get("manifest_digest") != expected["manifest"]
+        or report.get("generated_tokens") != 1
+        or report.get("covered_blocks") != report.get("total_blocks")
+        or report.get("privacy_safe") is not True
+    ):
+        raise HostError("acceptance result is invalid")
+    return {
+        "candidate": candidate,
+        "manifest_digest": expected["manifest"],
+        "inference_passed": True,
+    }
+
+
+def _stop_all(run_id: str, runner: Runner) -> dict[str, Any]:
+    state = _load_state(run_id)
+    stopped = 0
+    routes = dict(state["routes"])
+    for candidate, route in routes.items():
+        if route.get("running") is True:
+            runner(("docker", "stop", str(route["container"])), 300)
+            route = dict(route)
+            route["running"] = False
+            routes[candidate] = route
+            stopped += 1
+    state["routes"] = routes
+    _atomic_json(_state_path(run_id), state)
+    return {"stopped_routes": stopped}
+
+
+def _cleanup(run_id: str, runner: Runner) -> dict[str, Any]:
+    _remove_registry_config(runner)
+    state = _load_state(run_id)
+    removed = 0
+    errors = 0
+    for route in state["routes"].values():
+        try:
+            runner(("docker", "rm", "--force", str(route["container"])), 300)
+            removed += 1
+        except HostError:
+            errors += 1
+    if errors:
+        raise HostError("one or more exact route containers could not be removed")
+    root = STATE_ROOT / run_id
+    if root.parent != STATE_ROOT or root.name != run_id:
+        raise HostError("cleanup root is unsafe")
+    if root.exists():
+        shutil.rmtree(root)
+    return {"removed_routes": removed, "remaining_routes": 0}
+
+
+def execute_action(
+    *,
+    action: str,
+    run_id: str,
+    primary_image: str | None = None,
+    standby_image: str | None = None,
+    public_ipv4: str | None = None,
+    initial_peer: str | None = None,
+    acceptance_digest: str | None = None,
+    registry_user: str | None = None,
+    upload_id: str | None = None,
+    secret_payload: bytes | bytearray | None = None,
+    action_timeout_seconds: int | None = None,
+    runner: Runner = _run_bounded,
+    secret_runner: SecretRunner = _run_secret_bounded,
+) -> dict[str, Any]:
+    run_id = _run_id(run_id)
+    if action not in _ACTIONS:
+        raise HostError("host action is not in the fixed action set")
+    details: dict[str, Any]
+    if action == "preflight":
+        details = _bootstrap_preflight(runner)
+    elif action == "prepare-registry-upload":
+        if upload_id is None:
+            raise HostError("registry upload identifier is absent")
+        details = _prepare_registry_upload(run_id, upload_id)
+    elif action == "transport-sentinel-file":
+        if secret_payload is None:
+            raise HostError("transport sentinel payload is absent")
+        details = _transport_sentinel(secret_payload)
+    elif action == "prefetch-images-file":
+        if primary_image is None or standby_image is None or registry_user is None or secret_payload is None:
+            raise HostError("registry prefetch is missing a fixed input")
+        details = _prefetch_images(
+            primary_image=primary_image,
+            standby_image=standby_image,
+            registry_user=registry_user,
+            secret_payload=secret_payload,
+            action_timeout_seconds=_action_timeout(action_timeout_seconds),
+            runner=runner,
+            secret_runner=secret_runner,
+        )
+    elif action in {"start-primary", "start-standby"}:
+        candidate = _candidate_for_role("primary" if action.endswith("primary") else "standby")
+        raw_image = primary_image if candidate == "qwen3.5-2b" else standby_image
+        if raw_image is None or public_ipv4 is None or initial_peer is None:
+            raise HostError("start action is missing a fixed runtime binding")
+        image = _image(raw_image, candidate)
+        if acceptance_digest is None or _DIGEST_RE.fullmatch(acceptance_digest) is None:
+            raise HostError("acceptance helper digest is invalid")
+        action_timeout = _action_timeout(action_timeout_seconds)
+        state = _load_state(run_id)
+        previous = state["private"].get("acceptance_digest")
+        if previous is not None and previous != acceptance_digest:
+            raise HostError("acceptance helper binding changed between route starts")
+        details = _start(
+            run_id=run_id,
+            candidate=candidate,
+            image=image,
+            public_ipv4=_public_ipv4(public_ipv4),
+            initial_peer=_initial_peer(initial_peer),
+            acceptance_digest=acceptance_digest,
+            action_timeout_seconds=action_timeout,
+            runner=runner,
+        )
+    elif action == "health":
+        details = _health(run_id, runner)
+    elif action == "stop-primary":
+        details = _set_primary_running(run_id, False, runner)
+    elif action == "restore-primary":
+        details = _set_primary_running(run_id, True, runner)
+    elif action == "probe-primary":
+        details = _probe(run_id, "qwen3.5-2b", _action_timeout(action_timeout_seconds), runner)
+    elif action == "probe-standby":
+        details = _probe(run_id, "gemma-4-e2b", _action_timeout(action_timeout_seconds), runner)
+    elif action == "probe-auto":
+        details = _probe(run_id, "auto", _action_timeout(action_timeout_seconds), runner)
+    elif action == "stop-all":
+        details = _stop_all(run_id, runner)
+    elif action == "cleanup-registry-upload":
+        if upload_id is None:
+            raise HostError("registry upload identifier is absent")
+        details = {"registry_upload_removed": _remove_registry_upload(run_id, upload_id)}
+    elif action == "cleanup-registry":
+        details = {"registry_credentials_removed": _remove_registry_config(runner)}
+    else:
+        details = _cleanup(run_id, runner)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "scope": "gcp-public-route-host-action",
+        "result": "passed",
+        "action": action,
+        "details": details,
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Execute one fixed Gate 11 route-host action")
+    parser.add_argument("--action", choices=tuple(sorted(_ACTIONS)), required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--primary-image")
+    parser.add_argument("--standby-image")
+    parser.add_argument("--public-ipv4")
+    parser.add_argument("--initial-peer")
+    parser.add_argument("--acceptance-digest")
+    parser.add_argument("--registry-user")
+    parser.add_argument("--upload-id")
+    parser.add_argument("--action-timeout-seconds", type=int)
+    return parser
+
+
+def _encode_acknowledgement(report: Mapping[str, Any]) -> bytes:
+    payload = (json.dumps(report, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
+    framed = ACK_PREFIX + payload
+    if len(framed) > MAX_OUTPUT_BYTES:
+        raise HostError("host acknowledgement exceeds its bounded size")
+    return framed
+
+
+def _action_failure_report(action: str, failure_code: str) -> Mapping[str, Any]:
+    if action not in _ACTIONS or failure_code not in _ACTION_FAILURE_CODES:
+        raise HostError("host action failure acknowledgement is invalid")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "scope": "gcp-public-route-host-action",
+        "result": "failed",
+        "action": action,
+        "details": {"failure_code": failure_code},
+    }
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if os.name != "posix" or os.geteuid() != 0:
+        print("public-route host failed: fixed host actions require Linux root", file=sys.stderr)
+        return 2
+    try:
+        secret_payload = None
+        if args.action in {"transport-sentinel-file", "prefetch-images-file"}:
+            if args.upload_id is None:
+                raise HostError("registry upload identifier is absent")
+            secret_payload = _read_registry_upload(args.run_id, args.upload_id)
+        try:
+            report = execute_action(
+                action=args.action,
+                run_id=args.run_id,
+                primary_image=args.primary_image,
+                standby_image=args.standby_image,
+                public_ipv4=args.public_ipv4,
+                initial_peer=args.initial_peer,
+                acceptance_digest=args.acceptance_digest,
+                registry_user=args.registry_user,
+                upload_id=args.upload_id,
+                secret_payload=secret_payload,
+                action_timeout_seconds=args.action_timeout_seconds,
+            )
+        finally:
+            if isinstance(secret_payload, bytearray):
+                secret_payload[:] = b"\x00" * len(secret_payload)
+        payload = _encode_acknowledgement(report)
+    except ActionFailure as exc:
+        payload = _encode_acknowledgement(_action_failure_report(args.action, exc.failure_code))
+        sys.stdout.buffer.write(payload)
+        return _ACTION_FAILURE_EXIT_CODES[exc.failure_code]
+    except HostError as exc:
+        print(f"public-route host failed: {exc}", file=sys.stderr)
+        return 1
+    sys.stdout.buffer.write(payload)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

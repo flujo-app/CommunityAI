@@ -133,16 +133,16 @@ def load_catalog_publication_preflight_report(bootstrap: CatalogBootstrapConfig,
 
 def _mirror_hosts(bootstrap: CatalogBootstrapConfig) -> tuple[str, ...]:
     hosts = tuple((urlsplit(url).hostname or "").casefold() for url in bootstrap.catalog_mirrors)
-    if len(hosts) < 2:
-        raise CatalogBootstrapError("Publication requires at least two catalog mirrors")
+    if not hosts:
+        raise CatalogBootstrapError("Publication requires at least one catalog mirror")
     if len(set(hosts)) != len(hosts):
         raise CatalogBootstrapError("Publication catalog mirrors must use distinct network hosts")
     return hosts
 
 
 def _seed_components(bootstrap: CatalogBootstrapConfig) -> tuple[tuple[str, str, str], ...]:
-    if len(bootstrap.initial_peers) < 2:
-        raise CatalogBootstrapError("Publication requires the published seed plus at least one additional seed")
+    if not bootstrap.initial_peers:
+        raise CatalogBootstrapError("Publication requires at least one public seed")
 
     components = []
     for peer in bootstrap.initial_peers:
@@ -229,10 +229,10 @@ def verify_catalog_publication_bundle(
             selectors[folded] = manifest.digest_id
 
     for rung in catalog.rungs:
-        if rung.minimum_replicas < 2 or rung.minimum_independent_routes < 2 or rung.minimum_surviving_replicas < 1:
+        if rung.minimum_replicas < 1 or rung.minimum_independent_routes < 1 or rung.minimum_surviving_replicas < 1:
             raise CatalogBootstrapError(
-                f"Publication rung {rung.rung_id!r} must require redundant replicas, "
-                "independent routes, and survival after the largest peer loss"
+                f"Publication rung {rung.rung_id!r} must require at least one complete replica, "
+                "one route, and one surviving replica"
             )
 
     return {
@@ -252,7 +252,7 @@ def verify_catalog_publication_bundle(
         "complete_release_qualification": False,
         "not_covered": [
             "cross-platform and multi-machine model qualification",
-            "independent mirror or seed operator ownership",
+            "mirror and seed redundancy or independent operator ownership",
             "public-worker route redundancy and soak",
             "packaged clean-install inference",
         ],

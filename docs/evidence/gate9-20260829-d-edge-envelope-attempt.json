@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "scope": "edge-resource-envelope-attempt",
+  "run_id": "gate9-20260829-d",
+  "gate": 9,
+  "result": "failed",
+  "source_commit": "480c1faf4ae1476f15ef551b1771c7d549b9abc2",
+  "candidates": {
+    "qwen": {
+      "name": "Qwen3.5 2B",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+    },
+    "gemma": {
+      "name": "Gemma 4 E2B IT",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+      "attempted": false
+    }
+  },
+  "stop_reason": "The single native-PowerShell Windows Qwen cold-client invocation validated the exact manifest and began production artifact acquisition. Its dedicated empty cache grew to 22975832 bytes, then made no observable progress for the full five-minute limit. The controller terminated the benchmark before inference; Linux Qwen and both Gemma clients were not started.",
+  "setup": {
+    "route_profile": {
+      "provider": "gcp",
+      "operating_system": "linux",
+      "machine_type": "g2-standard-8",
+      "accelerator": "NVIDIA L4"
+    },
+    "linux_client_profile": {
+      "provider": "gcp",
+      "operating_system": "linux",
+      "machine_type": "e2-standard-4",
+      "accelerator": "none"
+    },
+    "source_and_runtime_verified": true,
+    "qwen_route_ready_at": "2026-08-29T15:13:14Z",
+    "qwen_route_cache_bytes_at_ready": 4548313432,
+    "windows_shell": "native_powershell",
+    "preflight": {
+      "native_gcloud_auth_active": true,
+      "global_gpu_limit": 1,
+      "global_gpu_usage": 0,
+      "regional_l4_limit": 1,
+      "regional_l4_usage": 0,
+      "exact_run_resources_absent": true,
+      "protected_bootstrap_running": true
+    }
+  },
+  "controls": {
+    "fly_operations": 0,
+    "docker_builds": 0,
+    "docker_pushes": 0,
+    "registry_mirrors": 0,
+    "qualification_or_recovery_reruns": 0,
+    "max_retries": 1,
+    "benchmark_root_invocations": 1,
+    "max_run_duration_seconds": 5400,
+    "instance_termination_action": "DELETE",
+    "boot_disks_auto_delete": true,
+    "artifact_no_progress_limit_seconds": 300,
+    "model_window_seconds": 3600,
+    "windows_and_linux_clients_sequential": true,
+    "linux_not_started_after_stop": true,
+    "gemma_not_started_after_stop": true
+  },
+  "client_results": {
+    "qwen_windows": {
+      "result": "failed_before_inference",
+      "cache_bytes_before": 0,
+      "cache_bytes_after": 22975832,
+      "cold_start": true,
+      "envelope_written": false,
+      "controller_terminated": true,
+      "failure_class": "artifact_delivery_no_progress"
+    },
+    "qwen_linux": {
+      "result": "not_started"
+    },
+    "gemma_windows": {
+      "result": "not_started"
+    },
+    "gemma_linux": {
+      "result": "not_started"
+    }
+  },
+  "cost": {
+    "combined_ceiling_usd": 100,
+    "maximum_estimate_usd": 28,
+    "observed_cost_usd": null,
+    "billing_state": "delayed",
+    "remaining_authorization_usd": 16,
+    "state": "CLEANED"
+  },
+  "cleanup": {
+    "verified_at": "2026-08-29T15:25:36.0542283Z",
+    "run_instances_absent": true,
+    "run_boot_disks_absent": true,
+    "run_firewalls_absent": true,
+    "run_model_service_absent": true,
+    "edge_benchmark_processes_absent": true,
+    "project_gpu_usage_zero": true,
+    "regional_l4_usage_zero": true,
+    "protected_bootstrap_present": true,
+    "protected_bootstrap_state": "RUNNING"
+  },
+  "privacy": {
+    "prompt_retained": false,
+    "decoded_output_retained": false,
+    "token_ids_retained": false,
+    "credentials_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false,
+    "network_endpoints_retained": false
+  }
+}

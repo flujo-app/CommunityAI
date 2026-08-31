@@ -67,6 +67,21 @@ _ignored_keys = ContextVar("ignored_keys", default=None)
 _artifact_verifier: ContextVar[Optional[ManifestArtifactVerifier]] = ContextVar("artifact_verifier", default=None)
 
 
+def select_checkpoint_shards(weight_map: dict, ignored_key_patterns: List[str]) -> List[str]:
+    """Return the whole checkpoint shards needed by the local client tensors."""
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise ValueError("checkpoint index has no non-empty weight_map")
+    selected = set()
+    for parameter_name, filename in weight_map.items():
+        if not isinstance(parameter_name, str) or not isinstance(filename, str) or not filename:
+            raise ValueError("checkpoint index weight_map must contain non-empty string keys and values")
+        if all(re.search(pattern, parameter_name) is None for pattern in ignored_key_patterns):
+            selected.add(filename)
+    if not selected:
+        raise ValueError("checkpoint index selects no client checkpoint shards")
+    return sorted(selected)
+
+
 @contextlib.contextmanager
 def ignore_keys(patterns: List[str]):
     token = _ignored_keys.set(patterns)
@@ -92,12 +107,13 @@ def patched_get_checkpoint_shard_files(
         if should_ignore_keys:
             n_original_shards = len(set(index["weight_map"].values()))
 
+            selected_shards = set(select_checkpoint_shards(index["weight_map"], _ignored_keys.get()))
             index["weight_map"] = {
                 param_name: filename
                 for param_name, filename in index["weight_map"].items()
                 if all(re.search(pattern, param_name) is None for pattern in _ignored_keys.get())
             }
-            n_loaded_shards = len(set(index["weight_map"].values()))
+            n_loaded_shards = len(selected_shards)
             logger.debug(f"Loading {n_loaded_shards} shards out of {n_original_shards}")
 
             # Replace the original index with a patched JSON, where ignored keys are removed

@@ -61,6 +61,7 @@ def catalog_dict(*, sequence: int = 1) -> dict:
         "issued_at_ms": int((NOW - 60) * 1000),
         "expires_at_ms": int((NOW + 3600) * 1000),
         "rungs": [rung("small", 1), rung("large", 2)],
+        "route_demand_authority_roots": [digest("e"), digest("f")],
         "models": [
             model("a", "small", "primary", 1_700_000_000),
             model("b", "small", "standby", 1_000_000_000),
@@ -140,6 +141,43 @@ def test_catalog_strict_validation(mutation, error):
     mutation(source)
     with pytest.raises(ModelCatalogError, match=error):
         ModelCatalog.from_dict(source)
+
+
+@pytest.mark.parametrize(
+    "roots, error",
+    [
+        ([digest("a")], "between 2 and 32"),
+        (["sha256:INVALID", digest("b")], "sha256: digest"),
+        ([digest("a"), digest("a")], "duplicates"),
+        ([digest("b"), digest("a")], "sorted"),
+        ([digest(f"{index:x}"[-1]) for index in range(33)], "between 2 and 32"),
+    ],
+)
+def test_catalog_route_demand_authority_roots_are_strict_and_bounded(roots, error):
+    source = catalog_dict()
+    source["route_demand_authority_roots"] = roots
+    with pytest.raises(ModelCatalogError, match=error):
+        ModelCatalog.from_dict(source)
+
+
+def test_catalog_missing_authority_roots_remains_verifiable_but_disables_remote_demand():
+    source = catalog_dict()
+    source.pop("route_demand_authority_roots")
+    key = CatalogSigningKey.generate()
+    signed = envelope(source).add_signature(key)
+
+    parsed = SignedModelCatalog.from_json(json.dumps(signed.to_dict()))
+    assert "route_demand_authority_roots" not in parsed.to_dict()["signed"]
+    assert parsed.verify(root(key), now=NOW).route_demand_authority_roots is None
+
+
+def test_catalog_authority_root_tampering_invalidates_the_offline_signature():
+    key = CatalogSigningKey.generate()
+    signed = envelope().add_signature(key).to_dict()
+    signed["signed"]["route_demand_authority_roots"][0] = digest("0")
+
+    with pytest.raises(ModelCatalogError, match="signature.*invalid"):
+        SignedModelCatalog.from_dict(signed).verify(root(key), now=NOW)
 
 
 def test_catalog_json_rejects_duplicate_keys_and_nonfinite_numbers():

@@ -28,6 +28,33 @@ def test_manifest_registration_resolves_name_alias_and_digest():
     assert manager.snapshots()[0].state is ModelState.KNOWN
 
 
+@pytest.mark.parametrize(
+    ("manifest_path", "expected_bytes"),
+    (
+        (
+            "public-alpha/catalog-v1/manifests/3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33.json",
+            4_571_197_320,
+        ),
+        (
+            "public-alpha/catalog-v1/manifests/2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd.json",
+            10_278_818_149,
+        ),
+    ),
+)
+def test_public_manifest_snapshot_reports_exact_selected_whole_shard_bytes(manifest_path, expected_bytes):
+    manifest = ModelManifest.load(manifest_path)
+    manager = ModelManager()
+    manager.register_manifest(manifest, lambda: ModelRuntime(object(), object()))
+
+    snapshot = manager.snapshots()[0].to_dict()
+
+    assert snapshot["download"] == {
+        "schema_version": 1,
+        "selected_whole_shard_bytes": expected_bytes,
+    }
+    assert expected_bytes == sum(artifact.size for artifact in manifest.artifacts)
+
+
 def test_manager_rejects_alias_collisions_case_insensitively():
     manager = ModelManager()
     manager.register(ModelDescriptor("First", aliases=("shared",)), lambda: ModelRuntime(object(), object()))

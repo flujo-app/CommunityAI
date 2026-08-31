@@ -52,7 +52,6 @@ registration does not download tokenizers or client-side weights.
       "auto_restart": true,
       "restart_backoff": 5,
       "device": "cuda:0",
-      "cache_dir": "worker-cache/tinyllama",
       "max_disk_space": "8GiB",
       "max_vram": "6GiB",
       "max_bandwidth_mbps": 15,
@@ -69,6 +68,14 @@ directory. Model `cache_dir`, `revocation_files`, `request_timeout`, and
 `max_retries` are optional. Their defaults are `null`, an empty list, 30 seconds,
 and three attempts respectively. Discovery timing defaults to 30 seconds between
 queries and a 15-second DHT startup timeout.
+
+A worker without its own `cache_dir` inherits the selected model's cache. This is the
+normal product configuration: the client runtime and every contribution worker for one
+exact manifest reuse the same persistent verified artifacts. A worker-specific cache is
+an advanced isolation override and may duplicate downloads; bootstrap and product-route
+configurators must not create separate role caches by default. Cache files remain lazy and
+are selected at whole upstream checkpoint-shard granularity as described in
+[ADR 0003](adr/0003-direct-manifested-artifact-delivery.md).
 
 Workers reference a configured model by name, alias, or manifest digest and run as
 isolated `drift server` child processes. Each declares exactly one of `num_blocks`
@@ -260,24 +267,31 @@ call `/v1/*`.
 
 ## Edge measurement
 
-Measure a manifested client against a complete route with a dedicated empty cache:
+Gate 9 separates acquisition from steady-state measurement. First materialize the exact
+client-selected artifacts from the immutable Hugging Face revision into an empty persistent
+cache and bind its acquisition evidence. Then measure the manifested client against a
+complete route using that verified cache:
 
 ```bash
 drift edge-benchmark manifests/tinyllama.json \
     --initial_peers /ip4/203.0.113.10/tcp/31337/p2p/QmExample \
     --cache_dir ./edge-benchmark-cache \
+    --allow_warm_cache \
     --output ./tinyllama-edge.json
 ```
 
-The versioned JSON captures cold cache growth, de-duplicated embedding/head
-parameter storage, process-tree RSS and accelerator allocations, load and first
-token latency, and post-first-token decode rate. A nonempty cache is rejected unless
-`--allow_warm_cache` is supplied so an accidental warm run cannot be labeled cold.
+The acquisition record captures selected whole-file shard bytes, resumptions, elapsed time,
+and verified cache growth. The versioned steady-state JSON captures de-duplicated
+embedding/head parameter storage, process-tree RSS and accelerator allocations, load and
+first-token latency, and post-first-token decode rate. A nonempty cache still requires
+`--allow_warm_cache`, so the envelope cannot be mislabeled as a cold acquisition.
 
 Public-alpha Gate 9 measurements follow the bounded
 [edge resource envelope runbook](EDGE_RESOURCE_ENVELOPE_RUNBOOK.md). That contract
-uses one attempt per model, disables benchmark retries, and forbids Fly operations,
-image builds or pushes, registry mirrors, and qualification/recovery reruns.
+uses one paid attempt per model, permits only bounded resumptions of the same immutable
+artifact, and forbids Fly operations, model-image builds/pushes/pulls, registry mirrors,
+and qualification/recovery reruns. Its supervisor treats complete child-process exit as
+the portable memory cleanup boundary.
 
 ## Single-model shorthand
 

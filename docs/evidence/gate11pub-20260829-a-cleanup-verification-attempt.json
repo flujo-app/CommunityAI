@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "scope": "gate11-public-route-image-publication-cleanup-verification-attempt",
+  "run_id": "gate11pub-20260829-a",
+  "gate": 11,
+  "result": "passed_cleanup_verified",
+  "recorded_at": "2026-08-30T00:36:31Z",
+  "source_commit": "d2ea7dea5f3541b86293279b0a650bb46ab82583",
+  "verification_checkout_commit": "a0f9c7784c996dc4f3b4ffcb225feb1383e09221",
+  "verification": {
+    "native_gcloud_account_configured": true,
+    "native_gcloud_token_refresh_succeeded": true,
+    "provider_state_observed": true,
+    "exact_builder_absence_verified": true,
+    "exact_boot_disk_absence_verified": true,
+    "protected_bootstrap_running_verified": true,
+    "provider_delete_deadline": "2026-08-30T00:09:18Z",
+    "provider_delete_deadline_reached_at_attempt": true
+  },
+  "cleanup": {
+    "state": "CLEANED",
+    "new_resource_created": false,
+    "delete_attempted": false,
+    "next_action": "retain_cost_commitment_until_billing_reconciliation_or_explicit_cleanup_backed_owner_reset"
+  },
+  "cost": {
+    "combined_ceiling_usd": 100,
+    "additional_maximum_reserved_usd": 0,
+    "remaining_authorization_usd": 6
+  },
+  "privacy": {
+    "account_identity_retained": false,
+    "credentials_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false,
+    "network_endpoints_retained": false
+  },
+  "complete_release_qualification": false
+}

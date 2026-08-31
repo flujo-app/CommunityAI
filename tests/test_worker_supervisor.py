@@ -58,6 +58,78 @@ def test_supervisor_reconfigures_only_after_persistence_and_while_idle():
     supervisor.shutdown()
 
 
+def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
+    initial = WorkerLaunch(
+        "automatic",
+        "auto",
+        (sys.executable, "-c", "raise SystemExit(1)"),
+        policy_admitted=False,
+        policy_reason="placement pending",
+        automatic=True,
+        block_indices="0:1",
+        placement_reason="placement pending",
+    )
+    updated = WorkerLaunch(
+        "automatic",
+        "model",
+        (sys.executable, "-c", "import time; time.sleep(30)"),
+        auto_start=True,
+        policy_admitted=True,
+        automatic=True,
+        block_indices="2:3",
+        placement_reason="selected least-covered block",
+    )
+    supervisor = WorkerSupervisor([initial], stop_timeout=2, poll_period=0.01)
+    supervisor.start_service()
+
+    assert supervisor.replace_launch(updated) is True
+    _wait_for(lambda: supervisor.snapshot("automatic")["state"] == "running")
+    snapshot = supervisor.snapshot("automatic")
+    assert snapshot["model"] == "model"
+    assert snapshot["automatic"] is True
+    assert snapshot["block_indices"] == "2:3"
+    assert snapshot["placement_reason"] == "selected least-covered block"
+
+    with pytest.raises(WorkerReconfigurationBusyError, match="pause contribution worker"):
+        supervisor.replace_launch(initial)
+
+    supervisor.pause_worker_for_reconfiguration("automatic")
+    migrated = WorkerLaunch(
+        "automatic",
+        "other-model",
+        updated.command,
+        auto_start=True,
+        policy_admitted=True,
+        automatic=True,
+        block_indices="3:4",
+        placement_reason="coverage changed",
+    )
+    assert supervisor.replace_launch(migrated, start=True) is True
+    _wait_for(lambda: supervisor.snapshot("automatic")["state"] == "running")
+    assert supervisor.snapshot("automatic")["operator_paused"] is False
+
+    # A real pause arriving after the reconciler's snapshot must override its
+    # stale start=True decision at the atomic launch-replacement boundary.
+    supervisor.pause_worker_for_reconfiguration("automatic")
+    supervisor.pause_worker("automatic")
+    paused_update = WorkerLaunch(
+        "automatic",
+        "third-model",
+        updated.command,
+        auto_start=True,
+        policy_admitted=True,
+        automatic=True,
+        block_indices="4:5",
+        placement_reason="coverage changed again",
+    )
+    assert supervisor.replace_launch(paused_update, start=True) is True
+    snapshot = supervisor.snapshot("automatic")
+    assert snapshot["state"] == "paused"
+    assert snapshot["desired_running"] is False
+    assert snapshot["operator_paused"] is True
+    supervisor.shutdown()
+
+
 def test_supervisor_reconfiguration_refuses_running_intent_before_persistence():
     launch = WorkerLaunch(
         "worker",

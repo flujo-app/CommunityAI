@@ -1,0 +1,29 @@
+{
+  "checked_at": "2026-08-30T11:24:18Z",
+  "complete_release_qualification": false,
+  "diagnostic": {
+    "binding_observed": false,
+    "domain_restricted_sharing_detected": true,
+    "exact_binding_add_returned_zero": false,
+    "exact_repository_create_returned_zero": true,
+    "exact_repository_delete_returned_zero": true,
+    "permission_denied_detected": false,
+    "temporary_public_access_granted": false
+  },
+  "final_repository_absent": true,
+  "privacy": {
+    "command_argv_retained": false,
+    "credentials_retained": false,
+    "paths_retained": false,
+    "provider_ids_retained": false,
+    "provider_output_retained": false
+  },
+  "protected_bootstrap_running": true,
+  "provider_mutations_bounded_to_exact_repository": true,
+  "provider_plan_digest": "sha256:2387d038386ea64e6301d70133aaee4dceedb2c8279e1a341b744ffb1f9fdbc4",
+  "result": "passed",
+  "run_id": "cache-20260830-d",
+  "schema_version": 1,
+  "scope": "gcp-public-route-cache-domain-policy-diagnostic",
+  "source_commit": "3ae7a094a1e4ca3865d5b6aa463816eac36318f4"
+}

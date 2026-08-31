@@ -20,7 +20,14 @@ from hivemind.p2p import PeerID
 from drift.data_structures import UID_DELIMITER
 from drift.model_manifest import ModelManifest
 from drift.node.route_health import module_infos_route_health
-from drift.protocol_identity import ReplayGuard, RevocationStore
+from drift.node.route_metrics import aggregate_route_observations
+from drift.protocol_identity import (
+    ProtocolSecurityError,
+    ReplayGuard,
+    RevocationStore,
+    verify_intent_lease,
+    verify_route_demand,
+)
 from drift.utils.dht import get_remote_module_infos
 
 logger = logging.getLogger(__name__)
@@ -34,6 +41,45 @@ MAX_PEER_CACHE_FUTURE_SECONDS = 5 * 60
 MIN_PEER_CACHE_WRITE_INTERVAL_SECONDS = 5 * 60
 _CACHE_SCOPE_RE = re.compile(r"^[0-9a-f]{64}$")
 _PEER_ADDRESS_RE = re.compile(r"^/(ip4|ip6)/([^/]+)/tcp/([1-9][0-9]{0,4})/p2p/([^/]{20,128})$")
+_KEY_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_MAX_ROUTE_DEMAND_RAW_RECORDS = 256
+_MAX_ROUTE_DEMAND_AUTHORITY_ROOTS = 32
+_MAX_ROUTE_DEMAND_NODES = 256
+_MAX_ROUTE_DEMAND_DEPTH = 8
+_MAX_ROUTE_DEMAND_STRING = 4096
+
+
+def _bounded_route_demand_source(value: Any) -> bool:
+    """Reject pathological decoded values without recursive traversal."""
+
+    stack = [(value, 0)]
+    nodes = 0
+    while stack:
+        current, depth = stack.pop()
+        nodes += 1
+        if nodes > _MAX_ROUTE_DEMAND_NODES or depth > _MAX_ROUTE_DEMAND_DEPTH:
+            return False
+        if current is None or isinstance(current, (bool, int, float)):
+            continue
+        if isinstance(current, str):
+            if len(current) > _MAX_ROUTE_DEMAND_STRING:
+                return False
+            continue
+        if isinstance(current, Mapping):
+            if len(current) > 32:
+                return False
+            for key, item in current.items():
+                if not isinstance(key, str) or not key or len(key) > 128:
+                    return False
+                stack.append((item, depth + 1))
+            continue
+        if isinstance(current, (list, tuple)):
+            if len(current) > 32:
+                return False
+            stack.extend((item, depth + 1) for item in current)
+            continue
+        return False
+    return True
 
 
 def _cacheable_peer_address(value: Any) -> bool:
@@ -230,6 +276,8 @@ class _TargetState:
     last_health: Optional[Dict[str, Any]] = None
     last_updated: Optional[float] = None
     last_error: Optional[str] = None
+    remote_route_observation: Optional[Dict[str, Any]] = None
+    remote_route_updated: Optional[float] = None
 
 
 def _default_dht_factory(**kwargs):
@@ -255,6 +303,8 @@ class ModelCoverageDiscovery:
         dht_factory: Callable[..., Any] = _default_dht_factory,
         lookup: Callable[..., Any] = get_remote_module_infos,
         peer_cache: Optional[PeerCache] = None,
+        replay_history_dir: Optional[Path | str] = None,
+        route_demand_authority_roots: Sequence[str] = (),
         peer_snapshot: Callable[[Any], Sequence[str]] = _default_peer_snapshot,
     ) -> None:
         if update_period <= 0 or startup_timeout <= 0:
@@ -264,6 +314,24 @@ class ModelCoverageDiscovery:
         self._dht_factory = dht_factory
         self._lookup = lookup
         self._peer_cache = peer_cache
+        authority_roots = tuple(route_demand_authority_roots)
+        if authority_roots and not 2 <= len(authority_roots) <= _MAX_ROUTE_DEMAND_AUTHORITY_ROOTS:
+            raise ValueError(
+                "route demand authority roots must be empty or contain between 2 and "
+                f"{_MAX_ROUTE_DEMAND_AUTHORITY_ROOTS} keys"
+            )
+        if any(not isinstance(key_id, str) or _KEY_ID_RE.fullmatch(key_id) is None for key_id in authority_roots):
+            raise ValueError("route demand authority roots must be canonical sha256 identifiers")
+        if len(set(authority_roots)) != len(authority_roots):
+            raise ValueError("route demand authority roots must not contain duplicates")
+        if authority_roots != tuple(sorted(authority_roots)):
+            raise ValueError("route demand authority roots must be sorted by key id")
+        self._route_demand_authority_roots = frozenset(authority_roots)
+        self._replay_history_dir = (
+            None
+            if replay_history_dir is None
+            else Path(os.path.abspath(os.fspath(Path(replay_history_dir).expanduser())))
+        )
         self._peer_snapshot = peer_snapshot
         self._states: Dict[str, _TargetState] = {}
         self._groups: Dict[Tuple[str, ...], list[_TargetState]] = {}
@@ -274,16 +342,22 @@ class ModelCoverageDiscovery:
             state = _TargetState(
                 target=target,
                 revocations=RevocationStore.from_files(target.revocation_files),
-                replay_guard=ReplayGuard(),
+                replay_guard=ReplayGuard(
+                    None
+                    if self._replay_history_dir is None
+                    else self._replay_history_dir / f"{target.manifest.digest}.json"
+                ),
             )
             self._states[digest] = state
             self._groups.setdefault(target.initial_peers, []).append(state)
 
+        self._group_io_locks = {initial_peers: threading.Lock() for initial_peers in self._groups}
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._dhts: Dict[Tuple[str, ...], Any] = {}
         self._shutdown_dht_ids: set[int] = set()
+        self._local_route_demand_keys: set[str] = set()
         self._started = False
         self._closed = False
 
@@ -333,11 +407,84 @@ class ModelCoverageDiscovery:
             result["last_error"] = state.last_error
             return result
 
+    def register_local_route_demand_key(self, key_id: str) -> None:
+        if not isinstance(key_id, str) or _KEY_ID_RE.fullmatch(key_id) is None:
+            raise ValueError("route demand key_id must be a canonical sha256 identifier")
+        if key_id not in self._route_demand_authority_roots:
+            raise ValueError("route demand key_id is not authorized by the signed catalog")
+        with self._lock:
+            self._local_route_demand_keys.add(key_id)
+
+    def route_demand_snapshot(self, digest_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            state = self._states[digest_id]
+            if state.remote_route_observation is None or state.remote_route_updated is None:
+                return None
+            observation = dict(state.remote_route_observation)
+            elapsed = max(0, int(time.monotonic() - state.remote_route_updated))
+            observation["age_seconds_bucket"] = min(
+                observation["window_seconds"],
+                observation["age_seconds_bucket"] + ((elapsed + 14) // 15) * 15,
+            )
+            return observation
+
     def _set_success(self, state: _TargetState, health: Dict[str, Any]) -> None:
         with self._lock:
             state.last_health = dict(health)
             state.last_updated = time.monotonic()
             state.last_error = None
+
+    def _set_remote_route_observation(self, state: _TargetState, observation: Optional[Mapping[str, Any]]) -> None:
+        with self._lock:
+            state.remote_route_observation = None if observation is None else dict(observation)
+            state.remote_route_updated = None if observation is None else time.monotonic()
+
+    def _read_remote_route_observations(self, state: _TargetState, dht: Any) -> Optional[Dict[str, Any]]:
+        result = dht.get(f"{state.target.manifest.dht_prefix}.demand-v1", latest=True)
+        container = getattr(result, "value", result)
+        if not isinstance(container, Mapping) or len(container) > _MAX_ROUTE_DEMAND_RAW_RECORDS:
+            return None
+        with self._lock:
+            local_keys = set(self._local_route_demand_keys)
+        observations = []
+        seen = set()
+        now = time.time()
+        for subkey, wrapped in container.items():
+            if len(seen) >= 32:
+                break
+            if subkey not in self._route_demand_authority_roots:
+                continue
+            source = getattr(wrapped, "value", wrapped)
+            try:
+                if not isinstance(source, Mapping) or source.get("key_id") != subkey:
+                    continue
+                if not _bounded_route_demand_source(source):
+                    continue
+                record = verify_route_demand(
+                    source,
+                    expected_manifest_digest=state.target.manifest.digest,
+                    now=now,
+                    revocations=state.revocations,
+                    replay_guard=state.replay_guard,
+                )
+                if subkey != record.key_id or record.key_id in local_keys or record.key_id in seen:
+                    continue
+                seen.add(record.key_id)
+                observation = dict(record.payload["observation"])
+                elapsed = max(0, int(now - record.payload["issued_at_ms"] / 1000))
+                observation["age_seconds_bucket"] = min(
+                    observation["window_seconds"],
+                    observation["age_seconds_bucket"] + ((elapsed + 14) // 15) * 15,
+                )
+                observations.append(observation)
+            except Exception:
+                # One untrusted decoded record cannot erase otherwise valid demand.
+                continue
+        return aggregate_route_observations(
+            observations,
+            expected_manifest_digest=state.target.manifest.digest_id,
+            maximum_age_seconds=90,
+        )
 
     def _set_error(self, states: Sequence[_TargetState], exc: Exception) -> None:
         error = f"{type(exc).__name__}: {exc}"
@@ -388,17 +535,26 @@ class ModelCoverageDiscovery:
                         for block_index in range(manifest.model.num_blocks)
                     ]
                     try:
-                        module_infos = self._lookup(
-                            dht,
-                            uids,
-                            manifest_digest=manifest.digest,
-                            manifest_execution_profile=manifest.runtime.to_dict(),
-                            revocations=state.revocations,
-                            replay_guard=state.replay_guard,
-                            latest=True,
-                        )
+                        with self._group_io_locks[initial_peers]:
+                            module_infos = self._lookup(
+                                dht,
+                                uids,
+                                manifest_digest=manifest.digest,
+                                manifest_execution_profile=manifest.runtime.to_dict(),
+                                revocations=state.revocations,
+                                replay_guard=state.replay_guard,
+                                latest=True,
+                            )
                         self._set_success(state, module_infos_route_health(module_infos))
                         any_success = True
+                        if callable(getattr(dht, "get", None)):
+                            try:
+                                with self._group_io_locks[initial_peers]:
+                                    observation = self._read_remote_route_observations(state, dht)
+                                self._set_remote_route_observation(state, observation)
+                            except Exception as exc:
+                                self._set_remote_route_observation(state, None)
+                                logger.warning("Remote route demand lookup failed for %s: %s", manifest.digest_id, exc)
                     except Exception as exc:
                         self._set_error((state,), exc)
                         logger.warning("Coverage discovery failed for %s: %s", manifest.digest_id, exc)
@@ -421,6 +577,87 @@ class ModelCoverageDiscovery:
                     self._shutdown_dht_once(dht)
                 except Exception:
                     logger.exception("Failed to close a coverage-discovery DHT")
+
+    def publish_intent(self, digest_id: str, source: Mapping[str, Any]) -> bool:
+        """Publish one verified, expiring intent to at least one remote DHT peer."""
+
+        state = self._states.get(digest_id)
+        if state is None:
+            raise KeyError(digest_id)
+        manifest = state.target.manifest
+        try:
+            record = verify_intent_lease(
+                source,
+                expected_manifest_digest=manifest.digest,
+                revocations=state.revocations,
+            )
+            expiration_time = record.payload["expires_at_ms"] / 1000
+            initial_peers = state.target.initial_peers
+            with self._lock:
+                dht = self._dhts.get(initial_peers)
+            if dht is None:
+                return False
+            with self._group_io_locks[initial_peers]:
+                with self._lock:
+                    if self._dhts.get(initial_peers) is not dht:
+                        return False
+                if not dht.is_alive():
+                    return False
+                return bool(
+                    dht.store(
+                        key=f"{manifest.dht_prefix}.intent-v1",
+                        subkey=record.key_id,
+                        value=record.to_dict(),
+                        expiration_time=expiration_time,
+                        exclude_self=True,
+                    )
+                )
+        except (ProtocolSecurityError, OSError, RuntimeError, TypeError, ValueError):
+            logger.warning("Could not publish a signed placement intent for %s", digest_id)
+            return False
+
+    def publish_route_demand(self, digest_id: str, source: Mapping[str, Any]) -> bool:
+        """Publish one verified, thresholded route-demand window to remote peers only."""
+
+        state = self._states.get(digest_id)
+        if state is None:
+            raise KeyError(digest_id)
+        manifest = state.target.manifest
+        try:
+            record = verify_route_demand(
+                source,
+                expected_manifest_digest=manifest.digest,
+                revocations=state.revocations,
+            )
+            if record.key_id not in self._route_demand_authority_roots:
+                return False
+            expiration_time = record.payload["expires_at_ms"] / 1000
+            initial_peers = state.target.initial_peers
+            with self._lock:
+                dht = self._dhts.get(initial_peers)
+            if dht is None:
+                return False
+            with self._group_io_locks[initial_peers]:
+                with self._lock:
+                    if self._dhts.get(initial_peers) is not dht:
+                        return False
+                if not dht.is_alive():
+                    return False
+                stored = bool(
+                    dht.store(
+                        key=f"{manifest.dht_prefix}.demand-v1",
+                        subkey=record.key_id,
+                        value=record.to_dict(),
+                        expiration_time=expiration_time,
+                        exclude_self=True,
+                    )
+                )
+            if stored:
+                self.register_local_route_demand_key(record.key_id)
+            return stored
+        except (ProtocolSecurityError, OSError, RuntimeError, TypeError, ValueError):
+            logger.warning("Could not publish signed route demand for %s", digest_id)
+            return False
 
     def close(self) -> None:
         with self._lock:

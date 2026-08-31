@@ -1,5 +1,7 @@
 import asyncio
 import copy
+import json
+import pickle
 import time
 from types import SimpleNamespace
 
@@ -8,6 +10,7 @@ from hivemind.p2p import PeerID
 
 from drift.data_structures import ServerInfo, ServerState
 from drift.protocol_identity import (
+    MAX_REPLAY_HISTORY_BYTES,
     NodeIdentity,
     ProtocolSecurityError,
     ReplayGuard,
@@ -16,9 +19,11 @@ from drift.protocol_identity import (
     create_intent_lease,
     create_revocation_record,
     create_rotation_record,
+    create_route_demand,
     create_worker_announcement,
     verify_intent_lease,
     verify_rotation_record,
+    verify_route_demand,
     verify_worker_announcement,
 )
 from drift.utils.dht import _get_remote_module_infos, get_remote_module_infos
@@ -151,6 +156,10 @@ def test_worker_announcement_rejects_wrong_peer_expiry_and_replay(tmp_path):
     with pytest.raises(ProtocolSecurityError, match="equivocated"):
         verify_server_info(identity, equivocation, replay_guard=guard, now=now)
 
+    serialized_guard = pickle.loads(pickle.dumps(guard))
+    with pytest.raises(ProtocolSecurityError, match="older"):
+        verify_server_info(identity, older_info, replay_guard=serialized_guard, now=now)
+
     server_info.signed_announcement = first.to_dict()
     wrong_profile = {**EXECUTION_PROFILE, "dtype": "float16"}
     with pytest.raises(ProtocolSecurityError, match="execution profile"):
@@ -173,13 +182,53 @@ def test_intent_lease_is_signed_bounded_and_replay_checked(tmp_path):
         manifest_digest=MANIFEST_DIGEST,
         start_block=2,
         end_block=6,
-        resource_claims={"vram_bytes": 8_000_000_000, "throughput": 4.5},
+        resource_claims={
+            "schema_version": 1,
+            "artifact_bytes": 8_000_000_000,
+            "block_count": 4,
+            "throughput_milli_rps": 4_500,
+        },
         issued_at=now,
         expires_at=now + 30,
         sequence=4,
         nonce="00112233445566778899aabbccddeeff",
     )
     assert verify_intent_lease(lease.to_dict(), expected_manifest_digest=MANIFEST_DIGEST, now=now).peer_id
+
+    with pytest.raises(ProtocolSecurityError, match="unknown fields"):
+        create_intent_lease(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            start_block=2,
+            end_block=6,
+            resource_claims={
+                "schema_version": 1,
+                "artifact_bytes": 8_000_000_000,
+                "block_count": 4,
+                "throughput_milli_rps": None,
+                "private_path": "forbidden",
+            },
+            issued_at=now,
+            expires_at=now + 30,
+            sequence=5,
+        )
+
+    with pytest.raises(ProtocolSecurityError, match="block_count"):
+        create_intent_lease(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            start_block=2,
+            end_block=6,
+            resource_claims={
+                "schema_version": 1,
+                "artifact_bytes": 8_000_000_000,
+                "block_count": 3,
+                "throughput_milli_rps": None,
+            },
+            issued_at=now,
+            expires_at=now + 30,
+            sequence=6,
+        )
 
     with pytest.raises(ProtocolSecurityError, match="different manifest"):
         verify_intent_lease(lease.to_dict(), expected_manifest_digest="b" * 64, now=now)
@@ -375,3 +424,261 @@ def test_identity_cli_never_overwrites_private_keys_with_trust_records(tmp_path,
         run_identity.main()
     assert not new_identity_path.exists()
     assert occupied_output.read_text(encoding="utf-8") == "keep"
+
+
+def test_route_demand_is_signed_thresholded_and_privacy_bounded(tmp_path):
+    identity = make_identity(tmp_path, "router.key")
+    now = time.time()
+    observation = {
+        "schema_version": 1,
+        "manifest_digest": "sha256:" + MANIFEST_DIGEST,
+        "window_seconds": 300,
+        "attempts_bucket": 4,
+        "successes_bucket": 2,
+        "useful_tokens_per_second_milli": 2_000,
+        "reliability_milli": 500,
+        "age_seconds_bucket": 15,
+    }
+    record = create_route_demand(
+        identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=now,
+        expires_at=now + 90,
+        sequence=1,
+    )
+
+    verified = verify_route_demand(
+        record.to_dict(),
+        expected_manifest_digest=MANIFEST_DIGEST,
+        now=now,
+    )
+    assert verified.key_id == identity.key_id
+    assert set(verified.payload) == {
+        "manifest_digest",
+        "observation",
+        "issued_at_ms",
+        "expires_at_ms",
+        "sequence",
+    }
+    assert set(verified.payload["observation"]) == set(observation)
+
+    with pytest.raises(ProtocolSecurityError, match="lifetime exceeds 90 seconds"):
+        create_route_demand(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            observation=observation,
+            issued_at=now,
+            expires_at=now + 91,
+            sequence=2,
+        )
+
+    long_lived = SignedRecord.create(
+        "route_demand",
+        {
+            "manifest_digest": MANIFEST_DIGEST,
+            "observation": observation,
+            "issued_at_ms": int(now * 1000),
+            "expires_at_ms": int((now + 600) * 1000),
+            "sequence": 2,
+        },
+        identity,
+    )
+    with pytest.raises(ProtocolSecurityError, match="lifetime exceeds 90 seconds"):
+        verify_route_demand(long_lived.to_dict(), now=now)
+
+    with pytest.raises(ProtocolSecurityError, match="at least 4"):
+        create_route_demand(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            observation=dict(observation, attempts_bucket=2, successes_bucket=1),
+            issued_at=now,
+            expires_at=now + 90,
+            sequence=2,
+        )
+    with pytest.raises(ProtocolSecurityError, match="unknown fields"):
+        create_route_demand(
+            identity,
+            manifest_digest=MANIFEST_DIGEST,
+            observation=dict(observation, request_id="forbidden"),
+            issued_at=now,
+            expires_at=now + 90,
+            sequence=3,
+        )
+
+    tampered = record.to_dict()
+    tampered["payload"]["observation"]["attempts_bucket"] = 8
+    with pytest.raises(ProtocolSecurityError, match="invalid signature"):
+        verify_route_demand(tampered, now=now)
+
+
+def test_replay_guard_persists_ordering_prunes_expiry_and_rejects_corrupt_state(tmp_path, monkeypatch):
+    identity = make_identity(tmp_path, "persistent-router.key")
+    now = time.time()
+    observation = {
+        "schema_version": 1,
+        "manifest_digest": "sha256:" + MANIFEST_DIGEST,
+        "window_seconds": 300,
+        "attempts_bucket": 4,
+        "successes_bucket": 2,
+        "useful_tokens_per_second_milli": 2_000,
+        "reliability_milli": 500,
+        "age_seconds_bucket": 15,
+    }
+    current = create_route_demand(
+        identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=now,
+        expires_at=now + 90,
+        sequence=10,
+    )
+    history_path = tmp_path / "replay" / "manifest.json"
+    verify_route_demand(
+        current.to_dict(),
+        expected_manifest_digest=MANIFEST_DIGEST,
+        replay_guard=ReplayGuard(history_path, clock=lambda: now),
+        now=now,
+    )
+
+    restarted = ReplayGuard(history_path, clock=lambda: now)
+    serialized_before_newer = pickle.dumps(ReplayGuard(history_path))
+    older = create_route_demand(
+        identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=now - 1,
+        expires_at=now + 89,
+        sequence=999,
+    )
+    with pytest.raises(ProtocolSecurityError, match="older"):
+        verify_route_demand(older.to_dict(), replay_guard=restarted, now=now)
+
+    equivocation = create_route_demand(
+        identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=dict(observation, attempts_bucket=8, successes_bucket=4),
+        issued_at=now,
+        expires_at=now + 90,
+        sequence=10,
+    )
+    with pytest.raises(ProtocolSecurityError, match="equivocated"):
+        verify_route_demand(equivocation.to_dict(), replay_guard=restarted, now=now)
+
+    failed_update = create_route_demand(
+        identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=now + 0.5,
+        expires_at=now + 90,
+        sequence=11,
+    )
+
+    def fail_replace(_source, _destination):
+        raise OSError("simulated atomic replace failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("drift.protocol_identity.os.replace", fail_replace)
+        with pytest.raises(ProtocolSecurityError, match="persisted safely"):
+            verify_route_demand(failed_update.to_dict(), replay_guard=restarted, now=now + 0.5)
+    assert json.loads(history_path.read_text(encoding="utf-8"))["entries"][0]["sequence"] == 10
+
+    short_lived_newer = create_route_demand(
+        identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=now + 1,
+        expires_at=now + 2,
+        sequence=11,
+    )
+    verify_route_demand(short_lived_newer.to_dict(), replay_guard=restarted, now=now + 1)
+    restored_after_disk_advance = pickle.loads(serialized_before_newer)
+    with pytest.raises(ProtocolSecurityError, match="older"):
+        verify_route_demand(current.to_dict(), replay_guard=restored_after_disk_advance, now=now + 1)
+    after_newer_expiry = ReplayGuard(history_path, clock=lambda: now + 3)
+    with pytest.raises(ProtocolSecurityError, match="older"):
+        verify_route_demand(current.to_dict(), replay_guard=after_newer_expiry, now=now + 3)
+
+    later = now + 92
+    replacement_identity = make_identity(tmp_path, "replacement-router.key")
+    replacement = create_route_demand(
+        replacement_identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=later,
+        expires_at=later + 90,
+        sequence=1,
+    )
+    pruned = ReplayGuard(history_path, clock=lambda: later)
+    verify_route_demand(replacement.to_dict(), replay_guard=pruned, now=later)
+    saved = json.loads(history_path.read_text(encoding="utf-8"))
+    assert len(saved["entries"]) == 1
+    assert saved["entries"][0]["key_id"] == replacement_identity.key_id
+
+    malformed_path = tmp_path / "malformed.json"
+    malformed_path.write_text('{"schema_version":1,"entries":[],"entries":[]}', encoding="utf-8")
+    with pytest.raises(ProtocolSecurityError, match="duplicate key"):
+        ReplayGuard(malformed_path)
+
+    boolean_schema_path = tmp_path / "boolean-schema.json"
+    boolean_schema_path.write_text('{"schema_version":true,"entries":[]}', encoding="utf-8")
+    with pytest.raises(ProtocolSecurityError, match="schema is invalid"):
+        ReplayGuard(boolean_schema_path)
+
+    directory_path = tmp_path / "directory.json"
+    directory_path.mkdir()
+    with pytest.raises(ProtocolSecurityError, match="regular file"):
+        ReplayGuard(directory_path)
+
+    link_path = tmp_path / "linked.json"
+    try:
+        link_path.symlink_to(history_path)
+    except OSError:
+        pass
+    else:
+        with pytest.raises(ProtocolSecurityError, match="regular file"):
+            ReplayGuard(link_path)
+
+
+def test_replay_guard_enforces_active_entry_and_byte_limits(tmp_path):
+    now = time.time()
+    observation = {
+        "schema_version": 1,
+        "manifest_digest": "sha256:" + MANIFEST_DIGEST,
+        "window_seconds": 300,
+        "attempts_bucket": 4,
+        "successes_bucket": 2,
+        "useful_tokens_per_second_milli": 2_000,
+        "reliability_milli": 500,
+        "age_seconds_bucket": 15,
+    }
+    first_identity = make_identity(tmp_path, "bounded-one.key")
+    second_identity = make_identity(tmp_path, "bounded-two.key")
+    first = create_route_demand(
+        first_identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=now,
+        expires_at=now + 90,
+        sequence=1,
+    )
+    second = create_route_demand(
+        second_identity,
+        manifest_digest=MANIFEST_DIGEST,
+        observation=observation,
+        issued_at=now,
+        expires_at=now + 90,
+        sequence=1,
+    )
+    history_path = tmp_path / "bounded.json"
+    guard = ReplayGuard(history_path, max_entries=1, clock=lambda: now)
+    verify_route_demand(first.to_dict(), replay_guard=guard, now=now)
+    with pytest.raises(ProtocolSecurityError, match="active entry limit"):
+        verify_route_demand(second.to_dict(), replay_guard=guard, now=now)
+    saved = json.loads(history_path.read_text(encoding="utf-8"))
+    assert [entry["key_id"] for entry in saved["entries"]] == [first_identity.key_id]
+
+    oversized_path = tmp_path / "oversized.json"
+    oversized_path.write_text(" " * (MAX_REPLAY_HISTORY_BYTES + 1), encoding="utf-8")
+    with pytest.raises(ProtocolSecurityError, match="byte limit"):
+        ReplayGuard(oversized_path)

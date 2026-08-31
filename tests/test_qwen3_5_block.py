@@ -5,6 +5,8 @@ import torch
 from drift.models.qwen3_5.block import WrappedQwen3_5Block
 from drift.models.qwen3_5.cache import Qwen3_5HybridCache
 from drift.models.qwen3_5.config import DistributedQwen3_5Config
+from drift.server.throughput import measure_compute_rps
+from drift.utils.convert_block import QuantType
 
 ATOL = 3e-5
 
@@ -147,3 +149,18 @@ def test_qwen3_5_full_attention_delegates_to_standard_cache():
     assert keys.shape == (1, cfg.num_key_value_heads, cfg.head_dim, 32)
     assert values.shape == (1, cfg.num_key_value_heads, 32, cfg.head_dim)
     assert strategy.supports_paged_cache is True
+
+
+def test_qwen3_5_throughput_probe_initializes_native_hybrid_cache():
+    throughput = measure_compute_rps(
+        _tiny_config(),
+        torch.device("cpu"),
+        torch.float32,
+        quant_type=QuantType.NONE,
+        tensor_parallel_devices=(torch.device("cpu"),),
+        n_tokens=1,
+        n_steps=2,
+        inference=True,
+    )
+
+    assert throughput > 0

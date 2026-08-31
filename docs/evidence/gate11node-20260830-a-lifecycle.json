@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "scope": "gate11-product-node-route-lifecycle",
+  "run_id": "route-20260830-j",
+  "gate": 11,
+  "result": "passed",
+  "observed_at": "2026-08-30T16:40:01Z",
+  "source": {
+    "authorized_commit": "e1d715fd47c852fa12ca50c76e8f4c6a0831fd78",
+    "final_commit": "4cef141746705c3ee8bc8e017693855e0bc4871e",
+    "authorized_plan_digest": "sha256:1a0927e9d83a9a409ac2ea0232c4fceb14821d3f2c5eb87def88b8e7cdcb07d8",
+    "bounded_in_place_runtime_repairs": [
+      "eab1562",
+      "51cc7b4",
+      "5449819",
+      "b84f9a1",
+      "4cef141"
+    ],
+    "resource_or_cost_ceiling_changed_after_authorization": false
+  },
+  "product_path": {
+    "runtime_kind": "generic-communityai-wheel",
+    "runtime_version": "2.3.0.dev2",
+    "runtime_byte_size": 377900,
+    "runtime_sha256": "sha256:589bbe3eacee01af773f5eeda47cd5575c1be02b720f08c9299ac7aeafa884ee",
+    "configurator_byte_size": 9602,
+    "configurator_sha256": "sha256:fc385f74e02ca955203b1fc5e8ae493c7f4ccd31bd7383c2ae0a1c461c91363e",
+    "acceptance_probe_byte_size": 9756,
+    "acceptance_probe_sha256": "sha256:bdcc9f499a7cd6b727c0e33a0c4c2b0e71e76e28f3f21cb99804a8f39edfa0d2",
+    "signed_catalog_verified": true,
+    "catalog_digest": "sha256:70937f0aa10aa73f158753386170c27a95c685b468c66945f05bb3929263f195",
+    "automatic_worker_placement": true,
+    "model_specific_images_used": false,
+    "model_artifacts_embedded_in_runtime": false,
+    "model_artifacts_transferred_by_operator": false,
+    "model_source": "direct-hugging-face-download-after-manifest-verification",
+    "persistent_shared_cache": true,
+    "persistent_shared_cache_files": 32,
+    "persistent_shared_cache_bytes": 14850015810
+  },
+  "routes": [
+    {
+      "role": "primary",
+      "model": "Qwen3.5 2B",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "covered_blocks": 24,
+      "total_blocks": 24,
+      "verified_peer_count": 1,
+      "status": "complete",
+      "reported_route_throughput_tokens_per_second": 5829.8
+    },
+    {
+      "role": "standby",
+      "model": "Gemma 4 E2B IT",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "covered_blocks": 35,
+      "total_blocks": 35,
+      "verified_peer_count": 1,
+      "status": "complete",
+      "reported_route_throughput_tokens_per_second": 5998.1
+    }
+  ],
+  "acceptance": {
+    "result": "passed",
+    "initial_selection_wait_ms": 33,
+    "primary": {
+      "model": "Qwen3.5 2B",
+      "completion_tokens": 1,
+      "duration_ms": 15461,
+      "succeeded": true
+    },
+    "fallback": {
+      "primary_disabled": true,
+      "automatic_selection": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "selection_wait_ms": 58073,
+      "standby_completion_tokens": 1,
+      "standby_inference_duration_ms": 33151,
+      "standby_inference_succeeded": true
+    },
+    "restoration": {
+      "primary_restored": true,
+      "automatic_selection": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "selection_wait_ms": 32042,
+      "completion_tokens": 1,
+      "inference_duration_ms": 15412,
+      "inference_succeeded": true
+    },
+    "total_duration_ms": 155897,
+    "worker_processes_stable_before_acceptance": true,
+    "hot_reconciliation_restart_count_during_stability_window": 0
+  },
+  "provider": {
+    "project": "community-ai-506321",
+    "zone": "us-central1-a",
+    "machine_type": "g2-standard-8",
+    "accelerator": "NVIDIA L4",
+    "accelerator_count": 1,
+    "accelerator_memory_total_mib": 23034,
+    "accelerator_memory_used_mib_after_acceptance": 6846,
+    "accelerator_process_memory_mib_after_acceptance": [
+      3868,
+      2964
+    ],
+    "system_memory_total_bytes": 33649029120,
+    "system_memory_available_bytes_after_acceptance": 27849506816,
+    "boot_disk_bytes": 206900281344,
+    "boot_disk_available_bytes_after_acceptance": 162487377920,
+    "boot_disk_auto_delete": true,
+    "os_image": "common-cu129-ubuntu-2404-nvidia-580-v20260819",
+    "service_account_attached": false,
+    "instance_status": "RUNNING",
+    "route_services_active": true,
+    "max_run_seconds": 50400,
+    "termination_action": "DELETE",
+    "termination_deadline": "2026-08-31T05:44:14Z",
+    "public_dht_ports": [
+      31337,
+      31338
+    ],
+    "ssh_restricted_to_iap_range": true
+  },
+  "credentials": {
+    "bootstrap_api_key_rotated": true,
+    "bootstrap_api_key_revoked": true,
+    "bootstrap_secret_file_removed": true,
+    "active_api_key_file_mode": "0600",
+    "control_key_file_mode": "0600"
+  },
+  "stages": {
+    "provider_preflight": true,
+    "create": true,
+    "generic_runtime_install": true,
+    "signed_catalog_verification": true,
+    "manifest_verification": true,
+    "origin_artifact_download": true,
+    "persistent_cache": true,
+    "automatic_placement": true,
+    "primary_route_complete": true,
+    "standby_route_complete": true,
+    "primary_inference": true,
+    "primary_disabled": true,
+    "automatic_fallback": true,
+    "standby_inference": true,
+    "primary_restored": true,
+    "restored_inference": true,
+    "minimum_stability_window": true
+  },
+  "operation": {
+    "state": "live-bounded",
+    "cleanup_deferred_for_gate_operation": true,
+    "automatic_instance_deletion_configured": true,
+    "protected_bootstrap_running": true,
+    "co_located_fallback_not_independent_redundancy": true,
+    "full_independent_redundancy_is_post_alpha": true,
+    "complete_release_qualification": false
+  },
+  "privacy": {
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_ids_retained": false,
+    "credentials_retained": false,
+    "endpoints_retained": false,
+    "peer_ids_retained": false,
+    "provider_ids_retained": false,
+    "provider_output_retained": false,
+    "command_argv_retained": false
+  }
+}

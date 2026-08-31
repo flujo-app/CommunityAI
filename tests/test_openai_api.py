@@ -178,6 +178,100 @@ def test_auto_request_uses_the_live_catalog_route_and_reports_unavailability():
     assert "complete live route" in unavailable.json()["detail"]
 
 
+def test_completed_generation_observer_receives_only_exact_manifest_aggregates():
+    digest = "sha256:" + "a" * 64
+    observed = []
+    manager = ModelManager()
+    manager.register(
+        ModelDescriptor("observed", manifest_digest=digest),
+        lambda: ModelRuntime(FakeModel(), FakeTokenizer()),
+    )
+    client = TestClient(create_app(model_manager=manager, route_outcome_observer=lambda **item: observed.append(item)))
+
+    response = client.post("/v1/completions", json={"model": "observed", "prompt": "private prompt"})
+
+    assert response.status_code == 200
+    assert len(observed) == 1
+    assert set(observed[0]) == {"manifest_digest", "succeeded", "completion_tokens", "duration_seconds"}
+    assert observed[0]["manifest_digest"] == digest
+    assert observed[0]["succeeded"] is True
+    assert observed[0]["completion_tokens"] == len(NEW_TOKENS)
+    assert observed[0]["duration_seconds"] > 0
+    assert "private prompt" not in repr(observed)
+
+
+def test_generation_failure_is_counted_without_error_content_and_observer_failure_isolated():
+    digest = "sha256:" + "b" * 64
+    observed = []
+
+    class FailingModel(FakeModel):
+        def generate(self, input_ids, **kwargs):
+            raise RuntimeError("private generation detail")
+
+    manager = ModelManager()
+    manager.register(
+        ModelDescriptor("failing", manifest_digest=digest),
+        lambda: ModelRuntime(FailingModel(), FakeTokenizer()),
+    )
+    client = TestClient(
+        create_app(model_manager=manager, route_outcome_observer=lambda **item: observed.append(item)),
+        raise_server_exceptions=False,
+    )
+
+    response = client.post("/v1/completions", json={"model": "failing", "prompt": "private prompt"})
+
+    assert response.status_code == 500
+    assert observed == [
+        {
+            "manifest_digest": digest,
+            "succeeded": False,
+            "completion_tokens": 0,
+            "duration_seconds": observed[0]["duration_seconds"],
+        }
+    ]
+    assert observed[0]["duration_seconds"] > 0
+    assert "private" not in repr(observed)
+
+    healthy = ModelManager()
+    healthy.register(
+        ModelDescriptor("healthy", manifest_digest="sha256:" + "c" * 64),
+        lambda: ModelRuntime(FakeModel(), FakeTokenizer()),
+    )
+
+    def reject_observation(**kwargs):
+        raise RuntimeError("observer unavailable")
+
+    isolated = TestClient(create_app(model_manager=healthy, route_outcome_observer=reject_observation))
+    assert isolated.post("/v1/completions", json={"model": "healthy", "prompt": "hi"}).status_code == 200
+
+
+def test_auth_and_unresolved_model_failures_do_not_enter_route_observations():
+    observed = []
+    manager = ModelManager()
+    manager.register(
+        ModelDescriptor("known", manifest_digest="sha256:" + "d" * 64),
+        lambda: ModelRuntime(FakeModel(), FakeTokenizer()),
+    )
+    client = TestClient(
+        create_app(
+            model_manager=manager,
+            api_keys=["secret"],
+            route_outcome_observer=lambda **item: observed.append(item),
+        )
+    )
+
+    assert client.post("/v1/completions", json={"model": "known", "prompt": "hi"}).status_code == 401
+    assert (
+        client.post(
+            "/v1/completions",
+            headers={"Authorization": "Bearer secret"},
+            json={"model": "unknown", "prompt": "hi"},
+        ).status_code
+        == 404
+    )
+    assert observed == []
+
+
 def test_chat_completion_finish_reason_length(api):
     response = api.client.post(
         "/v1/chat/completions",
@@ -291,9 +385,14 @@ async def test_cancelled_generation_keeps_lease_until_executor_finishes():
             assert allow_generation_to_finish.wait(timeout=2)
             return torch.cat([input_ids, torch.tensor([[101]])], dim=1)
 
+    observed = []
+    digest = "sha256:" + "e" * 64
     manager = ModelManager(max_loaded_models=1)
-    manager.register_loaded("model", BlockingModel(), FakeTokenizer())
-    app = create_app(model_manager=manager)
+    manager.register(
+        ModelDescriptor("model", manifest_digest=digest),
+        lambda: ModelRuntime(BlockingModel(), FakeTokenizer()),
+    )
+    app = create_app(model_manager=manager, route_outcome_observer=lambda **item: observed.append(item))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         request = asyncio.create_task(client.post("/v1/completions", json={"model": "model", "prompt": "hi"}))
@@ -311,5 +410,10 @@ async def test_cancelled_generation_keeps_lease_until_executor_finishes():
             await asyncio.sleep(0.01)
         else:
             pytest.fail("cancelled generation released its runtime too early or stranded the lease")
+
+        assert len(observed) == 1
+        assert observed[0]["manifest_digest"] == digest
+        assert observed[0]["succeeded"] is True
+        assert observed[0]["completion_tokens"] == 1
 
     manager.shutdown()

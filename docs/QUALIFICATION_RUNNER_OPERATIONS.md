@@ -80,6 +80,80 @@ command. Only the matching `PLANNED` run ID, provider, workload, purpose/source 
 provider-plan digest, and maximum changes the cost authorization to true. Provider authentication, target
 availability, quota, and absence checks remain mandatory even after cost authorization.
 
+Gate 11 uses two separately reserved GCP workloads. First,
+`gcp-public-route-cache` creates and prewarms the fixed private
+`us-central1` Artifact Registry remote repository backed by `https://ghcr.io`.
+It reserves USD 10 for one six-hour, auto-deleting `e2-standard-4` CPU builder,
+a 200 GiB balanced boot disk, and up to 30 days of retained cache storage. The lifecycle
+enables and exact-verifies both `artifactregistry.googleapis.com` and
+`iam.googleapis.com` with fixed `config.name` queries before repository creation.
+It derives one run-bound ephemeral service-account identifier, creates no key, grants only
+`roles/artifactregistry.reader` on the exact repository, and assigns only that identity
+with the cloud-platform token scope to the builder. The startup script accepts only the
+derived service-account email from metadata, validates one bounded metadata token, uses it
+only through Docker `--password-stdin`, and removes the isolated Docker config before its
+readiness acknowledgement. Readiness is written to a mode-private temporary file and exposed
+only by atomic same-filesystem rename; the fixed IAP probe requires a nonempty regular,
+non-symlink file before strict JSON validation. A nonzero bootstrap exit first removes
+registry credentials and atomically publishes the one exact failure acknowledgement, which
+the controller treats as immediately terminal. Before any GCP mutation, native `gh`
+authentication and both fixed package metadata records must report `public`; a private,
+missing, or malformed package fails the run before provisioning. GitHub makes the
+private-to-public package transition irreversible, so it is an explicit publication action.
+No `allUsers` or `allAuthenticatedUsers` binding is planned. After prewarm, the lifecycle
+deletes the builder, revokes the exact reader binding, deletes
+the ephemeral service account, requires all six builder/perimeter/identity absence checks,
+requires an empty repository policy, verifies scanning disabled and all four index/runtime
+digests, and revalidates `communityai-bootstrap-1`. Any failure deletes a repository
+created by that run and proves it absent. GCP describes the exact remote upstream as
+`remoteRepositoryConfig.commonRepository.uri == "https://ghcr.io"`; both cache and route
+lifecycles require that exact object, and the route rejects any residual resource policy.
+The retained private repository keeps the USD 10 reservation active.
+
+Generate the provider-call-free cache plan first:
+
+```powershell
+uv run --no-sync python scripts/qualification_cost_guard.py `
+  --run-id cache-20260830-g `
+  --provider gcp `
+  --workload gcp-public-route-cache `
+  --purpose "Gate 11 private same-region route image cache" `
+  --source-commit $sourceCommit `
+  --maximum-hours 6 `
+  --project community-ai-506321 `
+  --zone us-central1-a `
+  --linux-image ubuntu-2404-noble-amd64-v20260826 `
+  --primary-image $qwenGhcrIndexReference `
+  --primary-image-evidence-digest $qwenPublicationDigest `
+  --standby-image $gemmaGhcrIndexReference `
+  --standby-image-evidence-digest $gemmaPublicationDigest `
+  --cache-bootstrap-digest $cacheBootstrapDigest `
+  --cache-bootstrap-bytes $cacheBootstrapBytes `
+  --ledger docs/RELEASE_READINESS.md `
+  --output docs/evidence/cache-20260830-g-cost-authorization.json
+```
+
+The first pass must report `provisioning_authorized=false`. Record its exact
+`required_ledger_row`, commit and push the reservation, rerun the identical command,
+and require `provisioning_authorized=true` before running
+`scripts/gcp_public_route_cache_lifecycle.py`.
+
+After cache evidence passes, `gcp-public-route` fixes one run-bound G2/L4 host, the
+cached Qwen primary and Gemma standby index digests, the original GHCR
+publication-evidence digests, public ports, isolated network resources, health and
+fallback evidence, a 14-hour maximum, automatic instance deletion, and exact cleanup.
+Its conservative maximum remains USD 26. Co-location is fallback coverage, not
+independent redundancy. The cost guard accepts only the fixed
+`us-central1-docker.pkg.dev/community-ai-506321/communityai-ghcr-cache/flujo-app/...`
+destinations. Before creating a GPU host, the route lifecycle revalidates the private
+remote-repository configuration, scanning-disabled state, absence of public principals,
+and all four exact cached index/runtime digests. It then obtains one native
+`gcloud auth print-access-token` credential, sends it only through the fixed
+`oauth2accesstoken` Docker login for `us-central1-docker.pkg.dev`, and never records
+the credential or provider output. The host logs out from that exact registry after
+pulling. The lifecycle then enforces fresh health, primary-disable/standby-fallback,
+restoration, resource ceilings, and cleanup.
+
 For Fly, calculate a conservative maximum from current Fly pricing for the exact
 image, five-Machine topology, regions, CPU, memory, and maximum lifetime, then pass
 it explicitly:
@@ -105,7 +179,7 @@ uv run --no-sync python scripts/qualification_cost_guard.py `
 This Fly example is not a USD 20 authorization: current provider pricing must justify
 the chosen maximum, and the exact row still must be recorded before the adapter runs.
 
-Gate 11 uses a separate `fly-discovery-seed` workload. Its exact plan binds the
+A later provider-diversity follow-up uses the separate `fly-discovery-seed` workload. Its exact plan binds the
 run-derived dedicated app, one shared-CPU 1 GB Machine, one 1 GB identity volume, shared
 IPv4, Anycast IPv6, region, an immutable image from the reviewed GHCR repository, the
 publication-evidence digest and source commit, TCP 31337, a finite priced retention
@@ -244,7 +318,21 @@ protocol requirements, not optional troubleshooting:
    temporary file to the current user, transfer it over SSH, decode it only into the
    remote registry login, and delete both copies in unconditional cleanup. Verify the
    first three bytes are not `EF BB BF`; do not compensate later by guessing that
-   bytes should be stripped.
+   bytes should be stripped. The reviewed source-bound Gate 11 controller obtains one
+   native-`gh` token for an exactly validated GitHub login; rejects BOM, CR, NUL, non-ASCII,
+   whitespace, multiple lines, and oversized bytes; and encodes it as one canonical base64
+   line. Before writing any bytes it creates a random per-upload Windows directory, replaces
+   inheritance with exactly one non-inherited current-user FullControl rule, verifies that
+   DACL, writes a binary no-BOM file, applies and verifies the same protected DACL on the file,
+   and uses `shell=False` fixed `gcloud compute scp --tunnel-through-iap` with discarded
+   output and no token in argv or environment. The fixed `sudo -n` helper first prepares an
+   owner-only mode-0700 per-upload Linux directory, then accepts only its exact regular,
+   single-link, owner-matched, bounded file, removes the staging directory before decoding,
+   and proves the same path with a non-secret sentinel. It decodes only into
+   `docker login --password-stdin`, uses an exact root-owned mode-0700 isolated Docker config,
+   then logs out and removes it in the same action's `finally`; the outer lifecycle repeats
+   idempotent remote removal before provider deletion, zeroes memory, and refuses cleanup
+   success unless local, remote, and in-memory removal all pass.
 5. Generate Linux shell scripts as UTF-8 without BOM and LF-only. Before transfer,
    reject any carriage-return byte and any BOM; after transfer, repeat the byte check
    and run `bash -n`. Do not silently run `dos2unix` or `sed` on a source-bound

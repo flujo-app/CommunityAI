@@ -17,6 +17,7 @@ NOW = 2_000_000_000.0
 PEER_ID = "Qm" + "A" * 44
 PEER = f"/dns4/bootstrap.communityai.example.com/tcp/31337/p2p/{PEER_ID}"
 PUBLIC_IPV6 = "2606:4700:4700::1111"
+ROUTE_DEMAND_AUTHORITY_ROOTS = ("sha256:" + "a" * 64, "sha256:" + "b" * 64)
 
 
 def _manifest(name: str, alias: str) -> ModelManifest:
@@ -67,6 +68,7 @@ def _release_documents(*, sequence: int = 1):
             "expires_at_ms": int((NOW + 3600) * 1000),
             "rungs": [_rung()],
             "models": models,
+            "route_demand_authority_roots": list(ROUTE_DEMAND_AUTHORITY_ROOTS),
         }
     )
     key = CatalogSigningKey.generate()
@@ -126,6 +128,14 @@ def test_bootstrap_installs_verified_manifests_and_atomic_node_config(tmp_path):
     config = NodeConfig.load(config_path)
     assert len(config.models) == 2
     assert config.auto_model_priority == tuple(model.manifest_digest for model in envelope.signed.models)
+    assert config.route_demand_authority_roots == ROUTE_DEMAND_AUTHORITY_ROOTS
+    assert len(config.workers) == 1
+    automatic = config.workers[0]
+    assert automatic.worker_id == "automatic"
+    assert automatic.model == "auto"
+    assert automatic.num_blocks == 1
+    assert automatic.enabled is True
+    assert automatic.identity_path == (data_dir / "worker-identities" / "automatic.key").resolve()
     assert all(model.initial_peers == (PEER,) for model in config.models)
     assert all(model.manifest_path.parent == (data_dir / "manifests").resolve() for model in config.models)
     assert (data_dir / "catalogs" / "communityai-test" / "catalog.signed.json").is_file()

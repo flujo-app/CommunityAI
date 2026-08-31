@@ -1,0 +1,330 @@
+{
+  "schema_version": 1,
+  "scope": "edge-resource-envelope-attempt",
+  "run_id": "gate9-20260829-b",
+  "gate": 9,
+  "result": "failed",
+  "source_commit": "4af96d188f2b89573999f1ff3b159295ad50309b",
+  "candidates": {
+    "qwen": {
+      "name": "Qwen3.5 2B",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+    },
+    "gemma": {
+      "name": "Gemma 4 E2B IT",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+      "attempted": false
+    }
+  },
+  "stop_reason": "The Linux Qwen client completed cold artifact acquisition and real inference inside the model window, but retained 128184320 bytes of process-tree RSS above baseline after the five-second stabilization window. Runtime close, route-manager shutdown, child-process cleanup, and accelerator cleanup passed. The cleanup contract therefore failed closed and Gemma was not started.",
+  "setup": {
+    "route_profile": {
+      "provider": "gcp",
+      "operating_system": "linux",
+      "machine_type": "g2-standard-8",
+      "accelerator": "NVIDIA L4",
+      "gpu_memory_mib": 23034
+    },
+    "linux_client_profile": {
+      "provider": "gcp",
+      "operating_system": "linux",
+      "machine_type": "e2-standard-4",
+      "accelerator": "none"
+    },
+    "source_and_runtime_verified": true,
+    "linux_hivemind_sharing_strategy": "file_descriptor",
+    "qwen_route_ready_at": "2026-08-29T03:20:05Z",
+    "permanent_shared_memory_fix_commit": "4af96d188f2b89573999f1ff3b159295ad50309b"
+  },
+  "controls": {
+    "fly_operations": 0,
+    "docker_builds": 0,
+    "docker_pushes": 0,
+    "registry_mirrors": 0,
+    "qualification_or_recovery_reruns": 0,
+    "max_retries": 1,
+    "max_run_duration_seconds": 5400,
+    "instance_termination_action": "DELETE",
+    "boot_disks_auto_delete": true,
+    "artifact_no_progress_limit_seconds": 300,
+    "model_window_seconds": 3600,
+    "windows_and_linux_clients_sequential": true,
+    "gemma_not_started_after_stop": true
+  },
+  "client_results": {
+    "qwen_windows": {
+      "result": "passed",
+      "measured_at": "2026-08-29T03:58:54.000Z",
+      "runtime": {
+        "drift": "2.3.0.dev2",
+        "platform": "Windows-10-10.0.19045-SP0",
+        "python": "3.12.9",
+        "torch": "2.6.0+cu124"
+      },
+      "model": {
+        "dtype": "bfloat16",
+        "id": "Qwen3.5 2B",
+        "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+        "repository": "Qwen/Qwen3.5-2B",
+        "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+      },
+      "workload": {
+        "prompt_tokens": 1,
+        "requested_new_tokens": 8,
+        "generated_tokens": 8
+      },
+      "storage": {
+        "cache_bytes_after": 4571197320,
+        "cache_bytes_before": 0,
+        "cache_growth_bytes": 4571197320,
+        "cold_start": true
+      },
+      "memory": {
+        "accelerators": {
+          "cuda": {
+            "allocated_baseline_bytes": 0,
+            "allocated_loaded_bytes": 0,
+            "allocated_peak_bytes": 0,
+            "allocated_peak_delta_bytes": 0
+          }
+        },
+        "client_components": {
+          "components": {
+            "input_embeddings": {
+              "devices": [
+                "cpu"
+              ],
+              "dtypes": [
+                "bfloat16"
+              ],
+              "parameter_bytes": 1017118720,
+              "parameter_count": 508559360
+            },
+            "output_head": {
+              "devices": [
+                "cpu"
+              ],
+              "dtypes": [
+                "bfloat16"
+              ],
+              "parameter_bytes": 1017118720,
+              "parameter_count": 508559360
+            }
+          },
+          "unique_parameter_bytes": 1017118720
+        },
+        "process_tree_rss_baseline_bytes": 570118144,
+        "process_tree_rss_loaded_bytes": 492662784,
+        "process_tree_rss_peak_bytes": 1822994432,
+        "process_tree_rss_peak_delta_bytes": 1252876288,
+        "process_tree_rss_post_close_bytes": 447819776,
+        "process_tree_rss_post_close_delta_bytes": 0
+      },
+      "latency": {
+        "decode_seconds_after_first_token": 4.408512399997562,
+        "decode_tokens_per_second": 1.587837203316899,
+        "first_token_seconds": 2.235144099999161,
+        "load_seconds": 2304.115710899998,
+        "total_generation_seconds": 6.757830499998818
+      },
+      "cleanup": {
+        "accelerators": {
+          "clean": true,
+          "devices": {
+            "cuda": {
+              "allocated_baseline_bytes": 0,
+              "allocated_post_close_bytes": 0,
+              "allocated_post_close_delta_bytes": 0,
+              "clean": true
+            }
+          }
+        },
+        "memory": {
+          "clean": true,
+          "process_tree_rss_baseline_bytes": 570118144,
+          "process_tree_rss_post_close_bytes": 447819776,
+          "process_tree_rss_post_close_delta_bytes": 0,
+          "rss_tolerance_bytes": 16777216
+        },
+        "passed": true,
+        "process_tree": {
+          "additional_child_processes_post_close": 0,
+          "child_processes_baseline": 0,
+          "child_processes_post_close": 0,
+          "clean": true
+        },
+        "route_manager": {
+          "clean": true,
+          "dht_process_alive": false,
+          "observed": true,
+          "sequence_manager_update_thread_alive": false
+        },
+        "runtime_close": {
+          "available": true,
+          "clean": true,
+          "error_type": null,
+          "invoked": true
+        },
+        "stabilization": {
+          "deadline_reached": false,
+          "elapsed_seconds": 0.014893600004143082,
+          "poll_interval_seconds": 0.05,
+          "samples": 1,
+          "timeout_seconds": 5
+        }
+      }
+    },
+    "qwen_linux": {
+      "result": "failed",
+      "measured_at": "2026-08-29T04:05:57.000Z",
+      "runtime": {
+        "drift": "2.3.0.dev2",
+        "platform": "Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39",
+        "python": "3.11.16",
+        "torch": "2.6.0+cu124"
+      },
+      "model": {
+        "dtype": "bfloat16",
+        "id": "Qwen3.5 2B",
+        "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+        "repository": "Qwen/Qwen3.5-2B",
+        "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+      },
+      "workload": {
+        "prompt_tokens": 1,
+        "requested_new_tokens": 8,
+        "generated_tokens": 8
+      },
+      "storage": {
+        "cache_bytes_after": 4571197320,
+        "cache_bytes_before": 0,
+        "cache_growth_bytes": 4571197320,
+        "cold_start": true
+      },
+      "memory": {
+        "accelerators": {},
+        "client_components": {
+          "components": {
+            "input_embeddings": {
+              "devices": [
+                "cpu"
+              ],
+              "dtypes": [
+                "bfloat16"
+              ],
+              "parameter_bytes": 1017118720,
+              "parameter_count": 508559360
+            },
+            "output_head": {
+              "devices": [
+                "cpu"
+              ],
+              "dtypes": [
+                "bfloat16"
+              ],
+              "parameter_bytes": 1017118720,
+              "parameter_count": 508559360
+            }
+          },
+          "unique_parameter_bytes": 1017118720
+        },
+        "process_tree_rss_baseline_bytes": 615546880,
+        "process_tree_rss_loaded_bytes": 1546084352,
+        "process_tree_rss_peak_bytes": 2846519296,
+        "process_tree_rss_peak_delta_bytes": 2230972416,
+        "process_tree_rss_post_close_bytes": 743731200,
+        "process_tree_rss_post_close_delta_bytes": 128184320
+      },
+      "latency": {
+        "decode_seconds_after_first_token": 8.29987004800023,
+        "decode_tokens_per_second": 0.8433866987696488,
+        "first_token_seconds": 1.790280568000071,
+        "load_seconds": 351.4610230930002,
+        "total_generation_seconds": 10.09557998900027
+      },
+      "cleanup": {
+        "accelerators": {
+          "clean": true,
+          "devices": {}
+        },
+        "memory": {
+          "clean": false,
+          "process_tree_rss_baseline_bytes": 615546880,
+          "process_tree_rss_post_close_bytes": 743731200,
+          "process_tree_rss_post_close_delta_bytes": 128184320,
+          "rss_tolerance_bytes": 16777216
+        },
+        "passed": false,
+        "process_tree": {
+          "additional_child_processes_post_close": 0,
+          "child_processes_baseline": 0,
+          "child_processes_post_close": 0,
+          "clean": true
+        },
+        "route_manager": {
+          "clean": true,
+          "dht_process_alive": false,
+          "observed": true,
+          "sequence_manager_update_thread_alive": false
+        },
+        "runtime_close": {
+          "available": true,
+          "clean": true,
+          "error_type": null,
+          "invoked": true
+        },
+        "stabilization": {
+          "deadline_reached": true,
+          "elapsed_seconds": 5.008117378999941,
+          "poll_interval_seconds": 0.05,
+          "samples": 85,
+          "timeout_seconds": 5
+        }
+      }
+    },
+    "gemma_windows": {
+      "result": "not_started"
+    },
+    "gemma_linux": {
+      "result": "not_started"
+    }
+  },
+  "post_run_fix": {
+    "status": "implemented_and_locally_verified",
+    "issue": "Linux glibc arenas retained 128184320 bytes after client teardown.",
+    "behavior": "The benchmark now calls glibc malloc_trim(0) during bounded cleanup stabilization and publishes whether native heap trimming occurred.",
+    "focused_tests": {
+      "passed": 7,
+      "skipped": 2
+    }
+  },
+  "cost": {
+    "combined_ceiling_usd": 100,
+    "maximum_estimate_usd": 28,
+    "observed_cost_usd": null,
+    "billing_state": "delayed",
+    "state": "CLEANED"
+  },
+  "cleanup": {
+    "verified_at": "2026-08-29T04:09:53.6924203Z",
+    "run_instances_absent": true,
+    "run_boot_disks_absent": true,
+    "run_firewalls_absent": true,
+    "run_model_service_absent": true,
+    "edge_benchmark_processes_absent": true,
+    "project_gpu_usage_zero": true,
+    "protected_bootstrap_present": true,
+    "protected_bootstrap_state": "RUNNING"
+  },
+  "privacy": {
+    "prompt_retained": false,
+    "decoded_output_retained": false,
+    "token_ids_retained": false,
+    "credentials_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false,
+    "network_endpoints_retained": false
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "scope": "gcp-public-route-interrupted-attempt-cleanup",
+  "run_id": "route-20260830-a",
+  "attempt": "framed-retry",
+  "verified_at_utc": "2026-08-30T03:15:50.098Z",
+  "result": "failed-cleaned",
+  "failure_stage": "controller_interrupted",
+  "complete_release_qualification": false,
+  "authorization": {
+    "source_commit": "0ea140f3fe764a6772a3b4217ead4bcd7e93562f",
+    "evidence_digest": "sha256:c1c1ce9bd37d6ae8556eaeaa88676e5b08dabaea96554a5a765a0d6e993feedb",
+    "provider_plan_digest": "sha256:dc11838569220a3fd7d7afbd3e8e70f49ac9034994071252b11931dd9ad45947",
+    "maximum_estimate_usd": "26.00",
+    "cloud_ceiling_usd": "100.00"
+  },
+  "interruption": {
+    "lifecycle_process_present_at_recovery": false,
+    "expected_attempt_evidence_present": false,
+    "retained_log_contains_provider_output": false,
+    "retained_log_contains_only_local_environment_warning": true,
+    "stale_generic_evidence_excluded": true,
+    "exact_route_instance_observed_running_before_cleanup": true
+  },
+  "cleanup": {
+    "exact_delete_commands_passed": 5,
+    "absence_checks": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "all_absent": true,
+    "resource_classes": [
+      "instance",
+      "auto-delete boot disk",
+      "network",
+      "subnet",
+      "public-route firewall",
+      "IAP firewall"
+    ],
+    "protected_bootstrap_running": true,
+    "native_authentication_revalidated": true
+  },
+  "privacy": {
+    "command_argv_retained": false,
+    "credentials_retained": false,
+    "endpoints_retained": false,
+    "outputs_retained": false,
+    "paths_retained": false,
+    "peer_ids_retained": false,
+    "prompts_retained": false,
+    "provider_ids_retained": false,
+    "provider_output_retained": false,
+    "token_ids_retained": false
+  },
+  "next_action": "retry only through the same source-bound authorization after fresh fail-closed preflight, using a detached controller that survives workflow handoff"
+}

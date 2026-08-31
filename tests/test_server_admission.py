@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import multiprocessing as mp
 import queue
@@ -24,7 +25,7 @@ from drift.server.rejection_logging import (
     RoutinePublicRejectionLogFilter,
     install_public_rejection_log_filter,
 )
-from drift.server.server import ModuleContainer
+from drift.server.server import ModuleContainer, Server
 
 
 @pytest.fixture
@@ -518,12 +519,169 @@ def test_container_health_includes_the_shared_admission_authority():
     container = object.__new__(ModuleContainer)
     container.dht_announcer = alive
     container.conn_handlers = [alive]
-    container.runtime = SimpleNamespace(pools=[alive])
+    container.runtime = SimpleNamespace(pools=[alive], ready=SimpleNamespace(is_set=lambda: True))
     container.admission_state = AdmissionState.local(_policy())
+    container.health_state_path = None
 
     assert container.is_healthy() is True
     container.admission_state.mark_unhealthy()
     assert container.is_healthy() is False
+
+
+def test_legacy_container_health_remains_independent_of_public_admission_and_ready_state():
+    alive = SimpleNamespace(is_alive=lambda: True)
+    container = object.__new__(ModuleContainer)
+    container.dht_announcer = alive
+    container.conn_handlers = [alive]
+    container.runtime = SimpleNamespace(pools=[alive], ready=SimpleNamespace(is_set=lambda: False))
+    container.admission_state = None
+    container.health_state_path = None
+
+    assert container.is_healthy() is True
+
+
+def test_unexpected_admission_health_failure_logs_no_private_detail(caplog):
+    alive = SimpleNamespace(is_alive=lambda: True)
+    container = object.__new__(ModuleContainer)
+    container.dht_announcer = alive
+    container.conn_handlers = [alive]
+    container.runtime = SimpleNamespace(pools=[alive], ready=SimpleNamespace(is_set=lambda: True))
+    container.admission_state = SimpleNamespace(
+        snapshot=lambda: (_ for _ in ()).throw(ValueError("private-path-request-peer-sentinel"))
+    )
+    container.health_state_path = None
+
+    with caplog.at_level(logging.ERROR):
+        assert container.is_healthy() is False
+
+    assert "Unexpected public admission health failure" in caplog.text
+    assert "private-path-request-peer-sentinel" not in caplog.text
+
+
+def test_malformed_admission_health_fails_closed_without_logging_values(caplog):
+    alive = SimpleNamespace(is_alive=lambda: True)
+    container = object.__new__(ModuleContainer)
+    container.dht_announcer = alive
+    container.conn_handlers = [alive]
+    container.runtime = SimpleNamespace(pools=[alive], ready=SimpleNamespace(is_set=lambda: True))
+    container.admission_state = SimpleNamespace(snapshot=lambda: {"private-path-request-peer-sentinel": "secret"})
+    container.health_state_path = None
+
+    with caplog.at_level(logging.ERROR):
+        assert container.is_healthy() is False
+
+    assert "Unexpected public admission health failure" in caplog.text
+    assert "private-path-request-peer-sentinel" not in caplog.text
+    assert "secret" not in caplog.text
+
+
+def test_manifested_container_publishes_machine_readable_aggregate_health(tmp_path):
+    alive = SimpleNamespace(is_alive=lambda: True)
+    container = object.__new__(ModuleContainer)
+    container.dht_announcer = alive
+    container.conn_handlers = [alive]
+    container.runtime = SimpleNamespace(pools=[alive], ready=SimpleNamespace(is_set=lambda: True))
+    container.admission_state = AdmissionState.local(_policy())
+    container.health_state_path = tmp_path / "health.json"
+    container.server_info = SimpleNamespace(
+        manifest_digest="sha256:" + "a" * 64,
+        start_block=0,
+        end_block=24,
+    )
+
+    assert container.is_healthy() is True
+
+    payload = json.loads(container.health_state_path.read_text(encoding="utf-8"))
+    assert payload["worker_healthy"] is True
+    assert payload["route"] == {
+        "manifest_digest": "sha256:" + "a" * 64,
+        "start_block": 0,
+        "end_block": 24,
+    }
+    assert payload["admission"]["active_sessions"] == 0
+
+
+def test_initial_health_failure_shuts_down_and_cleans_before_restart():
+    calls = []
+    container = SimpleNamespace(
+        ready=SimpleNamespace(wait=lambda: calls.append("ready")),
+        is_healthy=lambda: False,
+        shutdown=lambda: calls.append("shutdown"),
+    )
+    server = object.__new__(Server)
+    server._create_module_container = lambda block_indices: container
+    server._clean_memory_and_fds = lambda: calls.append("clean")
+    server.health_state_path = object()
+    server.stop = SimpleNamespace(wait=lambda timeout: False)
+
+    assert Server._run_module_container(server, [0]) is False
+
+    assert calls == ["ready", "shutdown", "clean"]
+
+
+def test_legacy_container_is_not_health_checked_immediately_after_ready():
+    calls = []
+    stop_checks = iter((False, True))
+    container = SimpleNamespace(
+        ready=SimpleNamespace(wait=lambda: calls.append("ready")),
+        is_healthy=lambda: (_ for _ in ()).throw(AssertionError("unexpected immediate health check")),
+        shutdown=lambda: calls.append("shutdown"),
+    )
+    server = object.__new__(Server)
+    server._create_module_container = lambda block_indices: container
+    server._clean_memory_and_fds = lambda: calls.append("clean")
+    server.health_state_path = None
+    server.stop = SimpleNamespace(wait=lambda timeout: next(stop_checks))
+    server.mean_balance_check_period = 0
+
+    assert Server._run_module_container(server, [0]) is True
+
+    assert calls == ["ready", "shutdown", "clean"]
+
+
+def test_stop_set_during_ready_wins_before_manifested_initial_health_check():
+    calls = []
+    container = SimpleNamespace(
+        ready=SimpleNamespace(wait=lambda: calls.append("ready")),
+        is_healthy=lambda: (_ for _ in ()).throw(AssertionError("health checked after stop")),
+        shutdown=lambda: calls.append("shutdown"),
+    )
+    server = object.__new__(Server)
+    server._create_module_container = lambda block_indices: container
+    server._clean_memory_and_fds = lambda: calls.append("clean")
+    server.health_state_path = object()
+    server.stop = SimpleNamespace(wait=lambda timeout: True)
+
+    assert Server._run_module_container(server, [0]) is True
+
+    assert calls == ["ready", "shutdown", "clean"]
+
+
+def test_manifested_container_fails_closed_when_health_file_cannot_be_written(tmp_path, monkeypatch, caplog):
+    import drift.server.server as server_module
+
+    alive = SimpleNamespace(is_alive=lambda: True)
+    container = object.__new__(ModuleContainer)
+    container.dht_announcer = alive
+    container.conn_handlers = [alive]
+    container.runtime = SimpleNamespace(pools=[alive], ready=SimpleNamespace(is_set=lambda: True))
+    container.admission_state = AdmissionState.local(_policy())
+    container.health_state_path = tmp_path / "private-path-sentinel.json"
+    container.server_info = SimpleNamespace(
+        manifest_digest="sha256:" + "a" * 64,
+        start_block=0,
+        end_block=24,
+    )
+
+    def fail_write(*args, **kwargs):
+        raise server_module.HealthStateError("private-path-sentinel")
+
+    monkeypatch.setattr(server_module, "write_public_worker_health", fail_write)
+    with caplog.at_level(logging.ERROR):
+        assert container.is_healthy() is False
+
+    assert "Machine-readable public health is unavailable" in caplog.text
+    assert "private-path-sentinel" not in caplog.text
 
 
 def test_managed_session_unpublishes_and_releases_queued_pushes():

@@ -36,6 +36,7 @@ def _documents(
     initial_peers: list[str] | None = None,
     weight_delta: int = 0,
     shared_alias: bool = False,
+    best_effort_alpha: bool = False,
 ):
     primary = _manifest("Primary Test", "shared" if shared_alias else "primary-test")
     standby = _manifest("Standby Test", "shared" if shared_alias else "standby-test")
@@ -64,8 +65,8 @@ def _documents(
                 {
                     "id": "1-2b",
                     "order": 1,
-                    "minimum_replicas": 2,
-                    "minimum_independent_routes": 2,
+                    "minimum_replicas": 1 if best_effort_alpha else 2,
+                    "minimum_independent_routes": 1 if best_effort_alpha else 2,
                     "minimum_surviving_replicas": 1,
                     "minimum_soak_seconds": 60,
                     "maximum_observation_age_seconds": 30,
@@ -120,6 +121,24 @@ def test_publication_preflight_matches_signed_transport_and_exact_manifests():
     assert "public-worker route redundancy and soak" in report["not_covered"]
 
 
+def test_publication_preflight_accepts_explicit_best_effort_alpha_minimum():
+    bootstrap, envelope, manifests = _documents(
+        mirror_urls=["https://catalog.example.com/catalog.signed.json"],
+        initial_peers=[f"/dns4/seed.example.com/tcp/31337/p2p/{PEER_ID_ONE}"],
+        best_effort_alpha=True,
+    )
+
+    report = verify_catalog_publication_bundle(bootstrap, envelope, manifests)
+
+    assert report["result"] == "passed"
+    assert report["catalog_mirror_count"] == 1
+    assert report["distinct_seed_host_count"] == 1
+    assert report["distinct_seed_address_count"] == 1
+    assert report["distinct_seed_identity_count"] == 1
+    assert "mirror and seed redundancy or independent operator ownership" in report["not_covered"]
+    assert "public-worker route redundancy and soak" in report["not_covered"]
+
+
 @pytest.mark.parametrize(
     "mirror_urls, initial_peers, message",
     [
@@ -146,11 +165,6 @@ def test_publication_inputs_reject_nonpublic_transport(mirror_urls, initial_peer
     "documents, manifests_selector, message",
     [
         (
-            lambda: _documents(mirror_urls=["https://catalog-one.example.com/catalog.json"]),
-            lambda manifests: manifests,
-            "at least two catalog mirrors",
-        ),
-        (
             lambda: _documents(
                 mirror_urls=[
                     "https://catalog.example.com/one/catalog.json",
@@ -159,11 +173,6 @@ def test_publication_inputs_reject_nonpublic_transport(mirror_urls, initial_peer
             ),
             lambda manifests: manifests,
             "distinct network hosts",
-        ),
-        (
-            lambda: _documents(initial_peers=[f"/dns4/seed-one.example.com/tcp/31337/p2p/{PEER_ID_ONE}"]),
-            lambda manifests: manifests,
-            "at least one additional seed",
         ),
         (
             lambda: _documents(

@@ -16,7 +16,6 @@ from drift.utils.convert_block import QuantType, convert_block
 from drift.utils.disk_cache import DEFAULT_CACHE_DIR
 from drift.utils.file_lock import file_lock
 from drift.utils.hardware import get_device_name, synchronize_device
-from drift.utils.misc import DUMMY_KEY_PAST
 
 logger = get_logger(__name__)
 
@@ -202,7 +201,11 @@ def measure_compute_rps(
         block = block.to(dtype)
         block = convert_block(block, 0, config, tensor_parallel_devices, device, quant_type=quant_type, freeze=True)
 
-        cache = (DUMMY_KEY_PAST.to(dtype=dtype, device=device), DUMMY_KEY_PAST.to(dtype=dtype, device=device))
+        # Let each model initialize its native cache on the warm-up pass. A
+        # generic empty key/value tuple is not valid for hybrid caches such as
+        # Qwen3.5 linear attention, whose recurrent and convolution states have
+        # model-specific shapes.
+        cache = None
         elapsed = 0
         dummy_input = torch.randn(1, n_tokens, config.hidden_size, device=device, dtype=dtype)
 

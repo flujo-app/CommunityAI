@@ -18,6 +18,9 @@ from drift.model_manifest import ModelManifest
 
 logger = logging.getLogger(__name__)
 
+MODEL_DOWNLOAD_SCHEMA_VERSION = 1
+MAX_SELECTED_WHOLE_SHARD_BYTES = 64 * 1024**4
+
 
 class ModelState(str, Enum):
     KNOWN = "known"
@@ -74,6 +77,7 @@ class ModelDescriptor:
     manifest_digest: Optional[str] = None
     repository: Optional[str] = None
     name: Optional[str] = None
+    selected_whole_shard_bytes: Optional[int] = None
 
     def __post_init__(self) -> None:
         identifiers = (self.model_id, *self.aliases)
@@ -82,18 +86,35 @@ class ModelDescriptor:
         normalized = [value.casefold() for value in identifiers]
         if len(set(normalized)) != len(normalized):
             raise ValueError("model id and aliases must be unique when compared case-insensitively")
+        if self.selected_whole_shard_bytes is not None and (
+            isinstance(self.selected_whole_shard_bytes, bool)
+            or not isinstance(self.selected_whole_shard_bytes, int)
+            or not 1 <= self.selected_whole_shard_bytes <= MAX_SELECTED_WHOLE_SHARD_BYTES
+        ):
+            raise ValueError(
+                "selected_whole_shard_bytes must be None or an integer between 1 and "
+                f"{MAX_SELECTED_WHOLE_SHARD_BYTES}"
+            )
 
     @classmethod
     def from_manifest(cls, manifest: ModelManifest) -> "ModelDescriptor":
         # The manifest name is stable and human-readable. All declared API aliases and the
         # content digest resolve to the same record, but are never silently mapped elsewhere.
         aliases = tuple((*manifest.aliases, manifest.digest_id))
+        checkpoint_artifacts = manifest.artifacts_for_roles({"converted_weight", "quantized_weight", "weight"})
+        # A single whole shard is the only possible loader selection and therefore needs no
+        # transfer or checkpoint-index inspection. Multi-shard estimates fail closed until
+        # their verified index-derived selection is available.
+        selected_whole_shard_bytes = (
+            sum(artifact.size for artifact in manifest.artifacts) if len(checkpoint_artifacts) == 1 else None
+        )
         return cls(
             model_id=manifest.name,
             aliases=aliases,
             manifest_digest=manifest.digest_id,
             repository=manifest.source.repository,
             name=manifest.name,
+            selected_whole_shard_bytes=selected_whole_shard_bytes,
         )
 
 
@@ -103,6 +124,7 @@ class ModelSnapshot:
     aliases: Tuple[str, ...]
     manifest_digest: Optional[str]
     repository: Optional[str]
+    selected_whole_shard_bytes: Optional[int]
     state: ModelState
     last_error: Optional[str]
     loaded_at: Optional[float]
@@ -116,6 +138,10 @@ class ModelSnapshot:
             "aliases": list(self.aliases),
             "manifest_digest": self.manifest_digest,
             "repository": self.repository,
+            "download": {
+                "schema_version": MODEL_DOWNLOAD_SCHEMA_VERSION,
+                "selected_whole_shard_bytes": self.selected_whole_shard_bytes,
+            },
             "state": self.state.value,
             "last_error": self.last_error,
             "loaded_at": self.loaded_at,
@@ -585,6 +611,7 @@ class ModelManager:
                         aliases=record.descriptor.aliases,
                         manifest_digest=record.descriptor.manifest_digest,
                         repository=record.descriptor.repository,
+                        selected_whole_shard_bytes=record.descriptor.selected_whole_shard_bytes,
                         state=state,
                         last_error=record.last_error,
                         loaded_at=record.loaded_at,
