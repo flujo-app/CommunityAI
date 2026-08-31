@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-packaged-lifecycle-cost-authorization",
+  "run_id": "gate13-20260831-a",
+  "gate": 13,
+  "result": "authorized",
+  "recorded_at": "2026-08-31",
+  "source": {
+    "reservation_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
+    "route_runtime_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
+    "package_commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "windows_lifecycle_helper_commit": "4818da304f4eeafc81978873bcdfa8a41f6cad36",
+    "linux_lifecycle_helper_commit": "c3dc9234af7980bcaffd481c6f8e4e974ed117d4"
+  },
+  "authorization": {
+    "combined_cloud_ceiling_usd": "100.00",
+    "ledger_committed_before_run_usd": "0.00",
+    "maximum_estimate_usd": "52.00",
+    "route_maximum_estimate_usd": "26.00",
+    "clients_maximum_estimate_usd": "26.00",
+    "remaining_after_run_maximum_usd": "48.00",
+    "reservation_recorded": true,
+    "provisioning_authorized_after_fail_closed_preflight": true,
+    "provider_calls_authorized_without_preflight": false,
+    "pricing_as_of": "2026-08-31",
+    "pricing_basis": "same-day previously accepted 14-hour G2/L4 route ceiling plus the same client ceiling; both new clients are CPU-only e2-standard-8 rather than the prior L4 client class"
+  },
+  "immutable_inputs": {
+    "windows_package": {
+      "sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+      "bytes": 2695065068
+    },
+    "linux_package": {
+      "sha256": "f96d3ca651964380d4684855ab08682e8187b33386327ec3895cda25b43c2a00",
+      "bytes": 3360717934
+    },
+    "qwen_manifest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+    "gemma_manifest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+    "windows_helper": {
+      "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+      "sha256": "2272b3bd9a59ccbe66963558f2cee66b41f68403f611f8eff92362eebf8e22b8",
+      "bytes": 131385
+    },
+    "linux_helper": {
+      "path": "scripts/gate13_linux_packaged_lifecycle.py",
+      "sha256": "f50497fa06f465e8dba8b146e963faa11d102bc7c7fc8e5073e6c0b9e1beaf94",
+      "bytes": 113260
+    }
+  },
+  "provider_plan_digest": "sha256:d3854d047beba36d1415382b296f90f2aaf0fc135d45c7613852c69b85ccf5a1",
+  "provider_plan": {
+    "project": "community-ai-506321",
+    "route": {
+      "instance": "route-20260831-a-node",
+      "zone": "us-central1-a",
+      "machine_type": "g2-standard-8",
+      "accelerator": "1 x NVIDIA L4",
+      "image": "deeplearning-platform-release/common-cu129-ubuntu-2404-nvidia-580-v20260819",
+      "boot_disk_gib": 200,
+      "boot_disk_type": "pd-balanced",
+      "boot_disk_auto_delete": true,
+      "max_run_seconds": 50400,
+      "termination_action": "DELETE",
+      "network": "communityai-discovery",
+      "subnet": "communityai-us-central1",
+      "public_ports": [
+        31337,
+        31338
+      ],
+      "firewalls": [
+        "route-20260831-a-dht",
+        "route-20260831-a-iap"
+      ],
+      "service_account": false,
+      "scopes": []
+    },
+    "clients": [
+      {
+        "platform": "windows",
+        "model": "Qwen3.5 2B",
+        "instance": "gate13-20260831-a-win",
+        "zone": "us-central1-a",
+        "machine_type": "e2-standard-8",
+        "image_family": "windows-2025",
+        "image_project": "windows-cloud",
+        "boot_disk_gib": 120,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "max_run_seconds": 21600,
+        "termination_action": "DELETE",
+        "lifecycle_run_id": "gate13-windows-qwen-e",
+        "device_profile": "cpu"
+      },
+      {
+        "platform": "linux",
+        "model": "Gemma 4 E2B IT",
+        "instance": "gate13-20260831-a-linux",
+        "zone": "us-central1-a",
+        "machine_type": "e2-standard-8",
+        "image_family": "ubuntu-2404-lts-amd64",
+        "image_project": "ubuntu-os-cloud",
+        "boot_disk_gib": 120,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "max_run_seconds": 21600,
+        "termination_action": "DELETE",
+        "lifecycle_run_id": "gate13-linux-gemma-e",
+        "device_profile": "cpu"
+      }
+    ],
+    "sequencing": {
+      "route_live_for_both_lifecycles": true,
+      "clients_may_run_concurrently": true,
+      "all_16_phases_required_per_platform": true,
+      "exact_cleanup_before_pass": true
+    }
+  },
+  "preflight": {
+    "native_gcloud_token_refresh": true,
+    "compute_api_access": true,
+    "exact_target_instances_absent": true,
+    "exact_target_disks_absent": true,
+    "exact_target_firewalls_absent": true,
+    "machine_types_available": true,
+    "images_available": true,
+    "one_l4_quota_free": true,
+    "protected_bootstrap_running": true,
+    "focused_software_tests_required_before_create": true
+  },
+  "cleanup": {
+    "delete_only_exact_run_resources": true,
+    "verify_absent": [
+      "route-20260831-a-node",
+      "route-20260831-a-node boot disk",
+      "route-20260831-a-dht",
+      "route-20260831-a-iap",
+      "gate13-20260831-a-win",
+      "gate13-20260831-a-win boot disk",
+      "gate13-20260831-a-linux",
+      "gate13-20260831-a-linux boot disk"
+    ],
+    "protected_resources": [
+      "communityai-bootstrap-1",
+      "all resources not named by this plan"
+    ],
+    "cleanup_required_on_success_or_failure": true
+  },
+  "prohibited": {
+    "fly_operations": 0,
+    "model_specific_images_or_mirrors": 0,
+    "macos_work": 0,
+    "credits_or_payments_work": 0
+  },
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "endpoints_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false
+  }
+}
