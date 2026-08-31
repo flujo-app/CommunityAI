@@ -60,10 +60,12 @@ agent:
   directly, then attempt roughly 70B if that passes. This is permission to test those
   sizes, not permission to claim that an exact larger checkpoint works before its own
   model-specific evidence passes.
-- New temporary GCP and Fly test resources share one combined **USD 100 maximum**.
-  Track conservative estimates and observed cost in
-  [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that could exceed
-  the remaining balance.
+- New temporary GCP and Fly test resources share one live owner-authorized combined
+  ceiling. The baseline is USD 100; on 2026-08-31 the owner raised the current accounting
+  epoch to **USD 500 maximum**. The already committed USD 52 maximum remains charged to
+  that epoch, leaving USD 448 before a new reservation. Track conservative estimates and
+  observed cost in [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that
+  could exceed the remaining balance.
 - Use the existing `gcloud`, `flyctl`, and `gh` logins. Do not require the owner to copy
   provider tokens into environment variables when native CLI authentication works.
 - On Windows, every registry token, remote credential, and Linux script must follow the
@@ -227,7 +229,7 @@ fresh-host records and final provider absence proof exist.
 ### Cloud safety rules
 
 - Before provisioning, record a conservative maximum estimate in the spend ledger and
-  confirm it fits under the combined USD 100 ceiling.
+  confirm it fits under the live combined ceiling recorded in the readiness tracker.
 - An explicit owner budget reset starts a new USD 100 accounting epoch only after every
   prior run is cleanup-proved. Preserve those historical rows as `CLEANED-RELEASED` rather
   than pretending their actual cost was zero; their maxima no longer consume the new epoch,
@@ -249,7 +251,7 @@ Do not block on these while another roadmap item can proceed. Ask the owner only
 input is on the critical path:
 
 - a provider login expires and native CLI reauthentication is required;
-- the next bounded cloud run does not fit under the remaining USD 100 ceiling;
+- the next bounded cloud run does not fit under the remaining live owner-authorized ceiling;
 - platform code-signing/notarization credentials or a publisher identity are required;
 - production catalog signing needs independent human key holders;
 - an independent seed or mirror operator must accept operational responsibility; or
