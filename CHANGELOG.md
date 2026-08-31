@@ -7,6 +7,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Gate 13 paid qualification now has durable source-bound native host jobs: an exact-current-user
+  Windows Scheduled Task and a non-root transient Linux systemd service persist one attempt across
+  operator disconnects, bound output, terminate the complete process tree on timeout or overflow,
+  revalidate canonical lifecycle evidence before collection, and never re-arm consumed route or
+  client intents. Exact Windows lifecycle-config co-location and full Linux `ExecStart` structure
+  matching close the final independent-review gaps. Source `0e16ac2` passes the 217-test Gate 13 and
+  desktop matrix independently. This is a software prerequisite only: it created no cloud resources,
+  authorizes no paid run, and does not claim a completed clean-host lifecycle or Gate 13 pass.
 - Gate 13 paid qualification now has a persisted authorization-bound run-state contract that
   inventories exact resources before every transition, accepts the product route before any
   client, runs Windows/Qwen before Linux/Gemma, permanently consumes a failed or ambiguous
