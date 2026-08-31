@@ -52,6 +52,30 @@ def test_release_metadata_rejects_bool_int_float_type_spoofs(field, spoofed):
         linux_lifecycle._validate_release_metadata(json.dumps(altered).encode("utf-8"))
 
 
+def test_release_evidence_accepts_pretty_json_with_exact_recursive_types():
+    expected = {
+        "schema_version": 1,
+        "claims": {"unsigned": True, "sizes": [4, 10]},
+        "status": "public-alpha",
+    }
+    production_payload = (json.dumps(expected, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    parsed = linux_lifecycle._strict_release_json(production_payload)
+    assert linux_lifecycle._same_json_value(parsed, expected)
+
+    for spoofed in (
+        {**expected, "schema_version": True},
+        {**expected, "schema_version": 1.0},
+        {**expected, "claims": {"unsigned": 1, "sizes": [4, 10]}},
+        {**expected, "claims": {"unsigned": True, "sizes": [4.0, 10]}},
+    ):
+        assert not linux_lifecycle._same_json_value(spoofed, expected)
+
+    with pytest.raises(linux_lifecycle.LifecycleRunError):
+        linux_lifecycle._strict_release_json(b'{"schema_version":1,"schema_version":1}')
+    with pytest.raises(linux_lifecycle.LifecycleRunError):
+        linux_lifecycle._strict_release_json(b'{"schema_version":NaN}')
+
+
 def acquisition_record():
     count = PROFILE["selected_artifact_count"]
     size = PROFILE["selected_artifact_bytes"]

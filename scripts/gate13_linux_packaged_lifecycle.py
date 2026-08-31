@@ -67,6 +67,19 @@ def _canonical_json(value: Mapping[str, Any]) -> str:
     return json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
 
 
+def _same_json_value(actual: object, expected: object) -> bool:
+    """Compare parsed JSON without Python's bool/int/float equality coercions."""
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(actual) == set(expected) and all(_same_json_value(actual[key], expected[key]) for key in expected)
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _same_json_value(actual_item, expected_item) for actual_item, expected_item in zip(actual, expected)
+        )
+    return actual == expected
+
+
 def _strict_json(payload: bytes, *, maximum: int = MAX_JSON_BYTES) -> Mapping[str, Any]:
     if not isinstance(payload, bytes) or not 1 <= len(payload) <= maximum:
         raise LifecycleRunError("JSON payload exceeded its bound")
@@ -93,6 +106,11 @@ def _strict_json(payload: bytes, *, maximum: int = MAX_JSON_BYTES) -> Mapping[st
     if not isinstance(value, dict):
         raise LifecycleRunError("JSON payload is not an object")
     return value
+
+
+def _strict_release_json(payload: bytes) -> Mapping[str, Any]:
+    """Parse release evidence strictly while treating insignificant whitespace as formatting."""
+    return _strict_json(payload)
 
 
 def _duration(value: float) -> float:
@@ -139,21 +157,17 @@ def validate_acquisition(
     *,
     installed_manifest: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], tuple[Mapping[str, Any], ...]]:
-    if (
-        set(raw)
-        != {
-            "schema_version",
-            "acquired_at_unix",
-            "runtime",
-            "model",
-            "selection",
-            "artifacts",
-            "transfer",
-            "storage",
-            "privacy",
-        }
-        or raw.get("schema_version") != 1
-    ):
+    if set(raw) != {
+        "schema_version",
+        "acquired_at_unix",
+        "runtime",
+        "model",
+        "selection",
+        "artifacts",
+        "transfer",
+        "storage",
+        "privacy",
+    } or not _same_json_value(raw.get("schema_version"), 1):
         raise LifecycleRunError("edge acquisition schema is invalid")
     profile = MODEL_PROFILES.get(model_id)
     if profile is None or profile["manifest_digest"] != manifest_digest:
@@ -227,7 +241,7 @@ def validate_acquisition(
         source = installed_manifest.get("source")
         semantic_digest = hashlib.sha256(_canonical_json(installed_manifest).encode("utf-8")).hexdigest()
         if (
-            installed_manifest.get("schema_version") != 1
+            not _same_json_value(installed_manifest.get("schema_version"), 1)
             or installed_manifest.get("name") != model_id
             or semantic_digest != manifest_digest
             or not isinstance(source, dict)
@@ -304,7 +318,9 @@ def build_policy_update(
     pause_timeout: float,
     sharing_enabled: bool,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if set(snapshot) != {"schema_version", "config_revision", "policy"} or snapshot.get("schema_version") != 1:
+    if set(snapshot) != {"schema_version", "config_revision", "policy"} or not _same_json_value(
+        snapshot.get("schema_version"), 1
+    ):
         raise LifecycleRunError("contribution policy snapshot is invalid")
     revision = snapshot.get("config_revision")
     if not isinstance(revision, str) or _REVISION_RE.fullmatch(revision) is None:
@@ -369,7 +385,7 @@ def contribution_phase(
     contribution = status.get("contribution")
     if (
         not isinstance(contribution, dict)
-        or contribution.get("schema_version") != 3
+        or not _same_json_value(contribution.get("schema_version"), 3)
         or contribution.get("configured") is not True
         or contribution.get("editable") is not True
         or not isinstance(contribution.get("workers"), list)
@@ -550,7 +566,7 @@ def validate_worker_self_test(record: Mapping[str, Any]) -> None:
         "process_lifetime_guard_armed": True,
         "frozen": True,
     }
-    if record != expected:
+    if not _same_json_value(record, expected):
         raise LifecycleRunError("packaged worker self-test contract is invalid")
 
 
@@ -1112,8 +1128,8 @@ def _release_metadata() -> Mapping[str, Any]:
 
 
 def _validate_release_metadata(payload: bytes) -> Mapping[str, Any]:
-    metadata = _strict_json(payload)
-    if _canonical_json(metadata) != _canonical_json(_release_metadata()):
+    metadata = _strict_release_json(payload)
+    if not _same_json_value(metadata, _release_metadata()):
         raise LifecycleRunError("release metadata contains altered alpha claims")
     return metadata
 
@@ -1187,7 +1203,7 @@ def _validate_publication(value: object) -> Mapping[str, Any]:
         *(f"manifests/{profile['manifest_digest']}.json" for profile in MODEL_PROFILES.values()),
     }
     if (
-        value.get("schema_version") != 1
+        not _same_json_value(value.get("schema_version"), 1)
         or value.get("scope") != "catalog-publication-bundle"
         or not isinstance(catalog_id, str)
         or _RUN_ID_RE.fullmatch(catalog_id) is None
@@ -1230,7 +1246,7 @@ def _validate_desktop_metrics(
         raise LifecycleRunError("desktop metrics are missing or unsafe")
     metrics_bytes = metrics_path.read_bytes()
     if (
-        evidence.get("schema_version") != 1
+        not _same_json_value(evidence.get("schema_version"), 1)
         or evidence.get("path") != "desktop-metrics.json"
         or evidence.get("sha256") != hashlib.sha256(metrics_bytes).hexdigest()
         or type(evidence.get("size_bytes")) is not int
@@ -1238,9 +1254,7 @@ def _validate_desktop_metrics(
         or evidence["size_bytes"] < 1
     ):
         raise LifecycleRunError("desktop metrics provenance is invalid")
-    metrics = _strict_json(metrics_bytes)
-    if metrics_bytes != _canonical_json(metrics).encode("utf-8"):
-        raise LifecycleRunError("desktop metrics are not canonical JSON")
+    metrics = _strict_release_json(metrics_bytes)
     fields = {
         "schema_version",
         "application",
@@ -1284,21 +1298,21 @@ def _validate_desktop_metrics(
         "auto_selection": "passed",
     }
     if (
-        metrics.get("schema_version") != 1
+        not _same_json_value(metrics.get("schema_version"), 1)
         or metrics.get("application") != "CommunityAI"
         or metrics.get("package") != "communityai-desktop"
         or metrics.get("platform") != provenance.get("build_platform")
         or metrics.get("python") != provenance.get("build_python")
-        or metrics.get("bundle_bytes") != artifact_bytes
-        or metrics.get("file_count") != len(artifacts)
-        or metrics.get("acceptance") != expected_acceptance
+        or not _same_json_value(metrics.get("bundle_bytes"), artifact_bytes)
+        or not _same_json_value(metrics.get("file_count"), len(artifacts))
+        or not _same_json_value(metrics.get("acceptance"), expected_acceptance)
         or metrics.get("ui_smoke_passed") is not True
         or metrics.get("onboarding_ui_smoke_passed") is not True
         or metrics.get("console_window") is not True
         or metrics.get("signed") is not False
         or metrics.get("catalog_bootstrap_bundled") is not True
-        or metrics.get("catalog_publication_bundle") != publication
-        or metrics.get("release_artifacts") != release_artifacts
+        or not _same_json_value(metrics.get("catalog_publication_bundle"), publication)
+        or not _same_json_value(metrics.get("release_artifacts"), release_artifacts)
     ):
         raise LifecycleRunError("desktop metrics release binding is invalid")
     runtime = metrics.get("runtime")
@@ -1327,8 +1341,8 @@ def _validate_desktop_metrics(
         not isinstance(node, dict)
         or set(node) != node_fields
         or node.get("relative_executable") != "node/CommunityAI-Node"
-        or node.get("bundle_bytes") != sum(int(item["size_bytes"]) for item in node_artifacts)
-        or node.get("file_count") != len(node_artifacts)
+        or not _same_json_value(node.get("bundle_bytes"), sum(int(item["size_bytes"]) for item in node_artifacts))
+        or not _same_json_value(node.get("file_count"), len(node_artifacts))
         or node.get("self_test_passed") is not True
         or node.get("worker_self_test_passed") is not True
         or node.get("node_entrypoint_smoke_passed") is not True
@@ -1353,11 +1367,11 @@ def _validate_desktop_metrics(
     if (
         not isinstance(node_runtime, dict)
         or set(node_runtime) != runtime_fields
-        or node_runtime.get("schema_version") != 1
+        or not _same_json_value(node_runtime.get("schema_version"), 1)
         or node_runtime.get("application") != "CommunityAI-Node"
         or node_runtime.get("torch") != "2.6.0+cu124"
         or node_runtime.get("p2pd") != "p2pd"
-        or node_runtime.get("catalog_bootstrap_schema") != 1
+        or not _same_json_value(node_runtime.get("catalog_bootstrap_schema"), 1)
         or node_runtime.get("frozen") is not True
         or any(
             not _printable(node_runtime.get(field))
@@ -1382,9 +1396,7 @@ def _audit_package(root: Path, expected_digest: str, expected_bytes: int) -> Pac
         raise LifecycleRunError("release package inputs are missing or unsafe")
     metadata = _validate_release_metadata(metadata_path.read_bytes())
     provenance_bytes = provenance_path.read_bytes()
-    provenance = _strict_json(provenance_bytes)
-    if provenance_bytes != _canonical_json(provenance).encode("utf-8"):
-        raise LifecycleRunError("release provenance is not canonical JSON")
+    provenance = _strict_release_json(provenance_bytes)
     expected_provenance_fields = {
         "schema_version",
         "product",
@@ -1411,7 +1423,7 @@ def _audit_package(root: Path, expected_digest: str, expected_bytes: int) -> Pac
         raise LifecycleRunError("release provenance schema is invalid")
     source_commit = provenance.get("source_commit")
     if (
-        provenance.get("schema_version") != 1
+        not _same_json_value(provenance.get("schema_version"), 1)
         or provenance.get("product") != "CommunityAI"
         or provenance.get("package") != "communityai-desktop"
         or provenance.get("release_channel") != "public-alpha"
@@ -1450,13 +1462,13 @@ def _audit_package(root: Path, expected_digest: str, expected_bytes: int) -> Pac
     digest = _sha256_file(archive)
     package_bytes = archive.stat().st_size
     if (
-        archive_record.get("schema_version") != 1
+        not _same_json_value(archive_record.get("schema_version"), 1)
         or archive_record.get("path") != ARCHIVE_NAME
         or archive_record.get("format") != "tar.gz"
         or archive_record.get("platform") != "Linux"
         or archive_record.get("artifact_root") != "CommunityAI"
         or archive_record.get("sha256") != digest
-        or archive_record.get("size_bytes") != package_bytes
+        or not _same_json_value(archive_record.get("size_bytes"), package_bytes)
         or type(archive_record.get("entry_count")) is not int
         or archive_record["entry_count"] < 1
         or archive_record.get("preserves_executable_modes") is not True
@@ -1677,7 +1689,7 @@ def _run_self_tests(
         "policy_update": "passed",
         "auto_selection": "passed",
     }
-    if desktop_result != expected_desktop:
+    if not _same_json_value(desktop_result, expected_desktop):
         raise LifecycleRunError("packaged desktop self-test is invalid")
     node_result = _strict_json(owner.run_capture((str(node), "--self-test"), cwd=product_root, timeout=180))
     if set(node_result) != {
@@ -1696,7 +1708,7 @@ def _run_self_tests(
     }:
         raise LifecycleRunError("packaged node self-test schema is invalid")
     if (
-        node_result.get("schema_version") != 1
+        not _same_json_value(node_result.get("schema_version"), 1)
         or node_result.get("application") != "CommunityAI-Node"
         or node_result.get("drift") != expected_package_version
         or node_result.get("torch") != "2.6.0+cu124"
@@ -1843,7 +1855,7 @@ def _persistent_secret_material_count(persistent_root: Path) -> int:
     if _regular_file(store_path):
         raw = store_path.read_bytes()
         store = _strict_json(raw)
-        if set(store) != {"schema_version", "keys"} or store.get("schema_version") != 1:
+        if set(store) != {"schema_version", "keys"} or not _same_json_value(store.get("schema_version"), 1):
             raise LifecycleRunError("persistent API key store schema is invalid")
         keys = store.get("keys")
         if not isinstance(keys, list) or len(keys) > inference.MAX_API_KEYS:
@@ -2015,7 +2027,7 @@ def _bootstrap(
         raise LifecycleRunError("packaged bootstrap result schema is invalid")
     catalog_digest = result.get("catalog_digest")
     if (
-        result.get("schema_version") != 1
+        not _same_json_value(result.get("schema_version"), 1)
         or result.get("config_path") != str(config)
         or result.get("catalog_id") != package.catalog_id
         or result.get("catalog_sequence") != package.catalog_sequence
@@ -2146,7 +2158,7 @@ def _load_run_config(path: str) -> Mapping[str, Any]:
         "max_power_watts",
         "pause_timeout",
     }
-    if set(config) != fields or config.get("schema_version") != 1:
+    if set(config) != fields or not _same_json_value(config.get("schema_version"), 1):
         raise LifecycleRunError("qualification config schema is invalid")
     run_id = config.get("run_id")
     model_id = config.get("model_id")
@@ -2417,7 +2429,7 @@ def run_from_config(path: str) -> Mapping[str, Any]:
             sharing_enabled=True,
         )
         updated = _control_request(opener, "PUT", "/control/v1/contribution-policy", token, update)
-        if updated.get("policy") != expected_policy:
+        if not _same_json_value(updated.get("policy"), expected_policy):
             raise LifecycleRunError("contribution policy update was not preserved")
         contribution, worker_pid = _poll_value(
             lambda: (
