@@ -847,7 +847,7 @@ def _windows_register_script(config: HostJobConfig) -> str:
             ),
             (
                 "$principal = New-ScheduledTaskPrincipal -UserId $currentUser "
-                "-LogonType Interactive -RunLevel Limited"
+                "-LogonType S4U -RunLevel Limited"
             ),
             (
                 "$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew "
@@ -878,6 +878,13 @@ def _windows_snapshot_script(config: HostJobConfig) -> str:
             "$identity = [Security.Principal.WindowsIdentity]::GetCurrent()",
             "$currentUser = [string]$identity.Name",
             "$leafUser = $currentUser.Substring($currentUser.LastIndexOf('\\') + 1)",
+            "$taskSid = ''",
+            "try {",
+            "  $taskAccount = [Security.Principal.NTAccount]::new([string]$task.Principal.UserId)",
+            "  $taskSid = $taskAccount.Translate([Security.Principal.SecurityIdentifier]).Value",
+            "} catch {",
+            "  $taskSid = ''",
+            "}",
             "$action = @($task.Actions)[0]",
             f"$expectedLimit = [Xml.XmlConvert]::ToString([TimeSpan]::FromSeconds({config.max_run_seconds + 2 * SUPERVISOR_GRACE_SECONDS}))",
             (
@@ -885,8 +892,8 @@ def _windows_snapshot_script(config: HostJobConfig) -> str:
                 f"($action.Execute -eq {_ps_quote(os.fspath(config.python_executable))}) -and "
                 f"($action.Arguments -eq {_ps_quote(arguments)}) -and "
                 f"(-not $identity.IsSystem) -and ($leafUser -ieq {_ps_quote(config.host_user)}) -and "
-                "($task.Principal.UserId -ieq $currentUser) -and "
-                "($task.Principal.LogonType -eq 'Interactive') -and "
+                "($taskSid -eq $identity.User.Value) -and "
+                "($task.Principal.LogonType -eq 'S4U') -and "
                 "($task.Principal.RunLevel -eq 'Limited') -and "
                 "($task.Settings.MultipleInstances -eq 'IgnoreNew') -and "
                 "($task.Settings.ExecutionTimeLimit -eq $expectedLimit)"

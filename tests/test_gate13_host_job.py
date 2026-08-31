@@ -144,7 +144,7 @@ def test_windows_task_is_bounded_ordinary_user_single_instance(config_factory):
     script = host_job._windows_register_script(config)
 
     assert "New-ScheduledTaskPrincipal -UserId $currentUser" in script
-    assert "-LogonType Interactive -RunLevel Limited" in script
+    assert "-LogonType S4U -RunLevel Limited" in script
     assert "$identity.IsSystem" in script
     assert "'SYSTEM'" not in script
     assert "-MultipleInstances IgnoreNew" in script
@@ -157,9 +157,10 @@ def test_windows_task_is_bounded_ordinary_user_single_instance(config_factory):
     snapshot = host_job._windows_snapshot_script(config)
     assert "MultipleInstances -eq 'IgnoreNew'" in snapshot
     assert "ExecutionTimeLimit -eq $expectedLimit" in snapshot
-    assert "LogonType -eq 'Interactive'" in snapshot
+    assert "LogonType -eq 'S4U'" in snapshot
+    assert "$taskSid -eq $identity.User.Value" in snapshot
+    assert "NTAccount]::new([string]$task.Principal.UserId)" in snapshot
     assert "RunLevel -eq 'Limited'" in snapshot
-    assert "$task.Principal.UserId -ieq $currentUser" in snapshot
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires Windows PowerShell parser")
