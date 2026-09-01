@@ -21,7 +21,12 @@ if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction Silentl
 }
 
 $randomBytes = New-Object byte[] 32
-[Security.Cryptography.RandomNumberGenerator]::Fill($randomBytes)
+$randomGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+    $randomGenerator.GetBytes($randomBytes)
+} finally {
+    $randomGenerator.Dispose()
+}
 $plainPassword = [Convert]::ToBase64String($randomBytes) + "aA1!"
 $securePassword = ConvertTo-SecureString $plainPassword -AsPlainText -Force
 if (-not (Get-LocalUser -Name "M" -ErrorAction SilentlyContinue)) {

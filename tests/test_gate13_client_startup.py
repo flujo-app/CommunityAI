@@ -16,6 +16,8 @@ BASH = str(GIT_BASH) if GIT_BASH.is_file() else shutil.which("bash")
 def test_windows_bootstrap_preserves_the_proven_interactive_boundary():
     source = WINDOWS.read_text(encoding="utf-8")
 
+    assert "RandomNumberGenerator]::Create()" in source
+    assert "RandomNumberGenerator]::Fill" not in source
     assert 'New-LocalUser -Name "M"' in source
     assert 'Remove-LocalGroupMember -Group "Administrators" -Member "M"' in source
     assert 'New-LocalUser -Name "Gate13Admin"' in source
