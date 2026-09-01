@@ -19,6 +19,21 @@ WINDOWS_DIGEST = "sha256:" + "b" * 64
 LINUX_DIGEST = "sha256:" + "c" * 64
 
 
+def reserved_ledger_text(*, old_digest, new_digest):
+    lines = LEDGER.read_text(encoding="utf-8").splitlines(keepends=True)
+    matches = [
+        index for index, line in enumerate(lines) if line.startswith("| gate13-20260831-a |")
+    ]
+    assert len(matches) == 1
+    index = matches[0]
+    assert old_digest in lines[index]
+    assert lines[index].rstrip().endswith("| CLEANED-COMMITTED |")
+    lines[index] = lines[index].replace(old_digest, new_digest, 1).replace(
+        "| CLEANED-COMMITTED |", "| RESERVED |", 1
+    )
+    return "".join(lines)
+
+
 @pytest.fixture
 def plan(tmp_path):
     raw = json.loads(AUTHORIZATION.read_text(encoding="utf-8"))
@@ -31,9 +46,7 @@ def plan(tmp_path):
 
     ledger = tmp_path / "ledger.md"
     ledger.write_text(
-        LEDGER.read_text(encoding="utf-8")
-        .replace(old_digest, new_digest, 1)
-        .replace("| CLEANED-COMMITTED |", "| RESERVED |", 1),
+        reserved_ledger_text(old_digest=old_digest, new_digest=new_digest),
         encoding="utf-8",
     )
     return controller.load_plan(authorization, ledger)
@@ -120,9 +133,7 @@ def test_load_plan_accepts_only_documented_owner_ceiling(tmp_path):
     authorization.write_text(json.dumps(raw), encoding="utf-8")
     ledger = tmp_path / "ledger.md"
     ledger.write_text(
-        LEDGER.read_text(encoding="utf-8")
-        .replace(old_digest, new_digest, 1)
-        .replace("| CLEANED-COMMITTED |", "| RESERVED |", 1),
+        reserved_ledger_text(old_digest=old_digest, new_digest=new_digest),
         encoding="utf-8",
     )
 
@@ -178,12 +189,11 @@ def test_non_reserved_ledger_allows_cleanup_only():
 
 def test_reserved_parallel_client_plan_cannot_start(tmp_path):
     ledger = tmp_path / "ledger.md"
+    digest = json.loads(AUTHORIZATION.read_text(encoding="utf-8"))[
+        "provider_plan_digest"
+    ]
     ledger.write_text(
-        LEDGER.read_text(encoding="utf-8").replace(
-            "| CLEANED-COMMITTED |",
-            "| RESERVED |",
-            1,
-        ),
+        reserved_ledger_text(old_digest=digest, new_digest=digest),
         encoding="utf-8",
     )
     parallel = controller.load_plan(AUTHORIZATION, ledger)
