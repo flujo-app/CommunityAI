@@ -38,6 +38,34 @@ READ_CHUNK_BYTES = 65_536
 POSIX_SIGTERM = getattr(signal, "SIGTERM", 15)
 POSIX_SIGKILL = getattr(signal, "SIGKILL", 9)
 
+WINDOWS_RUNTIME_ENVIRONMENT = (
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "COMSPEC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "OS",
+    "PATH",
+    "PATHEXT",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PUBLIC",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+)
+
 HOST_ROOTS = {
     "windows": Path(r"C:\Gate13Run"),
     "linux": Path("/qualification"),
@@ -507,7 +535,7 @@ def _entrypoint_argv(config: HostJobConfig) -> list[str]:
 
 def _bounded_environment(config: HostJobConfig) -> dict[str, str]:
     allowed = (
-        ("SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE")
+        WINDOWS_RUNTIME_ENVIRONMENT
         if config.platform == "windows"
         else ("HOME", "LANG", "LC_ALL", "TMPDIR")
     )

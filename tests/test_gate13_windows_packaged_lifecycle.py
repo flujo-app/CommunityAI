@@ -605,7 +605,10 @@ def test_adapter_contains_exact_safety_and_lifecycle_contracts():
     assert positions == sorted(positions)
     assert lifecycle.count('-Name "') >= len(phases)
     assert "$script:LifecycleFailurePhase = $Name" in lifecycle
+    assert "$script:LifecycleFailureOperation = $Name" in lifecycle
     assert 'failure_phase = $failurePhase' in lifecycle
+    assert 'failure_operation = $failureOperation' in lifecycle
+    assert '"product_readiness"' in lifecycle
     assert "ConvertTo-Json -Compress" in lifecycle
 
     for required in (

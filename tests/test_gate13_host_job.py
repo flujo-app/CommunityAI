@@ -82,6 +82,28 @@ def test_load_config_binds_exact_files_paths_and_single_attempt(config_factory):
     assert config.host_user == "gate13"
 
 
+def test_windows_environment_keeps_standard_user_runtime_and_drops_secrets(config_factory, monkeypatch):
+    path, _raw = config_factory("windows")
+    config = host_job.load_config(path)
+    expected = {
+        "APPDATA": r"C:\\Users\\M\\AppData\\Roaming",
+        "LOCALAPPDATA": r"C:\\Users\\M\\AppData\\Local",
+        "PATH": r"C:\\Windows\\System32",
+        "USERPROFILE": r"C:\\Users\\M",
+    }
+    for key, value in expected.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("GH_TOKEN", "must-not-cross-the-host-boundary")
+    monkeypatch.setenv("COMMUNITYAI_CONTROL_TOKEN", "must-not-cross-the-host-boundary")
+
+    environment = host_job._bounded_environment(config)
+
+    assert all(environment[key] == value for key, value in expected.items())
+    assert set(environment).issubset(set(host_job.WINDOWS_RUNTIME_ENVIRONMENT))
+    assert "GH_TOKEN" not in environment
+    assert "COMMUNITYAI_CONTROL_TOKEN" not in environment
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
