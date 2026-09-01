@@ -4,7 +4,7 @@ umask 077
 root=/tmp/gate13-route
 wheel="$root/drift-2.3.0.dev2-py3-none-any.whl"
 test "$(stat -c %s "$wheel")" = "389107"
-test "$(sha256sum "$wheel" | cut -d' ' -f1)" = "2a4f30bad7ae897fed019bc7da330a09965adb35685d11abaeaebf7a1d40aa60"
+test "$(sha256sum "$wheel" | cut -d' ' -f1)" = "7a42803811289e14f69835331e0fbab69dd353c70c835131c10bdfa96ca5f111"
 test "$(sha256sum "$root/configure_product_route_node.py" | cut -d' ' -f1)" = "fc385f74e02ca955203b1fc5e8ae493c7f4ccd31bd7383c2ae0a1c461c91363e"
 test "$(sha256sum "$root/gate11_product_node_acceptance.py" | cut -d' ' -f1)" = "bdcc9f499a7cd6b727c0e33a0c4c2b0e71e76e28f3f21cb99804a8f39edfa0d2"
 apt-get update -qq

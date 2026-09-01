@@ -105,6 +105,26 @@ def test_windows_environment_keeps_standard_user_runtime_and_drops_secrets(confi
     assert "COMMUNITYAI_CONTROL_TOKEN" not in environment
 
 
+def test_linux_environment_keeps_display_and_secret_service_session(config_factory, monkeypatch):
+    path, _raw = config_factory("linux")
+    config = host_job.load_config(path)
+    expected = {
+        "DISPLAY": ":99",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        "GNOME_KEYRING_CONTROL": "/run/user/1000/keyring",
+        "QT_QPA_PLATFORM": "offscreen",
+    }
+    for key, value in expected.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("UNRELATED_SECRET", "must-not-cross-the-host-boundary")
+
+    environment = host_job._bounded_environment(config)
+
+    assert all(environment[key] == value for key, value in expected.items())
+    assert set(environment).issubset(set(host_job.LINUX_RUNTIME_ENVIRONMENT))
+    assert "UNRELATED_SECRET" not in environment
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

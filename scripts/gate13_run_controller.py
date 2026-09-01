@@ -271,11 +271,13 @@ def load_plan(authorization_path: Path, ledger_path: Path) -> RunPlan:
     sequencing = provider_plan.get("sequencing")
     if not all(isinstance(value, dict) for value in (source, immutable, route, sequencing)):
         raise RunControllerError("authorization bindings are invalid")
+    legacy_lifecycle = sequencing.get("all_16_phases_required_per_platform") is True
+    automated_replay = sequencing.get("automated_gate13_replay_required") is True
     if (
         not isinstance(clients, list)
         or len(clients) != 2
         or sequencing.get("route_live_for_both_lifecycles") is not True
-        or sequencing.get("all_16_phases_required_per_platform") is not True
+        or legacy_lifecycle == automated_replay
         or sequencing.get("exact_cleanup_before_pass") is not True
     ):
         raise RunControllerError("execution sequencing is invalid")

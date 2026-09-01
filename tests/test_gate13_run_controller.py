@@ -111,6 +111,28 @@ def test_load_plan_binds_exact_cost_and_resources(plan):
     assert plan.clients_may_run_concurrently is False
 
 
+def test_load_plan_accepts_the_automated_replay_instead_of_legacy_16_phases(tmp_path):
+    raw = json.loads(AUTHORIZATION.read_text(encoding="utf-8"))
+    sequencing = raw["provider_plan"]["sequencing"]
+    sequencing["clients_may_run_concurrently"] = False
+    sequencing["all_16_phases_required_per_platform"] = False
+    sequencing["automated_gate13_replay_required"] = True
+    old_digest = raw["provider_plan_digest"]
+    new_digest = controller._provider_digest(raw["provider_plan"])
+    raw["provider_plan_digest"] = new_digest
+    authorization = tmp_path / "authorization.json"
+    authorization.write_text(json.dumps(raw), encoding="utf-8")
+    ledger = tmp_path / "ledger.md"
+    ledger.write_text(
+        reserved_ledger_text(old_digest=old_digest, new_digest=new_digest),
+        encoding="utf-8",
+    )
+
+    replay_plan = controller.load_plan(authorization, ledger)
+
+    assert replay_plan.clients_may_run_concurrently is False
+
+
 def test_load_plan_accepts_only_documented_owner_ceiling(tmp_path):
     raw = json.loads(AUTHORIZATION.read_text(encoding="utf-8"))
     raw["provider_plan"]["sequencing"]["clients_may_run_concurrently"] = False

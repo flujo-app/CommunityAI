@@ -65,6 +65,18 @@ WINDOWS_RUNTIME_ENVIRONMENT = (
     "USERPROFILE",
     "WINDIR",
 )
+LINUX_RUNTIME_ENVIRONMENT = (
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DISPLAY",
+    "GNOME_KEYRING_CONTROL",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "QT_QPA_PLATFORM",
+    "TMPDIR",
+    "XAUTHORITY",
+    "XDG_RUNTIME_DIR",
+)
 
 HOST_ROOTS = {
     "windows": Path(r"C:\Gate13Run"),
@@ -539,7 +551,7 @@ def _entrypoint_argv(config: HostJobConfig) -> list[str]:
 
 
 def _bounded_environment(config: HostJobConfig) -> dict[str, str]:
-    allowed = WINDOWS_RUNTIME_ENVIRONMENT if config.platform == "windows" else ("HOME", "LANG", "LC_ALL", "TMPDIR")
+    allowed = WINDOWS_RUNTIME_ENVIRONMENT if config.platform == "windows" else LINUX_RUNTIME_ENVIRONMENT
     return {key: os.environ[key] for key in allowed if key in os.environ}
 
 
