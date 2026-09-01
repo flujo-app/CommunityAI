@@ -302,8 +302,7 @@ def _validate_session(path: Path, config: ReplayConfig, stage: str) -> Mapping[s
         or inference.get("model_id") != config.model_id
         or inference.get("manifest_digest") != config.manifest_digest
         or inference.get("completion_count") != 1
-        or type(inference.get("generated_token_count")) is not int
-        or not 1 <= inference["generated_token_count"] <= 8
+        or inference.get("generated_token_count") != 1
         or inference.get("response_content_retained") is not False
         or inference.get("token_identifiers_retained") is not False
         or inference.get("temporary_key_removed") is not True

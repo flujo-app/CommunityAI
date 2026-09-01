@@ -213,7 +213,7 @@ def _completion_request(url: str, secret: str, timeout: float) -> Mapping[str, A
             "model": "auto",
             "messages": [{"role": "user", "content": "Reply with one short word."}],
             "temperature": 0,
-            "max_tokens": 8,
+            "max_tokens": 1,
             "n": 1,
             "stream": False,
         },
@@ -298,7 +298,7 @@ def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[
         ):
             raise PlaythroughError("localhost inference content is empty")
         generated = usage.get("completion_tokens") if isinstance(usage, dict) else None
-        if type(generated) is not int or not 1 <= generated <= 8:
+        if type(generated) is not int or generated != 1:
             raise PlaythroughError("localhost inference token count is invalid")
         completion_count = 1
         generated_token_count = generated

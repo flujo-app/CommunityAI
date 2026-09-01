@@ -15,7 +15,7 @@ if (Test-Path -LiteralPath $readyMarker -PathType Leaf) {
     if ($null -eq $sshFirewall) {
         New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
     } else {
-        Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True
+        Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True -Profile Any
     }
     return
 }
@@ -29,6 +29,7 @@ Start-Service -Name sshd
 if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
 }
+Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True -Profile Any
 
 $randomBytes = New-Object byte[] 32
 $randomGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()

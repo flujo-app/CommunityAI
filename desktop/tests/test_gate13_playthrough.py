@@ -5,7 +5,7 @@ import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from communityai_desktop.acceptance import fake_node
 from communityai_desktop.app import main
@@ -141,6 +141,24 @@ class PlaythroughPlanTests(unittest.TestCase):
         self.assertEqual(result["completion_count"], 1)
         self.assertFalse(result["response_content_retained"])
         self.assertEqual({item["id"] for item in client.list_keys() if item["revoked_at"] is None}, {"baseline"})
+
+    def test_localhost_inference_requests_exactly_one_token(self):
+        from communityai_desktop.gate13_playthrough import _completion_request
+
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.headers.get_content_type.return_value = "application/json"
+        response.read.return_value = b'{"result":"bounded"}'
+        opener = MagicMock()
+        opener.open.return_value = response
+
+        with patch("communityai_desktop.gate13_playthrough.build_opener", return_value=opener):
+            result = _completion_request("http://127.0.0.1:8080/v1/chat/completions", "secret", 10)
+
+        self.assertEqual(result, {"result": "bounded"})
+        request = opener.open.call_args.args[0]
+        self.assertEqual(json.loads(request.data)["max_tokens"], 1)
 
     def test_hidden_packaged_cli_installs_the_qualification_automation(self):
         lifecycle = SimpleNamespace(close=lambda: None)

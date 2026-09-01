@@ -159,3 +159,9 @@ def test_config_and_session_evidence_fail_closed(tmp_path):
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
     with pytest.raises(replay.ReplayError):
         replay._validate_session(evidence_path, config, "start")
+
+    evidence = session_evidence({**valid, "stage": "start"})
+    evidence["inference"]["generated_token_count"] = 2
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(replay.ReplayError):
+        replay._validate_session(evidence_path, config, "start")

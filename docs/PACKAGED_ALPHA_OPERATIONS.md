@@ -69,7 +69,8 @@ stopped. A second fresh desktop process proves sharing resumed after restart, cl
 **Pause sharing**, proves the worker stopped, and performs another localhost inference.
 
 Each inference creates one in-memory temporary client key, retains only completion and
-token counts, revokes the key, and proves the active-key baseline was restored. Session
+token counts, revokes the key, and proves the active-key baseline was restored. It requests
+and requires exactly one generated token, matching the manual Gate 13 procedure. Session
 timeouts are bounded to one hour each. The outer runner verifies the production archive
 digest and byte size, runs the four packaged self-tests, executes both window sessions,
 validates their strict privacy-safe evidence, and removes its exact run-scoped temporary
