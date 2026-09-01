@@ -19,6 +19,7 @@ from typing import Any, Mapping, Sequence
 SCHEMA_VERSION = 1
 SCOPE = "gate13-packaged-lifecycle"
 AUTOMATED_REPLAY_SCOPE = "gate13-automated-desktop-replay"
+AUTOMATED_REPLAY_POLICY_PROFILE = "gate13-manual-cpu-v1"
 MAX_INPUT_BYTES = 1_048_576
 MAX_COUNT = 1_000_000
 MAX_BYTES = 1 << 50
@@ -92,6 +93,7 @@ _AUTOMATED_REPLAY_FIELDS = {
     "restart_resume_observed",
     "pause_clicked",
     "sharing_paused",
+    "policy_profile",
     "session_duration_seconds",
     "privacy_safe",
     "qualification_temporaries_removed",
@@ -690,6 +692,7 @@ def _validate_automated_replay(raw_document: Mapping[str, Any]) -> dict[str, Any
         or not isinstance(document["source_commit"], str)
         or _HEX40_RE.fullmatch(document["source_commit"]) is None
         or document["model_id"] not in MODEL_PROFILES
+        or document["policy_profile"] != AUTOMATED_REPLAY_POLICY_PROFILE
     ):
         _fail()
     profile = MODEL_PROFILES[document["model_id"]]
@@ -749,6 +752,7 @@ def _validate_automated_replay(raw_document: Mapping[str, Any]) -> dict[str, Any
             "restart_resume_observed": True,
             "pause_clicked": True,
             "sharing_paused": True,
+            "policy_profile": AUTOMATED_REPLAY_POLICY_PROFILE,
             "response_content_retained": False,
             "token_identifier_count": 0,
         },

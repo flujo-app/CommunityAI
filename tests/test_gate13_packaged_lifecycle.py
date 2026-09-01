@@ -505,6 +505,7 @@ def test_current_gate13_automated_replay_is_accepted_by_the_host_evidence_bounda
         "restart_resume_observed": True,
         "pause_clicked": True,
         "sharing_paused": True,
+        "policy_profile": "gate13-manual-cpu-v1",
         "session_duration_seconds": {"start": 100.0, "resume_pause": 80.0},
         "privacy_safe": True,
         "qualification_temporaries_removed": True,
@@ -518,6 +519,7 @@ def test_current_gate13_automated_replay_is_accepted_by_the_host_evidence_bounda
     assert evidence["manifest_digest"] == MANIFEST_DIGEST
     assert evidence["lifecycle"]["real_window_sessions"] == 2
     assert evidence["lifecycle"]["restart_resume_observed"] is True
+    assert evidence["lifecycle"]["policy_profile"] == "gate13-manual-cpu-v1"
 
     document["pause_clicked"] = False
     with pytest.raises(lifecycle.LifecycleEvidenceError):

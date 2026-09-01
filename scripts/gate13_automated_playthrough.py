@@ -27,6 +27,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 SCHEMA_VERSION = 1
 SCOPE = "gate13-automated-desktop-replay"
+POLICY_PROFILE = "gate13-manual-cpu-v1"
 MAX_CONFIG_BYTES = 65_536
 MAX_EVIDENCE_BYTES = 65_536
 
@@ -78,6 +79,19 @@ _SESSION_FIELDS = {
     "limits",
     "privacy",
 }
+
+
+def _manual_schedule() -> dict[str, Any]:
+    return {
+        "timezone": "UTC",
+        "windows": [
+            {
+                "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                "start": "00:00",
+                "end": "23:59",
+            }
+        ],
+    }
 
 
 class ReplayError(ValueError):
@@ -204,16 +218,19 @@ def load_config(path: Path) -> ReplayConfig:
         or policy["allowed_models"] != [model_id]
         or policy["preferred_models"] != [model_id]
         or policy["denied_models"] != []
-        or policy["schedule"] is not None
+        or policy["schedule"] != _manual_schedule()
     ):
-        raise ReplayError("policy does not select only the qualification model")
-    if not isinstance(policy["max_disk_space"], str) or not 1 <= len(policy["max_disk_space"]) <= 32:
-        raise ReplayError("storage ceiling is invalid")
-    if not isinstance(policy["max_vram"], str) or not 1 <= len(policy["max_vram"]) <= 32:
-        raise ReplayError("memory ceiling is invalid")
-    _number(policy["max_bandwidth_mbps"], "bandwidth ceiling", 0.001, 1_000_000)
-    _number(policy["max_power_watts"], "power ceiling", 0.001, 1_000_000)
-    _number(policy["pause_timeout"], "pause timeout", 1, 300)
+        raise ReplayError("policy does not match the proven manual replay")
+    if policy["max_disk_space"] != "32GB":
+        raise ReplayError("storage ceiling does not match the proven manual replay")
+    if policy["max_vram"] != "20GB":
+        raise ReplayError("memory ceiling does not match the proven manual replay")
+    if _number(policy["max_bandwidth_mbps"], "bandwidth ceiling", 0.001, 1_000_000) != 100.0:
+        raise ReplayError("bandwidth ceiling does not match the proven manual replay")
+    if policy["max_power_watts"] is not None:
+        raise ReplayError("the manual CPU-host replay requires an unset power ceiling")
+    if _number(policy["pause_timeout"], "pause timeout", 1, 300) != 120.0:
+        raise ReplayError("pause timeout does not match the proven manual replay")
     executable = _absolute_path(raw["desktop_executable"], "desktop executable")
     _regular_metadata(executable, 2 * 1024**3)
     package_archive = _absolute_path(raw["package_archive"], "package archive")
@@ -321,8 +338,9 @@ def _validate_session(path: Path, config: ReplayConfig, stage: str) -> Mapping[s
         "storage": True,
         "memory_or_vram": True,
         "bandwidth": True,
-        "power": True,
+        "power": False,
         "pause_timeout": True,
+        "schedule": True,
     }
     expected_privacy = {
         "prompt_retained": False,
@@ -464,6 +482,7 @@ def run_replay(
         "restart_resume_observed": True,
         "pause_clicked": True,
         "sharing_paused": True,
+        "policy_profile": POLICY_PROFILE,
         "session_duration_seconds": {
             "start": start["duration_seconds"],
             "resume_pause": resumed["duration_seconds"],

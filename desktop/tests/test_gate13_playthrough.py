@@ -35,12 +35,21 @@ def _config(stage: str) -> dict:
             "allowed_models": [MODEL_ID],
             "preferred_models": [MODEL_ID],
             "denied_models": [],
-            "max_disk_space": "20GiB",
-            "max_vram": "8GiB",
+            "max_disk_space": "32GB",
+            "max_vram": "20GB",
             "max_bandwidth_mbps": 100.0,
-            "max_power_watts": 250.0,
-            "pause_timeout": 30.0,
-            "schedule": None,
+            "max_power_watts": None,
+            "pause_timeout": 120.0,
+            "schedule": {
+                "timezone": "UTC",
+                "windows": [
+                    {
+                        "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                        "start": "00:00",
+                        "end": "23:59",
+                    }
+                ],
+            },
         },
         "timeout_seconds": 30.0,
         "inference_timeout_seconds": 10.0,
@@ -74,12 +83,19 @@ class PlaythroughPlanTests(unittest.TestCase):
             plan = _write_plan(root / "plan.json", "start")
             self.assertEqual(plan.model_id, MODEL_ID)
             self.assertEqual(plan.policy["allowed_models"], [MODEL_ID])
+            self.assertIsNone(plan.policy["max_power_watts"])
 
             invalid = _config("start")
             invalid["policy"]["denied_models"] = [MODEL_ID]
             (root / "invalid.json").write_text(json.dumps(invalid), encoding="utf-8")
             with self.assertRaises(PlaythroughError):
                 PlaythroughPlan.load(root / "invalid.json")
+
+            invalid_power = _config("start")
+            invalid_power["policy"]["max_power_watts"] = 250.0
+            (root / "invalid-power.json").write_text(json.dumps(invalid_power), encoding="utf-8")
+            with self.assertRaises(PlaythroughError):
+                PlaythroughPlan.load(root / "invalid-power.json")
 
             (root / "duplicate.json").write_text('{"schema_version":1,"schema_version":1}', encoding="utf-8")
             with self.assertRaises(PlaythroughError):

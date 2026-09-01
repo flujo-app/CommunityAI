@@ -44,6 +44,21 @@ _POLICY_FIELDS = {
     "pause_timeout",
     "schedule",
 }
+
+
+def _manual_schedule() -> dict[str, Any]:
+    return {
+        "timezone": "UTC",
+        "windows": [
+            {
+                "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                "start": "00:00",
+                "end": "23:59",
+            }
+        ],
+    }
+
+
 _CONFIG_FIELDS = {
     "schema_version",
     "run_id",
@@ -124,15 +139,20 @@ def _policy(value: Any, model_id: str) -> dict[str, Any]:
         raise PlaythroughError("sharing must be enabled for the start stage")
     if model_id not in allowed or model_id not in preferred or denied:
         raise PlaythroughError("sharing policy does not select the qualification model")
-    if not isinstance(value["max_disk_space"], str) or not 1 <= len(value["max_disk_space"]) <= 32:
-        raise PlaythroughError("storage ceiling is invalid")
-    if not isinstance(value["max_vram"], str) or not 1 <= len(value["max_vram"]) <= 32:
-        raise PlaythroughError("memory ceiling is invalid")
+    if value["max_disk_space"] != "32GB":
+        raise PlaythroughError("storage ceiling does not match the proven manual replay")
+    if value["max_vram"] != "20GB":
+        raise PlaythroughError("memory ceiling does not match the proven manual replay")
     bandwidth = _bounded_number(value["max_bandwidth_mbps"], "bandwidth ceiling", minimum=0.001, maximum=1_000_000)
-    power = _bounded_number(value["max_power_watts"], "power ceiling", minimum=0.001, maximum=1_000_000)
+    if bandwidth != 100.0:
+        raise PlaythroughError("bandwidth ceiling does not match the proven manual replay")
+    if value["max_power_watts"] is not None:
+        raise PlaythroughError("the manual CPU-host replay requires an unset power ceiling")
     pause = _bounded_number(value["pause_timeout"], "pause timeout", minimum=1, maximum=300)
-    if value["schedule"] is not None:
-        raise PlaythroughError("Gate 13 qualification requires an unrestricted schedule")
+    if pause != 120.0:
+        raise PlaythroughError("pause timeout does not match the proven manual replay")
+    if value["schedule"] != _manual_schedule():
+        raise PlaythroughError("sharing schedule does not match the proven manual replay")
     return {
         "sharing_enabled": True,
         "allowed_models": list(allowed),
@@ -141,9 +161,9 @@ def _policy(value: Any, model_id: str) -> dict[str, Any]:
         "max_disk_space": value["max_disk_space"],
         "max_vram": value["max_vram"],
         "max_bandwidth_mbps": bandwidth,
-        "max_power_watts": power,
+        "max_power_watts": None,
         "pause_timeout": pause,
-        "schedule": None,
+        "schedule": _manual_schedule(),
     }
 
 
@@ -509,9 +529,9 @@ class Gate13Playthrough:
             ):
                 editor = dialog.findChild(self._qt["QLineEdit"], f"policy_{field}")
                 value = self.plan.policy[field]
-                editor.setText(f"{value:g}" if isinstance(value, float) else str(value))
+                editor.setText("" if value is None else f"{value:g}" if isinstance(value, float) else str(value))
             schedule = dialog.findChild(self._qt["QPlainTextEdit"], "policy_schedule")
-            schedule.clear()
+            schedule.setPlainText(json.dumps(self.plan.policy["schedule"], separators=(",", ":")))
             buttons = dialog.findChild(self._qt["QDialogButtonBox"], "sharingPolicyButtons")
             save = buttons.button(self._qt["QDialogButtonBox"].StandardButton.Save)
             self._state = "wait_policy"
@@ -573,8 +593,9 @@ class Gate13Playthrough:
                     "storage": True,
                     "memory_or_vram": True,
                     "bandwidth": True,
-                    "power": True,
+                    "power": False,
                     "pause_timeout": True,
+                    "schedule": True,
                 },
                 "privacy": {
                     "prompt_retained": False,

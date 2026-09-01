@@ -40,12 +40,21 @@ def config_document(root: Path) -> dict:
             "allowed_models": [MODEL_ID],
             "preferred_models": [MODEL_ID],
             "denied_models": [],
-            "max_disk_space": "20GiB",
-            "max_vram": "8GiB",
+            "max_disk_space": "32GB",
+            "max_vram": "20GB",
             "max_bandwidth_mbps": 100.0,
-            "max_power_watts": 250.0,
-            "pause_timeout": 30.0,
-            "schedule": None,
+            "max_power_watts": None,
+            "pause_timeout": 120.0,
+            "schedule": {
+                "timezone": "UTC",
+                "windows": [
+                    {
+                        "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                        "start": "00:00",
+                        "end": "23:59",
+                    }
+                ],
+            },
         },
         "session_timeout_seconds": 30.0,
         "inference_timeout_seconds": 10.0,
@@ -92,8 +101,9 @@ def session_evidence(plan: dict) -> dict:
             "storage": True,
             "memory_or_vram": True,
             "bandwidth": True,
-            "power": True,
+            "power": False,
             "pause_timeout": True,
+            "schedule": True,
         },
         "privacy": {
             "prompt_retained": False,
@@ -136,6 +146,7 @@ def test_replay_runs_real_desktop_contract_twice_and_removes_temporaries(tmp_pat
     assert result["real_window_sessions"] == 2
     assert result["localhost_inference_count"] == 2
     assert result["restart_resume_observed"] is True
+    assert result["policy_profile"] == replay.POLICY_PROFILE
     assert result["qualification_temporaries_removed"] is True
     assert not config.work_root.exists()
 
@@ -147,6 +158,13 @@ def test_config_and_session_evidence_fail_closed(tmp_path):
     config_path.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(replay.ReplayError):
         replay.load_config(config_path)
+
+    invalid_power = config_document(tmp_path)
+    invalid_power["policy"]["max_power_watts"] = 250.0
+    invalid_power_path = tmp_path / "invalid-power.json"
+    invalid_power_path.write_text(json.dumps(invalid_power), encoding="utf-8")
+    with pytest.raises(replay.ReplayError):
+        replay.load_config(invalid_power_path)
 
     valid = config_document(tmp_path)
     valid_path = tmp_path / "valid.json"

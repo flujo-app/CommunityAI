@@ -514,6 +514,7 @@ def test_collect_accepts_current_automated_desktop_replay(plan):
         "restart_resume_observed": True,
         "pause_clicked": True,
         "sharing_paused": True,
+        "policy_profile": "gate13-manual-cpu-v1",
         "session_duration_seconds": {"start": 120.0, "resume_pause": 90.0},
         "privacy_safe": True,
         "qualification_temporaries_removed": True,

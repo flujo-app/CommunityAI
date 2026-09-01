@@ -98,12 +98,19 @@ its leaf must be exactly `.gate13-playthrough-<run_id>`:
     "allowed_models": ["Qwen3.5 2B"],
     "preferred_models": ["Qwen3.5 2B"],
     "denied_models": [],
-    "max_disk_space": "20GiB",
-    "max_vram": "8GiB",
+    "max_disk_space": "32GB",
+    "max_vram": "20GB",
     "max_bandwidth_mbps": 100.0,
-    "max_power_watts": 250.0,
-    "pause_timeout": 30.0,
-    "schedule": null
+    "max_power_watts": null,
+    "pause_timeout": 120.0,
+    "schedule": {
+      "timezone": "UTC",
+      "windows": [{
+        "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+        "start": "00:00",
+        "end": "23:59"
+      }]
+    }
   },
   "session_timeout_seconds": 3600,
   "inference_timeout_seconds": 600
@@ -111,6 +118,10 @@ its leaf must be exactly `.gate13-playthrough-<run_id>`:
 ~~~
 
 Run it as the ordinary qualification user with tracing disabled:
+
+This policy is the exact CPU-host policy proven by the manual Gate 13 playthrough:
+the power field stays blank because the e2 hosts have no power telemetry, while the
+storage, memory, bandwidth, pause, and explicit UTC schedule fields are exercised.
 
 ~~~text
 python gate13_automated_playthrough.py --config gate13-windows-run.json > gate13-windows-evidence.json
