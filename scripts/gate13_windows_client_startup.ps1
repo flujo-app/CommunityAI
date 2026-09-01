@@ -8,7 +8,17 @@ $runRoot = "C:\Gate13Run"
 $downloadRoot = "C:\Gate13Download"
 New-Item -ItemType Directory -Force -Path $bootstrapRoot, $runRoot, $downloadRoot | Out-Null
 $readyMarker = Join-Path $bootstrapRoot "ready.txt"
-if (Test-Path -LiteralPath $readyMarker -PathType Leaf) { return }
+if (Test-Path -LiteralPath $readyMarker -PathType Leaf) {
+    Set-Service -Name sshd -StartupType Automatic
+    if ((Get-Service -Name sshd).Status -ne "Running") { Start-Service -Name sshd }
+    $sshFirewall = Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
+    if ($null -eq $sshFirewall) {
+        New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+    } else {
+        Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True
+    }
+    return
+}
 
 $capability = Get-WindowsCapability -Online -Name "OpenSSH.Server~~~~0.0.1.0"
 if ($capability.State -ne "Installed") {

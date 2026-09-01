@@ -18,6 +18,8 @@ def test_windows_bootstrap_preserves_the_proven_interactive_boundary():
 
     assert "RandomNumberGenerator]::Create()" in source
     assert "RandomNumberGenerator]::Fill" not in source
+    assert 'if ((Get-Service -Name sshd).Status -ne "Running") { Start-Service -Name sshd }' in source
+    assert 'Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True' in source
     assert 'New-LocalUser -Name "M"' in source
     assert 'Remove-LocalGroupMember -Group "Administrators" -Member "M"' in source
     assert 'New-LocalUser -Name "Gate13Admin"' in source
