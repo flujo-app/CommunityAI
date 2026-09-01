@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-automated-paid-cloud-authorization",
+  "gate": 13,
+  "run_id": "gate13-20260901-a",
+  "result": "authorized",
+  "recorded_at": "2026-09-01T20:58:50Z",
+  "source": {
+    "durable_controller_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
+    "host_job_adapter_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
+    "route_runtime_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
+    "route_setup_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
+    "package_commit": "1476d67f3887dfd0de2acfb1305cbcca9975614f",
+    "production_workflow_run": 33555907921
+  },
+  "authorization": {
+    "owner_reset_recorded": true,
+    "combined_cloud_ceiling_usd": "100.00",
+    "ledger_committed_before_run_usd": "0.00",
+    "maximum_estimate_usd": "56.00",
+    "route_maximum_estimate_usd": "30.00",
+    "clients_maximum_estimate_usd": "26.00",
+    "remaining_after_run_maximum_usd": "44.00",
+    "reservation_recorded": true,
+    "provisioning_authorized_after_fail_closed_preflight": true,
+    "provider_calls_authorized_without_preflight": false,
+    "pricing_as_of": "2026-09-01",
+    "pricing_basis": "The owner reports the prior real-world replay cost was approximately USD 10. USD 56 is retained only as a fail-safe maximum-lifetime reservation, not as a bill forecast."
+  },
+  "immutable_inputs": {
+    "durable_controller": {
+      "path": "scripts/gate13_run_controller.py",
+      "source_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
+      "sha256": "5ab9bf2c49267e3b2b7cefcb2d2c9b1eb331a652970e3345ab443f09db4cf8aa",
+      "bytes": 34281
+    },
+    "host_job_adapter": {
+      "path": "scripts/gate13_host_job.py",
+      "source_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
+      "sha256": "f9bd388a61226df6ac3fcadb5bdc68134e2ccb741718f4a4c65543cfc4180cdb",
+      "bytes": 42513
+    },
+    "lifecycle_evidence_validator": {
+      "path": "scripts/gate13_packaged_lifecycle.py",
+      "source_commit": "1476d67f3887dfd0de2acfb1305cbcca9975614f",
+      "sha256": "a32e1cfcb61e84ccacc13b16a5bf016b3357584edf2b6b536c2122a8e1c2abab",
+      "bytes": 31881
+    },
+    "automated_playthrough": {
+      "path": "scripts/gate13_automated_playthrough.py",
+      "source_commit": "1476d67f3887dfd0de2acfb1305cbcca9975614f",
+      "sha256": "b6e289f105632728a7e585777a320bb3fcbb7cdd527c1d4a7ec2f816ffa17a37",
+      "bytes": 18331
+    },
+    "route_setup": {
+      "path": "scripts/gate13_route_setup.sh",
+      "source_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
+      "sha256": "045372ea0be9c4a8f31756a502b2a9ec799087eeaac294ebad2b34eccfe0affc",
+      "bytes": 3371
+    },
+    "route_runtime_wheel": {
+      "filename": "drift-2.3.0.dev2-py3-none-any.whl",
+      "source_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
+      "sha256": "7a42803811289e14f69835331e0fbab69dd353c70c835131c10bdfa96ca5f111",
+      "bytes": 389107,
+      "model_artifacts_embedded": false
+    },
+    "windows_package": {
+      "sha256": "790d13505e387f91b3e080f303dfd0db2feefc067844fd57f003d9e5cd4aa687",
+      "bytes": 2695084305,
+      "workflow_artifact": "communityai-desktop-install-windows"
+    },
+    "linux_package": {
+      "sha256": "7816abb5a83395eac4e898ff1301a85e0a8bbdbced0c5e593701f43122b798e1",
+      "bytes": 3360729627,
+      "workflow_artifact": "communityai-desktop-install-linux"
+    },
+    "qwen_manifest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+    "gemma_manifest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd"
+  },
+  "provider_plan_digest": "sha256:6687b9ba098b3f6676f48f4bf03ebb92bdc6a1278bf5bc1c227819b3a3e7cbb0",
+  "provider_plan": {
+    "project": "community-ai-506321",
+    "route": {
+      "instance": "route-20260901-a-node",
+      "zone": "us-central1-b",
+      "machine_type": "g2-standard-8",
+      "accelerator": "1 x NVIDIA L4",
+      "image": "deeplearning-platform-release/common-cu129-ubuntu-2404-nvidia-580-v20260831",
+      "boot_disk_gib": 200,
+      "boot_disk_type": "pd-balanced",
+      "boot_disk_auto_delete": true,
+      "max_run_seconds": 57600,
+      "termination_action": "DELETE",
+      "network": "communityai-discovery",
+      "subnet": "communityai-us-central1",
+      "public_ports": [31337, 31338],
+      "firewalls": ["route-20260901-a-dht", "route-20260901-a-iap"],
+      "service_account": false,
+      "scopes": []
+    },
+    "clients": [
+      {
+        "platform": "windows",
+        "model": "Qwen3.5 2B",
+        "instance": "gate13-20260901-a-win",
+        "zone": "us-central1-b",
+        "machine_type": "e2-standard-8",
+        "image": "windows-server-2025-dc-v20260814",
+        "image_project": "windows-cloud",
+        "boot_disk_gib": 120,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "max_run_seconds": 21600,
+        "termination_action": "DELETE",
+        "lifecycle_run_id": "gate13-20260901-a-windows",
+        "device_profile": "cpu",
+        "network": "communityai-discovery",
+        "subnet": "communityai-us-central1",
+        "network_tag": "gate13-20260901-a-client",
+        "host_execution": "automated_real_window_foreground_as_ordinary_user"
+      },
+      {
+        "platform": "linux",
+        "model": "Gemma 4 E2B IT",
+        "instance": "gate13-20260901-a-linux",
+        "zone": "us-central1-b",
+        "machine_type": "e2-standard-8",
+        "image": "ubuntu-2404-noble-amd64-v20260826",
+        "image_project": "ubuntu-os-cloud",
+        "boot_disk_gib": 120,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "max_run_seconds": 21600,
+        "termination_action": "DELETE",
+        "lifecycle_run_id": "gate13-20260901-a-linux",
+        "device_profile": "cpu",
+        "network": "communityai-discovery",
+        "subnet": "communityai-us-central1",
+        "network_tag": "gate13-20260901-a-client",
+        "host_execution": "automated_real_window_dbus_session_as_ordinary_user"
+      }
+    ],
+    "sequencing": {
+      "route_live_for_both_lifecycles": true,
+      "clients_may_run_concurrently": false,
+      "route_accepted_before_any_client_create": true,
+      "windows_collected_and_deleted_before_linux_create": true,
+      "all_16_phases_required_per_platform": false,
+      "automated_gate13_replay_required": true,
+      "exact_cleanup_before_pass": true
+    }
+  },
+  "preflight": {
+    "native_gcloud_token_refresh": true,
+    "compute_api_access": true,
+    "exact_target_instances_absent": true,
+    "exact_target_disks_absent": true,
+    "exact_target_firewalls_absent": true,
+    "machine_types_available": true,
+    "images_available": true,
+    "one_l4_quota_free": true,
+    "protected_bootstrap_running": true,
+    "production_packages_passed": true
+  },
+  "prohibited": {
+    "fly_resources": 0,
+    "macos_hosts": 0,
+    "service_accounts": 0,
+    "client_gpu_instances": 0,
+    "concurrent_clients": 0,
+    "credit_operations": 0
+  },
+  "privacy": {
+    "retain_prompts": false,
+    "retain_outputs": false,
+    "retain_credentials": false,
+    "retain_signed_urls": false,
+    "retain_provider_endpoints": false
+  }
+}

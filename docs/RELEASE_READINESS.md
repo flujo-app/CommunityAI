@@ -120,23 +120,26 @@ longer consume the new authorization; later billing should still be recorded for
 ## Cloud authorization and spend ledger
 
 Authorization applies only to CommunityAI qualification and public-alpha infrastructure.
-The [owner-authorized ceiling](evidence/owner-budget-authorization-20260831.json) is USD 500
-combined across new temporary GCP and Fly resources in the current accounting epoch. The
-existing USD 52 committed maximum and the seven cleaned-failed USD 56 Gate 13 runs remain
-charged. The final USD 56 `gate13-20260831-i` manual-playthrough reservation brings the
-committed maximum to USD 500 and leaves USD 0 unreserved. The existing
-GCP bootstrap's ordinary baseline cost is tracked separately; never delete it as test cleanup.
+On 2026-09-01 the owner explicitly reset the cloud accounting epoch after reporting that the
+prior real-world cloud charge was approximately USD 10 rather than the conservative reserved
+maximums. Historical rows and their then-current `CLEANED-COMMITTED` labels remain unchanged
+for auditability but consume USD 0 in the reset epoch. The reset epoch has a USD 100 accounting
+ceiling; only the exact USD 56 `gate13-20260901-a` reservation is authorized, leaving USD 44
+unreserved and unauthorized for any other run. USD 56 remains a maximum-lifetime safety bound,
+not a bill forecast. The existing GCP bootstrap's ordinary baseline cost is tracked separately;
+never delete it as test cleanup.
 
 Before every paid run, add an entry with a conservative maximum. After cleanup, replace
 the estimate with observed cost when available. If provider billing is delayed, retain the
 maximum estimate until actual cost is known unless the owner explicitly resets the budget
-after complete cleanup. On reset, keep historical rows, mark them `CLEANED-RELEASED`, and
-continue recording later observed charges for information; released rows do not consume the
-new epoch. `CLEANED-COMMITTED` means resources are absence-proved but the conservative
-maximum still consumes the current epoch because no reset or observed charge has replaced it.
+after complete cleanup. On reset, keep historical rows and continue recording later observed
+charges for information. `CLEANED-COMMITTED` means resources were absence-proved while the
+conservative maximum still consumed the accounting epoch then in force; a later explicit reset
+starts a new epoch without rewriting that historical state.
 
 | Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
 | --- | --- | --- | ---: | ---: | --- | --- |
+| gate13-20260901-a | GCP | Automated Gate 13 real-window replay against fresh production packages from `1476d67f3887dfd0de2acfb1305cbcca9975614f`: one bounded L4 route, then sequential ordinary-user Windows/Qwen and Linux/Gemma clients [plan `sha256:6687b9ba098b3f6676f48f4bf03ebb92bdc6a1278bf5bc1c227819b3a3e7cbb0`] | USD 56.00 maximum-lifetime safety bound; owner reports the comparable real-world run was approximately USD 10 | — | [Fresh authorization](evidence/gate13-20260901-a-cost-authorization.json); cleanup required before terminal classification. | RESERVED |
 | gate13-20260831-i | GCP | Final Gate 13 manual clean-host playthrough: Gate 11 route acceptance first, then sequential ordinary-user Windows/Qwen and Linux/Gemma desktop qualification with literal UI controls and post-restart inference [plan `sha256:8525c3099f273c099aba26de57c1f610a0c74cac65ed2640589d51e874bd0c44`] | USD 56.00 | — | [Passed qualification and cleanup](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) proves both exact archives, packaged self-tests, real desktop start/share/restart/pause flows, Qwen and Gemma inference, the Windows long-path product fix, all exact resources absent, L4 usage zero, and the protected bootstrap running. | CLEANED-COMMITTED |
 | gate13-20260831-h | GCP | Final corrected Gate 13 route-first lifecycle with both four-file release-audit bundles pinned and staged, the bounded Windows user-runtime environment, exact archive preflight, and sequential ordinary-user Windows/Qwen then Linux/Gemma clients [plan `sha256:f243254cc5fb65f44d0c9e707be36feb3284fd6e15b15620882843798fb456b1`] | USD 56.00 | — | [Failed attempt and cleanup](evidence/gate13-20260831-h-failed-attempt-and-cleanup.json) records passed route acceptance and exact Windows archive verification, one Windows failure at `signed_bootstrap/product_readiness`, no Linux create, exact instance/disk/firewall absence, L4 usage zero, and protected-bootstrap health. | CLEANED-COMMITTED |
 | gate13-20260831-g | GCP | Corrected Gate 13 route-first lifecycle with a bounded standard Windows user-runtime environment, one durable foreground host-adapter execution as each ordinary OS user, exact archive preflight, and sequential Windows/Qwen then Linux/Gemma clients [plan `sha256:f27f36158f2ad16019578555023cc854cb1e6e3b10ebae8cd3ed24d757b8e032`] | USD 56.00 | — | [Failed attempt and cleanup](evidence/gate13-20260831-g-failed-attempt-and-cleanup.json) records passed route acceptance, the exact Windows archive, a two-second `package_verification` failure caused by four omitted existing audit inputs, no Linux create, and exact instance/disk/firewall cleanup with L4 usage zero. | CLEANED-COMMITTED |
