@@ -180,15 +180,16 @@ def test_windows_lifecycle_config_must_be_beside_entrypoint(config_factory):
         host_job.load_config(path)
 
 
-def test_windows_task_is_bounded_ordinary_user_single_instance(config_factory):
+def test_windows_task_is_bounded_interactive_ordinary_user_single_instance(config_factory):
     path, _raw = config_factory("windows")
     config = host_job.load_config(path)
 
     script = host_job._windows_register_script(config)
 
-    assert "New-ScheduledTaskPrincipal -UserId $currentUser" in script
-    assert "-LogonType S4U -RunLevel Limited" in script
-    assert "$identity.IsSystem" in script
+    assert "New-ScheduledTaskPrincipal -UserId $targetAccount.Value" in script
+    assert "-LogonType Interactive -RunLevel Limited" in script
+    assert "privileged task registration required" in script
+    assert "Get-LocalUser -Name 'gate13'" in script
     assert "'SYSTEM'" not in script
     assert "-MultipleInstances IgnoreNew" in script
     assert "-ExecutionTimeLimit" in script
@@ -200,8 +201,8 @@ def test_windows_task_is_bounded_ordinary_user_single_instance(config_factory):
     snapshot = host_job._windows_snapshot_script(config)
     assert "MultipleInstances -eq 'IgnoreNew'" in snapshot
     assert "ExecutionTimeLimit -eq $expectedLimit" in snapshot
-    assert "LogonType -eq 'S4U'" in snapshot
-    assert "$taskSid -eq $identity.User.Value" in snapshot
+    assert "LogonType -eq 'Interactive'" in snapshot
+    assert "$taskSid -eq $targetSid" in snapshot
     assert "NTAccount]::new([string]$task.Principal.UserId)" in snapshot
     assert "RunLevel -eq 'Limited'" in snapshot
 
@@ -248,13 +249,41 @@ def test_linux_unit_is_bounded_non_root_and_non_restarting(config_factory):
     assert "--property=Restart=no" in argv
     assert "--property=KillMode=control-group" in argv
     assert "--property=NoNewPrivileges=no" in argv
+    assert "--property=PrivateTmp=no" in argv
     assert "--property=TimeoutStartSec=120" in argv
     assert f"--property=RuntimeMaxSec={config.max_run_seconds + 2 * host_job.SUPERVISOR_GRACE_SECONDS}" in argv
+    assert "--setenv=DISPLAY=:99" in argv
+    assert "--setenv=HOME=/home/gate13" in argv
+    assert "--setenv=XDG_RUNTIME_DIR=/qualification/runtime" in argv
+    assert "/usr/bin/dbus-run-session" in argv
+    assert "execute-linux-desktop-session" in argv
     assert "--wait" not in argv
     assert host_job._entrypoint_argv(config)[-2:] == [
         "--config",
         str(config.lifecycle_config_path),
     ]
+
+
+def test_linux_desktop_session_starts_secret_service_before_execute(tmp_path, monkeypatch):
+    config_path = tmp_path / "host-job.json"
+    observed = []
+    monkeypatch.setattr(host_job.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setenv("HOME", "/home/gate13")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/qualification/runtime")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/qualification/runtime/bus")
+
+    def run(argv, **kwargs):
+        observed.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="GNOME_KEYRING_CONTROL=/qualification/runtime/keyring\n", stderr="")
+
+    monkeypatch.setattr(host_job.subprocess, "run", run)
+    monkeypatch.setattr(host_job, "execute", lambda path: {"result": "passed", "path": str(path)})
+
+    assert host_job._execute_linux_desktop_session(config_path)["result"] == "passed"
+    assert observed[0][0] == ["/usr/bin/gnome-keyring-daemon", "--unlock", "--components=secrets"]
+    assert observed[0][1]["input"] == "\n"
+    assert host_job.os.environ["GNOME_KEYRING_CONTROL"] == "/qualification/runtime/keyring"
 
 
 def test_windows_automated_python_replay_uses_the_bound_python(config_factory):
@@ -523,9 +552,9 @@ def test_linux_snapshot_binds_exact_service_command(config_factory):
             "User=gate13",
             "Group=gate13",
             (
-                "ExecStart={ path="
-                f"{config.python_executable} ; argv[]={config.python_executable} "
-                f"{config.adapter_path} execute --config {config.config_path} ; "
+                "ExecStart={ path=/usr/bin/dbus-run-session ; argv[]=/usr/bin/dbus-run-session "
+                f"{config.python_executable} {config.adapter_path} "
+                f"execute-linux-desktop-session --config {config.config_path} ; "
                 "ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; "
                 "pid=0 ; code=(null) ; status=0/0 }"
             ),
@@ -534,7 +563,8 @@ def test_linux_snapshot_binds_exact_service_command(config_factory):
             "KillMode=control-group",
             "UMask=0077",
             "NoNewPrivileges=no",
-            "PrivateTmp=yes",
+            "PrivateTmp=no",
+            'Environment="DISPLAY=:99" "HOME=/home/gate13" "XDG_RUNTIME_DIR=/qualification/runtime"',
             "TimeoutStartUSec=2min",
             "RuntimeMaxUSec=1h 2min",
         ]
@@ -550,8 +580,8 @@ def test_linux_snapshot_binds_exact_service_command(config_factory):
     }
 
     foreign_stdout = stdout.replace(
-        f"execute --config {config.config_path} ;",
-        f"execute --config {config.config_path} --extra ;",
+        f"execute-linux-desktop-session --config {config.config_path} ;",
+        f"execute-linux-desktop-session --config {config.config_path} --extra ;",
     )
 
     def foreign_runner(_argv, timeout):

@@ -876,9 +876,11 @@ def _windows_register_script(config: HostJobConfig) -> str:
             f"$taskPath = {_ps_quote(task_path)}",
             f"$taskName = {_ps_quote(config.job_name)}",
             "$identity = [Security.Principal.WindowsIdentity]::GetCurrent()",
-            "$currentUser = [string]$identity.Name",
-            "$leafUser = $currentUser.Substring($currentUser.LastIndexOf('\\') + 1)",
-            f"if ($identity.IsSystem -or $leafUser -ine {_ps_quote(config.host_user)}) {{ throw 'ordinary host user mismatch' }}",
+            "$operator = [Security.Principal.WindowsPrincipal]::new($identity)",
+            "if (-not $operator.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'privileged task registration required' }",
+            f"$targetUser = Get-LocalUser -Name {_ps_quote(config.host_user)} -ErrorAction Stop",
+            "$targetAccount = [Security.Principal.NTAccount]::new($env:COMPUTERNAME, [string]$targetUser.Name)",
+            "$targetSid = $targetAccount.Translate([Security.Principal.SecurityIdentifier]).Value",
             "$existing = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
             "if ($null -ne $existing) { throw 'exact task already exists' }",
             (
@@ -886,7 +888,10 @@ def _windows_register_script(config: HostJobConfig) -> str:
                 f"-Execute {_ps_quote(os.fspath(config.python_executable))} "
                 f"-Argument {_ps_quote(_windows_action_arguments(config))}"
             ),
-            ("$principal = New-ScheduledTaskPrincipal -UserId $currentUser " "-LogonType S4U -RunLevel Limited"),
+            (
+                "$principal = New-ScheduledTaskPrincipal -UserId $targetAccount.Value "
+                "-LogonType Interactive -RunLevel Limited"
+            ),
             (
                 "$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew "
                 f"-ExecutionTimeLimit (New-TimeSpan -Seconds {config.max_run_seconds + 2 * SUPERVISOR_GRACE_SECONDS})"
@@ -914,8 +919,10 @@ def _windows_snapshot_script(config: HostJobConfig) -> str:
             "  exit 0",
             "}",
             "$identity = [Security.Principal.WindowsIdentity]::GetCurrent()",
-            "$currentUser = [string]$identity.Name",
-            "$leafUser = $currentUser.Substring($currentUser.LastIndexOf('\\') + 1)",
+            "$operator = [Security.Principal.WindowsPrincipal]::new($identity)",
+            f"$targetUser = Get-LocalUser -Name {_ps_quote(config.host_user)} -ErrorAction Stop",
+            "$targetAccount = [Security.Principal.NTAccount]::new($env:COMPUTERNAME, [string]$targetUser.Name)",
+            "$targetSid = $targetAccount.Translate([Security.Principal.SecurityIdentifier]).Value",
             "$taskSid = ''",
             "try {",
             "  $taskAccount = [Security.Principal.NTAccount]::new([string]$task.Principal.UserId)",
@@ -929,9 +936,9 @@ def _windows_snapshot_script(config: HostJobConfig) -> str:
                 "$binding = (@($task.Actions).Count -eq 1) -and "
                 f"($action.Execute -eq {_ps_quote(os.fspath(config.python_executable))}) -and "
                 f"($action.Arguments -eq {_ps_quote(arguments)}) -and "
-                f"(-not $identity.IsSystem) -and ($leafUser -ieq {_ps_quote(config.host_user)}) -and "
-                "($taskSid -eq $identity.User.Value) -and "
-                "($task.Principal.LogonType -eq 'S4U') -and "
+                "($operator.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) -and "
+                "($taskSid -eq $targetSid) -and "
+                "($task.Principal.LogonType -eq 'Interactive') -and "
                 "($task.Principal.RunLevel -eq 'Limited') -and "
                 "($task.Settings.MultipleInstances -eq 'IgnoreNew') -and "
                 "($task.Settings.ExecutionTimeLimit -eq $expectedLimit)"
@@ -974,12 +981,16 @@ def _linux_start_argv(config: HostJobConfig) -> list[str]:
         "--property=KillMode=control-group",
         "--property=UMask=0077",
         "--property=NoNewPrivileges=no",
-        "--property=PrivateTmp=yes",
+        "--property=PrivateTmp=no",
         "--property=TimeoutStartSec=120",
         f"--property=RuntimeMaxSec={config.max_run_seconds + 2 * SUPERVISOR_GRACE_SECONDS}",
+        "--setenv=DISPLAY=:99",
+        "--setenv=HOME=/home/gate13",
+        "--setenv=XDG_RUNTIME_DIR=/qualification/runtime",
+        "/usr/bin/dbus-run-session",
         os.fspath(config.python_executable),
         os.fspath(config.adapter_path),
-        "execute",
+        "execute-linux-desktop-session",
         "--config",
         os.fspath(config.config_path),
     ]
@@ -1019,12 +1030,25 @@ def _systemd_exec_start_matches(config: HostJobConfig, value: str) -> bool:
     )
     if matched is None:
         return False
-    expected_argv = f"{config.python_executable} {config.adapter_path} " f"execute --config {config.config_path}"
+    expected_argv = (
+        f"/usr/bin/dbus-run-session {config.python_executable} {config.adapter_path} "
+        f"execute-linux-desktop-session --config {config.config_path}"
+    )
     return (
-        matched["path"] == os.fspath(config.python_executable)
+        matched["path"] == "/usr/bin/dbus-run-session"
         and matched["argv"] == expected_argv
         and matched["ignore"] == "no"
     )
+
+
+def _systemd_environment_matches(value: str) -> bool:
+    assignments = re.findall(r'(?:^|\s)(?:"([^"\\]*(?:\\.[^"\\]*)*)"|(\S+))', value)
+    rendered = {quoted or plain for quoted, plain in assignments}
+    return rendered == {
+        "DISPLAY=:99",
+        "HOME=/home/gate13",
+        "XDG_RUNTIME_DIR=/qualification/runtime",
+    }
 
 
 def _linux_snapshot(config: HostJobConfig, runner: Runner) -> Mapping[str, Any]:
@@ -1047,6 +1071,7 @@ def _linux_snapshot(config: HostJobConfig, runner: Runner) -> Mapping[str, Any]:
         "--property=UMask",
         "--property=NoNewPrivileges",
         "--property=PrivateTmp",
+        "--property=Environment",
         "--property=TimeoutStartUSec",
         "--property=RuntimeMaxUSec",
     ]
@@ -1074,6 +1099,7 @@ def _linux_snapshot(config: HostJobConfig, runner: Runner) -> Mapping[str, Any]:
         "UMask",
         "NoNewPrivileges",
         "PrivateTmp",
+        "Environment",
         "TimeoutStartUSec",
         "RuntimeMaxUSec",
     }
@@ -1091,7 +1117,8 @@ def _linux_snapshot(config: HostJobConfig, runner: Runner) -> Mapping[str, Any]:
         and fields["KillMode"] == "control-group"
         and fields["UMask"] == "0077"
         and fields["NoNewPrivileges"] == "no"
-        and fields["PrivateTmp"] == "yes"
+        and fields["PrivateTmp"] == "no"
+        and _systemd_environment_matches(fields["Environment"])
         and _parse_systemd_seconds(fields["TimeoutStartUSec"]) == 120.0
         and _parse_systemd_seconds(fields["RuntimeMaxUSec"]) == config.max_run_seconds + 2 * SUPERVISOR_GRACE_SECONDS
     )
@@ -1168,9 +1195,45 @@ def _render(value: Mapping[str, Any]) -> str:
     return json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
 
 
+def _execute_linux_desktop_session(config_path: Path) -> Mapping[str, Any]:
+    if not sys.platform.startswith("linux"):
+        raise HostJobError("Linux desktop session used on another platform")
+    expected = {
+        "DISPLAY": ":99",
+        "HOME": "/home/gate13",
+        "XDG_RUNTIME_DIR": "/qualification/runtime",
+    }
+    if any(os.environ.get(key) != value for key, value in expected.items()):
+        raise HostJobError("Linux desktop environment is not bound")
+    if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        raise HostJobError("Linux D-Bus session is absent")
+    try:
+        keyring = subprocess.run(
+            ["/usr/bin/gnome-keyring-daemon", "--unlock", "--components=secrets"],
+            input="\n",
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HostJobError("Linux Secret Service could not start") from exc
+    if keyring.returncode != 0 or len(keyring.stdout.encode("utf-8")) > 32_768:
+        raise HostJobError("Linux Secret Service could not start")
+    for line in keyring.stdout.splitlines():
+        name, separator, value = line.partition("=")
+        if not separator or name not in {"GNOME_KEYRING_CONTROL", "SSH_AUTH_SOCK"} or not value:
+            raise HostJobError("Linux Secret Service environment is invalid")
+        os.environ[name] = value
+    return execute(config_path)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("action", choices=("start", "status", "execute", "collect", "cleanup"))
+    parser.add_argument(
+        "action",
+        choices=("start", "status", "execute", "execute-linux-desktop-session", "collect", "cleanup"),
+    )
     parser.add_argument("--config", required=True)
     try:
         arguments = parser.parse_args(sys.argv[1:] if argv is None else argv)
@@ -1182,6 +1245,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(_render(observe_job(config, native_snapshot(config))))
         elif arguments.action == "execute":
             terminal = execute(config_path)
+            print(_render(terminal))
+            return 0 if terminal["result"] == "passed" else 2
+        elif arguments.action == "execute-linux-desktop-session":
+            terminal = _execute_linux_desktop_session(config_path)
             print(_render(terminal))
             return 0 if terminal["result"] == "passed" else 2
         elif arguments.action == "collect":

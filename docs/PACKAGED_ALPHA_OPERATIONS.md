@@ -115,6 +115,22 @@ Run it as the ordinary qualification user with tracing disabled:
 python gate13_automated_playthrough.py --config gate13-windows-run.json > gate13-windows-evidence.json
 ~~~
 
+The replay is desktop automation, not a headless smoke test. On Windows, provision with
+[gate13_windows_client_startup.ps1](../scripts/gate13_windows_client_startup.ps1), wait
+for the ordinary `M` account to own a real console session, and let the privileged host
+adapter register the bound task with `Interactive` logon and `Limited` run level. `S4U`,
+service-session, and SSH-session launches are invalid because Qt may start without an
+actual user desktop or access to that user's Credential Manager.
+
+On Linux, provision with
+[gate13_linux_client_startup.sh](../scripts/gate13_linux_client_startup.sh). It installs
+the package's complete XCB runtime closure, starts a TCP-disabled Xvfb display, and
+prepares the ordinary `gate13` account. The host adapter runs the replay inside a private
+`dbus-run-session`, starts GNOME Keyring's Secret Service, and passes only the fixed
+display, home, and runtime-directory values into the bounded service. Do not substitute
+`QT_QPA_PLATFORM=offscreen`: the qualification requires two real X11 windows and the
+same native credential session across restart.
+
 Use `platform: linux` and the exact Linux executable/archive for Linux. The durable
 Gate 13 host-job adapter accepts this Python entrypoint on both platforms, binds the
 config and source commit, and validates the aggregate before collection. A cloud replay
