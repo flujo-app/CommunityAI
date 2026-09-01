@@ -7,7 +7,8 @@
   "recorded_at": "2026-09-01T20:58:50Z",
   "source": {
     "durable_controller_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
-    "host_job_adapter_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
+    "host_job_adapter_commit": "d5dc3537eb4a1e405ed9a6bfde0236bda0a58d7f",
+    "client_session_bootstrap_commit": "d5dc3537eb4a1e405ed9a6bfde0236bda0a58d7f",
     "route_runtime_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
     "route_setup_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
     "package_commit": "1476d67f3887dfd0de2acfb1305cbcca9975614f",
@@ -36,9 +37,21 @@
     },
     "host_job_adapter": {
       "path": "scripts/gate13_host_job.py",
-      "source_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
-      "sha256": "f9bd388a61226df6ac3fcadb5bdc68134e2ccb741718f4a4c65543cfc4180cdb",
-      "bytes": 42513
+      "source_commit": "d5dc3537eb4a1e405ed9a6bfde0236bda0a58d7f",
+      "sha256": "3fd232fa291c849fb45b0432b556bf01a6cb22650d7911389eb533e2f95ce3ff",
+      "bytes": 45573
+    },
+    "windows_client_startup": {
+      "path": "scripts/gate13_windows_client_startup.ps1",
+      "source_commit": "d5dc3537eb4a1e405ed9a6bfde0236bda0a58d7f",
+      "sha256": "5b59ca91970af3459d06054f466bad910cde4aadf4e7e3c3e101a931e26b93a8",
+      "bytes": 8042
+    },
+    "linux_client_startup": {
+      "path": "scripts/gate13_linux_client_startup.sh",
+      "source_commit": "d5dc3537eb4a1e405ed9a6bfde0236bda0a58d7f",
+      "sha256": "72ac32fb78946ac09b60bbef571a944a018d790871fafbb818ec7006bee292c6",
+      "bytes": 2138
     },
     "lifecycle_evidence_validator": {
       "path": "scripts/gate13_packaged_lifecycle.py",
