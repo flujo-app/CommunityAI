@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -231,6 +232,19 @@ def test_linux_unit_is_bounded_non_root_and_non_restarting(config_factory):
     assert f"--property=RuntimeMaxSec={config.max_run_seconds + 2 * host_job.SUPERVISOR_GRACE_SECONDS}" in argv
     assert "--wait" not in argv
     assert host_job._entrypoint_argv(config)[-2:] == [
+        "--config",
+        str(config.lifecycle_config_path),
+    ]
+
+
+def test_windows_automated_python_replay_uses_the_bound_python(config_factory):
+    path, _raw = config_factory("windows")
+    config = host_job.load_config(path)
+    automated = replace(config, entrypoint_path=config.entrypoint_path.with_suffix(".py"))
+
+    assert host_job._entrypoint_argv(automated) == [
+        str(config.python_executable),
+        str(automated.entrypoint_path),
         "--config",
         str(config.lifecycle_config_path),
     ]

@@ -7,6 +7,15 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Gate 13's successful manual desktop flow now has a bounded automated replay. The
+  production package can open its real Qt window in a hidden qualification mode, perform
+  localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,
+  prove sharing resumed, click Pause, and infer again without retaining prompt, response,
+  credential, endpoint, or path data. A standard-library outer runner verifies the exact
+  production archive, runs all four packaged self-tests, executes both sessions, validates
+  canonical evidence, and removes its run temporaries. The durable host-job boundary now
+  accepts the Python replay entrypoint on Windows and Linux. Local real-window and contract
+  tests pass; no paid clean-host replay or new release artifact is claimed by this change.
 - The owner raised the current combined GCP/Fly public-alpha accounting epoch to USD 500 on
   2026-08-31. The existing USD 52 committed maximum remains charged. Run
   `gate13-20260831-b` reserved USD 56 but failed before VM creation when its two IAP tags reached

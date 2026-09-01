@@ -21,16 +21,12 @@ LINUX_DIGEST = "sha256:" + "c" * 64
 
 def reserved_ledger_text(*, old_digest, new_digest):
     lines = LEDGER.read_text(encoding="utf-8").splitlines(keepends=True)
-    matches = [
-        index for index, line in enumerate(lines) if line.startswith("| gate13-20260831-a |")
-    ]
+    matches = [index for index, line in enumerate(lines) if line.startswith("| gate13-20260831-a |")]
     assert len(matches) == 1
     index = matches[0]
     assert old_digest in lines[index]
     assert lines[index].rstrip().endswith("| CLEANED-COMMITTED |")
-    lines[index] = lines[index].replace(old_digest, new_digest, 1).replace(
-        "| CLEANED-COMMITTED |", "| RESERVED |", 1
-    )
+    lines[index] = lines[index].replace(old_digest, new_digest, 1).replace("| CLEANED-COMMITTED |", "| RESERVED |", 1)
     return "".join(lines)
 
 
@@ -189,9 +185,7 @@ def test_non_reserved_ledger_allows_cleanup_only():
 
 def test_reserved_parallel_client_plan_cannot_start(tmp_path):
     ledger = tmp_path / "ledger.md"
-    digest = json.loads(AUTHORIZATION.read_text(encoding="utf-8"))[
-        "provider_plan_digest"
-    ]
+    digest = json.loads(AUTHORIZATION.read_text(encoding="utf-8"))["provider_plan_digest"]
     ledger.write_text(
         reserved_ledger_text(old_digest=digest, new_digest=digest),
         encoding="utf-8",
@@ -467,6 +461,54 @@ def test_collect_binds_canonical_evidence_then_deletes_windows(monkeypatch, plan
     )
     assert after_delete["phase"] == "WINDOWS_COLLECTED"
     assert after_delete["next_action"] == "start_linux"
+
+
+def test_collect_accepts_current_automated_desktop_replay(plan):
+    state = controller.reconcile(
+        controller.initial_state(plan),
+        observation(plan, route=True, windows=True, route_job="passed", windows_job="passed"),
+        plan,
+        now_unix=NOW,
+    )
+    evidence = {
+        "schema_version": 1,
+        "scope": "gate13-automated-desktop-replay",
+        "run_id": f"{plan.run_id}-windows",
+        "platform": "windows",
+        "result": "passed",
+        "source_commit": plan.windows_source_commit,
+        "package": {
+            "sha256": "sha256:" + plan.windows_package_sha256.removeprefix("sha256:"),
+            "bytes": plan.windows_package_bytes,
+            "verified_before_run": True,
+            "self_test_count": 4,
+        },
+        "model_id": "Qwen3.5 2B",
+        "manifest_digest": "sha256:" + plan.qwen_manifest.removeprefix("sha256:"),
+        "real_window_sessions": 2,
+        "localhost_inference_count": 2,
+        "policy_dialog_saved": True,
+        "start_clicked": True,
+        "restart_resume_observed": True,
+        "pause_clicked": True,
+        "sharing_paused": True,
+        "session_duration_seconds": {"start": 120.0, "resume_pause": 90.0},
+        "privacy_safe": True,
+        "qualification_temporaries_removed": True,
+    }
+    payload = (json.dumps(evidence, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+
+    collected = controller.collect_platform(
+        state,
+        plan,
+        platform="windows",
+        evidence_payload=payload,
+        observed_digest=digest,
+    )
+
+    assert collected["phase"] == "WINDOWS_DELETING"
+    assert collected["windows_consumed"] is True
 
 
 def test_partial_or_wrong_digest_evidence_cannot_advance(plan):

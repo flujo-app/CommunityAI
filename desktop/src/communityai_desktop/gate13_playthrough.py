@@ -1,0 +1,617 @@
+"""Automate the real packaged Gate 13 desktop playthrough.
+
+This module is deliberately part of the frozen desktop rather than an external UI
+mock.  A qualification invocation opens the normal window, uses the real sharing
+policy dialog and Start/Pause buttons, and performs one bounded localhost inference
+with an ephemeral client key.  It retains only bounded acceptance facts.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import re
+import stat
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+from communityai_desktop.client import normalize_loopback_url
+
+SCHEMA_VERSION = 1
+SCOPE = "gate13-packaged-desktop-playthrough"
+MAX_CONFIG_BYTES = 65_536
+MAX_RESPONSE_BYTES = 1_048_576
+QUALIFICATION_KEY_LABEL = "Gate 13 automated qualification"
+
+_RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+_MODEL_RE = re.compile(r"[ -~]{1,128}")
+_POLICY_FIELDS = {
+    "sharing_enabled",
+    "allowed_models",
+    "preferred_models",
+    "denied_models",
+    "max_disk_space",
+    "max_vram",
+    "max_bandwidth_mbps",
+    "max_power_watts",
+    "pause_timeout",
+    "schedule",
+}
+_CONFIG_FIELDS = {
+    "schema_version",
+    "run_id",
+    "stage",
+    "model_id",
+    "manifest_digest",
+    "total_blocks",
+    "policy",
+    "timeout_seconds",
+    "inference_timeout_seconds",
+}
+
+
+class PlaythroughError(ValueError):
+    """A qualification plan or observed desktop state failed closed."""
+
+
+def _reject_constant(_value: str) -> None:
+    raise PlaythroughError("configuration contains a non-finite value")
+
+
+def _unique_object(pairs: Sequence[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise PlaythroughError("configuration contains a duplicate field")
+        value[key] = item
+    return value
+
+
+def _regular_bytes(path: Path, maximum: int) -> bytes:
+    path = Path(path)
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise PlaythroughError("configuration is unavailable") from exc
+    reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    if reparse or path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 1 <= metadata.st_size <= maximum:
+        raise PlaythroughError("configuration is not a bounded regular file")
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise PlaythroughError("configuration is unreadable") from exc
+
+
+def _bounded_number(value: Any, label: str, *, minimum: float, maximum: float) -> float:
+    if type(value) not in (int, float):
+        raise PlaythroughError(f"{label} is invalid")
+    rendered = float(value)
+    if not math.isfinite(rendered) or not minimum <= rendered <= maximum:
+        raise PlaythroughError(f"{label} is invalid")
+    return rendered
+
+
+def _selectors(value: Any, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) > 8:
+        raise PlaythroughError(f"{label} is invalid")
+    clean: list[str] = []
+    folded: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or _MODEL_RE.fullmatch(item) is None or item != item.strip():
+            raise PlaythroughError(f"{label} is invalid")
+        canonical = item.casefold()
+        if canonical in folded:
+            raise PlaythroughError(f"{label} contains a duplicate selector")
+        folded.add(canonical)
+        clean.append(item)
+    return tuple(clean)
+
+
+def _policy(value: Any, model_id: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _POLICY_FIELDS:
+        raise PlaythroughError("sharing policy schema is invalid")
+    allowed = _selectors(value["allowed_models"], "allowed models")
+    preferred = _selectors(value["preferred_models"], "preferred models")
+    denied = _selectors(value["denied_models"], "denied models")
+    if value["sharing_enabled"] is not True:
+        raise PlaythroughError("sharing must be enabled for the start stage")
+    if model_id not in allowed or model_id not in preferred or denied:
+        raise PlaythroughError("sharing policy does not select the qualification model")
+    if not isinstance(value["max_disk_space"], str) or not 1 <= len(value["max_disk_space"]) <= 32:
+        raise PlaythroughError("storage ceiling is invalid")
+    if not isinstance(value["max_vram"], str) or not 1 <= len(value["max_vram"]) <= 32:
+        raise PlaythroughError("memory ceiling is invalid")
+    bandwidth = _bounded_number(value["max_bandwidth_mbps"], "bandwidth ceiling", minimum=0.001, maximum=1_000_000)
+    power = _bounded_number(value["max_power_watts"], "power ceiling", minimum=0.001, maximum=1_000_000)
+    pause = _bounded_number(value["pause_timeout"], "pause timeout", minimum=1, maximum=300)
+    if value["schedule"] is not None:
+        raise PlaythroughError("Gate 13 qualification requires an unrestricted schedule")
+    return {
+        "sharing_enabled": True,
+        "allowed_models": list(allowed),
+        "preferred_models": list(preferred),
+        "denied_models": list(denied),
+        "max_disk_space": value["max_disk_space"],
+        "max_vram": value["max_vram"],
+        "max_bandwidth_mbps": bandwidth,
+        "max_power_watts": power,
+        "pause_timeout": pause,
+        "schedule": None,
+    }
+
+
+@dataclass(frozen=True)
+class PlaythroughPlan:
+    run_id: str
+    stage: str
+    model_id: str
+    manifest_digest: str
+    total_blocks: int
+    policy: Mapping[str, Any]
+    timeout_seconds: float
+    inference_timeout_seconds: float
+
+    @classmethod
+    def load(cls, path: Path) -> "PlaythroughPlan":
+        payload = _regular_bytes(path, MAX_CONFIG_BYTES)
+        try:
+            raw = json.loads(
+                payload.decode("utf-8"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_constant,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PlaythroughError("configuration is invalid JSON") from exc
+        if not isinstance(raw, dict) or set(raw) != _CONFIG_FIELDS or raw.get("schema_version") != SCHEMA_VERSION:
+            raise PlaythroughError("configuration schema is invalid")
+        run_id = raw["run_id"]
+        stage = raw["stage"]
+        model_id = raw["model_id"]
+        digest = raw["manifest_digest"]
+        total_blocks = raw["total_blocks"]
+        if not isinstance(run_id, str) or _RUN_RE.fullmatch(run_id) is None:
+            raise PlaythroughError("run id is invalid")
+        if stage not in ("start", "resume_pause"):
+            raise PlaythroughError("playthrough stage is invalid")
+        if not isinstance(model_id, str) or _MODEL_RE.fullmatch(model_id) is None or model_id != model_id.strip():
+            raise PlaythroughError("model id is invalid")
+        if not isinstance(digest, str) or _DIGEST_RE.fullmatch(digest) is None:
+            raise PlaythroughError("manifest digest is invalid")
+        if type(total_blocks) is not int or not 1 <= total_blocks <= 512:
+            raise PlaythroughError("block count is invalid")
+        timeout = _bounded_number(raw["timeout_seconds"], "playthrough timeout", minimum=30, maximum=3_600)
+        inference_timeout = _bounded_number(
+            raw["inference_timeout_seconds"], "inference timeout", minimum=10, maximum=600
+        )
+        return cls(
+            run_id=run_id,
+            stage=stage,
+            model_id=model_id,
+            manifest_digest=digest,
+            total_blocks=total_blocks,
+            policy=_policy(raw["policy"], model_id),
+            timeout_seconds=timeout,
+            inference_timeout_seconds=inference_timeout,
+        )
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ARG002
+        return None
+
+
+def _completion_request(url: str, secret: str, timeout: float) -> Mapping[str, Any]:
+    body = json.dumps(
+        {
+            "model": "auto",
+            "messages": [{"role": "user", "content": "Reply with one short word."}],
+            "temperature": 0,
+            "max_tokens": 8,
+            "n": 1,
+            "stream": False,
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request = Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    opener = build_opener(ProxyHandler({}), _RejectRedirects())
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            if response.status != 200 or response.headers.get_content_type() != "application/json":
+                raise PlaythroughError("localhost inference was rejected")
+            payload = response.read(MAX_RESPONSE_BYTES + 1)
+    except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        raise PlaythroughError("localhost inference failed") from exc
+    if not 1 <= len(payload) <= MAX_RESPONSE_BYTES:
+        raise PlaythroughError("localhost inference response is invalid")
+    try:
+        value = json.loads(payload.decode("utf-8"), parse_constant=_reject_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PlaythroughError("localhost inference response is invalid") from exc
+    if not isinstance(value, dict):
+        raise PlaythroughError("localhost inference response is invalid")
+    return value
+
+
+def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[str, Any]:
+    """Run one response-content-free localhost inference and restore the API-key baseline."""
+
+    baseline_items = [item for item in controller.client.list_keys() if item.get("revoked_at") is None]
+    baseline = {item["id"] for item in baseline_items}
+    if not baseline:
+        raise PlaythroughError("a preexisting client key is required")
+    if any(item.get("label") == QUALIFICATION_KEY_LABEL for item in baseline_items):
+        raise PlaythroughError("a prior qualification key remains active")
+    created_id = ""
+    secret = ""
+    failed = False
+    cleanup_failed = False
+    completion_count = 0
+    generated_token_count = 0
+    try:
+        status = controller.client.status()
+        selection = status["auto_selection"]
+        if (
+            selection.get("status") != "selected"
+            or selection.get("model") != plan.model_id
+            or selection.get("manifest_digest") != plan.manifest_digest
+        ):
+            raise PlaythroughError("automatic selection changed before inference")
+        created = controller.client.create_key(QUALIFICATION_KEY_LABEL)
+        created_id = created.get("key", {}).get("id", "")
+        secret = created.get("secret", "")
+        if (
+            not isinstance(created_id, str)
+            or not created_id
+            or not isinstance(secret, str)
+            or not 1 <= len(secret) <= 512
+        ):
+            raise PlaythroughError("temporary client key response is invalid")
+        base = normalize_loopback_url(status["openai_base_url"])
+        completion = _completion_request(f"{base}/v1/chat/completions", secret, plan.inference_timeout_seconds)
+        if completion.get("object") != "chat.completion" or completion.get("model") != plan.model_id:
+            raise PlaythroughError("localhost inference identity is invalid")
+        choices = completion.get("choices")
+        usage = completion.get("usage")
+        if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
+            raise PlaythroughError("localhost inference completion count is invalid")
+        message = choices[0].get("message")
+        if (
+            not isinstance(message, dict)
+            or not isinstance(message.get("content"), str)
+            or not message["content"].strip()
+        ):
+            raise PlaythroughError("localhost inference content is empty")
+        generated = usage.get("completion_tokens") if isinstance(usage, dict) else None
+        if type(generated) is not int or not 1 <= generated <= 8:
+            raise PlaythroughError("localhost inference token count is invalid")
+        completion_count = 1
+        generated_token_count = generated
+    except BaseException:
+        failed = True
+    finally:
+        secret = ""
+        try:
+            active = {item["id"] for item in controller.client.list_keys() if item.get("revoked_at") is None}
+            candidates = active - baseline
+            if created_id and created_id in active:
+                candidates.add(created_id)
+            if len(candidates) != 1:
+                raise PlaythroughError("temporary client key identity is ambiguous")
+            controller.client.revoke_key(next(iter(candidates)))
+            after = {item["id"] for item in controller.client.list_keys() if item.get("revoked_at") is None}
+            if after != baseline:
+                raise PlaythroughError("temporary client key cleanup failed")
+        except BaseException:
+            cleanup_failed = True
+    if failed or cleanup_failed:
+        raise PlaythroughError("localhost inference or key cleanup failed")
+    return {
+        "passed": True,
+        "model_id": plan.model_id,
+        "manifest_digest": plan.manifest_digest,
+        "completion_count": completion_count,
+        "generated_token_count": generated_token_count,
+        "response_content_retained": False,
+        "token_identifiers_retained": False,
+        "temporary_key_removed": True,
+    }
+
+
+def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
+    destination = Path(path).absolute()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() and (destination.is_symlink() or not destination.is_file()):
+        raise PlaythroughError("evidence destination is unsafe")
+    payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    temporary_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=".gate13-playthrough-", suffix=".tmp", dir=destination.parent, delete=False
+        ) as out:
+            temporary_name = out.name
+            out.write(payload)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary_name, destination)
+        temporary_name = ""
+    except OSError as exc:
+        raise PlaythroughError("evidence could not be persisted") from exc
+    finally:
+        if temporary_name:
+            try:
+                Path(temporary_name).unlink()
+            except OSError:
+                pass
+
+
+class Gate13Playthrough:
+    """A bounded Qt state machine that drives the real packaged controls."""
+
+    def __init__(
+        self,
+        plan: PlaythroughPlan,
+        evidence_path: Path,
+        *,
+        screenshot_path: Path | None = None,
+        inference_runner: Callable[[Any, PlaythroughPlan], Mapping[str, Any]] = qualify_localhost_inference,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self.plan = plan
+        self.evidence_path = Path(evidence_path)
+        self.screenshot_path = None if screenshot_path is None else Path(screenshot_path)
+        self._inference_runner = inference_runner
+        self._clock = clock
+        self._started = clock()
+        self._state = "wait_ready"
+        self._done = False
+        self._inference: Mapping[str, Any] | None = None
+        self._window = None
+        self._application = None
+        self._qt: Mapping[str, Any] = {}
+        self._timer = None
+
+    def install(self, window: Any, application: Any, qt: Mapping[str, Any]) -> None:
+        self._window = window
+        self._application = application
+        self._qt = qt
+        timer_type = qt["QTimer"]
+        self._timer = timer_type(window)
+        self._timer.setInterval(200)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+        timer_type.singleShot(max(1, int(self.plan.timeout_seconds * 1_000)), self._timeout)
+
+    def _timeout(self) -> None:
+        if not self._done:
+            self._fail()
+
+    def _ready(self) -> bool:
+        window = self._window
+        if window is None or window._controller is None or window._busy:
+            return False
+        snapshot = window._snapshot
+        selection = snapshot.get("auto_selection", {})
+        models = snapshot.get("models", [])
+        selected = next((item for item in models if item.get("id") == self.plan.model_id), None)
+        return bool(
+            selection.get("status") == "selected"
+            and selection.get("model") == self.plan.model_id
+            and selection.get("manifest_digest") == self.plan.manifest_digest
+            and selection.get("covered_blocks") == self.plan.total_blocks
+            and selection.get("total_blocks") == self.plan.total_blocks
+            and isinstance(selection.get("peer_count"), int)
+            and selection["peer_count"] > 0
+            and selected is not None
+            and selected.get("route_complete") is True
+            and selected.get("covered_blocks") == self.plan.total_blocks
+            and selected.get("total_blocks") == self.plan.total_blocks
+        )
+
+    def _tick(self) -> None:
+        if self._done or self._window is None:
+            return
+        try:
+            if self._state == "wait_ready":
+                if not self._ready():
+                    return
+                if self.plan.stage == "start":
+                    self._begin_inference("wait_inference_before_policy")
+                else:
+                    self._state = "wait_resumed"
+            elif self._state == "wait_policy":
+                contribution = self._window._snapshot.get("contribution", {})
+                if not self._window._busy and contribution.get("policy") == self.plan.policy:
+                    self._click_start()
+            elif self._state == "wait_started":
+                contribution = self._window._snapshot.get("contribution", {})
+                workers = self._window._snapshot.get("workers", [])
+                active = any(item.get("model") == self.plan.model_id and item.get("sharing_active") for item in workers)
+                if contribution.get("intent_enabled") and contribution.get("enabled") and active:
+                    self._pass(started=True)
+            elif self._state == "wait_resumed":
+                contribution = self._window._snapshot.get("contribution", {})
+                workers = self._window._snapshot.get("workers", [])
+                active = any(item.get("model") == self.plan.model_id and item.get("sharing_active") for item in workers)
+                if contribution.get("intent_enabled") and contribution.get("enabled") and active:
+                    self._click_pause()
+            elif self._state == "wait_paused":
+                contribution = self._window._snapshot.get("contribution", {})
+                workers = self._window._snapshot.get("workers", [])
+                target = [item for item in workers if item.get("model") == self.plan.model_id]
+                if (
+                    not self._window._busy
+                    and not contribution.get("intent_enabled")
+                    and not contribution.get("enabled")
+                    and target
+                    and all(not item.get("desired_running") and not item.get("sharing_active") for item in target)
+                ):
+                    self._begin_inference("wait_inference_after_pause")
+        except BaseException:
+            self._fail()
+
+    def _begin_inference(self, waiting_state: str) -> None:
+        self._state = waiting_state
+        controller = self._window._controller
+
+        def finished(result: Mapping[str, Any]) -> None:
+            self._inference = dict(result)
+            if waiting_state == "wait_inference_before_policy":
+                self._begin_policy_edit()
+            else:
+                self._pass(paused=True)
+
+        self._window._submit(
+            lambda: self._inference_runner(controller, self.plan),
+            finished,
+            lambda _message: self._fail(),
+        )
+
+    def _begin_policy_edit(self) -> None:
+        if self._window.edit_policy_button.isEnabled() is False:
+            self._fail()
+            return
+        self._state = "editing_policy"
+        self._qt["QTimer"].singleShot(100, self._fill_policy_dialog)
+        self._window.edit_policy_button.click()
+
+    def _fill_policy_dialog(self) -> None:
+        try:
+            dialog = self._window.findChild(self._qt["QDialog"], "sharingPolicyDialog")
+            if dialog is None:
+                raise PlaythroughError("sharing policy dialog did not open")
+            checkbox = dialog.findChild(self._qt["QCheckBox"], "policy_sharing_enabled")
+            checkbox.setChecked(True)
+            for field in ("allowed_models", "preferred_models", "denied_models"):
+                editor = dialog.findChild(self._qt["QPlainTextEdit"], f"policy_{field}")
+                editor.setPlainText("\n".join(self.plan.policy[field]))
+            for field in (
+                "max_disk_space",
+                "max_vram",
+                "max_bandwidth_mbps",
+                "max_power_watts",
+                "pause_timeout",
+            ):
+                editor = dialog.findChild(self._qt["QLineEdit"], f"policy_{field}")
+                value = self.plan.policy[field]
+                editor.setText(f"{value:g}" if isinstance(value, float) else str(value))
+            schedule = dialog.findChild(self._qt["QPlainTextEdit"], "policy_schedule")
+            schedule.clear()
+            buttons = dialog.findChild(self._qt["QDialogButtonBox"], "sharingPolicyButtons")
+            save = buttons.button(self._qt["QDialogButtonBox"].StandardButton.Save)
+            self._state = "wait_policy"
+            save.click()
+        except BaseException:
+            self._fail()
+
+    def _click_start(self) -> None:
+        button = self._window.master_share_button
+        if button.text() != "Start sharing" or not button.isEnabled():
+            return
+        self._state = "wait_started"
+        button.click()
+
+    def _click_pause(self) -> None:
+        button = self._window.master_share_button
+        if button.text() != "Pause sharing" or not button.isEnabled():
+            return
+        self._state = "wait_paused"
+        button.click()
+
+    def _base_result(self, result: str) -> dict[str, Any]:
+        duration = max(0.0, self._clock() - self._started)
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "scope": SCOPE,
+            "run_id": self.plan.run_id,
+            "stage": self.plan.stage,
+            "result": result,
+            "model_id": self.plan.model_id,
+            "manifest_digest": self.plan.manifest_digest,
+            "duration_seconds": round(duration, 6),
+        }
+
+    def _pass(self, *, started: bool = False, paused: bool = False) -> None:
+        if self._done or self._inference is None:
+            self._fail()
+            return
+        value = self._base_result("passed")
+        value.update(
+            {
+                "route": {
+                    "rendered_in_real_window": True,
+                    "complete": True,
+                    "covered_blocks": self.plan.total_blocks,
+                    "total_blocks": self.plan.total_blocks,
+                },
+                "inference": dict(self._inference),
+                "ui": {
+                    "real_window_opened": True,
+                    "policy_dialog_saved": self.plan.stage == "start",
+                    "start_clicked": started,
+                    "sharing_running_observed": started,
+                    "resumed_after_restart_observed": paused,
+                    "pause_clicked": paused,
+                    "sharing_paused_observed": paused,
+                },
+                "limits": {
+                    "storage": True,
+                    "memory_or_vram": True,
+                    "bandwidth": True,
+                    "power": True,
+                    "pause_timeout": True,
+                },
+                "privacy": {
+                    "prompt_retained": False,
+                    "response_content_retained": False,
+                    "token_identifiers_retained": False,
+                    "credentials_retained": False,
+                    "paths_retained": False,
+                    "endpoints_retained": False,
+                },
+            }
+        )
+        self._finish(value)
+
+    def _fail(self) -> None:
+        if self._done:
+            return
+        value = self._base_result("failed")
+        value["failure_code"] = "playthrough_failed"
+        self._finish(value)
+
+    def _finish(self, value: Mapping[str, Any]) -> None:
+        self._done = True
+        if self._timer is not None:
+            self._timer.stop()
+        try:
+            if self.screenshot_path is not None and self._window is not None:
+                self.screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                if not self._window.grab().save(str(self.screenshot_path)):
+                    raise PlaythroughError("playthrough screenshot failed")
+            _atomic_json(self.evidence_path, value)
+        except BaseException:
+            fallback = self._base_result("failed")
+            fallback["failure_code"] = "evidence_write_failed"
+            try:
+                _atomic_json(self.evidence_path, fallback)
+            except BaseException:
+                pass
+        finally:
+            if self._application is not None:
+                self._application.quit()

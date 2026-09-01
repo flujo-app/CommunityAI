@@ -332,6 +332,11 @@ def load_config(path: Path) -> HostJobConfig:
         values["entrypoint_path"].parent / expected_lifecycle_name,
     ):
         raise HostJobError("Windows lifecycle config is not beside its entrypoint")
+    entrypoint_suffix = values["entrypoint_path"].suffix.casefold()
+    if (platform == "windows" and entrypoint_suffix not in {".ps1", ".py"}) or (
+        platform == "linux" and entrypoint_suffix != ".py"
+    ):
+        raise HostJobError("entrypoint type is invalid")
     if not _same_path(values["python_executable"], HOST_PYTHON[platform]):
         raise HostJobError("Python executable changed")
     if not _same_path(values["adapter_path"], ADAPTER_PATH):
@@ -514,7 +519,7 @@ def _terminal(
 
 
 def _entrypoint_argv(config: HostJobConfig) -> list[str]:
-    if config.platform == "windows":
+    if config.platform == "windows" and config.entrypoint_path.suffix.casefold() == ".ps1":
         return [
             r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
             "-NoLogo",
@@ -534,11 +539,7 @@ def _entrypoint_argv(config: HostJobConfig) -> list[str]:
 
 
 def _bounded_environment(config: HostJobConfig) -> dict[str, str]:
-    allowed = (
-        WINDOWS_RUNTIME_ENVIRONMENT
-        if config.platform == "windows"
-        else ("HOME", "LANG", "LC_ALL", "TMPDIR")
-    )
+    allowed = WINDOWS_RUNTIME_ENVIRONMENT if config.platform == "windows" else ("HOME", "LANG", "LC_ALL", "TMPDIR")
     return {key: os.environ[key] for key in allowed if key in os.environ}
 
 
@@ -873,10 +874,7 @@ def _windows_register_script(config: HostJobConfig) -> str:
                 f"-Execute {_ps_quote(os.fspath(config.python_executable))} "
                 f"-Argument {_ps_quote(_windows_action_arguments(config))}"
             ),
-            (
-                "$principal = New-ScheduledTaskPrincipal -UserId $currentUser "
-                "-LogonType S4U -RunLevel Limited"
-            ),
+            ("$principal = New-ScheduledTaskPrincipal -UserId $currentUser " "-LogonType S4U -RunLevel Limited"),
             (
                 "$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew "
                 f"-ExecutionTimeLimit (New-TimeSpan -Seconds {config.max_run_seconds + 2 * SUPERVISOR_GRACE_SECONDS})"

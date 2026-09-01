@@ -59,6 +59,14 @@ Qwen inference. Every run instance, disk, and firewall is absent, global L4 usag
 and the protected bootstrap remains running. Gate 14 is now `READY`; Gate 15 owns
 publication of the source-fixed Windows archive plus reinstall/uninstall release work.
 
+The follow-up automated replay converts the successful manual sequence into two bounded
+real-window package sessions: infer/edit-policy/Start, then full process restart,
+resume/Pause/infer. It verifies the archive and four packaged self-tests, restores the
+temporary API-key baseline, emits strict privacy-safe evidence, and is accepted by the
+durable Windows/Linux host-job boundary. Local Qt and contract tests pass. This improves
+repeatability without claiming a new paid clean-host run; a live replay still requires a
+new source-bound package, cost authorization, route, clients, and cleanup evidence.
+
 Do not work on the post-alpha items in the deferred table while an alpha gate can progress.
 Missing Docker, snapshots, local GPU hardware, or local host capacity is not an external
 blocker: use authorized bounded infrastructure according to its role. GCP/local hosts

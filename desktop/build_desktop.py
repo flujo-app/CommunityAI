@@ -1269,6 +1269,8 @@ def main() -> int:
         str(build_root / "spec"),
         "--hidden-import",
         "communityai_desktop.pyside_shell",
+        "--hidden-import",
+        "communityai_desktop.gate13_playthrough",
         "--add-data",
         f"{icon_path}{os.pathsep}communityai_desktop/assets",
     ]

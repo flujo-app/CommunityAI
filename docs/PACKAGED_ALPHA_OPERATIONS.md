@@ -4,9 +4,16 @@ This runbook defines the Gate 13 clean-host lifecycle for the unsigned Community
 public-alpha packages. It applies to Windows and Linux. It does not apply to macOS,
 does not test credits, and does not authorize cloud creation.
 
-Passing the controller tests in this repository does **not** pass Gate 13. Gate 13
-requires one complete real packaged lifecycle on each supported platform against the
-published signed bootstrap and a live product route.
+Passing the controller tests in this repository does **not** constitute a fresh live
+qualification. A replay requires the exact packaged desktop on each supported platform
+against the published signed bootstrap and a live product route.
+
+Gate 13 and Gate 15 are now separate release gates. Gate 13 covers verified package
+startup, real-window inference, sharing-policy editing, Start, full application restart,
+automatic sharing resume, Pause, and post-restart inference. Manual replacement,
+retain/delete uninstall choices, and retained-data reinstall are Gate 15. The older
+16-phase contract later in this document remains a useful combined Gate 13/15 release
+exercise; it is not the shortest Gate 13 replay.
 
 ## Release boundary
 
@@ -41,6 +48,9 @@ Resolve these before touching a clean host:
 7. One privacy-safe run ID for each host.
 8. A copy of
    [gate13_packaged_lifecycle.py](../scripts/gate13_packaged_lifecycle.py).
+9. A copy of
+   [gate13_automated_playthrough.py](../scripts/gate13_automated_playthrough.py)
+   when replaying the current Gate 13 boundary.
 
 The controller is a standard-library qualification tool. It may be copied separately
 to the host, but it does not install or import CommunityAI source. The product runtime
@@ -48,7 +58,70 @@ must consist only of the unpacked release executables. A source checkout, editab
 install, repository PYTHONPATH, developer virtual environment, or invocation of
 python -m drift invalidates the run.
 
-## Evidence contract
+## Current automated Gate 13 replay
+
+The production desktop contains a hidden qualification mode that drives the real Qt
+window. It does not call the controller in place of UI actions. The first process opens
+the normal window, verifies the exact selected route, performs one localhost inference,
+opens and saves **Edit sharing limits**, clicks **Start sharing**, and observes the
+selected worker running. The process then exits normally so the desktop-owned node is
+stopped. A second fresh desktop process proves sharing resumed after restart, clicks
+**Pause sharing**, proves the worker stopped, and performs another localhost inference.
+
+Each inference creates one in-memory temporary client key, retains only completion and
+token counts, revokes the key, and proves the active-key baseline was restored. Session
+timeouts are bounded to one hour each. The outer runner verifies the production archive
+digest and byte size, runs the four packaged self-tests, executes both window sessions,
+validates their strict privacy-safe evidence, and removes its exact run-scoped temporary
+root.
+
+Prepare one absolute-path config beside the staged runner. `work_root` must not exist and
+its leaf must be exactly `.gate13-playthrough-<run_id>`:
+
+~~~json
+{
+  "schema_version": 1,
+  "run_id": "gate13-replay-a",
+  "platform": "windows",
+  "source_commit": "<40 lowercase hex>",
+  "package_archive": "<absolute verified production archive path>",
+  "package_sha256": "sha256:<64 lowercase hex>",
+  "package_bytes": 1,
+  "desktop_executable": "<absolute unpacked CommunityAI executable path>",
+  "work_root": "<absolute parent>/.gate13-playthrough-gate13-replay-a",
+  "model_id": "Qwen3.5 2B",
+  "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+  "total_blocks": 24,
+  "policy": {
+    "sharing_enabled": true,
+    "allowed_models": ["Qwen3.5 2B"],
+    "preferred_models": ["Qwen3.5 2B"],
+    "denied_models": [],
+    "max_disk_space": "20GiB",
+    "max_vram": "8GiB",
+    "max_bandwidth_mbps": 100.0,
+    "max_power_watts": 250.0,
+    "pause_timeout": 30.0,
+    "schedule": null
+  },
+  "session_timeout_seconds": 3600,
+  "inference_timeout_seconds": 600
+}
+~~~
+
+Run it as the ordinary qualification user with tracing disabled:
+
+~~~text
+python gate13_automated_playthrough.py --config gate13-windows-run.json > gate13-windows-evidence.json
+~~~
+
+Use `platform: linux` and the exact Linux executable/archive for Linux. The durable
+Gate 13 host-job adapter accepts this Python entrypoint on both platforms, binds the
+config and source commit, and validates the aggregate before collection. A cloud replay
+still requires a fresh cost authorization, route acceptance, exact clean clients, and
+provider cleanup; prior Gate 13 reservations must not be reused.
+
+## Combined 16-phase Gate 13/15 evidence contract
 
 Platform startup scripts perform product actions and write one local JSON phase result
 after each action. After final cleanup they place the ordered phase objects in one
@@ -487,7 +560,7 @@ Always finish exact product cleanup. A failed action is not permission to leave 
 worker, node, desktop process, persistent test data, credential, or phase temporary
 behind.
 
-## Publication checklist
+## Combined 16-phase publication checklist
 
 A Gate 13 evidence record is publishable only when:
 
@@ -500,5 +573,8 @@ A Gate 13 evidence record is publishable only when:
   checksum.
 
 Archive the Windows and Linux records separately, then aggregate their bounded facts in
-release readiness. Do not mark Gate 13 passed from controller unit tests, build-job
-smokes, or only one supported platform.
+release readiness. For a current-scope Gate 13 replay, the automated aggregate replaces
+the combined 16-phase record only for the open/infer/share/restart/resume/pause boundary;
+Gate 15 still requires separate replacement and uninstall evidence. Do not claim a fresh
+live qualification from controller tests, build-job smokes, or only one supported
+platform.
