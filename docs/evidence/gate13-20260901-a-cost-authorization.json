@@ -8,11 +8,11 @@
   "source": {
     "durable_controller_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
     "host_job_adapter_commit": "d5dc3537eb4a1e405ed9a6bfde0236bda0a58d7f",
-    "client_session_bootstrap_commit": "5f1eef1e662ef2d844630702e5713666ceb95b03",
+    "client_session_bootstrap_commit": "e60c3577c7205ff434cad6e9396f89555626aceb",
     "route_runtime_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
     "route_setup_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
-    "package_commit": "1476d67f3887dfd0de2acfb1305cbcca9975614f",
-    "production_workflow_run": 33555907921
+    "package_commit": "e60c3577c7205ff434cad6e9396f89555626aceb",
+    "production_workflow_run": 33566978488
   },
   "authorization": {
     "owner_reset_recorded": true,
@@ -43,9 +43,9 @@
     },
     "windows_client_startup": {
       "path": "scripts/gate13_windows_client_startup.ps1",
-      "source_commit": "5f1eef1e662ef2d844630702e5713666ceb95b03",
-      "sha256": "491b8091f7c0151afcc4a91619e5e5a100a10cfef63e38900d4ffb08c9cc7ab5",
-      "bytes": 8689
+      "source_commit": "e60c3577c7205ff434cad6e9396f89555626aceb",
+      "sha256": "3f8600c42a3c0765e100963c2e28cdef7c6b248992924ff3406941aefce7cf47",
+      "bytes": 8779
     },
     "linux_client_startup": {
       "path": "scripts/gate13_linux_client_startup.sh",
@@ -61,9 +61,9 @@
     },
     "automated_playthrough": {
       "path": "scripts/gate13_automated_playthrough.py",
-      "source_commit": "1476d67f3887dfd0de2acfb1305cbcca9975614f",
-      "sha256": "b6e289f105632728a7e585777a320bb3fcbb7cdd527c1d4a7ec2f816ffa17a37",
-      "bytes": 18331
+      "source_commit": "e60c3577c7205ff434cad6e9396f89555626aceb",
+      "sha256": "b9633c1580d5f0b64c3407ed9b7e272390e60faaa15c6f3eb09df4465864d60a",
+      "bytes": 18259
     },
     "route_setup": {
       "path": "scripts/gate13_route_setup.sh",
@@ -79,13 +79,13 @@
       "model_artifacts_embedded": false
     },
     "windows_package": {
-      "sha256": "790d13505e387f91b3e080f303dfd0db2feefc067844fd57f003d9e5cd4aa687",
-      "bytes": 2695084305,
+      "sha256": "fb65dfc5f9d797761d3ba345e2338813660408fc171ceba338f0f2704414f70d",
+      "bytes": 2695083337,
       "workflow_artifact": "communityai-desktop-install-windows"
     },
     "linux_package": {
-      "sha256": "7816abb5a83395eac4e898ff1301a85e0a8bbdbced0c5e593701f43122b798e1",
-      "bytes": 3360729627,
+      "sha256": "0afd773d44179477b34fffc6a89fc093b4dbd8ba7d19a063ae58700a4587235b",
+      "bytes": 3360734113,
       "workflow_artifact": "communityai-desktop-install-linux"
     },
     "qwen_manifest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
