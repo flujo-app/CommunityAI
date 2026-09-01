@@ -8,7 +8,7 @@
   "source": {
     "durable_controller_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
     "host_job_adapter_commit": "d5dc3537eb4a1e405ed9a6bfde0236bda0a58d7f",
-    "client_session_bootstrap_commit": "389661cbe6443a88da70556d29de84dc521a00f0",
+    "client_session_bootstrap_commit": "5f1eef1e662ef2d844630702e5713666ceb95b03",
     "route_runtime_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
     "route_setup_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
     "package_commit": "1476d67f3887dfd0de2acfb1305cbcca9975614f",
@@ -43,9 +43,9 @@
     },
     "windows_client_startup": {
       "path": "scripts/gate13_windows_client_startup.ps1",
-      "source_commit": "389661cbe6443a88da70556d29de84dc521a00f0",
-      "sha256": "4ab1a90f20b8faee6de2b0679f9650219f3b17b542a730bcac6deaf249ea031f",
-      "bytes": 8146
+      "source_commit": "5f1eef1e662ef2d844630702e5713666ceb95b03",
+      "sha256": "491b8091f7c0151afcc4a91619e5e5a100a10cfef63e38900d4ffb08c9cc7ab5",
+      "bytes": 8689
     },
     "linux_client_startup": {
       "path": "scripts/gate13_linux_client_startup.sh",
