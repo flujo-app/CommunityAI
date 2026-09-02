@@ -8,11 +8,11 @@
   "source": {
     "durable_controller_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
     "host_job_adapter_commit": "d5dc3537eb4a1e405ed9a6bfde0236bda0a58d7f",
-    "client_session_bootstrap_commit": "e60c3577c7205ff434cad6e9396f89555626aceb",
+    "client_session_bootstrap_commit": "cd3e347488c2a79399ba3dd6ce8c31a26ac78ef7",
     "route_runtime_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
     "route_setup_commit": "905cabd13c481adff4a5a7de850ceb6ee839a25b",
-    "package_commit": "e60c3577c7205ff434cad6e9396f89555626aceb",
-    "production_workflow_run": 33566978488
+    "package_commit": "cd3e347488c2a79399ba3dd6ce8c31a26ac78ef7",
+    "production_workflow_run": 33582031380
   },
   "authorization": {
     "owner_reset_recorded": true,
@@ -55,15 +55,21 @@
     },
     "lifecycle_evidence_validator": {
       "path": "scripts/gate13_packaged_lifecycle.py",
-      "source_commit": "1476d67f3887dfd0de2acfb1305cbcca9975614f",
-      "sha256": "a32e1cfcb61e84ccacc13b16a5bf016b3357584edf2b6b536c2122a8e1c2abab",
-      "bytes": 31881
+      "source_commit": "cd3e347488c2a79399ba3dd6ce8c31a26ac78ef7",
+      "sha256": "c899ffb162aef49e7dc54c1e62a86505713652e341bd32f77f123e76bde8d1d4",
+      "bytes": 33278
     },
     "automated_playthrough": {
       "path": "scripts/gate13_automated_playthrough.py",
-      "source_commit": "e60c3577c7205ff434cad6e9396f89555626aceb",
-      "sha256": "b9633c1580d5f0b64c3407ed9b7e272390e60faaa15c6f3eb09df4465864d60a",
-      "bytes": 18259
+      "source_commit": "cd3e347488c2a79399ba3dd6ce8c31a26ac78ef7",
+      "sha256": "9ffda923a37ef64631898ad82139457a329393f15b78afd45709611f7f4a087f",
+      "bytes": 20545
+    },
+    "route_client_fence": {
+      "path": "scripts/gate13_route_fence.py",
+      "source_commit": "238122692655c083d534f2a8359635f6588931e7",
+      "sha256": "6d42e80a30aaacd3f7b80c89be15af435ab6427b1c62a338cadf11ac32237772",
+      "bytes": 9367
     },
     "route_setup": {
       "path": "scripts/gate13_route_setup.sh",
@@ -79,19 +85,19 @@
       "model_artifacts_embedded": false
     },
     "windows_package": {
-      "sha256": "fb65dfc5f9d797761d3ba345e2338813660408fc171ceba338f0f2704414f70d",
-      "bytes": 2695083337,
+      "sha256": "127ea96d5eafa908aa6221e11e86af1c05e4183e5cef05696a0a58ea381ebbc0",
+      "bytes": 2695083895,
       "workflow_artifact": "communityai-desktop-install-windows"
     },
     "linux_package": {
-      "sha256": "0afd773d44179477b34fffc6a89fc093b4dbd8ba7d19a063ae58700a4587235b",
-      "bytes": 3360734113,
+      "sha256": "9791ffa6d3cfa86ef8aabdec518918cef65a961eb69439880306880b741cfe20",
+      "bytes": 3360741913,
       "workflow_artifact": "communityai-desktop-install-linux"
     },
     "qwen_manifest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
     "gemma_manifest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd"
   },
-  "provider_plan_digest": "sha256:6687b9ba098b3f6676f48f4bf03ebb92bdc6a1278bf5bc1c227819b3a3e7cbb0",
+  "provider_plan_digest": "sha256:3fd1e3907d431222a876fa192e8dbc08611dfcfad46cd5c865110eccf01fe547",
   "provider_plan": {
     "project": "community-ai-506321",
     "route": {
@@ -158,6 +164,7 @@
       "route_live_for_both_lifecycles": true,
       "clients_may_run_concurrently": false,
       "route_accepted_before_any_client_create": true,
+      "route_fenced_and_revalidated_for_each_client": true,
       "windows_collected_and_deleted_before_linux_create": true,
       "all_16_phases_required_per_platform": false,
       "automated_gate13_replay_required": true,
