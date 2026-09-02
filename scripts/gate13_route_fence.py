@@ -27,6 +27,7 @@ SCHEMA_VERSION = 1
 SCOPE = "gate13-route-client-fence"
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_SECRET_BYTES = 512
+SERVICE_ACTION_TIMEOUT_SECONDS = 180
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,8 @@ def _request_json(opener: Any, url: str, secret: str) -> Mapping[str, Any]:
 def _systemctl(
     arguments: Sequence[str],
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    *,
+    timeout_seconds: float = 60,
 ) -> None:
     try:
         result = runner(
@@ -124,7 +127,7 @@ def _systemctl(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
-            timeout=60,
+            timeout=timeout_seconds,
             close_fds=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -173,8 +176,16 @@ def fence_route(
 
     if opener is None:
         opener = build_opener(ProxyHandler({}), _RejectRedirects())
-    _systemctl(("stop", profile.other_service), runner)
-    _systemctl(("restart", profile.service), runner)
+    _systemctl(
+        ("stop", profile.other_service),
+        runner,
+        timeout_seconds=SERVICE_ACTION_TIMEOUT_SECONDS,
+    )
+    _systemctl(
+        ("restart", profile.service),
+        runner,
+        timeout_seconds=SERVICE_ACTION_TIMEOUT_SECONDS,
+    )
     deadline = clock() + timeout_seconds
     while clock() < deadline:
         try:

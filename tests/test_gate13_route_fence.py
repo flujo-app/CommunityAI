@@ -83,12 +83,14 @@ def ready_opener(item: fence.Profile):
 def test_fence_restarts_only_target_and_rechecks_exact_route_after_settle(tmp_path):
     item = profile(tmp_path)
     calls = []
+    timeouts = []
 
     def runner(argv, **kwargs):
         assert kwargs["stdin"] is subprocess.DEVNULL
         assert kwargs["stdout"] is subprocess.DEVNULL
         assert kwargs["stderr"] is subprocess.DEVNULL
         calls.append(tuple(argv[1:]))
+        timeouts.append(kwargs["timeout"])
         inactive_probe = argv[1:3] == ["is-active", "--quiet"] and argv[3] == item.other_service
         return subprocess.CompletedProcess(argv, 3 if inactive_probe else 0)
 
@@ -103,6 +105,7 @@ def test_fence_restarts_only_target_and_rechecks_exact_route_after_settle(tmp_pa
     )
 
     assert calls[:2] == [("stop", item.other_service), ("restart", item.service)]
+    assert timeouts[:2] == [fence.SERVICE_ACTION_TIMEOUT_SECONDS] * 2
     assert ("is-active", "--quiet", item.other_service) in calls
     assert sleeps == [30]
     assert result == {
