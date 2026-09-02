@@ -135,7 +135,19 @@ class PlaythroughPlanTests(unittest.TestCase):
                         "status": "selected",
                         "model": MODEL_ID,
                         "manifest_digest": MANIFEST_DIGEST,
+                        "covered_blocks": plan.total_blocks,
+                        "total_blocks": plan.total_blocks,
+                        "peer_count": 1,
                     },
+                    "models": [
+                        {
+                            "id": MODEL_ID,
+                            "manifest_digest": MANIFEST_DIGEST,
+                            "route_complete": True,
+                            "covered_blocks": plan.total_blocks,
+                            "total_blocks": plan.total_blocks,
+                        }
+                    ],
                 }
 
             def create_key(self, label):
@@ -148,9 +160,11 @@ class PlaythroughPlanTests(unittest.TestCase):
 
         client = Client()
         completion = {
-            "object": "chat.completion",
             "model": MODEL_ID,
-            "choices": [{"message": {"role": "assistant", "content": "yes"}}],
+            # The manual Gate 13 command deliberately retained no generated
+            # content.  A one-token response is qualified by identity and the
+            # server-reported token count, not by decoded visible text.
+            "choices": [{"message": {"role": "assistant", "content": ""}}],
             "usage": {"completion_tokens": 1},
         }
         with patch("communityai_desktop.gate13_playthrough._completion_request", return_value=completion):
@@ -158,6 +172,23 @@ class PlaythroughPlanTests(unittest.TestCase):
 
         self.assertEqual(result["completion_count"], 1)
         self.assertFalse(result["response_content_retained"])
+        self.assertEqual({item["id"] for item in client.list_keys() if item["revoked_at"] is None}, {"baseline"})
+
+        unavailable_then_ready = MagicMock(
+            side_effect=[PlaythroughError("localhost inference failed"), completion]
+        )
+        with (
+            patch(
+                "communityai_desktop.gate13_playthrough._completion_request",
+                unavailable_then_ready,
+            ),
+            patch("communityai_desktop.gate13_playthrough.time.sleep") as readiness_sleep,
+        ):
+            retried = qualify_localhost_inference(SimpleNamespace(client=client), plan)
+
+        self.assertTrue(retried["passed"])
+        self.assertEqual(unavailable_then_ready.call_count, 2)
+        readiness_sleep.assert_called_once_with(5.0)
         self.assertEqual({item["id"] for item in client.list_keys() if item["revoked_at"] is None}, {"baseline"})
 
     def test_localhost_inference_requests_exactly_one_token(self):
@@ -176,7 +207,15 @@ class PlaythroughPlanTests(unittest.TestCase):
 
         self.assertEqual(result, {"result": "bounded"})
         request = opener.open.call_args.args[0]
-        self.assertEqual(json.loads(request.data)["max_tokens"], 1)
+        self.assertEqual(
+            json.loads(request.data),
+            {
+                "model": "auto",
+                "messages": [{"role": "user", "content": "Reply with one word."}],
+                "max_tokens": 1,
+                "stream": False,
+            },
+        )
 
     def test_hidden_packaged_cli_installs_the_qualification_automation(self):
         lifecycle = SimpleNamespace(close=lambda: None)

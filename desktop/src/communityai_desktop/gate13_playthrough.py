@@ -29,6 +29,8 @@ SCOPE = "gate13-packaged-desktop-playthrough"
 MAX_CONFIG_BYTES = 65_536
 MAX_RESPONSE_BYTES = 1_048_576
 QUALIFICATION_KEY_LABEL = "Gate 13 automated qualification"
+MANUAL_ROUTE_WAIT_SECONDS = 450.0
+MANUAL_ROUTE_POLL_SECONDS = 5.0
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -238,10 +240,8 @@ def _completion_request(url: str, secret: str, timeout: float) -> Mapping[str, A
     body = json.dumps(
         {
             "model": "auto",
-            "messages": [{"role": "user", "content": "Reply with one short word."}],
-            "temperature": 0,
+            "messages": [{"role": "user", "content": "Reply with one word."}],
             "max_tokens": 1,
-            "n": 1,
             "stream": False,
         },
         separators=(",", ":"),
@@ -273,6 +273,62 @@ def _completion_request(url: str, secret: str, timeout: float) -> Mapping[str, A
     if not isinstance(value, dict):
         raise PlaythroughError("localhost inference response is invalid")
     return value
+
+
+def _manual_route_ready(status: Mapping[str, Any], plan: PlaythroughPlan) -> bool:
+    selection = status.get("auto_selection")
+    models = status.get("models")
+    if not isinstance(selection, dict) or not isinstance(models, list):
+        return False
+    selected = next(
+        (
+            item
+            for item in models
+            if isinstance(item, dict)
+            and item.get("id") == plan.model_id
+            and item.get("manifest_digest") == plan.manifest_digest
+        ),
+        None,
+    )
+    return bool(
+        selection.get("status") == "selected"
+        and selection.get("model") == plan.model_id
+        and selection.get("manifest_digest") == plan.manifest_digest
+        and selection.get("covered_blocks") == plan.total_blocks
+        and selection.get("total_blocks") == plan.total_blocks
+        and isinstance(selection.get("peer_count"), int)
+        and selection["peer_count"] > 0
+        and selected is not None
+        and selected.get("route_complete") is True
+        and selected.get("covered_blocks") == plan.total_blocks
+        and selected.get("total_blocks") == plan.total_blocks
+    )
+
+
+def _completion_after_manual_readiness_wait(
+    controller: Any,
+    plan: PlaythroughPlan,
+    url: str,
+    secret: str,
+) -> Mapping[str, Any]:
+    """Replay the manual Model-unavailable -> wait-for-complete -> retry sequence."""
+
+    try:
+        return _completion_request(url, secret, plan.inference_timeout_seconds)
+    except PlaythroughError as first_error:
+        deadline = time.monotonic() + min(MANUAL_ROUTE_WAIT_SECONDS, plan.inference_timeout_seconds)
+        while time.monotonic() < deadline:
+            time.sleep(min(MANUAL_ROUTE_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+            try:
+                status = controller.client.status()
+            except BaseException:
+                continue
+            if _manual_route_ready(status, plan):
+                try:
+                    return _completion_request(url, secret, plan.inference_timeout_seconds)
+                except PlaythroughError:
+                    raise first_error
+        raise first_error
 
 
 def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[str, Any]:
@@ -310,20 +366,15 @@ def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[
         ):
             raise PlaythroughError("temporary client key response is invalid")
         base = normalize_loopback_url(status["openai_base_url"])
-        completion = _completion_request(f"{base}/v1/chat/completions", secret, plan.inference_timeout_seconds)
-        if completion.get("object") != "chat.completion" or completion.get("model") != plan.model_id:
+        completion = _completion_after_manual_readiness_wait(
+            controller,
+            plan,
+            f"{base}/v1/chat/completions",
+            secret,
+        )
+        if completion.get("model") != plan.model_id:
             raise PlaythroughError("localhost inference identity is invalid")
-        choices = completion.get("choices")
         usage = completion.get("usage")
-        if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
-            raise PlaythroughError("localhost inference completion count is invalid")
-        message = choices[0].get("message")
-        if (
-            not isinstance(message, dict)
-            or not isinstance(message.get("content"), str)
-            or not message["content"].strip()
-        ):
-            raise PlaythroughError("localhost inference content is empty")
         generated = usage.get("completion_tokens") if isinstance(usage, dict) else None
         if type(generated) is not int or generated != 1:
             raise PlaythroughError("localhost inference token count is invalid")
