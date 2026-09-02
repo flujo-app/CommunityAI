@@ -73,19 +73,51 @@ def _unique_object(pairs: Sequence[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _regular_bytes(path: Path, maximum: int) -> bytes:
+def _open_regular(path: Path, maximum: int):
     path = Path(path)
     try:
-        metadata = path.lstat()
+        before = path.lstat()
     except OSError as exc:
         raise Gate14ProbeError("required input is unavailable") from exc
-    reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-    if reparse or path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 1 <= metadata.st_size <= maximum:
+    reparse = bool(getattr(before, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    if reparse or path.is_symlink() or not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= maximum:
         raise Gate14ProbeError("required input is unsafe")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        return path.read_bytes()
+        descriptor = os.open(path, flags)
+        handle = os.fdopen(descriptor, "rb")
     except OSError as exc:
         raise Gate14ProbeError("required input is unreadable") from exc
+    try:
+        opened = os.fstat(handle.fileno())
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not 1 <= opened.st_size <= maximum
+            or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise Gate14ProbeError("required input changed while opening")
+        return handle, opened
+    except BaseException:
+        handle.close()
+        raise
+
+
+def _regular_bytes(path: Path, maximum: int) -> bytes:
+    handle, metadata = _open_regular(path, maximum)
+    try:
+        payload = handle.read(maximum + 1)
+        after = os.fstat(handle.fileno())
+    except OSError as exc:
+        raise Gate14ProbeError("required input is unreadable") from exc
+    finally:
+        handle.close()
+    if len(payload) != metadata.st_size or (after.st_dev, after.st_ino, after.st_size) != (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+    ):
+        raise Gate14ProbeError("required input changed while reading")
+    return payload
 
 
 def _strict_json(payload: bytes) -> Mapping[str, Any]:
@@ -109,21 +141,22 @@ def _sha256(payload: bytes) -> str:
 
 
 def _hash_regular_file(path: Path, maximum: int) -> tuple[int, str]:
-    path = Path(path)
-    try:
-        metadata = path.lstat()
-    except OSError as exc:
-        raise Gate14ProbeError("required input is unavailable") from exc
-    reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-    if reparse or path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 1 <= metadata.st_size <= maximum:
-        raise Gate14ProbeError("required input is unsafe")
+    stream, metadata = _open_regular(path, maximum)
     digest = hashlib.sha256()
     try:
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+        after = os.fstat(stream.fileno())
     except OSError as exc:
         raise Gate14ProbeError("required input is unreadable") from exc
+    finally:
+        stream.close()
+    if (after.st_dev, after.st_ino, after.st_size) != (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+    ):
+        raise Gate14ProbeError("required input changed while reading")
     return metadata.st_size, "sha256:" + digest.hexdigest()
 
 

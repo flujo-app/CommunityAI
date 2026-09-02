@@ -27,6 +27,7 @@ def calibration_challenge(platform: str, package_payload: bytes) -> dict:
             platform=platform,
             source_commit=SOURCE,
             package_sha256="sha256:" + hashlib.sha256(package_payload).hexdigest(),
+            checkpoint_sha256="sha256:" + "c" * 64,
             controller_state_revision=2,
             issued_at_unix=CHALLENGE_ISSUED,
             nonce="a" * 64,

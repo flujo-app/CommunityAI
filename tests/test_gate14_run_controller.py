@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate14_calibration_challenge as challenge_contract  # noqa: E402
 import gate14_hardware_acceptance as acceptance  # noqa: E402
+import gate14_packaged_lifecycle as lifecycle  # noqa: E402
 import gate14_run_controller as controller  # noqa: E402
 
 RUN_ID = "gate14-20260902-a"
@@ -30,6 +31,7 @@ def challenge_document(platform: str, revision: int = 2) -> dict:
             platform=platform,
             source_commit=SOURCE,
             package_sha256=PACKAGE_DIGESTS[platform],
+            checkpoint_sha256="sha256:" + "c" * 64,
             controller_state_revision=revision,
             issued_at_unix=NOW,
             nonce=("a" if platform == "windows" else "b") * 64,
@@ -40,6 +42,33 @@ def challenge_document(platform: str, revision: int = 2) -> dict:
 def write_challenge(tmp_path: Path, platform: str, value: dict | None = None) -> Path:
     path = tmp_path / f"{platform}-challenge.json"
     path.write_text(json.dumps(value or challenge_document(platform)), encoding="utf-8")
+    return path
+
+
+def write_checkpoint(
+    tmp_path: Path,
+    plan: controller.RunPlan,
+    platform: str,
+    *,
+    created_at: int = NOW,
+) -> Path:
+    client = plan.windows if platform == "windows" else plan.linux
+    value = {
+        "schema_version": lifecycle.SCHEMA_VERSION,
+        "scope": lifecycle.CHECKPOINT_SCOPE,
+        "run_id": plan.run_id,
+        "platform": platform,
+        "attempt_ordinal": 1,
+        "source_commit": client.source_commit,
+        "lifecycle_config_sha256": "sha256:" + "d" * 64,
+        "package_sha256": client.package_sha256,
+        "release_metadata_sha256": "sha256:" + "e" * 64,
+        "prepared_facts_sha256": "sha256:" + "f" * 64,
+        "phase": "challenge-ready",
+        "created_at_unix": created_at,
+    }
+    path = tmp_path / f"{platform}-checkpoint.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
     return path
 
 
@@ -353,12 +382,14 @@ def test_controller_issues_one_time_source_bound_calibration_challenge(tmp_path,
         plan,
     )
     path = tmp_path / "controller-challenge.json"
+    checkpoint_path = write_checkpoint(tmp_path, plan, "windows")
 
     next_state, value = controller.issue_calibration_challenge(
         state,
         plan,
         "windows",
         path,
+        checkpoint_path,
         issued_at_unix=NOW + 1,
         nonce="f" * 64,
     )
@@ -368,6 +399,9 @@ def test_controller_issues_one_time_source_bound_calibration_challenge(tmp_path,
     assert value["platform"] == "windows"
     assert value["source_commit"] == plan.windows.source_commit
     assert value["package_sha256"] == plan.windows.package_sha256
+    assert value["checkpoint_sha256"] == lifecycle.checkpoint_digest(
+        json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    )
     assert value["controller_state_revision"] == state["revision"]
     assert next_state["windows_challenge_sha256"] == challenge_contract.digest(value)
     recovered_state, recovered = controller.issue_calibration_challenge(
@@ -375,6 +409,7 @@ def test_controller_issues_one_time_source_bound_calibration_challenge(tmp_path,
         plan,
         "windows",
         path,
+        checkpoint_path,
         issued_at_unix=NOW + 2,
         nonce="e" * 64,
     )
@@ -388,6 +423,7 @@ def test_controller_issues_one_time_source_bound_calibration_challenge(tmp_path,
             plan,
             "windows",
             path,
+            checkpoint_path,
             issued_at_unix=NOW + 2,
             nonce="e" * 64,
         )
@@ -454,11 +490,13 @@ def test_lifecycle_reattaches_collects_serially_and_cleanup_passes(
     assert state["next_action"] == "none"
 
     windows_challenge_path = tmp_path / "windows-challenge.json"
+    windows_checkpoint_path = write_checkpoint(tmp_path, plan, "windows")
     state, windows_challenge = controller.issue_calibration_challenge(
         state,
         plan,
         "windows",
         windows_challenge_path,
+        windows_checkpoint_path,
         issued_at_unix=NOW,
         nonce="a" * 64,
     )
@@ -516,11 +554,13 @@ def test_lifecycle_reattaches_collects_serially_and_cleanup_passes(
     assert state["linux_consumed"] is True
 
     linux_challenge_path = tmp_path / "linux-challenge.json"
+    linux_checkpoint_path = write_checkpoint(tmp_path, plan, "linux")
     state, linux_challenge = controller.issue_calibration_challenge(
         state,
         plan,
         "linux",
         linux_challenge_path,
+        linux_checkpoint_path,
         issued_at_unix=NOW,
         nonce="b" * 64,
     )
@@ -631,11 +671,13 @@ def test_collect_rejects_wrong_package_and_save_round_trips(tmp_path, plan):
         plan,
     )
     challenge_path = tmp_path / "wrong-package-challenge.json"
+    checkpoint_path = write_checkpoint(tmp_path, plan, "windows")
     state, challenge = controller.issue_calibration_challenge(
         state,
         plan,
         "windows",
         challenge_path,
+        checkpoint_path,
         issued_at_unix=NOW,
         nonce="a" * 64,
     )
@@ -675,11 +717,13 @@ def test_collect_rejects_evidence_from_a_different_challenge(tmp_path, plan):
         plan,
     )
     issued_path = tmp_path / "issued-challenge.json"
+    checkpoint_path = write_checkpoint(tmp_path, plan, "windows")
     state, issued = controller.issue_calibration_challenge(
         state,
         plan,
         "windows",
         issued_path,
+        checkpoint_path,
         issued_at_unix=NOW,
         nonce="a" * 64,
     )
@@ -792,11 +836,13 @@ def test_passed_job_requires_and_binds_exact_evidence_digest(tmp_path, plan):
         plan,
     )
     challenge_path = tmp_path / "reported-challenge.json"
+    checkpoint_path = write_checkpoint(tmp_path, plan, "windows")
     state, challenge = controller.issue_calibration_challenge(
         state,
         plan,
         "windows",
         challenge_path,
+        checkpoint_path,
         issued_at_unix=NOW,
         nonce="a" * 64,
     )
@@ -949,4 +995,45 @@ def test_load_plan_rejects_hidden_active_reservation_below_epoch_anchor(tmp_path
             tmp_path,
             additional_current_maximum="1.00",
             hide_additional_below_anchor=True,
+        )
+
+
+def test_challenge_rejects_missing_or_foreign_ready_checkpoint(tmp_path, plan):
+    state = controller.reconcile(
+        controller.initial_state(plan),
+        observation(plan, windows=True, windows_job="running"),
+        plan,
+    )
+    challenge_path = tmp_path / "challenge.json"
+    missing = tmp_path / "missing-checkpoint.json"
+    with pytest.raises(
+        controller.Gate14ControllerError,
+        match="checkpoint is invalid",
+    ):
+        controller.issue_calibration_challenge(
+            state,
+            plan,
+            "windows",
+            challenge_path,
+            missing,
+            issued_at_unix=NOW,
+            nonce="a" * 64,
+        )
+
+    checkpoint_path = write_checkpoint(tmp_path, plan, "windows")
+    value = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    value["source_commit"] = "9" * 40
+    checkpoint_path.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(
+        controller.Gate14ControllerError,
+        match="checkpoint is invalid",
+    ):
+        controller.issue_calibration_challenge(
+            state,
+            plan,
+            "windows",
+            challenge_path,
+            checkpoint_path,
+            issued_at_unix=NOW,
+            nonce="a" * 64,
         )

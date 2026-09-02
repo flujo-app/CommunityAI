@@ -22,6 +22,7 @@ from typing import Any, Mapping, Sequence
 
 import gate14_calibration_challenge as challenge_contract
 import gate14_hardware_acceptance as acceptance
+import gate14_packaged_lifecycle as packaged_lifecycle
 import qualification_cost_guard as cost_guard
 
 SCHEMA_VERSION = 1
@@ -836,6 +837,7 @@ def issue_calibration_challenge(
     plan: RunPlan,
     platform: str,
     challenge_path: Path,
+    checkpoint_path: Path,
     *,
     issued_at_unix: int | None = None,
     nonce: str | None = None,
@@ -854,6 +856,18 @@ def issue_calibration_challenge(
     lifetime = min(challenge_contract.MAX_LIFETIME_SECONDS, client.termination_unix - issued)
     if lifetime < challenge_contract.MIN_LIFETIME_SECONDS:
         raise Gate14ControllerError("calibration challenge would outlive the host")
+    try:
+        checkpoint = packaged_lifecycle.load_checkpoint_for_controller(
+            checkpoint_path,
+            run_id=plan.run_id,
+            platform=platform,
+            source_commit=client.source_commit,
+            package_sha256=client.package_sha256,
+            now_unix=issued,
+        )
+        checkpoint_sha256 = packaged_lifecycle.checkpoint_digest(checkpoint)
+    except packaged_lifecycle.Gate14LifecycleError as exc:
+        raise Gate14ControllerError("challenge-ready checkpoint is invalid") from exc
     if Path(challenge_path).exists():
         value = challenge_contract.validate(
             challenge_contract.load(challenge_path),
@@ -861,6 +875,7 @@ def issue_calibration_challenge(
             platform=platform,
             source_commit=client.source_commit,
             package_sha256=client.package_sha256,
+            checkpoint_sha256=checkpoint_sha256,
             now_unix=issued,
         )
         if value["controller_state_revision"] != state["revision"]:
@@ -871,6 +886,7 @@ def issue_calibration_challenge(
             platform=platform,
             source_commit=client.source_commit,
             package_sha256=client.package_sha256,
+            checkpoint_sha256=checkpoint_sha256,
             controller_state_revision=state["revision"],
             issued_at_unix=issued,
             lifetime_seconds=lifetime,
@@ -999,6 +1015,7 @@ def _common_parser() -> argparse.ArgumentParser:
     parser.add_argument("--platform", choices=("windows", "linux"))
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--challenge", type=Path)
+    parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--failure-code", default="operator-cleanup")
     return parser
 
@@ -1019,13 +1036,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             result = state
         elif args.operation == "challenge":
-            if args.platform is None or args.challenge is None:
-                raise Gate14ControllerError("challenge platform and output are required")
+            if args.platform is None or args.challenge is None or args.checkpoint is None:
+                raise Gate14ControllerError("challenge platform, checkpoint, and output are required")
             state, result = issue_calibration_challenge(
                 state,
                 plan,
                 args.platform,
                 args.challenge,
+                args.checkpoint,
             )
         elif args.operation == "collect":
             if args.platform is None or args.evidence is None or args.challenge is None:

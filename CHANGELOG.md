@@ -44,8 +44,17 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   verification, and archive-bound uploads. A final no-spend audit also replaced a stale Gate 13
   Linux HOME/runtime hardcode with the configured host-job values, so the Gate 14 desktop session
   accepts its isolated paths. The combined Gate 13/Gate 14 host-job and Gate 14 contract suite now
-  passes 107 tests. This is software and preflight evidence only: no Gate 14 hardware pass is
-  claimed yet.
+  passes 107 tests. A shared packaged-lifecycle sequencer now rejects user-supplied pass claims,
+  binds the exact production archive and release metadata, completes the non-calibration drills,
+  and publishes an immutable challenge-ready checkpoint before accepting a controller challenge.
+  The challenge covers that exact checkpoint digest; retained checkpoints cannot replay the
+  lifecycle. Controller-owned staging is separated from lifecycle outputs, validated with exact
+  POSIX ownership or native Windows owner/protected-DACL and per-right access probes, and every
+  staged file is read without following a raced path and revalidated around action phases.
+  Failure cleanup is unconditional, private facts are removed before final evidence publication,
+  and the persisted evidence is strictly reread and compared. The expanded no-spend Gate 14
+  contract matrix passes 125 tests. This is software and preflight evidence only: no Gate 14
+  hardware pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,

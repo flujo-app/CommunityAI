@@ -31,6 +31,7 @@ _FIELDS = {
     "platform",
     "source_commit",
     "package_sha256",
+    "checkpoint_sha256",
     "controller_state_revision",
     "issued_at_unix",
     "expires_at_unix",
@@ -82,21 +83,36 @@ def parse_payload(payload: bytes) -> Mapping[str, Any]:
 def regular_payload(path: Path) -> bytes:
     path = Path(path)
     try:
-        metadata = path.lstat()
+        before = path.lstat()
     except OSError as exc:
         raise Gate14ChallengeError("challenge is unavailable") from exc
-    reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-    if (
-        reparse
-        or path.is_symlink()
-        or not stat.S_ISREG(metadata.st_mode)
-        or not 1 <= metadata.st_size <= MAX_JSON_BYTES
-    ):
+    reparse = bool(getattr(before, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    if reparse or path.is_symlink() or not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= MAX_JSON_BYTES:
         raise Gate14ChallengeError("challenge path is unsafe")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        return path.read_bytes()
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+                or not 1 <= opened.st_size <= MAX_JSON_BYTES
+            ):
+                raise Gate14ChallengeError("challenge changed while opening")
+            payload = handle.read(MAX_JSON_BYTES + 1)
+            after = os.fstat(handle.fileno())
+    except Gate14ChallengeError:
+        raise
     except OSError as exc:
         raise Gate14ChallengeError("challenge is unreadable") from exc
+    if len(payload) != opened.st_size or (after.st_dev, after.st_ino, after.st_size) != (
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_size,
+    ):
+        raise Gate14ChallengeError("challenge changed while reading")
+    return payload
 
 
 def load(path: Path) -> Mapping[str, Any]:
@@ -110,6 +126,7 @@ def validate(
     platform: str,
     source_commit: str,
     package_sha256: str,
+    checkpoint_sha256: str | None = None,
     now_unix: float | None = None,
 ) -> Mapping[str, Any]:
     if not isinstance(value, dict) or set(value) != _FIELDS:
@@ -128,6 +145,9 @@ def validate(
         or not isinstance(value["package_sha256"], str)
         or _DIGEST_RE.fullmatch(value["package_sha256"]) is None
         or value["package_sha256"] != package_sha256
+        or not isinstance(value["checkpoint_sha256"], str)
+        or _DIGEST_RE.fullmatch(value["checkpoint_sha256"]) is None
+        or (checkpoint_sha256 is not None and value["checkpoint_sha256"] != checkpoint_sha256)
         or not isinstance(value["nonce"], str)
         or _NONCE_RE.fullmatch(value["nonce"]) is None
     ):
@@ -158,6 +178,7 @@ def create(
     platform: str,
     source_commit: str,
     package_sha256: str,
+    checkpoint_sha256: str,
     controller_state_revision: int,
     issued_at_unix: int | None = None,
     lifetime_seconds: int = MAX_LIFETIME_SECONDS,
@@ -171,6 +192,7 @@ def create(
         "platform": platform,
         "source_commit": source_commit,
         "package_sha256": package_sha256,
+        "checkpoint_sha256": checkpoint_sha256,
         "controller_state_revision": controller_state_revision,
         "issued_at_unix": issued,
         "expires_at_unix": issued + lifetime_seconds,
@@ -182,6 +204,7 @@ def create(
         platform=platform,
         source_commit=source_commit,
         package_sha256=package_sha256,
+        checkpoint_sha256=checkpoint_sha256,
         now_unix=issued,
     )
 
