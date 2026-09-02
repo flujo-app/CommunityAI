@@ -36,6 +36,8 @@ $script:LifecycleProcess = $null
 $script:LifecycleAcquisitionInvoked = $false
 $script:LifecycleOwnWorkRoot = $false
 $script:LifecycleOwnPersistentRoot = $false
+$script:LifecycleFailurePhase = "initialization"
+$script:LifecycleFailureOperation = "initialization"
 
 function Initialize-Gate13NativeHost {
     if ($null -ne ("Gate13.NativeHost" -as [type])) {
@@ -1147,6 +1149,8 @@ function Measure-Gate13Phase {
         [Parameter(Mandatory = $true)] [string] $Name,
         [Parameter(Mandatory = $true)] [scriptblock] $Action
     )
+    $script:LifecycleFailurePhase = $Name
+    $script:LifecycleFailureOperation = $Name
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     $facts = & $Action
     $timer.Stop()
@@ -1199,7 +1203,33 @@ function Get-Gate13Sha256 {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "required file missing"
     }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    $stream = $null
+    $hasher = $null
+    $digest = $null
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $Path,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read,
+            1048576,
+            [System.IO.FileOptions]::SequentialScan
+        )
+        $hasher = [System.Security.Cryptography.SHA256]::Create()
+        $digest = $hasher.ComputeHash($stream)
+        return [System.BitConverter]::ToString($digest).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        if ($null -ne $digest) {
+            [Array]::Clear($digest, 0, $digest.Length)
+        }
+        if ($null -ne $hasher) {
+            $hasher.Dispose()
+        }
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
 }
 
 function Read-Gate13JsonFile {
@@ -2814,7 +2844,9 @@ function Invoke-Gate13WindowsPackagedLifecycle {
     }))
 
     [void]$phases.Add((Measure-Gate13Phase -Name "signed_bootstrap" -Action {
+        $script:LifecycleFailureOperation = "bootstrap_command"
         $state.Bootstrap = Invoke-Gate13Bootstrap
+        $script:LifecycleFailureOperation = "bootstrap_binding"
         if (
             $state.Bootstrap.CatalogId -cne $state.Audit.PublicationCatalogId -or
             [int64]$state.Bootstrap.CatalogSequence -ne
@@ -2826,8 +2858,11 @@ function Invoke-Gate13WindowsPackagedLifecycle {
         ) {
             throw "installed bootstrap did not match release provenance"
         }
+        $script:LifecycleFailureOperation = "product_start"
         Start-Gate13Product
+        $script:LifecycleFailureOperation = "product_readiness"
         $state.ProductStatus = Wait-Gate13ProductStatus -TimeoutSeconds 300
+        $script:LifecycleFailureOperation = "profile_binding"
         $state.Profile = $state.ProductStatus.Profile
         if (
             $state.Profile.ModelId -cne $state.Audit.ExpectedModelId -or
@@ -2835,6 +2870,7 @@ function Invoke-Gate13WindowsPackagedLifecycle {
         ) {
             throw "operator-bound selected model identity rejected"
         }
+        $script:LifecycleFailureOperation = "selected_manifest_context"
         $state.Context = Get-Gate13SelectedManifestContext -Profile $state.Profile
         return [ordered]@{
             catalog_id = $state.Bootstrap.CatalogId
@@ -3186,6 +3222,8 @@ function Invoke-Gate13WindowsPackagedLifecycle {
         }
     }))
 
+    $script:LifecycleFailurePhase = "evidence_validation"
+    $script:LifecycleFailureOperation = "evidence_validation"
     $document = [ordered]@{
         schema_version = 1
         run_id = $state.Audit.RunId
@@ -3252,10 +3290,24 @@ function Start-Gate13WindowsPackagedLifecycle {
         return 0
     }
     catch {
+        $failurePhase = [string]$script:LifecycleFailurePhase
+        if ($failurePhase -notmatch '^[a-z_]{1,64}$') {
+            $failurePhase = "initialization"
+        }
+        $failureOperation = [string]$script:LifecycleFailureOperation
+        if ($failureOperation -notmatch '^[a-z_]{1,64}$') {
+            $failureOperation = $failurePhase
+        }
         Invoke-Gate13FailureCleanup
-        [Console]::Out.WriteLine(
-            '{"failure_code":"windows_packaged_lifecycle_failed","result":"failed","schema_version":1}'
-        )
+        [Console]::Out.WriteLine((
+            [ordered]@{
+                failure_code = "windows_packaged_lifecycle_failed"
+                failure_operation = $failureOperation
+                failure_phase = $failurePhase
+                result = "failed"
+                schema_version = 1
+            } | ConvertTo-Json -Compress
+        ))
         return 2
     }
     finally {

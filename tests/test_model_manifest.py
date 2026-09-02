@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -459,6 +460,34 @@ def test_verified_artifact_promotion_retries_windows_sharing_violation(tmp_path,
     assert delays == [0.05, 0.1]
     assert final.read_bytes() == b"verified"
     assert not partial.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 extended-length paths are Windows-specific")
+def test_resumable_manifest_paths_work_beyond_legacy_windows_max_path(tmp_path):
+    from drift.utils.file_lock import file_lock
+
+    manifest = ModelManifest.from_dict(manifest_dict())
+    cache = tmp_path / ("cache-" + "x" * 96)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        manifest.source.repository,
+        manifest.source.revision,
+        cache_dir=cache,
+    )
+
+    partial, final, lock = verifier._resumable_paths(manifest.get_artifact("weights.bin"))
+    assert len(str(cache.absolute() / "manifest-artifacts" / manifest.digest / "partial")) > 248
+    assert str(partial).startswith("\\\\?\\")
+    assert str(lock).startswith("\\\\?\\")
+
+    partial.parent.mkdir(parents=True, exist_ok=True)
+    partial.write_bytes(b"partial")
+    with file_lock(lock, exclusive=True):
+        final.parent.mkdir(parents=True, exist_ok=True)
+        final.write_bytes(b"final")
+
+    assert partial.read_bytes() == b"partial"
+    assert final.read_bytes() == b"final"
 
 
 def test_mixed_cached_and_downloaded_artifacts_share_one_snapshot_root(tmp_path, monkeypatch):

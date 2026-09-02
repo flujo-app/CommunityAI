@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-failed-attempt-and-cleanup",
+  "run_id": "gate13-20260831-h",
+  "gate": 13,
+  "result": "failed-cleaned",
+  "recorded_at": "2026-09-01T02:28:35.232Z",
+  "source": {
+    "authorization_sha256": "sha256:6714a7a33b671c3fc177e182c354b80e3fb54c6657d5008eff74080c088be523",
+    "package_commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "host_job_commit": "8c56feced219c521818ef6ad79ec830fc6b30a20"
+  },
+  "acceptance": {
+    "route_acceptance_passed": true,
+    "windows_archive_sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+    "windows_archive_bytes": 2695065068,
+    "windows_attempts": 1,
+    "windows_result": "failed",
+    "failure_phase": "signed_bootstrap",
+    "failure_operation": "product_readiness",
+    "linux_created": false,
+    "linux_attempts": 0,
+    "gate_passed": false
+  },
+  "conclusion": "The exact route and package prerequisites passed. The opaque non-interactive Windows launch timed out waiting for product readiness and retained no useful product error. This run does not show a Gate 11 or GCP route failure.",
+  "cleanup": {
+    "verified_at": "2026-09-01T02:28:35.232Z",
+    "instances_absent": [
+      "route-20260831-h-node",
+      "gate13-20260831-h-win",
+      "gate13-20260831-h-linux"
+    ],
+    "disks_absent": [
+      "route-20260831-h-node",
+      "gate13-20260831-h-win",
+      "gate13-20260831-h-linux"
+    ],
+    "firewalls_absent": [
+      "route-20260831-h-dht",
+      "route-20260831-h-iap"
+    ],
+    "global_l4_quota_limit": 1,
+    "global_l4_quota_usage": 0,
+    "protected_bootstrap_status": "RUNNING"
+  },
+  "next_action": "Run the exact Windows package manually in a real interactive console session with visible node and desktop diagnostics; do not invoke the lifecycle wrapper until the manual flow passes.",
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "endpoints_retained": false,
+    "provider_output_retained": false
+  }
+}

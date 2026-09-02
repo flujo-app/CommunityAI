@@ -18,6 +18,13 @@ from typing import Any, Mapping, Sequence
 
 SCHEMA_VERSION = 1
 SCOPE = "gate13-packaged-lifecycle"
+AUTOMATED_REPLAY_SCOPE = "gate13-automated-desktop-replay"
+AUTOMATED_REPLAY_SCHEMA_VERSION = 2
+AUTOMATED_REPLAY_POLICY_PROFILE = "gate13-manual-cpu-v1"
+AUTOMATED_REPLAY_SEQUENCE_PROFILES = {
+    "windows": "gate13-manual-windows-v1",
+    "linux": "gate13-manual-linux-v1",
+}
 MAX_INPUT_BYTES = 1_048_576
 MAX_COUNT = 1_000_000
 MAX_BYTES = 1 << 50
@@ -74,6 +81,31 @@ _HEX40_RE = re.compile(r"[0-9a-f]{40}")
 _DIGEST_RE = re.compile(r"(?:sha256:)?[0-9a-f]{64}")
 _LABEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")
 _DISPLAY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._+()-]{0,127}")
+_AUTOMATED_REPLAY_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "platform",
+    "result",
+    "source_commit",
+    "package",
+    "model_id",
+    "manifest_digest",
+    "real_window_sessions",
+    "localhost_inference_count",
+    "policy_dialog_saved",
+    "start_clicked",
+    "pause_control_observed",
+    "restart_resume_observed",
+    "pause_clicked",
+    "sharing_intent_paused",
+    "policy_profile",
+    "sequence_profile",
+    "start_observation_seconds",
+    "session_duration_seconds",
+    "privacy_safe",
+    "qualification_temporaries_removed",
+}
 
 
 class LifecycleEvidenceError(ValueError):
@@ -655,7 +687,107 @@ class LifecycleController:
         }
 
 
+def _validate_automated_replay(raw_document: Mapping[str, Any]) -> dict[str, Any]:
+    document = dict(_mapping(raw_document))
+    _exact_fields(document, _AUTOMATED_REPLAY_FIELDS)
+    if (
+        document["schema_version"] != AUTOMATED_REPLAY_SCHEMA_VERSION
+        or document["scope"] != AUTOMATED_REPLAY_SCOPE
+        or document["result"] != "passed"
+        or not isinstance(document["run_id"], str)
+        or _LABEL_RE.fullmatch(document["run_id"]) is None
+        or document["platform"] not in ("windows", "linux")
+        or not isinstance(document["source_commit"], str)
+        or _HEX40_RE.fullmatch(document["source_commit"]) is None
+        or document["model_id"] not in MODEL_PROFILES
+        or document["policy_profile"] != AUTOMATED_REPLAY_POLICY_PROFILE
+        or document["sequence_profile"] != AUTOMATED_REPLAY_SEQUENCE_PROFILES.get(document["platform"])
+    ):
+        _fail()
+    profile = MODEL_PROFILES[document["model_id"]]
+    expected_manifest = "sha256:" + profile["manifest_digest"]
+    if document["manifest_digest"] != expected_manifest:
+        _fail()
+    package = _mapping(document["package"])
+    _exact_fields(package, {"sha256", "bytes", "verified_before_run", "self_test_count"})
+    if (
+        not isinstance(package["sha256"], str)
+        or _DIGEST_RE.fullmatch(package["sha256"]) is None
+        or type(package["bytes"]) is not int
+        or not 1 <= package["bytes"] <= 8 * 1024**3
+        or package["verified_before_run"] is not True
+        or package["self_test_count"] != 4
+    ):
+        _fail()
+    expected_inferences = 1 if document["platform"] == "windows" else 2
+    expected_resume = document["platform"] == "linux"
+    expected_start_observation = 25.0 if document["platform"] == "windows" else 20.0
+    if (
+        document["real_window_sessions"] != 2
+        or document["localhost_inference_count"] != expected_inferences
+        or type(document["restart_resume_observed"]) is not bool
+        or document["restart_resume_observed"] is not expected_resume
+        or type(document["start_observation_seconds"]) not in (int, float)
+        or float(document["start_observation_seconds"]) != expected_start_observation
+    ):
+        _fail()
+    for field in (
+        "policy_dialog_saved",
+        "start_clicked",
+        "pause_control_observed",
+        "pause_clicked",
+        "sharing_intent_paused",
+        "privacy_safe",
+        "qualification_temporaries_removed",
+    ):
+        if document[field] is not True:
+            _fail()
+    durations = _mapping(document["session_duration_seconds"])
+    _exact_fields(durations, {"initial", "restart"})
+    for value in durations.values():
+        if type(value) not in (int, float) or not math.isfinite(float(value)) or not 0 <= float(value) <= 3_630:
+            _fail()
+    return {
+        "schema_version": AUTOMATED_REPLAY_SCHEMA_VERSION,
+        "scope": AUTOMATED_REPLAY_SCOPE,
+        "result": "passed",
+        "run_id": document["run_id"],
+        "platform": document["platform"],
+        "source_commit": document["source_commit"],
+        "package_sha256": package["sha256"].removeprefix("sha256:"),
+        "package_bytes": package["bytes"],
+        "model_id": document["model_id"],
+        "manifest_digest": expected_manifest.removeprefix("sha256:"),
+        "package": dict(package),
+        "model": {
+            "id": document["model_id"],
+            "manifest_digest": expected_manifest,
+        },
+        "lifecycle": {
+            "real_window_sessions": 2,
+            "localhost_inference_count": expected_inferences,
+            "policy_dialog_saved": True,
+            "start_clicked": True,
+            "pause_control_observed": True,
+            "restart_resume_observed": expected_resume,
+            "pause_clicked": True,
+            "sharing_intent_paused": True,
+            "policy_profile": AUTOMATED_REPLAY_POLICY_PROFILE,
+            "sequence_profile": AUTOMATED_REPLAY_SEQUENCE_PROFILES[document["platform"]],
+            "start_observation_seconds": expected_start_observation,
+            "response_content_retained": False,
+            "token_identifier_count": 0,
+        },
+        "cleanup": {
+            "qualification_temporaries_removed": True,
+            "complete": True,
+        },
+    }
+
+
 def validate_lifecycle_document(raw_document: Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(raw_document, dict) and raw_document.get("scope") == AUTOMATED_REPLAY_SCOPE:
+        return _validate_automated_replay(raw_document)
     document = dict(_mapping(raw_document))
     _exact_fields(document, _DOCUMENT_FIELDS)
     phases = document["phases"]

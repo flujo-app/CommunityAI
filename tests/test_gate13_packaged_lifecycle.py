@@ -480,3 +480,50 @@ def test_public_summary_does_not_retain_raw_phase_only_fields():
         "recovery_action_count",
     ):
         assert forbidden_value not in rendered
+
+
+def test_current_gate13_automated_replay_is_accepted_by_the_host_evidence_boundary():
+    document = {
+        "schema_version": 2,
+        "scope": "gate13-automated-desktop-replay",
+        "run_id": "gate13-automated-a",
+        "platform": "windows",
+        "result": "passed",
+        "source_commit": SOURCE_COMMIT,
+        "package": {
+            "sha256": "sha256:" + PACKAGE_DIGEST,
+            "bytes": 123_456_789,
+            "verified_before_run": True,
+            "self_test_count": 4,
+        },
+        "model_id": "Qwen3.5 2B",
+        "manifest_digest": "sha256:" + MANIFEST_DIGEST,
+        "real_window_sessions": 2,
+        "localhost_inference_count": 1,
+        "policy_dialog_saved": True,
+        "start_clicked": True,
+        "pause_control_observed": True,
+        "restart_resume_observed": False,
+        "pause_clicked": True,
+        "sharing_intent_paused": True,
+        "policy_profile": "gate13-manual-cpu-v1",
+        "sequence_profile": "gate13-manual-windows-v1",
+        "start_observation_seconds": 25.0,
+        "session_duration_seconds": {"initial": 100.0, "restart": 80.0},
+        "privacy_safe": True,
+        "qualification_temporaries_removed": True,
+    }
+
+    evidence = lifecycle.validate_lifecycle_document(document)
+
+    assert evidence["result"] == "passed"
+    assert evidence["source_commit"] == SOURCE_COMMIT
+    assert evidence["package_sha256"] == PACKAGE_DIGEST
+    assert evidence["manifest_digest"] == MANIFEST_DIGEST
+    assert evidence["lifecycle"]["real_window_sessions"] == 2
+    assert evidence["lifecycle"]["restart_resume_observed"] is False
+    assert evidence["lifecycle"]["policy_profile"] == "gate13-manual-cpu-v1"
+
+    document["pause_clicked"] = False
+    with pytest.raises(lifecycle.LifecycleEvidenceError):
+        lifecycle.validate_lifecycle_document(document)

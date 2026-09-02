@@ -60,10 +60,12 @@ agent:
   directly, then attempt roughly 70B if that passes. This is permission to test those
   sizes, not permission to claim that an exact larger checkpoint works before its own
   model-specific evidence passes.
-- New temporary GCP and Fly test resources share one combined **USD 100 maximum**.
-  Track conservative estimates and observed cost in
-  [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that could exceed
-  the remaining balance.
+- New temporary GCP and Fly test resources share one live owner-authorized combined
+  ceiling. The baseline is USD 100; on 2026-08-31 the owner raised the current accounting
+  epoch to **USD 500 maximum**. The already committed USD 52 maximum remains charged to
+  that epoch, leaving USD 448 before a new reservation. Track conservative estimates and
+  observed cost in [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that
+  could exceed the remaining balance.
 - Use the existing `gcloud`, `flyctl`, and `gh` logins. Do not require the owner to copy
   provider tokens into environment variables when native CLI authentication works.
 - On Windows, every registry token, remote credential, and Linux script must follow the
@@ -200,10 +202,34 @@ On every implementation run:
    ends, the release is complete, or that narrow definition applies to every permitted
    task on the current critical path.
 
+### Durable paid-run contract
+
+A multi-hour paid qualification must not depend on an operator terminal, SSH/IAP session,
+or untracked repair script remaining alive. Before its first create, it must have one
+source-bound, persisted, idempotent controller with `start`, `status`, `collect`, and
+`cleanup` operations. Every operation begins by inventorying the exact authorized
+instances, disks, firewalls, ownership metadata, and absolute deadlines. Matching resources
+are reattached; foreign or ambiguous exact-name resources fail closed; missing resources are
+never recreated merely because local state was lost.
+
+Long-running work runs as one named host-local durable service or task and writes only a
+bounded sanitized status plus a digest-bound terminal record. Repeating `start` observes the
+existing job; it does not launch a second lifecycle. Once a packaged product lifecycle or a
+diagnostic product launch begins, any non-pass consumes that client for acceptance. Removing
+its files or credentials does not make it fresh again, and phase-level lifecycle resumption
+is prohibited.
+
+For Gate 13, accept the complete product route before creating a client. Run the higher-risk
+Windows/Qwen lifecycle first; collect its canonical 16-phase record and delete that client
+before creating Linux/Gemma. This is an operational cost/risk sequence, not a relaxation of
+the two-platform acceptance contract. Any route failure, ambiguous host job, expired runway,
+or client failure goes directly to exact cleanup. A gate passes only after both complete
+fresh-host records and final provider absence proof exist.
+
 ### Cloud safety rules
 
 - Before provisioning, record a conservative maximum estimate in the spend ledger and
-  confirm it fits under the combined USD 100 ceiling.
+  confirm it fits under the live combined ceiling recorded in the readiness tracker.
 - An explicit owner budget reset starts a new USD 100 accounting epoch only after every
   prior run is cleanup-proved. Preserve those historical rows as `CLEANED-RELEASED` rather
   than pretending their actual cost was zero; their maxima no longer consume the new epoch,
@@ -225,7 +251,7 @@ Do not block on these while another roadmap item can proceed. Ask the owner only
 input is on the critical path:
 
 - a provider login expires and native CLI reauthentication is required;
-- the next bounded cloud run does not fit under the remaining USD 100 ceiling;
+- the next bounded cloud run does not fit under the remaining live owner-authorized ceiling;
 - platform code-signing/notarization credentials or a publisher identity are required;
 - production catalog signing needs independent human key holders;
 - an independent seed or mirror operator must accept operational responsibility; or
