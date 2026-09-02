@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -177,6 +179,211 @@ def cleanup(config, **overrides):
     return value
 
 
+def _json_bytes(value):
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _release_audit(staging, platform, source_commit, package):
+    audit_root = staging / lifecycle._RELEASE_AUDIT_DIRECTORY_NAME
+    audit_root.mkdir()
+    title = platform.title()
+    package_name = lifecycle._PACKAGE_NAMES[platform]
+    package_digest = hashlib.sha256(package.read_bytes()).hexdigest()
+    archive_record = {
+        "schema_version": 1,
+        "path": package_name,
+        "format": "zip" if platform == "windows" else "tar.gz",
+        "platform": title,
+        "artifact_root": "CommunityAI",
+        "sha256": package_digest,
+        "size_bytes": package.stat().st_size,
+        "entry_count": 1,
+        "preserves_executable_modes": platform == "linux",
+        "preserves_internal_file_symlinks": platform == "linux",
+    }
+    publication = {"scope": "test-publication-binding"}
+    release_artifacts = {
+        "schema_version": 1,
+        "artifact_count": 1,
+        "artifact_bytes": 1,
+        "checksums_sha256": hashlib.sha256(b"0" * 64 + b"  CommunityAI/test.bin\n").hexdigest(),
+        "source_commit": source_commit,
+        "source_tree": "2" * 40,
+        "unsigned": True,
+        "complete_release_qualification": False,
+        "install_archive": archive_record,
+    }
+    metrics = {
+        "schema_version": 1,
+        "application": "CommunityAI",
+        "package": "communityai-desktop",
+        "platform": f"{title}-test",
+        "signed": False,
+        "catalog_bootstrap_bundled": True,
+        "catalog_publication_bundle": publication,
+        "node_sidecar": {
+            "self_test_passed": True,
+            "node_entrypoint_smoke_passed": True,
+            "worker_entrypoint_smoke_passed": True,
+            "worker_self_test_passed": True,
+        },
+        "release_artifacts": release_artifacts,
+    }
+    metrics_payload = _json_bytes(metrics)
+    artifact = {
+        "path": "CommunityAI/test.bin",
+        "kind": "file",
+        "sha256": "0" * 64,
+        "size_bytes": 1,
+        "mode": 0o755,
+    }
+    provenance = {
+        "schema_version": 1,
+        "product": "CommunityAI",
+        "package": "communityai-desktop",
+        "release_channel": "public-alpha",
+        "source_commit": source_commit,
+        "source_tree": "2" * 40,
+        "build_workflow": "test",
+        "build_platform": f"{title}-test",
+        "build_python": "3.12",
+        "build_pyinstaller": "test",
+        "artifact_root": "CommunityAI",
+        "checksum_manifest": "SHA256SUMS",
+        "artifacts": [artifact],
+        "install_archive": archive_record,
+        "desktop_metrics": {
+            "schema_version": 1,
+            "path": "desktop-metrics.json",
+            "sha256": hashlib.sha256(metrics_payload).hexdigest(),
+            "size_bytes": len(metrics_payload),
+        },
+        "catalog_publication_bundle": publication,
+        "unsigned": True,
+        "publisher_signature": False,
+        "automatic_updates": False,
+        "complete_release_qualification": False,
+    }
+    member_payloads = {
+        "SHA256SUMS": b"0" * 64 + b"  CommunityAI/test.bin\n",
+        "desktop-metrics.json": metrics_payload,
+        "provenance.json": _json_bytes(provenance),
+        "release-metadata.json": _json_bytes(lifecycle._RELEASE_METADATA),
+    }
+    for name, payload in member_payloads.items():
+        (audit_root / name).write_bytes(payload)
+
+    archive_path = staging / lifecycle._RELEASE_AUDIT_ARCHIVE_NAME
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name in lifecycle._RELEASE_AUDIT_MEMBERS:
+            archive.writestr(name, member_payloads[name])
+    archive_payload = archive_path.read_bytes()
+    binding = {
+        "schema_version": 1,
+        "artifact_name": f"communityai-desktop-audit-{platform}",
+        "artifact_sha256": lifecycle._digest(archive_payload),
+        "artifact_bytes": len(archive_payload),
+        "members": [
+            {
+                "name": name,
+                "sha256": lifecycle._digest(member_payloads[name]),
+                "size_bytes": len(member_payloads[name]),
+            }
+            for name in lifecycle._RELEASE_AUDIT_MEMBERS
+        ],
+    }
+    return binding, audit_root / "release-metadata.json"
+
+
+def _warm_cache(staging, platform):
+    expected = lifecycle._GATE9_WARM_CACHE[platform]
+    model_id = acceptance.EXPECTED_PLATFORM_MODELS[platform]
+    profile = acceptance.MODEL_PROFILES[model_id]
+    artifacts = [
+        {
+            "path": path,
+            "role": role,
+            "sha256": digest,
+            "size_bytes": size,
+        }
+        for path, role, digest, size in expected["artifacts"]
+    ]
+    materialized = [
+        {
+            "path": item["path"],
+            "role": item["role"],
+            "sha256": item["sha256"].removeprefix("sha256:"),
+            "size_bytes": item["size_bytes"],
+            "materialization_attempts": 1,
+            "resumptions": 0,
+            "resumed_from_bytes": [],
+            "elapsed_seconds": 0.1,
+        }
+        for item in artifacts
+    ]
+    record = {
+        "schema_version": 1,
+        "acquired_at_unix": NOW - 60,
+        "runtime": {"python": "3.12", "platform": platform, "drift": "test"},
+        "model": {
+            "id": model_id,
+            "manifest_digest": profile["manifest_digest"],
+            "repository": lifecycle._MODEL_SOURCE[model_id][0],
+            "revision": profile["revision_commit"],
+            "dtype": lifecycle._MODEL_SOURCE[model_id][1],
+        },
+        "selection": {
+            "startup_artifact_paths": sorted(
+                item["path"]
+                for item in artifacts
+                if item["role"] in {"chat_template", "config", "tokenizer", "weight_index"}
+            ),
+            "weight_artifact_paths": sorted(item["path"] for item in artifacts if item["role"] == "weight"),
+            "artifact_count": len(artifacts),
+            "artifact_bytes": sum(item["size_bytes"] for item in artifacts),
+            "weight_artifact_bytes": sum(item["size_bytes"] for item in artifacts if item["role"] == "weight"),
+        },
+        "artifacts": materialized,
+        "transfer": {
+            "direct_upstream_transfer": True,
+            "mirror_used": False,
+            "source_class_verified": True,
+            "transport_override_present": False,
+            "elapsed_seconds": 1.0,
+            "max_resumptions": 3,
+            "resumptions": 0,
+            "completed": True,
+        },
+        "storage": {
+            "cold_start": True,
+            "cache_bytes_before": 0,
+            "cache_bytes_after": profile["selected_artifact_bytes"],
+            "cache_growth_bytes": profile["selected_artifact_bytes"],
+            "verified": True,
+        },
+        "privacy": {
+            "credentials_retained": False,
+            "local_paths_retained": False,
+            "response_bodies_retained": False,
+            "urls_retained": False,
+        },
+    }
+    payload = _json_bytes(record)
+    record_path = staging / lifecycle._MATERIALIZATION_RECORD_NAME
+    record_path.write_bytes(payload)
+    return {
+        "schema_version": 1,
+        "layout": "manifest-artifacts-v1",
+        "gate9_acquisition_record_sha256": expected["gate9_acquisition_record_sha256"],
+        "gate9_resource_envelope_sha256": expected["gate9_resource_envelope_sha256"],
+        "materialization_record_sha256": lifecycle._digest(payload),
+        "materialization_record_bytes": len(payload),
+        "artifact_count": profile["selected_artifact_count"],
+        "artifact_bytes": profile["selected_artifact_bytes"],
+        "artifacts": artifacts,
+    }
+
+
 @pytest.fixture
 def config_factory(tmp_path, monkeypatch):
     monkeypatch.setattr(
@@ -195,16 +402,14 @@ def config_factory(tmp_path, monkeypatch):
             "communityai-desktop-windows.zip" if platform == "windows" else "communityai-desktop-linux.tar.gz"
         )
         package.write_bytes(PACKAGE_PAYLOAD)
-        metadata = staging / "release-metadata.json"
-        metadata_payload = (
-            json.dumps(
-                lifecycle._RELEASE_METADATA,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
+        release_audit, metadata = _release_audit(
+            staging,
+            platform,
+            SOURCE,
+            package,
         )
-        metadata.write_bytes(metadata_payload.encode("utf-8"))
+        warm_cache = _warm_cache(staging, platform)
+        metadata_payload = metadata.read_bytes()
         model_id = acceptance.EXPECTED_PLATFORM_MODELS[platform]
         raw = {
             "schema_version": 1,
@@ -217,7 +422,9 @@ def config_factory(tmp_path, monkeypatch):
             "package_sha256": PACKAGE_SHA256,
             "package_bytes": package.stat().st_size,
             "release_metadata_path": str(metadata.resolve()),
-            "release_metadata_sha256": lifecycle._digest(metadata_payload.encode("utf-8")),
+            "release_metadata_sha256": lifecycle._digest(metadata_payload),
+            "release_audit": release_audit,
+            "warm_cache": warm_cache,
             "model_id": model_id,
             "manifest_digest": acceptance.MODEL_PROFILES[model_id]["manifest_digest"],
             "gate13_evidence_sha256": acceptance.EXPECTED_GATE13_EVIDENCE_SHA256,
@@ -317,6 +524,285 @@ def test_config_has_no_claim_fields_and_binds_exact_inputs(config_factory):
         lifecycle.load_config(path)
 
 
+@pytest.mark.parametrize(
+    ("platform", "cell"),
+    [("windows", "qwen_windows"), ("linux", "gemma_linux")],
+)
+def test_gate9_warm_cache_constants_match_committed_evidence(
+    config_factory,
+    platform,
+    cell,
+):
+    evidence = json.loads(
+        (ROOT / "docs" / "evidence" / "gate9-20260830-e-edge-resource-envelopes.json").read_text(encoding="utf-8")
+    )
+    source = evidence["client_results"][cell]
+    expected = lifecycle._GATE9_WARM_CACHE[platform]
+    projected = tuple(
+        (
+            item["path"],
+            item["role"],
+            "sha256:" + item["sha256"],
+            item["size_bytes"],
+        )
+        for item in source["acquisition_record"]["artifacts"]
+    )
+
+    assert source["acquisition_record_sha256"] == expected["gate9_acquisition_record_sha256"]
+    assert source["resource_envelope_sha256"] == expected["gate9_resource_envelope_sha256"]
+    assert projected == expected["artifacts"]
+
+    path, _raw = config_factory(platform=platform)
+    config = lifecycle.load_config(path)
+    assert config.warm_cache.artifacts == tuple(lifecycle.CacheArtifactBinding(*item) for item in expected["artifacts"])
+
+
+def test_config_binds_full_release_audit_and_fresh_warm_cache(config_factory):
+    path, _raw = config_factory()
+
+    config = lifecycle.load_config(path)
+    checkpoint = lifecycle.write_or_load_checkpoint(
+        config,
+        prepared(),
+        now_unix=NOW,
+    )
+
+    assert config.release_audit.artifact_name == "communityai-desktop-audit-windows"
+    assert [item.name for item in config.release_audit.members] == list(lifecycle._RELEASE_AUDIT_MEMBERS)
+    assert (
+        config.warm_cache.gate9_acquisition_record_sha256
+        == lifecycle._GATE9_WARM_CACHE["windows"]["gate9_acquisition_record_sha256"]
+    )
+    assert checkpoint["release_audit_sha256"] == config.release_audit.binding_sha256
+    assert checkpoint["warm_cache_sha256"] == config.warm_cache.binding_sha256
+    assert checkpoint["materialization_record_sha256"] == config.warm_cache.materialization_record_sha256
+
+
+@pytest.mark.parametrize(
+    ("mutator", "message"),
+    [
+        (
+            lambda raw: raw.update({"schema_version": True}),
+            "lifecycle configuration schema",
+        ),
+        (
+            lambda raw: raw["release_audit"].update({"schema_version": True}),
+            "release audit identity",
+        ),
+        (
+            lambda raw: raw["warm_cache"].update({"schema_version": True}),
+            "warm-cache Gate 9 identity",
+        ),
+        (
+            lambda raw: raw["release_audit"]["members"].reverse(),
+            "members are not exact and sorted",
+        ),
+        (
+            lambda raw: raw["release_audit"].update({"passed": True}),
+            "release audit binding schema",
+        ),
+        (
+            lambda raw: raw["warm_cache"].update({"gate9_acquisition_record_sha256": "sha256:" + "f" * 64}),
+            "Gate 9 identity",
+        ),
+        (
+            lambda raw: raw["warm_cache"]["artifacts"][0].update({"path": "../chat_template.jinja"}),
+            "artifact path",
+        ),
+        (
+            lambda raw: raw["warm_cache"]["artifacts"][0].update(
+                {"size_bytes": raw["warm_cache"]["artifacts"][0]["size_bytes"] + 1}
+            ),
+            "artifact identity",
+        ),
+        (
+            lambda raw: raw["warm_cache"].update({"verified": True}),
+            "warm-cache binding schema",
+        ),
+    ],
+)
+def test_public_input_binding_mutations_fail_closed(
+    config_factory,
+    mutator,
+    message,
+):
+    path, raw = config_factory()
+    mutator(raw)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(lifecycle.Gate14LifecycleError, match=message):
+        lifecycle.load_config(path)
+
+
+@pytest.mark.parametrize("attack", ["reverse", "symlink"])
+def test_release_audit_zip_members_are_exact_regular_files(config_factory, attack):
+    path, raw = config_factory()
+    archive_path = path.parent / lifecycle._RELEASE_AUDIT_ARCHIVE_NAME
+    audit_root = path.parent / lifecycle._RELEASE_AUDIT_DIRECTORY_NAME
+    names = list(lifecycle._RELEASE_AUDIT_MEMBERS)
+    if attack == "reverse":
+        names.reverse()
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        for index, name in enumerate(names):
+            payload = (audit_root / name).read_bytes()
+            if attack == "symlink" and index == 0:
+                info = zipfile.ZipInfo(name)
+                info.create_system = 3
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                archive.writestr(info, payload)
+            else:
+                archive.writestr(name, payload)
+    archive_payload = archive_path.read_bytes()
+    raw["release_audit"]["artifact_sha256"] = lifecycle._digest(archive_payload)
+    raw["release_audit"]["artifact_bytes"] = len(archive_payload)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(
+        lifecycle.Gate14LifecycleError,
+        match="archive members are invalid",
+    ):
+        lifecycle.load_config(path)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "provenance",
+        "metrics",
+        "release_metadata",
+        "archive",
+        "metrics_record",
+        "release_artifacts",
+        "release_totals",
+    ],
+)
+def test_release_audit_schema_versions_reject_boolean(config_factory, target):
+    path, raw = config_factory()
+    audit_root = path.parent / lifecycle._RELEASE_AUDIT_DIRECTORY_NAME
+    provenance = json.loads((audit_root / "provenance.json").read_text(encoding="utf-8"))
+    metrics = json.loads((audit_root / "desktop-metrics.json").read_text(encoding="utf-8"))
+    metadata = json.loads((audit_root / "release-metadata.json").read_text(encoding="utf-8"))
+
+    if target == "provenance":
+        provenance["schema_version"] = True
+    elif target == "metrics":
+        metrics["schema_version"] = True
+    elif target == "release_metadata":
+        metadata["schema_version"] = True
+    elif target == "archive":
+        provenance["install_archive"]["schema_version"] = True
+        metrics["release_artifacts"]["install_archive"]["schema_version"] = True
+    elif target == "metrics_record":
+        provenance["desktop_metrics"]["schema_version"] = True
+    elif target == "release_artifacts":
+        metrics["release_artifacts"]["schema_version"] = True
+    else:
+        metrics["release_artifacts"]["artifact_count"] = 999
+        metrics["release_artifacts"]["artifact_bytes"] = -1
+        metrics["release_artifacts"]["checksums_sha256"] = "f" * 64
+
+    metrics_payload = _json_bytes(metrics)
+    provenance["desktop_metrics"]["sha256"] = hashlib.sha256(metrics_payload).hexdigest()
+    provenance["desktop_metrics"]["size_bytes"] = len(metrics_payload)
+    payloads = {
+        "SHA256SUMS": (audit_root / "SHA256SUMS").read_bytes(),
+        "desktop-metrics.json": metrics_payload,
+        "provenance.json": _json_bytes(provenance),
+        "release-metadata.json": _json_bytes(metadata),
+    }
+
+    with pytest.raises(lifecycle.Gate14LifecycleError):
+        lifecycle._validate_release_semantics(
+            payloads,
+            platform=raw["platform"],
+            source_commit=raw["source_commit"],
+            package_sha256=raw["package_sha256"],
+            package_bytes=raw["package_bytes"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        ("release-audit.zip", "release audit artifact"),
+        ("release-audit/SHA256SUMS", "release audit extracted member"),
+        (
+            lifecycle._MATERIALIZATION_RECORD_NAME,
+            "cache materialization record identity",
+        ),
+    ],
+)
+def test_staged_public_input_drift_fails_before_prepare_and_cleans(
+    config_factory,
+    target,
+    message,
+):
+    path, _raw = config_factory()
+    config = lifecycle.load_config(path)
+    candidate = config.staging_root / Path(target)
+    payload = candidate.read_bytes()
+    candidate.write_bytes(b" " + payload[1:])
+    actions = FakeActions(Clock())
+
+    with pytest.raises(lifecycle.Gate14LifecycleError, match=message):
+        lifecycle.run_lifecycle(config, actions, hardware_probe=hardware)
+
+    assert actions.events == ["cleanup"]
+    assert not config.checkpoint_path.exists()
+
+
+def _rewrite_materialization(path, raw, mutator):
+    record_path = path.parent / lifecycle._MATERIALIZATION_RECORD_NAME
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    mutator(record)
+    payload = _json_bytes(record)
+    record_path.write_bytes(payload)
+    raw["warm_cache"]["materialization_record_sha256"] = lifecycle._digest(payload)
+    raw["warm_cache"]["materialization_record_bytes"] = len(payload)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+def test_materialization_mirror_or_transport_override_is_rejected(config_factory):
+    path, raw = config_factory()
+
+    def mutate(record):
+        record["transfer"]["direct_upstream_transfer"] = False
+        record["transfer"]["mirror_used"] = True
+
+    _rewrite_materialization(path, raw, mutate)
+
+    with pytest.raises(
+        lifecycle.Gate14LifecycleError,
+        match="materialization proof",
+    ):
+        lifecycle.load_config(path)
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda record: record.update({"schema_version": True}),
+        lambda record: record["runtime"].update({"private_path": "C:/secret"}),
+        lambda record: record["model"].update({"repository": "attacker/model"}),
+        lambda record: record["selection"].update({"verified": True}),
+        lambda record: record["transfer"].update({"elapsed_seconds": True}),
+        lambda record: record["transfer"].update({"elapsed_seconds": float("inf")}),
+        lambda record: record["transfer"].update({"resumptions": False}),
+        lambda record: record["storage"].update({"cache_bytes_before": False}),
+        lambda record: record["privacy"].update({"credentials_retained": 0}),
+    ],
+)
+def test_materialization_nested_schema_and_source_fail_closed(
+    config_factory,
+    mutator,
+):
+    path, raw = config_factory()
+    _rewrite_materialization(path, raw, mutator)
+
+    with pytest.raises(lifecycle.Gate14LifecycleError):
+        lifecycle.load_config(path)
+
+
 def test_config_rejects_wrong_model_and_escaped_private_path(
     config_factory,
     tmp_path,
@@ -364,6 +850,51 @@ def test_checkpoint_is_immutable_and_prepared_digest_bound(config_factory):
             config,
             changed,
             now_unix=NOW + 1,
+        )
+
+
+@pytest.mark.parametrize("field", ["schema_version", "attempt_ordinal"])
+def test_boolean_checkpoint_identity_fails_direct_and_persisted(config_factory, field):
+    path, _raw = config_factory()
+    config = lifecycle.load_config(path)
+    observed = prepared()
+    checkpoint = lifecycle._checkpoint_value(config, observed, NOW)
+    checkpoint[field] = True
+
+    with pytest.raises(lifecycle.Gate14LifecycleError, match="checkpoint schema"):
+        lifecycle.validate_checkpoint(
+            checkpoint,
+            config,
+            observed,
+            now_unix=NOW,
+        )
+    with pytest.raises(lifecycle.Gate14LifecycleError, match="checkpoint schema"):
+        lifecycle.checkpoint_digest(checkpoint)
+
+    config.checkpoint_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+    with pytest.raises(lifecycle.Gate14LifecycleError, match="checkpoint schema"):
+        lifecycle.write_or_load_checkpoint(
+            config,
+            observed,
+            now_unix=NOW,
+        )
+
+
+def test_boolean_attempt_ordinal_fails_prepared_and_cleanup(config_factory):
+    path, _raw = config_factory()
+    config = lifecycle.load_config(path)
+    observed = prepared()
+    observed["attempt_ordinal"] = True
+    with pytest.raises(
+        lifecycle.Gate14LifecycleError,
+        match="prepared observation schema or binding",
+    ):
+        lifecycle.validate_prepared(observed, config)
+
+    with pytest.raises(lifecycle.Gate14LifecycleError, match="cleanup is incomplete"):
+        lifecycle.validate_cleanup(
+            cleanup(config, attempt_ordinal=True),
+            config,
         )
 
 

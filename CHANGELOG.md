@@ -61,7 +61,19 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   production prepare/calibrate handlers intentionally fail closed until the release audit
   companions and Gate 9 warm cache are controller-bound. The expanded no-spend Gate 14 contract
   matrix passes 154 tests, including native and client-side rejection of Boolean, numeric,
-  array-coerced, and changed controller bindings. This is software and preflight evidence only:
+  array-coerced, and changed controller bindings. The controller-owned lifecycle input now binds
+  the complete Actions audit ZIP by exact artifact name, digest, size, and the exact four extracted
+  `SHA256SUMS`, desktop-metrics, provenance, and release-metadata members. Their package, source,
+  platform, archive, checksum inventory, smoke, and incomplete unsigned-alpha claims are validated
+  together. A separate warm-cache binding preserves the historical Gate 9 acquisition and envelope
+  identities while requiring a fresh direct-upstream, no-mirror, empty-cache materialization record
+  with the exact sorted artifact digests, roles, counts, and bytes for Windows/Qwen and Linux/Gemma.
+  Outer archive, extracted member, and materialization-record drift is rechecked at every lifecycle
+  boundary, and the immutable challenge-ready checkpoint binds all three identities. The lifecycle/
+  controller focus passes 75 tests, including unknown nested cache fields, wrong repository,
+  non-finite timing, historical-artifact mutation, and source/member substitution. No physical Gate 9
+  cache survives the cleaned historical hosts, so the paid run still requires a fresh source-bound
+  production build and direct host materialization. This is software and preflight evidence only:
   no Gate 14 hardware or
   cloud-run pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The

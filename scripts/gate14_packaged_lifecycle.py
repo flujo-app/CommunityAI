@@ -18,8 +18,9 @@ import re
 import stat
 import tempfile
 import time
+import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 import gate14_calibration_challenge as challenge_contract
@@ -34,6 +35,11 @@ CLEANUP_SCOPE = "gate14-host-lifecycle-cleanup"
 MAX_CONFIG_BYTES = 65_536
 MAX_PRIVATE_JSON_BYTES = 262_144
 MAX_RELEASE_METADATA_BYTES = host_probe.MAX_JSON_BYTES
+MAX_RELEASE_PROVENANCE_BYTES = 8 * 1024**2
+MAX_DESKTOP_METRICS_BYTES = 1024**2
+MAX_RELEASE_CHECKSUMS_BYTES = 4 * 1024**2
+MAX_RELEASE_AUDIT_BYTES = 32 * 1024**2
+MAX_MATERIALIZATION_RECORD_BYTES = 2 * 1024**2
 MAX_PACKAGE_BYTES = 8 * 1024**3
 MAX_CHALLENGE_WAIT_SECONDS = 1_200.0
 
@@ -53,6 +59,8 @@ _CONFIG_FIELDS = {
     "package_bytes",
     "release_metadata_path",
     "release_metadata_sha256",
+    "release_audit",
+    "warm_cache",
     "model_id",
     "manifest_digest",
     "gate13_evidence_sha256",
@@ -97,6 +105,9 @@ _CHECKPOINT_FIELDS = {
     "lifecycle_config_sha256",
     "package_sha256",
     "release_metadata_sha256",
+    "release_audit_sha256",
+    "warm_cache_sha256",
+    "materialization_record_sha256",
     "prepared_facts_sha256",
     "phase",
     "created_at_unix",
@@ -121,6 +132,101 @@ _OUTPUT_NAMES = {
     "evidence_path": "gate14-platform-evidence.json",
 }
 _CHALLENGE_NAME = "gate14-challenge.json"
+_RELEASE_AUDIT_ARCHIVE_NAME = "release-audit.zip"
+_RELEASE_AUDIT_DIRECTORY_NAME = "release-audit"
+_MATERIALIZATION_RECORD_NAME = "gate14-cache-materialization.json"
+_RELEASE_AUDIT_MEMBERS = (
+    "SHA256SUMS",
+    "desktop-metrics.json",
+    "provenance.json",
+    "release-metadata.json",
+)
+_MODEL_SOURCE = {
+    "Qwen3.5 2B": ("Qwen/Qwen3.5-2B", "bfloat16"),
+    "Gemma 4 E2B IT": ("google/gemma-4-E2B-it", "bfloat16"),
+}
+_GATE9_WARM_CACHE = {
+    "windows": {
+        "gate9_acquisition_record_sha256": "sha256:557c9a5a5441d095f780bfe20620450502a1b941fd7e33fe72b83bec5e147c52",
+        "gate9_resource_envelope_sha256": "sha256:cd68afb67d9b0f3cb8c82db0d3314ad89b558c20880998ea4d8c4493e9f4bc9f",
+        "artifacts": (
+            (
+                "chat_template.jinja",
+                "chat_template",
+                "sha256:273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+                7755,
+            ),
+            ("config.json", "config", "sha256:ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4", 2908),
+            (
+                "merges.txt",
+                "tokenizer",
+                "sha256:a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+                3353259,
+            ),
+            (
+                "model.safetensors-00001-of-00001.safetensors",
+                "weight",
+                "sha256:aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1",
+                4548221488,
+            ),
+            (
+                "model.safetensors.index.json",
+                "weight_index",
+                "sha256:aca8afed9da75b0f050b408d270766fd77627f1af401e240f61c3b47d0db02f9",
+                64460,
+            ),
+            (
+                "tokenizer.json",
+                "tokenizer",
+                "sha256:5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+                12807982,
+            ),
+            (
+                "tokenizer_config.json",
+                "tokenizer",
+                "sha256:49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+                16709,
+            ),
+            (
+                "vocab.json",
+                "tokenizer",
+                "sha256:ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+                6722759,
+            ),
+        ),
+    },
+    "linux": {
+        "gate9_acquisition_record_sha256": "sha256:1628f87f1baaa2f562ca6c7340d2863034cdb0d17dbdf8995e38d9ae792fe0b5",
+        "gate9_resource_envelope_sha256": "sha256:2eb0bcf6419ba085665fad34310453a1b9dc2e89d90e9177f41566df012996c8",
+        "artifacts": (
+            (
+                "chat_template.jinja",
+                "chat_template",
+                "sha256:0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5",
+                18569,
+            ),
+            ("config.json", "config", "sha256:1b28f3d2c3100f6c594754b81107428bd7b822a7f48272ca681dae9d2ec38330", 4954),
+            (
+                "model.safetensors",
+                "weight",
+                "sha256:2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550",
+                10246621918,
+            ),
+            (
+                "tokenizer.json",
+                "tokenizer",
+                "sha256:cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+                32169626,
+            ),
+            (
+                "tokenizer_config.json",
+                "tokenizer",
+                "sha256:9f4fec4b1dc6ecddf8f4a92e9caea5971c0e67d81309f3f9066a2bee8c362633",
+                3082,
+            ),
+        ),
+    },
+}
 _PENDING_EVIDENCE_NAME = ".gate14-platform-evidence.pending.json"
 _RELEASE_METADATA = {
     "schema_version": 1,
@@ -173,6 +279,45 @@ HardwareProbe = Callable[[str], Mapping[str, Any]]
 
 
 @dataclass(frozen=True)
+class AuditMemberBinding:
+    name: str
+    sha256: str
+    size_bytes: int
+    path: Path
+
+
+@dataclass(frozen=True)
+class ReleaseAuditBinding:
+    artifact_name: str
+    artifact_sha256: str
+    artifact_bytes: int
+    archive_path: Path
+    members: tuple[AuditMemberBinding, ...]
+    binding_sha256: str
+
+
+@dataclass(frozen=True)
+class CacheArtifactBinding:
+    path: str
+    role: str
+    sha256: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class WarmCacheBinding:
+    gate9_acquisition_record_sha256: str
+    gate9_resource_envelope_sha256: str
+    materialization_record_sha256: str
+    materialization_record_bytes: int
+    materialization_record_path: Path
+    artifact_count: int
+    artifact_bytes: int
+    artifacts: tuple[CacheArtifactBinding, ...]
+    binding_sha256: str
+
+
+@dataclass(frozen=True)
 class LifecycleConfig:
     run_id: str
     platform: str
@@ -185,6 +330,8 @@ class LifecycleConfig:
     package_bytes: int
     release_metadata_path: Path
     release_metadata_sha256: str
+    release_audit: ReleaseAuditBinding
+    warm_cache: WarmCacheBinding
     model_id: str
     manifest_digest: str
     gate13_evidence_sha256: str
@@ -230,6 +377,18 @@ def _canonical(value: Mapping[str, Any]) -> bytes:
 
 def _digest(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _exact_equal(value: Any, expected: Any) -> bool:
+    if type(value) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(value) == set(expected) and all(_exact_equal(value[key], expected[key]) for key in expected)
+    if isinstance(expected, list):
+        return len(value) == len(expected) and all(
+            _exact_equal(observed, required) for observed, required in zip(value, expected)
+        )
+    return value == expected
 
 
 def _open_regular(
@@ -541,10 +700,689 @@ def _private_path(raw: Mapping[str, Any], field: str, root: Path) -> Path:
     )
 
 
+def _exact_staged_path(path: Path, expected: Path, label: str, *, directory: bool) -> Path:
+    candidate = _absolute_path(os.fspath(path), label)
+    expected = Path(os.path.abspath(os.fspath(expected)))
+    if candidate != expected:
+        raise Gate14LifecycleError(f"{label} escaped its fixed location")
+    try:
+        metadata = candidate.lstat()
+    except OSError as exc:
+        raise Gate14LifecycleError(f"{label} is unavailable") from exc
+    reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    expected_type = stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode)
+    if reparse or candidate.is_symlink() or not expected_type:
+        raise Gate14LifecycleError(f"{label} is unsafe")
+    return candidate
+
+
+def _public_path(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value or "\\" in value or any(ord(character) < 32 for character in value):
+        raise Gate14LifecycleError(f"{label} is unsafe")
+    pure = PurePosixPath(value)
+    if pure.is_absolute() or pure.as_posix() != value or any(part in ("", ".", "..") for part in pure.parts):
+        raise Gate14LifecycleError(f"{label} is unsafe")
+    return value
+
+
+def _digest_field(value: Any, label: str) -> str:
+    if not isinstance(value, str) or _DIGEST_RE.fullmatch(value) is None:
+        raise Gate14LifecycleError(f"{label} is invalid")
+    return value
+
+
+def _audit_member_payloads(binding: ReleaseAuditBinding) -> dict[str, bytes]:
+    _assert_controller_owned(binding.archive_path, directory=False)
+    archive = _regular_bytes(binding.archive_path, MAX_RELEASE_AUDIT_BYTES)
+    if len(archive) != binding.artifact_bytes or _digest(archive) != binding.artifact_sha256:
+        raise Gate14LifecycleError("release audit artifact binding changed")
+
+    expected = {member.name: member for member in binding.members}
+    payloads: dict[str, bytes] = {}
+    try:
+        import io
+
+        with zipfile.ZipFile(io.BytesIO(archive), "r") as source:
+            infos = source.infolist()
+            names = [info.filename for info in infos]
+            if names != list(_RELEASE_AUDIT_MEMBERS) or any(
+                info.is_dir() or info.flag_bits & 0x1 or stat.S_IFMT(info.external_attr >> 16) not in {0, stat.S_IFREG}
+                for info in infos
+            ):
+                raise Gate14LifecycleError("release audit archive members are invalid")
+            for info in infos:
+                member = expected[info.filename]
+                if info.file_size != member.size_bytes:
+                    raise Gate14LifecycleError("release audit archive member size changed")
+                payload = source.read(info)
+                if len(payload) != member.size_bytes or _digest(payload) != member.sha256:
+                    raise Gate14LifecycleError("release audit archive member digest changed")
+                payloads[member.name] = payload
+    except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
+        raise Gate14LifecycleError("release audit archive is unreadable") from exc
+
+    for member in binding.members:
+        _assert_controller_owned(member.path, directory=False)
+        staged = _regular_bytes(
+            member.path,
+            {
+                "provenance.json": MAX_RELEASE_PROVENANCE_BYTES,
+                "desktop-metrics.json": MAX_DESKTOP_METRICS_BYTES,
+                "SHA256SUMS": MAX_RELEASE_CHECKSUMS_BYTES,
+            }.get(member.name, MAX_RELEASE_METADATA_BYTES),
+        )
+        if staged != payloads[member.name]:
+            raise Gate14LifecycleError("release audit extracted member changed")
+    return payloads
+
+
+def _validate_release_semantics(
+    payloads: Mapping[str, bytes],
+    *,
+    platform: str,
+    source_commit: str,
+    package_sha256: str,
+    package_bytes: int,
+) -> None:
+    provenance = _strict_json(
+        payloads["provenance.json"],
+        MAX_RELEASE_PROVENANCE_BYTES,
+    )
+    metrics = _strict_json(
+        payloads["desktop-metrics.json"],
+        MAX_DESKTOP_METRICS_BYTES,
+    )
+    release_metadata = _strict_json(
+        payloads["release-metadata.json"],
+        MAX_RELEASE_METADATA_BYTES,
+    )
+    if not _exact_equal(release_metadata, _RELEASE_METADATA):
+        raise Gate14LifecycleError("release audit metadata claims are invalid")
+
+    provenance_fields = {
+        "schema_version",
+        "product",
+        "package",
+        "release_channel",
+        "source_commit",
+        "source_tree",
+        "build_workflow",
+        "build_platform",
+        "build_python",
+        "build_pyinstaller",
+        "artifact_root",
+        "checksum_manifest",
+        "artifacts",
+        "install_archive",
+        "desktop_metrics",
+        "catalog_publication_bundle",
+        "unsigned",
+        "publisher_signature",
+        "automatic_updates",
+        "complete_release_qualification",
+    }
+    title = platform.title()
+    archive = provenance.get("install_archive")
+    metrics_record = provenance.get("desktop_metrics")
+    artifacts = provenance.get("artifacts")
+    if (
+        set(provenance) != provenance_fields
+        or type(provenance.get("schema_version")) is not int
+        or provenance.get("schema_version") != 1
+        or provenance.get("product") != "CommunityAI"
+        or provenance.get("package") != "communityai-desktop"
+        or provenance.get("release_channel") != "public-alpha"
+        or provenance.get("source_commit") != source_commit
+        or not isinstance(provenance.get("source_tree"), str)
+        or _COMMIT_RE.fullmatch(provenance["source_tree"]) is None
+        or not isinstance(provenance.get("build_platform"), str)
+        or not provenance["build_platform"].startswith(title)
+        or provenance.get("artifact_root") != "CommunityAI"
+        or provenance.get("checksum_manifest") != "SHA256SUMS"
+        or provenance.get("unsigned") is not True
+        or provenance.get("publisher_signature") is not False
+        or provenance.get("automatic_updates") is not False
+        or provenance.get("complete_release_qualification") is not False
+        or not isinstance(artifacts, list)
+        or not artifacts
+        or not isinstance(archive, dict)
+        or not isinstance(metrics_record, dict)
+    ):
+        raise Gate14LifecycleError("release provenance binding is invalid")
+
+    expected_archive = {
+        "schema_version": 1,
+        "path": _PACKAGE_NAMES[platform],
+        "format": "zip" if platform == "windows" else "tar.gz",
+        "platform": title,
+        "artifact_root": "CommunityAI",
+        "sha256": package_sha256.removeprefix("sha256:"),
+        "size_bytes": package_bytes,
+        "entry_count": archive.get("entry_count"),
+        "preserves_executable_modes": platform == "linux",
+        "preserves_internal_file_symlinks": platform == "linux",
+    }
+    if (
+        set(archive) != set(expected_archive)
+        or type(archive.get("schema_version")) is not int
+        or type(archive.get("entry_count")) is not int
+        or archive["entry_count"] < 1
+        or not _exact_equal(archive, expected_archive)
+    ):
+        raise Gate14LifecycleError("release archive provenance is invalid")
+
+    metrics_payload = payloads["desktop-metrics.json"]
+    if not _exact_equal(
+        metrics_record,
+        {
+            "schema_version": 1,
+            "path": "desktop-metrics.json",
+            "sha256": hashlib.sha256(metrics_payload).hexdigest(),
+            "size_bytes": len(metrics_payload),
+        },
+    ):
+        raise Gate14LifecycleError("desktop metrics provenance is invalid")
+
+    artifact_paths: list[str] = []
+    artifact_kinds: dict[str, str] = {}
+    link_targets: dict[str, str] = {}
+    checksum_lines: list[str] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            raise Gate14LifecycleError("release artifact inventory is invalid")
+        kind = artifact.get("kind")
+        expected_fields = {"path", "kind", "sha256", "size_bytes"}
+        expected_fields.add("mode" if kind == "file" else "link_target")
+        path = _public_path(artifact.get("path"), "release artifact path")
+        digest = artifact.get("sha256")
+        size = artifact.get("size_bytes")
+        if (
+            set(artifact) != expected_fields
+            or not path.startswith("CommunityAI/")
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or type(size) is not int
+            or size < 0
+            or kind not in {"file", "symlink"}
+        ):
+            raise Gate14LifecycleError("release artifact inventory is invalid")
+        if kind == "file":
+            if type(artifact.get("mode")) is not int or not 0 <= artifact["mode"] <= 0o7777:
+                raise Gate14LifecycleError("release artifact mode is invalid")
+        else:
+            target = _public_path(artifact.get("link_target"), "release link target")
+            if target == path or not target.startswith("CommunityAI/"):
+                raise Gate14LifecycleError("release artifact link is invalid")
+            link_targets[path] = target
+        artifact_paths.append(path)
+        artifact_kinds[path] = kind
+        checksum_lines.append(f"{digest}  {path}\n")
+    if any(artifact_kinds.get(target) != "file" for target in link_targets.values()):
+        raise Gate14LifecycleError("release artifact link target is invalid")
+    if (
+        artifact_paths != sorted(artifact_paths)
+        or len({item.casefold() for item in artifact_paths}) != len(artifact_paths)
+        or payloads["SHA256SUMS"] != "".join(checksum_lines).encode("utf-8")
+    ):
+        raise Gate14LifecycleError("release checksum inventory is invalid")
+
+    release_artifacts = metrics.get("release_artifacts")
+    node_sidecar = metrics.get("node_sidecar")
+    if (
+        type(metrics.get("schema_version")) is not int
+        or metrics.get("schema_version") != 1
+        or metrics.get("application") != "CommunityAI"
+        or metrics.get("package") != "communityai-desktop"
+        or not isinstance(metrics.get("platform"), str)
+        or not metrics["platform"].startswith(title)
+        or metrics.get("signed") is not False
+        or metrics.get("catalog_bootstrap_bundled") is not True
+        or not _exact_equal(
+            metrics.get("catalog_publication_bundle"),
+            provenance.get("catalog_publication_bundle"),
+        )
+        or not isinstance(release_artifacts, dict)
+        or set(release_artifacts)
+        != {
+            "schema_version",
+            "artifact_count",
+            "artifact_bytes",
+            "checksums_sha256",
+            "source_commit",
+            "source_tree",
+            "unsigned",
+            "complete_release_qualification",
+            "install_archive",
+        }
+        or type(release_artifacts.get("schema_version")) is not int
+        or release_artifacts.get("schema_version") != 1
+        or type(release_artifacts.get("artifact_count")) is not int
+        or release_artifacts.get("artifact_count") != len(artifacts)
+        or type(release_artifacts.get("artifact_bytes")) is not int
+        or release_artifacts.get("artifact_bytes") != sum(item["size_bytes"] for item in artifacts)
+        or release_artifacts.get("checksums_sha256") != hashlib.sha256(payloads["SHA256SUMS"]).hexdigest()
+        or release_artifacts.get("source_commit") != source_commit
+        or release_artifacts.get("source_tree") != provenance.get("source_tree")
+        or release_artifacts.get("unsigned") is not True
+        or not _exact_equal(release_artifacts.get("install_archive"), archive)
+        or release_artifacts.get("complete_release_qualification") is not False
+        or not isinstance(node_sidecar, dict)
+        or node_sidecar.get("self_test_passed") is not True
+        or node_sidecar.get("node_entrypoint_smoke_passed") is not True
+        or node_sidecar.get("worker_entrypoint_smoke_passed") is not True
+        or node_sidecar.get("worker_self_test_passed") is not True
+    ):
+        raise Gate14LifecycleError("desktop metrics binding is invalid")
+
+
+def _load_release_audit(
+    value: Any,
+    *,
+    staging_root: Path,
+    release_metadata_path: Path,
+    release_metadata_sha256: str,
+    platform: str,
+    source_commit: str,
+    package_sha256: str,
+    package_bytes: int,
+) -> ReleaseAuditBinding:
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "artifact_name",
+        "artifact_sha256",
+        "artifact_bytes",
+        "members",
+    }:
+        raise Gate14LifecycleError("release audit binding schema is invalid")
+    expected_artifact_name = f"communityai-desktop-audit-{platform}"
+    raw_members = value.get("members")
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("artifact_name") != expected_artifact_name
+        or not isinstance(raw_members, list)
+        or len(raw_members) != len(_RELEASE_AUDIT_MEMBERS)
+    ):
+        raise Gate14LifecycleError("release audit identity is invalid")
+    artifact_sha256 = _digest_field(
+        value.get("artifact_sha256"),
+        "release audit artifact digest",
+    )
+    artifact_bytes = _bounded_integer(
+        value.get("artifact_bytes"),
+        "release audit artifact size",
+        1,
+        MAX_RELEASE_AUDIT_BYTES,
+    )
+
+    audit_directory = _exact_staged_path(
+        staging_root / _RELEASE_AUDIT_DIRECTORY_NAME,
+        staging_root / _RELEASE_AUDIT_DIRECTORY_NAME,
+        "release audit directory",
+        directory=True,
+    )
+    _assert_controller_owned(audit_directory, directory=True)
+    members: list[AuditMemberBinding] = []
+    for index, raw in enumerate(raw_members):
+        if not isinstance(raw, dict) or set(raw) != {"name", "sha256", "size_bytes"}:
+            raise Gate14LifecycleError("release audit member schema is invalid")
+        name = raw.get("name")
+        if name != _RELEASE_AUDIT_MEMBERS[index]:
+            raise Gate14LifecycleError("release audit members are not exact and sorted")
+        maximum = {
+            "provenance.json": MAX_RELEASE_PROVENANCE_BYTES,
+            "desktop-metrics.json": MAX_DESKTOP_METRICS_BYTES,
+            "SHA256SUMS": MAX_RELEASE_CHECKSUMS_BYTES,
+        }.get(name, MAX_RELEASE_METADATA_BYTES)
+        member = AuditMemberBinding(
+            name=name,
+            sha256=_digest_field(raw.get("sha256"), "release audit member digest"),
+            size_bytes=_bounded_integer(
+                raw.get("size_bytes"),
+                "release audit member size",
+                1,
+                maximum,
+            ),
+            path=_exact_staged_path(
+                audit_directory / name,
+                audit_directory / name,
+                "release audit member",
+                directory=False,
+            ),
+        )
+        members.append(member)
+    metadata_member = next(item for item in members if item.name == "release-metadata.json")
+    if metadata_member.path != release_metadata_path or metadata_member.sha256 != release_metadata_sha256:
+        raise Gate14LifecycleError("release metadata is not bound to the full audit")
+
+    binding = ReleaseAuditBinding(
+        artifact_name=expected_artifact_name,
+        artifact_sha256=artifact_sha256,
+        artifact_bytes=artifact_bytes,
+        archive_path=_exact_staged_path(
+            staging_root / _RELEASE_AUDIT_ARCHIVE_NAME,
+            staging_root / _RELEASE_AUDIT_ARCHIVE_NAME,
+            "release audit archive",
+            directory=False,
+        ),
+        members=tuple(members),
+        binding_sha256=_digest(_canonical(value)),
+    )
+    payloads = _audit_member_payloads(binding)
+    _validate_release_semantics(
+        payloads,
+        platform=platform,
+        source_commit=source_commit,
+        package_sha256=package_sha256,
+        package_bytes=package_bytes,
+    )
+    return binding
+
+
+def _validate_cache_artifact(value: Any) -> CacheArtifactBinding:
+    if not isinstance(value, dict) or set(value) != {
+        "path",
+        "role",
+        "sha256",
+        "size_bytes",
+    }:
+        raise Gate14LifecycleError("warm-cache artifact schema is invalid")
+    path = _public_path(value.get("path"), "warm-cache artifact path")
+    role = value.get("role")
+    if role not in {"chat_template", "config", "tokenizer", "weight", "weight_index"}:
+        raise Gate14LifecycleError("warm-cache artifact role is invalid")
+    return CacheArtifactBinding(
+        path=path,
+        role=role,
+        sha256=_digest_field(value.get("sha256"), "warm-cache artifact digest"),
+        size_bytes=_bounded_integer(
+            value.get("size_bytes"),
+            "warm-cache artifact size",
+            1,
+            acceptance.MAX_BYTES,
+        ),
+    )
+
+
+def _validate_materialization_record(
+    payload: bytes,
+    *,
+    model_id: str,
+    manifest_digest: str,
+    warm_cache: WarmCacheBinding,
+) -> None:
+    raw = _strict_json(payload, MAX_MATERIALIZATION_RECORD_BYTES)
+    expected_fields = {
+        "schema_version",
+        "acquired_at_unix",
+        "runtime",
+        "model",
+        "selection",
+        "artifacts",
+        "transfer",
+        "storage",
+        "privacy",
+    }
+    runtime = raw.get("runtime")
+    model = raw.get("model")
+    selection = raw.get("selection")
+    transfer = raw.get("transfer")
+    storage = raw.get("storage")
+    privacy = raw.get("privacy")
+    artifacts = raw.get("artifacts")
+    profile = acceptance.MODEL_PROFILES[model_id]
+    repository, dtype = _MODEL_SOURCE[model_id]
+    nested = (runtime, model, selection, transfer, storage, privacy)
+    runtime_values = runtime.values() if isinstance(runtime, dict) else ()
+    if (
+        set(raw) != expected_fields
+        or type(raw.get("schema_version")) is not int
+        or raw.get("schema_version") != 1
+        or type(raw.get("acquired_at_unix")) is not int
+        or raw["acquired_at_unix"] < 1
+        or not all(isinstance(item, dict) for item in nested)
+        or set(runtime) != {"python", "platform", "drift"}
+        or any(
+            not isinstance(item, str) or not item or len(item) > 256 or any(ord(character) < 32 for character in item)
+            for item in runtime_values
+        )
+        or set(model) != {"id", "manifest_digest", "repository", "revision", "dtype"}
+        or set(selection)
+        != {
+            "startup_artifact_paths",
+            "weight_artifact_paths",
+            "artifact_count",
+            "artifact_bytes",
+            "weight_artifact_bytes",
+        }
+        or set(transfer)
+        != {
+            "direct_upstream_transfer",
+            "mirror_used",
+            "source_class_verified",
+            "transport_override_present",
+            "elapsed_seconds",
+            "max_resumptions",
+            "resumptions",
+            "completed",
+        }
+        or not isinstance(artifacts, list)
+        or model.get("id") != model_id
+        or model.get("manifest_digest") != manifest_digest
+        or model.get("repository") != repository
+        or model.get("revision") != profile["revision_commit"]
+        or model.get("dtype") != dtype
+    ):
+        raise Gate14LifecycleError("cache materialization record binding is invalid")
+
+    expected_artifacts = [
+        {
+            "path": item.path,
+            "role": item.role,
+            "sha256": item.sha256.removeprefix("sha256:"),
+            "size_bytes": item.size_bytes,
+        }
+        for item in warm_cache.artifacts
+    ]
+    observed_artifacts: list[dict[str, Any]] = []
+    total_resumptions = 0
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "path",
+            "role",
+            "sha256",
+            "size_bytes",
+            "materialization_attempts",
+            "resumptions",
+            "resumed_from_bytes",
+            "elapsed_seconds",
+        }:
+            raise Gate14LifecycleError("cache materialization artifact schema is invalid")
+        observed = {
+            "path": artifact.get("path"),
+            "role": artifact.get("role"),
+            "sha256": artifact.get("sha256"),
+            "size_bytes": artifact.get("size_bytes"),
+        }
+        attempts = artifact.get("materialization_attempts")
+        resumptions = artifact.get("resumptions")
+        resumed = artifact.get("resumed_from_bytes")
+        elapsed = artifact.get("elapsed_seconds")
+        if (
+            type(attempts) is not int
+            or attempts < 1
+            or type(resumptions) is not int
+            or resumptions < 0
+            or not isinstance(resumed, list)
+            or len(resumed) != resumptions
+            or any(type(item) is not int or item < 1 for item in resumed)
+            or type(elapsed) not in (int, float)
+            or not math.isfinite(float(elapsed))
+            or elapsed < 0
+        ):
+            raise Gate14LifecycleError("cache materialization artifact proof is invalid")
+        observed_artifacts.append(observed)
+        total_resumptions += resumptions
+    if not _exact_equal(observed_artifacts, expected_artifacts):
+        raise Gate14LifecycleError("cache materialization artifacts changed")
+
+    startup_paths = [
+        item.path
+        for item in warm_cache.artifacts
+        if item.role in {"chat_template", "config", "tokenizer", "weight_index"}
+    ]
+    weight_paths = [item.path for item in warm_cache.artifacts if item.role == "weight"]
+    if (
+        selection.get("startup_artifact_paths") != sorted(startup_paths)
+        or selection.get("weight_artifact_paths") != sorted(weight_paths)
+        or type(selection.get("artifact_count")) is not int
+        or selection.get("artifact_count") != warm_cache.artifact_count
+        or type(selection.get("artifact_bytes")) is not int
+        or selection.get("artifact_bytes") != warm_cache.artifact_bytes
+        or type(selection.get("weight_artifact_bytes")) is not int
+        or selection["weight_artifact_bytes"]
+        != sum(item.size_bytes for item in warm_cache.artifacts if item.role == "weight")
+        or type(transfer.get("elapsed_seconds")) not in (int, float)
+        or not math.isfinite(float(transfer["elapsed_seconds"]))
+        or transfer["elapsed_seconds"] < 0
+        or transfer.get("direct_upstream_transfer") is not True
+        or transfer.get("mirror_used") is not False
+        or transfer.get("source_class_verified") is not True
+        or transfer.get("transport_override_present") is not False
+        or transfer.get("completed") is not True
+        or type(transfer.get("max_resumptions")) is not int
+        or transfer.get("max_resumptions") != 3
+        or type(transfer.get("resumptions")) is not int
+        or transfer.get("resumptions") != total_resumptions
+        or not 0 <= total_resumptions <= 3
+        or not _exact_equal(
+            storage,
+            {
+                "cold_start": True,
+                "cache_bytes_before": 0,
+                "cache_bytes_after": warm_cache.artifact_bytes,
+                "cache_growth_bytes": warm_cache.artifact_bytes,
+                "verified": True,
+            },
+        )
+        or not _exact_equal(
+            privacy,
+            {
+                "credentials_retained": False,
+                "local_paths_retained": False,
+                "response_bodies_retained": False,
+                "urls_retained": False,
+            },
+        )
+    ):
+        raise Gate14LifecycleError("cache materialization proof is invalid")
+
+
+def _load_warm_cache(
+    value: Any,
+    *,
+    staging_root: Path,
+    platform: str,
+    model_id: str,
+    manifest_digest: str,
+) -> WarmCacheBinding:
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "layout",
+        "gate9_acquisition_record_sha256",
+        "gate9_resource_envelope_sha256",
+        "materialization_record_sha256",
+        "materialization_record_bytes",
+        "artifact_count",
+        "artifact_bytes",
+        "artifacts",
+    }:
+        raise Gate14LifecycleError("warm-cache binding schema is invalid")
+    expected = _GATE9_WARM_CACHE[platform]
+    raw_artifacts = value.get("artifacts")
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("layout") != "manifest-artifacts-v1"
+        or value.get("gate9_acquisition_record_sha256") != expected["gate9_acquisition_record_sha256"]
+        or value.get("gate9_resource_envelope_sha256") != expected["gate9_resource_envelope_sha256"]
+        or not isinstance(raw_artifacts, list)
+    ):
+        raise Gate14LifecycleError("warm-cache Gate 9 identity is invalid")
+    artifacts = tuple(_validate_cache_artifact(item) for item in raw_artifacts)
+    expected_artifacts = tuple(CacheArtifactBinding(*item) for item in expected["artifacts"])
+    profile = acceptance.MODEL_PROFILES[model_id]
+    artifact_count = _bounded_integer(
+        value.get("artifact_count"),
+        "warm-cache artifact count",
+        1,
+        100,
+    )
+    artifact_bytes = _bounded_integer(
+        value.get("artifact_bytes"),
+        "warm-cache artifact bytes",
+        1,
+        acceptance.MAX_BYTES,
+    )
+    if (
+        artifacts != expected_artifacts
+        or artifact_count != len(artifacts)
+        or artifact_count != profile["selected_artifact_count"]
+        or artifact_bytes != sum(item.size_bytes for item in artifacts)
+        or artifact_bytes != profile["selected_artifact_bytes"]
+        or [item.path for item in artifacts] != sorted(item.path for item in artifacts)
+        or len({item.path.casefold() for item in artifacts}) != len(artifacts)
+        or manifest_digest != profile["manifest_digest"]
+    ):
+        raise Gate14LifecycleError("warm-cache artifact identity is invalid")
+
+    record_path = _exact_staged_path(
+        staging_root / _MATERIALIZATION_RECORD_NAME,
+        staging_root / _MATERIALIZATION_RECORD_NAME,
+        "cache materialization record",
+        directory=False,
+    )
+    binding = WarmCacheBinding(
+        gate9_acquisition_record_sha256=expected["gate9_acquisition_record_sha256"],
+        gate9_resource_envelope_sha256=expected["gate9_resource_envelope_sha256"],
+        materialization_record_sha256=_digest_field(
+            value.get("materialization_record_sha256"),
+            "cache materialization record digest",
+        ),
+        materialization_record_bytes=_bounded_integer(
+            value.get("materialization_record_bytes"),
+            "cache materialization record size",
+            1,
+            MAX_MATERIALIZATION_RECORD_BYTES,
+        ),
+        materialization_record_path=record_path,
+        artifact_count=artifact_count,
+        artifact_bytes=artifact_bytes,
+        artifacts=artifacts,
+        binding_sha256=_digest(_canonical(value)),
+    )
+    _assert_controller_owned(record_path, directory=False)
+    record = _regular_bytes(record_path, MAX_MATERIALIZATION_RECORD_BYTES)
+    if len(record) != binding.materialization_record_bytes or _digest(record) != binding.materialization_record_sha256:
+        raise Gate14LifecycleError("cache materialization record identity changed")
+    _validate_materialization_record(
+        record,
+        model_id=model_id,
+        manifest_digest=manifest_digest,
+        warm_cache=binding,
+    )
+    return binding
+
+
 def load_config(path: Path) -> LifecycleConfig:
     payload = _regular_bytes(Path(path), MAX_CONFIG_BYTES)
     raw = _strict_json(payload, MAX_CONFIG_BYTES)
-    if set(raw) != _CONFIG_FIELDS or raw.get("schema_version") != SCHEMA_VERSION or raw.get("scope") != SCOPE:
+    if (
+        set(raw) != _CONFIG_FIELDS
+        or type(raw.get("schema_version")) is not int
+        or raw.get("schema_version") != SCHEMA_VERSION
+        or raw.get("scope") != SCOPE
+    ):
         raise Gate14LifecycleError("lifecycle configuration schema is invalid")
 
     run_id = raw["run_id"]
@@ -609,11 +1447,11 @@ def load_config(path: Path) -> LifecycleConfig:
     )
     if _regular_metadata(package_path, MAX_PACKAGE_BYTES).st_size != package_bytes:
         raise Gate14LifecycleError("package size changed")
-    release_metadata_path = _path_under_root(
+    release_metadata_path = _exact_staged_path(
         _absolute_path(raw["release_metadata_path"], "release metadata path"),
-        staging_root,
-        "release-metadata.json",
+        staging_root / _RELEASE_AUDIT_DIRECTORY_NAME / "release-metadata.json",
         "release metadata",
+        directory=False,
     )
     metadata_payload = _regular_bytes(
         release_metadata_path,
@@ -624,6 +1462,23 @@ def load_config(path: Path) -> LifecycleConfig:
         or _strict_json(metadata_payload, MAX_RELEASE_METADATA_BYTES) != _RELEASE_METADATA
     ):
         raise Gate14LifecycleError("release metadata binding is invalid")
+    release_audit = _load_release_audit(
+        raw["release_audit"],
+        staging_root=staging_root,
+        release_metadata_path=release_metadata_path,
+        release_metadata_sha256=release_metadata_sha256,
+        platform=platform,
+        source_commit=source_commit,
+        package_sha256=package_sha256,
+        package_bytes=package_bytes,
+    )
+    warm_cache = _load_warm_cache(
+        raw["warm_cache"],
+        staging_root=staging_root,
+        platform=platform,
+        model_id=model_id,
+        manifest_digest=manifest_digest,
+    )
 
     challenge_path = _path_under_root(
         _absolute_path(raw["challenge_path"], "challenge path"),
@@ -701,6 +1556,8 @@ def load_config(path: Path) -> LifecycleConfig:
         package_bytes=package_bytes,
         release_metadata_path=release_metadata_path,
         release_metadata_sha256=release_metadata_sha256,
+        release_audit=release_audit,
+        warm_cache=warm_cache,
         model_id=model_id,
         manifest_digest=manifest_digest,
         gate13_evidence_sha256=gate13_digest,
@@ -758,11 +1615,39 @@ def _verify_staged_inputs(config: LifecycleConfig) -> None:
         config.release_metadata_path,
         MAX_RELEASE_METADATA_BYTES,
     )
-    if (
-        _digest(metadata) != config.release_metadata_sha256
-        or _strict_json(metadata, MAX_RELEASE_METADATA_BYTES) != _RELEASE_METADATA
+    if _digest(metadata) != config.release_metadata_sha256 or not _exact_equal(
+        _strict_json(metadata, MAX_RELEASE_METADATA_BYTES),
+        _RELEASE_METADATA,
     ):
         raise Gate14LifecycleError("release metadata binding changed")
+
+    audit_payloads = _audit_member_payloads(config.release_audit)
+    _validate_release_semantics(
+        audit_payloads,
+        platform=config.platform,
+        source_commit=config.source_commit,
+        package_sha256=config.package_sha256,
+        package_bytes=config.package_bytes,
+    )
+    _assert_controller_owned(
+        config.warm_cache.materialization_record_path,
+        directory=False,
+    )
+    materialization = _regular_bytes(
+        config.warm_cache.materialization_record_path,
+        MAX_MATERIALIZATION_RECORD_BYTES,
+    )
+    if (
+        len(materialization) != config.warm_cache.materialization_record_bytes
+        or _digest(materialization) != config.warm_cache.materialization_record_sha256
+    ):
+        raise Gate14LifecycleError("cache materialization record identity changed")
+    _validate_materialization_record(
+        materialization,
+        model_id=config.model_id,
+        manifest_digest=config.manifest_digest,
+        warm_cache=config.warm_cache,
+    )
 
 
 def validate_prepared(
@@ -772,10 +1657,12 @@ def validate_prepared(
     if (
         not isinstance(value, dict)
         or set(value) != _PREPARED_FIELDS
+        or type(value["schema_version"]) is not int
         or value["schema_version"] != SCHEMA_VERSION
         or value["scope"] != PREPARED_SCOPE
         or value["run_id"] != config.run_id
         or value["platform"] != config.platform
+        or type(value["attempt_ordinal"]) is not int
         or value["attempt_ordinal"] != config.attempt_ordinal
         or value["source_commit"] != config.source_commit
         or value["package_sha256"] != config.package_sha256
@@ -832,10 +1719,47 @@ def _checkpoint_value(
         "lifecycle_config_sha256": config.config_sha256,
         "package_sha256": config.package_sha256,
         "release_metadata_sha256": config.release_metadata_sha256,
+        "release_audit_sha256": config.release_audit.binding_sha256,
+        "warm_cache_sha256": config.warm_cache.binding_sha256,
+        "materialization_record_sha256": (config.warm_cache.materialization_record_sha256),
         "prepared_facts_sha256": _digest(_canonical(prepared)),
         "phase": "challenge-ready",
         "created_at_unix": created_at_unix,
     }
+
+
+def _validate_checkpoint_shape(value: Any) -> None:
+    digest_fields = (
+        "lifecycle_config_sha256",
+        "package_sha256",
+        "release_metadata_sha256",
+        "release_audit_sha256",
+        "warm_cache_sha256",
+        "materialization_record_sha256",
+        "prepared_facts_sha256",
+    )
+    if (
+        not isinstance(value, dict)
+        or set(value) != _CHECKPOINT_FIELDS
+        or type(value.get("schema_version")) is not int
+        or value.get("schema_version") != SCHEMA_VERSION
+        or value.get("scope") != CHECKPOINT_SCOPE
+        or not isinstance(value.get("run_id"), str)
+        or _RUN_RE.fullmatch(value["run_id"]) is None
+        or value.get("platform") not in {"windows", "linux"}
+        or type(value.get("attempt_ordinal")) is not int
+        or value.get("attempt_ordinal") < 1
+        or not isinstance(value.get("source_commit"), str)
+        or _COMMIT_RE.fullmatch(value["source_commit"]) is None
+        or any(
+            not isinstance(value.get(field), str) or _DIGEST_RE.fullmatch(value[field]) is None
+            for field in digest_fields
+        )
+        or value.get("phase") != "challenge-ready"
+        or type(value.get("created_at_unix")) is not int
+        or value.get("created_at_unix") < 0
+    ):
+        raise Gate14LifecycleError("checkpoint schema is invalid")
 
 
 def validate_checkpoint(
@@ -845,14 +1769,13 @@ def validate_checkpoint(
     *,
     now_unix: float,
 ) -> Mapping[str, Any]:
-    if not isinstance(value, dict) or set(value) != _CHECKPOINT_FIELDS:
-        raise Gate14LifecycleError("checkpoint schema is invalid")
+    _validate_checkpoint_shape(value)
     expected = _checkpoint_value(
         config,
         prepared,
         value.get("created_at_unix"),
     )
-    if value != expected:
+    if not _exact_equal(value, expected):
         raise Gate14LifecycleError("checkpoint binding is invalid")
     created = value["created_at_unix"]
     if (
@@ -866,8 +1789,7 @@ def validate_checkpoint(
 
 
 def checkpoint_digest(value: Mapping[str, Any]) -> str:
-    if not isinstance(value, dict) or set(value) != _CHECKPOINT_FIELDS:
-        raise Gate14LifecycleError("checkpoint schema is invalid")
+    _validate_checkpoint_shape(value)
     return _digest(_canonical(value))
 
 
@@ -886,6 +1808,7 @@ def load_checkpoint_for_controller(
     )
     if (
         set(value) != _CHECKPOINT_FIELDS
+        or type(value.get("schema_version")) is not int
         or value.get("schema_version") != SCHEMA_VERSION
         or value.get("scope") != CHECKPOINT_SCOPE
         or value.get("run_id") != run_id
@@ -899,6 +1822,12 @@ def load_checkpoint_for_controller(
         or _DIGEST_RE.fullmatch(value["lifecycle_config_sha256"]) is None
         or not isinstance(value.get("release_metadata_sha256"), str)
         or _DIGEST_RE.fullmatch(value["release_metadata_sha256"]) is None
+        or not isinstance(value.get("release_audit_sha256"), str)
+        or _DIGEST_RE.fullmatch(value["release_audit_sha256"]) is None
+        or not isinstance(value.get("warm_cache_sha256"), str)
+        or _DIGEST_RE.fullmatch(value["warm_cache_sha256"]) is None
+        or not isinstance(value.get("materialization_record_sha256"), str)
+        or _DIGEST_RE.fullmatch(value["materialization_record_sha256"]) is None
         or not isinstance(value.get("prepared_facts_sha256"), str)
         or _DIGEST_RE.fullmatch(value["prepared_facts_sha256"]) is None
         or type(value.get("created_at_unix")) is not int
@@ -1042,10 +1971,12 @@ def validate_cleanup(
     if (
         not isinstance(value, dict)
         or set(value) != _CLEANUP_FIELDS
+        or type(value["schema_version"]) is not int
         or value["schema_version"] != SCHEMA_VERSION
         or value["scope"] != CLEANUP_SCOPE
         or value["run_id"] != config.run_id
         or value["platform"] != config.platform
+        or type(value["attempt_ordinal"]) is not int
         or value["attempt_ordinal"] != config.attempt_ordinal
         or any(
             value[field] is not True
