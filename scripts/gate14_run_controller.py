@@ -14,11 +14,13 @@ import os
 import re
 import stat
 import tempfile
+import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+import gate14_calibration_challenge as challenge_contract
 import gate14_hardware_acceptance as acceptance
 import qualification_cost_guard as cost_guard
 
@@ -88,6 +90,14 @@ _CLIENT_PLAN_FIELDS = {
     "package_sha256",
     "model_id",
     "manifest_digest",
+    "machine_type",
+    "image_project",
+    "image",
+    "boot_disk_gib",
+    "boot_disk_type",
+    "service_account_disabled",
+    "max_run_seconds",
+    "termination_action",
 }
 _SEQUENCING_FIELDS = {
     "clients_may_run_concurrently",
@@ -104,6 +114,10 @@ _STATE_FIELDS = {
     "failure_code",
     "windows_evidence_digest",
     "linux_evidence_digest",
+    "windows_challenge_sha256",
+    "linux_challenge_sha256",
+    "windows_challenge_consumed",
+    "linux_challenge_consumed",
     "windows_consumed",
     "linux_consumed",
     "cleanup_verified",
@@ -137,6 +151,12 @@ class ClientPlan:
     package_sha256: str
     model_id: str
     manifest_digest: str
+    machine_type: str
+    image_project: str
+    image: str
+    boot_disk_gib: int
+    boot_disk_type: str
+    max_run_seconds: int
 
 
 @dataclass(frozen=True)
@@ -242,6 +262,25 @@ def _client_plan(value: Any, platform: str, source_commit: str) -> ClientPlan:
     expected_manifest = acceptance.MODEL_PROFILES[expected_model]["manifest_digest"]
     if raw["manifest_digest"] != expected_manifest:
         raise Gate14ControllerError("client manifest is invalid")
+    if raw["machine_type"] != "g2-standard-8":
+        raise Gate14ControllerError("client machine type is invalid")
+    expected_image_project = "windows-cloud" if platform == "windows" else "ubuntu-os-cloud"
+    expected_image_pattern = (
+        re.compile(r"windows-server-2022-dc-v[0-9]{8}")
+        if platform == "windows"
+        else re.compile(r"ubuntu-2404-noble-amd64-v[0-9]{8}")
+    )
+    if raw["image_project"] != expected_image_project:
+        raise Gate14ControllerError("client image project is invalid")
+    image = _string(raw["image"], expected_image_pattern)
+    boot_disk_gib = _integer(raw["boot_disk_gib"], 100, 200)
+    if (
+        raw["boot_disk_type"] != "pd-balanced"
+        or raw["service_account_disabled"] is not True
+        or raw["termination_action"] != "DELETE"
+    ):
+        raise Gate14ControllerError("client runtime boundary is invalid")
+    max_run_seconds = _integer(raw["max_run_seconds"], 1_800, 14_400)
     return ClientPlan(
         platform=platform,
         instance=instance,
@@ -251,6 +290,12 @@ def _client_plan(value: Any, platform: str, source_commit: str) -> ClientPlan:
         package_sha256=package_sha256,
         model_id=expected_model,
         manifest_digest=expected_manifest,
+        machine_type="g2-standard-8",
+        image_project=expected_image_project,
+        image=image,
+        boot_disk_gib=boot_disk_gib,
+        boot_disk_type="pd-balanced",
+        max_run_seconds=max_run_seconds,
     )
 
 
@@ -368,6 +413,10 @@ def initial_state(plan: RunPlan) -> dict[str, Any]:
         "failure_code": None,
         "windows_evidence_digest": None,
         "linux_evidence_digest": None,
+        "windows_challenge_sha256": None,
+        "linux_challenge_sha256": None,
+        "windows_challenge_consumed": False,
+        "linux_challenge_consumed": False,
         "windows_consumed": False,
         "linux_consumed": False,
         "cleanup_verified": False,
@@ -387,12 +436,26 @@ def validate_state(value: Mapping[str, Any], plan: RunPlan) -> dict[str, Any]:
     ):
         raise Gate14ControllerError("state binding is invalid")
     _integer(state["revision"])
-    for field in ("windows_consumed", "linux_consumed", "cleanup_verified"):
+    for field in (
+        "windows_consumed",
+        "linux_consumed",
+        "windows_challenge_consumed",
+        "linux_challenge_consumed",
+        "cleanup_verified",
+    ):
         if type(state[field]) is not bool:
             raise Gate14ControllerError("state boolean is invalid")
-    for field in ("windows_evidence_digest", "linux_evidence_digest"):
+    for field in (
+        "windows_evidence_digest",
+        "linux_evidence_digest",
+        "windows_challenge_sha256",
+        "linux_challenge_sha256",
+    ):
         if state[field] is not None:
             _string(state[field], _DIGEST_RE)
+    for platform in ("windows", "linux"):
+        if state[f"{platform}_challenge_consumed"] and state[f"{platform}_challenge_sha256"] is None:
+            raise Gate14ControllerError("consumed calibration challenge is missing")
     if state["failure_code"] is not None:
         _string(state["failure_code"], re.compile(r"[a-z0-9][a-z0-9-]{0,63}"))
     allowed_actions = {
@@ -411,6 +474,9 @@ def validate_state(value: Mapping[str, Any], plan: RunPlan) -> dict[str, Any]:
         raise Gate14ControllerError("Windows evidence state is inconsistent")
     if state["linux_evidence_digest"] is not None and not state["linux_consumed"]:
         raise Gate14ControllerError("Linux evidence state is inconsistent")
+    for platform in ("windows", "linux"):
+        if state[f"{platform}_evidence_digest"] is not None and state[f"{platform}_challenge_sha256"] is None:
+            raise Gate14ControllerError("platform evidence lacks a calibration challenge")
     phase = state["phase"]
     failed_phase = phase in {"CLEANING_FAILED", "CLEANED_FAILURE"}
     if failed_phase is (state["failure_code"] is None):
@@ -420,7 +486,14 @@ def validate_state(value: Mapping[str, Any], plan: RunPlan) -> dict[str, Any]:
     windows_evidence = state["windows_evidence_digest"] is not None
     linux_evidence = state["linux_evidence_digest"] is not None
     if phase == "ABSENT" and any(
-        (state["windows_consumed"], state["linux_consumed"], windows_evidence, linux_evidence)
+        (
+            state["windows_consumed"],
+            state["linux_consumed"],
+            windows_evidence,
+            linux_evidence,
+            state["windows_challenge_sha256"] is not None,
+            state["linux_challenge_sha256"] is not None,
+        )
     ):
         raise Gate14ControllerError("initial state is inconsistent")
     if phase == "WINDOWS_RUNNING" and (
@@ -431,18 +504,28 @@ def validate_state(value: Mapping[str, Any], plan: RunPlan) -> dict[str, Any]:
     ):
         raise Gate14ControllerError("Windows running state is inconsistent")
     if phase == "WINDOWS_DELETING" and (
-        not state["windows_consumed"] or state["linux_consumed"] or not windows_evidence or linux_evidence
+        not state["windows_consumed"]
+        or state["linux_consumed"]
+        or not windows_evidence
+        or linux_evidence
+        or not state["windows_challenge_consumed"]
     ):
         raise Gate14ControllerError("Windows deletion state is inconsistent")
     if phase == "LINUX_RUNNING" and (
         not state["windows_consumed"]
         or not state["linux_consumed"]
         or not windows_evidence
+        or not state["windows_challenge_consumed"]
         or (state["next_action"] == "collect_linux") is not linux_evidence
     ):
         raise Gate14ControllerError("Linux running state is inconsistent")
     if phase in {"LINUX_DELETING", "CLEANED_PASS"} and (
-        not state["windows_consumed"] or not state["linux_consumed"] or not windows_evidence or not linux_evidence
+        not state["windows_consumed"]
+        or not state["linux_consumed"]
+        or not windows_evidence
+        or not linux_evidence
+        or not state["windows_challenge_consumed"]
+        or not state["linux_challenge_consumed"]
     ):
         raise Gate14ControllerError("completed evidence state is inconsistent")
     return state
@@ -748,11 +831,68 @@ def reconcile(
     raise Gate14ControllerError("unhandled lifecycle phase")
 
 
+def issue_calibration_challenge(
+    state_value: Mapping[str, Any],
+    plan: RunPlan,
+    platform: str,
+    challenge_path: Path,
+    *,
+    issued_at_unix: int | None = None,
+    nonce: str | None = None,
+) -> tuple[dict[str, Any], Mapping[str, Any]]:
+    state = validate_state(state_value, plan)
+    expected_phase = "WINDOWS_RUNNING" if platform == "windows" else "LINUX_RUNNING"
+    if (
+        state["phase"] != expected_phase
+        or state["next_action"] != "none"
+        or state[f"{platform}_challenge_sha256"] is not None
+        or state[f"{platform}_challenge_consumed"]
+    ):
+        raise Gate14ControllerError("calibration challenge is out of sequence")
+    client = plan.windows if platform == "windows" else plan.linux
+    issued = int(time.time()) if issued_at_unix is None else issued_at_unix
+    lifetime = min(challenge_contract.MAX_LIFETIME_SECONDS, client.termination_unix - issued)
+    if lifetime < challenge_contract.MIN_LIFETIME_SECONDS:
+        raise Gate14ControllerError("calibration challenge would outlive the host")
+    if Path(challenge_path).exists():
+        value = challenge_contract.validate(
+            challenge_contract.load(challenge_path),
+            run_id=plan.run_id,
+            platform=platform,
+            source_commit=client.source_commit,
+            package_sha256=client.package_sha256,
+            now_unix=issued,
+        )
+        if value["controller_state_revision"] != state["revision"]:
+            raise Gate14ControllerError("existing calibration challenge is stale")
+    else:
+        value = challenge_contract.create(
+            run_id=plan.run_id,
+            platform=platform,
+            source_commit=client.source_commit,
+            package_sha256=client.package_sha256,
+            controller_state_revision=state["revision"],
+            issued_at_unix=issued,
+            lifetime_seconds=lifetime,
+            nonce=nonce,
+        )
+        challenge_contract.write_new(challenge_path, value)
+    challenge_sha256 = challenge_contract.digest(value)
+    return (
+        _next(
+            state,
+            **{f"{platform}_challenge_sha256": challenge_sha256},
+        ),
+        value,
+    )
+
+
 def collect_platform(
     state_value: Mapping[str, Any],
     plan: RunPlan,
     platform: str,
     evidence_path: Path,
+    challenge_path: Path,
 ) -> dict[str, Any]:
     state = validate_state(state_value, plan)
     expected_phase = "WINDOWS_RUNNING" if platform == "windows" else "LINUX_RUNNING"
@@ -762,6 +902,22 @@ def collect_platform(
     payload = _regular_bytes(evidence_path)
     summary = acceptance.validate_platform_document(_strict_json(payload))
     client = plan.windows if platform == "windows" else plan.linux
+    challenge_value = challenge_contract.validate(
+        challenge_contract.load(challenge_path),
+        run_id=plan.run_id,
+        platform=platform,
+        source_commit=client.source_commit,
+        package_sha256=client.package_sha256,
+    )
+    challenge_sha256 = challenge_contract.digest(challenge_value)
+    if (
+        challenge_value["controller_state_revision"] >= state["revision"]
+        or state[f"{platform}_challenge_consumed"]
+        or state[f"{platform}_challenge_sha256"] != challenge_sha256
+    ):
+        raise Gate14ControllerError("calibration challenge state is invalid")
+    if summary["calibration_challenge_sha256"] != challenge_sha256:
+        raise Gate14ControllerError("platform evidence used a different calibration challenge")
     if (
         summary["run_id"] != plan.run_id
         or summary["platform"] != platform
@@ -778,6 +934,7 @@ def collect_platform(
         state,
         **{
             f"{platform}_evidence_digest": digest,
+            f"{platform}_challenge_consumed": True,
             "phase": f"{platform.upper()}_DELETING",
             "next_action": f"delete_{platform}",
         },
@@ -834,13 +991,14 @@ def save_state(path: Path, state_value: Mapping[str, Any], plan: RunPlan) -> Non
 
 def _common_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("start", "status", "collect", "cleanup"))
+    parser.add_argument("operation", choices=("start", "status", "challenge", "collect", "cleanup"))
     parser.add_argument("--authorization", type=Path, required=True)
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--observation", type=Path)
     parser.add_argument("--platform", choices=("windows", "linux"))
     parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--challenge", type=Path)
     parser.add_argument("--failure-code", default="operator-cleanup")
     return parser
 
@@ -850,6 +1008,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         plan = load_plan(args.authorization, args.ledger)
         state = load_state(args.state, plan) if args.state.exists() else initial_state(plan)
+        result: Mapping[str, Any]
         if args.operation in {"start", "status"}:
             if args.observation is None:
                 raise Gate14ControllerError("observation is required")
@@ -858,10 +1017,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _strict_json(_regular_bytes(args.observation)),
                 plan,
             )
+            result = state
+        elif args.operation == "challenge":
+            if args.platform is None or args.challenge is None:
+                raise Gate14ControllerError("challenge platform and output are required")
+            state, result = issue_calibration_challenge(
+                state,
+                plan,
+                args.platform,
+                args.challenge,
+            )
         elif args.operation == "collect":
-            if args.platform is None or args.evidence is None:
-                raise Gate14ControllerError("platform evidence is required")
-            state = collect_platform(state, plan, args.platform, args.evidence)
+            if args.platform is None or args.evidence is None or args.challenge is None:
+                raise Gate14ControllerError("platform evidence and challenge are required")
+            state = collect_platform(
+                state,
+                plan,
+                args.platform,
+                args.evidence,
+                args.challenge,
+            )
+            result = state
         else:
             state = begin_cleanup(state, plan, args.failure_code)
             if args.observation is not None:
@@ -870,10 +1046,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     _strict_json(_regular_bytes(args.observation)),
                     plan,
                 )
+            result = state
         save_state(args.state, state, plan)
-    except (Gate14ControllerError, acceptance.Gate14EvidenceError) as exc:
+    except (
+        Gate14ControllerError,
+        challenge_contract.Gate14ChallengeError,
+        acceptance.Gate14EvidenceError,
+    ) as exc:
         raise SystemExit(str(exc)) from exc
-    print(json.dumps(state, sort_keys=True, separators=(",", ":")))
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
 

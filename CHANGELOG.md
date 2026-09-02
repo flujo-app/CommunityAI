@@ -7,19 +7,31 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
-- Gate 14 hardware acceptance now has a fail-closed, source-bound verifier and durable GCP
-  lifecycle controller. They pin the exact Gate 13 packaged lifecycle and Windows/Qwen plus
-  Linux/Gemma Gate 9 envelopes, enforce the USD 100 aggregate ledger ceiling, serialize fresh
-  L4 hosts, bind host-reported evidence before collection, and require cleanup proof for the
-  exact authorization bytes, controller source, provider plan, project, zone, resources,
-  and successful terminal state while excluding the protected bootstrap from cleanup targets.
-  The focused 49-test suite covers deadline, rollback, orphan/returned-resource inventory, forged-state,
-  evidence-substitution, cross-platform, hidden/excess spend, and cleanup-binding failures. Exact source
-  `c0f2342e15aa7e12ca7c2980deca64d613204143` passed independent adversarial review, CodeQL,
-  style, Linux/Windows tests, and production-package provenance verification. A native read-only GCP
-  preflight stopped before inventory or quota inspection because the configured account requires
-  interactive reauthentication; no reservation or resource was created, so the current-epoch USD 44
-  remainder is intact. This is software and package evidence only: no Gate 14 hardware pass is claimed yet.
+- Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
+  lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
+  pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
+  the USD 100 aggregate ledger ceiling, serialize fresh L4 hosts, and require cleanup proof for
+  the exact authorization bytes, controller source, provider plan, project, zone, resources,
+  and successful terminal state while excluding the protected bootstrap. Host evidence now binds
+  fresh calibrated bandwidth and physical-power samples before, across, and below the configured
+  limits. Every calibration is bound to a controller-issued, one-time 15-minute challenge and
+  measured start/end timestamps inside a maximum 120-second sample window. Controller state
+  persists the issued digest and one-time consumption, while interrupted issuance reattaches only
+  the exact still-valid file; stale, missing, future-dated, or cross-challenge evidence fails closed.
+  Every provider mutation is bound
+  to a valid controller action and a fresh authenticated inventory; exact disks must retain the full
+  authorized image-project path, and instances must prove that no service account is attached.
+  The focused 67-test suite covers challenge freshness, calibration, deadline, rollback,
+  orphan/returned resources,
+  forged state, evidence substitution, cross-platform, hidden/excess spend, cleanup binding, foreign
+  image projects, attached service accounts, and stale direct actions. The original verifier/controller
+  source `c0f2342e15aa7e12ca7c2980deca64d613204143` passed independent adversarial review,
+  CodeQL, style, Linux/Windows tests, and production-package provenance verification. After native
+  GCP authentication was refreshed, a read-only preflight proved one active account, an active
+  project, the protected bootstrap running, global GPU quota 1 with usage 0, ready L4/G2 and
+  Windows/Linux image inputs, and zero Gate 14 instances, disks, firewalls, or running L4s.
+  No reservation or provider resource was created, so the current-epoch USD 44 remainder is intact.
+  This is software and preflight evidence only: no Gate 14 hardware pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,

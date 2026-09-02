@@ -21,6 +21,9 @@ PROJECT = "community-ai-506321"
 ZONE = "us-central1-a"
 INSTANCES = ("gate14-20260902-a-windows", "gate14-20260902-a-linux")
 DISKS = ("gate14-20260902-a-windows-disk", "gate14-20260902-a-linux-disk")
+CHALLENGE_SHA256 = "sha256:" + "c" * 64
+CHALLENGE_ISSUED = 2_000_000_000
+CHALLENGE_EXPIRES = CHALLENGE_ISSUED + 900
 
 
 def provider_plan_document() -> dict:
@@ -39,6 +42,16 @@ def provider_plan_document() -> dict:
                 "manifest_digest": acceptance.MODEL_PROFILES[acceptance.EXPECTED_PLATFORM_MODELS[platform]][
                     "manifest_digest"
                 ],
+                "machine_type": "g2-standard-8",
+                "image_project": "windows-cloud" if platform == "windows" else "ubuntu-os-cloud",
+                "image": (
+                    "windows-server-2022-dc-v20260814" if platform == "windows" else "ubuntu-2404-noble-amd64-v20260826"
+                ),
+                "boot_disk_gib": 100,
+                "boot_disk_type": "pd-balanced",
+                "service_account_disabled": True,
+                "max_run_seconds": 7_200,
+                "termination_action": "DELETE",
             }
             for index, platform in enumerate(("windows", "linux"))
         ],
@@ -136,6 +149,12 @@ def platform_document(platform: str) -> dict:
             "configured_and_resolved_match": True,
             "low_vram_rejected": True,
         },
+        "calibration_challenge": {
+            "challenge_sha256": CHALLENGE_SHA256,
+            "controller_state_revision": 2,
+            "issued_at_unix": CHALLENGE_ISSUED,
+            "expires_at_unix": CHALLENGE_EXPIRES,
+        },
         "suspensions": [
             {
                 "kind": kind,
@@ -144,6 +163,31 @@ def platform_document(platform: str) -> dict:
                 "desired_intent_preserved": True,
                 "worker_count_during": 0,
                 "duration_seconds": 2.5,
+                "calibration": {
+                    "measurement_source": {
+                        "bandwidth": "host-network-counters",
+                        "power": "nvidia-nvml-device-power",
+                        "schedule": "utc-policy-clock",
+                    }[kind],
+                    "measurement_scope": {
+                        "bandwidth": "aggregate-host-network",
+                        "power": "selected-nvidia-l4-device",
+                        "schedule": "utc-schedule-policy",
+                    }[kind],
+                    "sample_count": 4,
+                    "sample_interval_seconds": 0.5,
+                    "baseline_value": 1.0 if kind == "schedule" else 10.0,
+                    "configured_limit": {
+                        "bandwidth": 100.0,
+                        "power": 250.0,
+                        "schedule": 0.5,
+                    }[kind],
+                    "trigger_value": 0.0 if kind == "schedule" else (120.0 if kind == "bandwidth" else 275.0),
+                    "resume_value": 1.0 if kind == "schedule" else 10.0,
+                    "challenge_sha256": CHALLENGE_SHA256,
+                    "sample_started_at_unix": CHALLENGE_ISSUED + 10,
+                    "sample_ended_at_unix": CHALLENGE_ISSUED + 12,
+                },
             }
             for kind in ("bandwidth", "power", "schedule")
         ],
@@ -240,6 +284,10 @@ def write_documents(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
         "failure_code": None,
         "windows_evidence_digest": windows_digest,
         "linux_evidence_digest": linux_digest,
+        "windows_challenge_sha256": CHALLENGE_SHA256,
+        "linux_challenge_sha256": CHALLENGE_SHA256,
+        "windows_challenge_consumed": True,
+        "linux_challenge_consumed": True,
         "windows_consumed": True,
         "linux_consumed": True,
         "cleanup_verified": True,
@@ -311,6 +359,8 @@ def test_validate_files_emits_digest_bound_privacy_safe_aggregate(tmp_path):
         lambda value: value["limits"].update(power_watts=None),
         lambda value: value["suspensions"].pop(),
         lambda value: value["suspensions"][0].update(resumed=False),
+        lambda value: value["suspensions"][0]["calibration"].update(trigger_value=50.0),
+        lambda value: value["suspensions"][1]["calibration"].update(measurement_scope="aggregate-host-network"),
         lambda value: value["recovery"].update(worker_restarted=False),
         lambda value: value["pause"].update(descendant_count_after=1),
         lambda value: value["restart"].update(policy_persisted=False),
@@ -337,6 +387,28 @@ def test_wrong_model_and_unsafe_block_range_fail_closed():
     value["placement"]["block_end"] = value["placement"]["block_start"]
     with pytest.raises(acceptance.Gate14EvidenceError):
         acceptance.validate_platform_document(value)
+
+
+def test_calibration_requires_challenge_bound_bounded_sample_windows():
+    missing_timestamp = platform_document("windows")
+    missing_timestamp["suspensions"][0]["calibration"].pop("sample_started_at_unix")
+    with pytest.raises(acceptance.Gate14EvidenceError):
+        acceptance.validate_platform_document(missing_timestamp)
+
+    wrong_challenge = platform_document("windows")
+    wrong_challenge["suspensions"][0]["calibration"]["challenge_sha256"] = "sha256:" + "d" * 64
+    with pytest.raises(acceptance.Gate14EvidenceError):
+        acceptance.validate_platform_document(wrong_challenge)
+
+    stale = platform_document("windows")
+    stale["suspensions"][0]["calibration"]["sample_ended_at_unix"] = CHALLENGE_EXPIRES + 1
+    with pytest.raises(acceptance.Gate14EvidenceError):
+        acceptance.validate_platform_document(stale)
+
+    oversized = platform_document("windows")
+    oversized["suspensions"][0]["calibration"]["sample_ended_at_unix"] = CHALLENGE_ISSUED + 131
+    with pytest.raises(acceptance.Gate14EvidenceError):
+        acceptance.validate_platform_document(oversized)
 
 
 def test_aggregate_rejects_mismatched_run_source_and_incomplete_cleanup(tmp_path):

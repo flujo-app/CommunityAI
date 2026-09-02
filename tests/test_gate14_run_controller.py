@@ -10,6 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import gate14_calibration_challenge as challenge_contract  # noqa: E402
 import gate14_hardware_acceptance as acceptance  # noqa: E402
 import gate14_run_controller as controller  # noqa: E402
 
@@ -20,6 +21,26 @@ PACKAGE_DIGESTS = {
     "windows": "sha256:" + "a" * 64,
     "linux": "sha256:" + "b" * 64,
 }
+
+
+def challenge_document(platform: str, revision: int = 2) -> dict:
+    return dict(
+        challenge_contract.create(
+            run_id=RUN_ID,
+            platform=platform,
+            source_commit=SOURCE,
+            package_sha256=PACKAGE_DIGESTS[platform],
+            controller_state_revision=revision,
+            issued_at_unix=NOW,
+            nonce=("a" if platform == "windows" else "b") * 64,
+        )
+    )
+
+
+def write_challenge(tmp_path: Path, platform: str, value: dict | None = None) -> Path:
+    path = tmp_path / f"{platform}-challenge.json"
+    path.write_text(json.dumps(value or challenge_document(platform)), encoding="utf-8")
+    return path
 
 
 def provider_plan() -> dict:
@@ -36,6 +57,16 @@ def provider_plan() -> dict:
                 "package_sha256": PACKAGE_DIGESTS[platform],
                 "model_id": model_id,
                 "manifest_digest": acceptance.MODEL_PROFILES[model_id]["manifest_digest"],
+                "machine_type": "g2-standard-8",
+                "image_project": "windows-cloud" if platform == "windows" else "ubuntu-os-cloud",
+                "image": (
+                    "windows-server-2022-dc-v20260814" if platform == "windows" else "ubuntu-2404-noble-amd64-v20260826"
+                ),
+                "boot_disk_gib": 100,
+                "boot_disk_type": "pd-balanced",
+                "service_account_disabled": True,
+                "max_run_seconds": 7_200,
+                "termination_action": "DELETE",
             }
         )
     return {
@@ -152,7 +183,9 @@ def observation(
     }
 
 
-def platform_evidence(platform: str) -> dict:
+def platform_evidence(platform: str, challenge_value: dict | None = None) -> dict:
+    challenge = challenge_value or challenge_document(platform)
+    challenge_sha256 = challenge_contract.digest(challenge)
     model_id = acceptance.EXPECTED_PLATFORM_MODELS[platform]
     profile = acceptance.MODEL_PROFILES[model_id]
     selected = profile["selected_artifact_bytes"]
@@ -210,6 +243,12 @@ def platform_evidence(platform: str) -> dict:
             "configured_and_resolved_match": True,
             "low_vram_rejected": True,
         },
+        "calibration_challenge": {
+            "challenge_sha256": challenge_sha256,
+            "controller_state_revision": challenge["controller_state_revision"],
+            "issued_at_unix": challenge["issued_at_unix"],
+            "expires_at_unix": challenge["expires_at_unix"],
+        },
         "suspensions": [
             {
                 "kind": kind,
@@ -218,6 +257,31 @@ def platform_evidence(platform: str) -> dict:
                 "desired_intent_preserved": True,
                 "worker_count_during": 0,
                 "duration_seconds": 3.0,
+                "calibration": {
+                    "measurement_source": {
+                        "bandwidth": "host-network-counters",
+                        "power": "nvidia-nvml-device-power",
+                        "schedule": "utc-policy-clock",
+                    }[kind],
+                    "measurement_scope": {
+                        "bandwidth": "aggregate-host-network",
+                        "power": "selected-nvidia-l4-device",
+                        "schedule": "utc-schedule-policy",
+                    }[kind],
+                    "sample_count": 4,
+                    "sample_interval_seconds": 0.5,
+                    "baseline_value": 1.0 if kind == "schedule" else 10.0,
+                    "configured_limit": {
+                        "bandwidth": 100.0,
+                        "power": 250.0,
+                        "schedule": 0.5,
+                    }[kind],
+                    "trigger_value": 0.0 if kind == "schedule" else (120.0 if kind == "bandwidth" else 275.0),
+                    "resume_value": 1.0 if kind == "schedule" else 10.0,
+                    "challenge_sha256": challenge_sha256,
+                    "sample_started_at_unix": NOW + 10,
+                    "sample_ended_at_unix": NOW + 12,
+                },
             }
             for kind in ("bandwidth", "power", "schedule")
         ],
@@ -282,6 +346,53 @@ def test_load_plan_binds_budget_sequence_models_and_exact_resources(plan):
     assert controller.PROTECTED_INSTANCE not in plan.instances
 
 
+def test_controller_issues_one_time_source_bound_calibration_challenge(tmp_path, plan):
+    state = controller.reconcile(
+        controller.initial_state(plan),
+        observation(plan, windows=True, windows_job="running"),
+        plan,
+    )
+    path = tmp_path / "controller-challenge.json"
+
+    next_state, value = controller.issue_calibration_challenge(
+        state,
+        plan,
+        "windows",
+        path,
+        issued_at_unix=NOW + 1,
+        nonce="f" * 64,
+    )
+
+    assert path.exists()
+    assert value["run_id"] == plan.run_id
+    assert value["platform"] == "windows"
+    assert value["source_commit"] == plan.windows.source_commit
+    assert value["package_sha256"] == plan.windows.package_sha256
+    assert value["controller_state_revision"] == state["revision"]
+    assert next_state["windows_challenge_sha256"] == challenge_contract.digest(value)
+    recovered_state, recovered = controller.issue_calibration_challenge(
+        state,
+        plan,
+        "windows",
+        path,
+        issued_at_unix=NOW + 2,
+        nonce="e" * 64,
+    )
+    assert recovered == value
+    assert recovered_state["windows_challenge_sha256"] == next_state["windows_challenge_sha256"]
+
+    path.unlink()
+    with pytest.raises(controller.Gate14ControllerError):
+        controller.issue_calibration_challenge(
+            next_state,
+            plan,
+            "windows",
+            path,
+            issued_at_unix=NOW + 2,
+            nonce="e" * 64,
+        )
+
+
 def test_load_plan_rejects_spend_above_remaining_ceiling(tmp_path):
     provider = provider_plan()
     digest = controller._canonical_digest(provider)
@@ -342,9 +453,18 @@ def test_lifecycle_reattaches_collects_serially_and_cleanup_passes(
     assert state["windows_consumed"] is True
     assert state["next_action"] == "none"
 
+    windows_challenge_path = tmp_path / "windows-challenge.json"
+    state, windows_challenge = controller.issue_calibration_challenge(
+        state,
+        plan,
+        "windows",
+        windows_challenge_path,
+        issued_at_unix=NOW,
+        nonce="a" * 64,
+    )
     windows_path = tmp_path / "windows.json"
     windows_path.write_text(
-        json.dumps(platform_evidence("windows")),
+        json.dumps(platform_evidence("windows", windows_challenge)),
         encoding="utf-8",
     )
     windows_digest = "sha256:" + hashlib.sha256(windows_path.read_bytes()).hexdigest()
@@ -359,7 +479,13 @@ def test_lifecycle_reattaches_collects_serially_and_cleanup_passes(
         plan,
     )
     assert state["next_action"] == "collect_windows"
-    state = controller.collect_platform(state, plan, "windows", windows_path)
+    state = controller.collect_platform(
+        state,
+        plan,
+        "windows",
+        windows_path,
+        windows_challenge_path,
+    )
     assert state["phase"] == "WINDOWS_DELETING"
     assert state["next_action"] == "delete_windows"
 
@@ -389,9 +515,18 @@ def test_lifecycle_reattaches_collects_serially_and_cleanup_passes(
     assert state["phase"] == "LINUX_RUNNING"
     assert state["linux_consumed"] is True
 
+    linux_challenge_path = tmp_path / "linux-challenge.json"
+    state, linux_challenge = controller.issue_calibration_challenge(
+        state,
+        plan,
+        "linux",
+        linux_challenge_path,
+        issued_at_unix=NOW,
+        nonce="b" * 64,
+    )
     linux_path = tmp_path / "linux.json"
     linux_path.write_text(
-        json.dumps(platform_evidence("linux")),
+        json.dumps(platform_evidence("linux", linux_challenge)),
         encoding="utf-8",
     )
     linux_digest = "sha256:" + hashlib.sha256(linux_path.read_bytes()).hexdigest()
@@ -408,7 +543,13 @@ def test_lifecycle_reattaches_collects_serially_and_cleanup_passes(
         plan,
     )
     assert state["next_action"] == "collect_linux"
-    state = controller.collect_platform(state, plan, "linux", linux_path)
+    state = controller.collect_platform(
+        state,
+        plan,
+        "linux",
+        linux_path,
+        linux_challenge_path,
+    )
     assert state["phase"] == "LINUX_DELETING"
     assert state["next_action"] == "delete_linux"
 
@@ -489,7 +630,16 @@ def test_collect_rejects_wrong_package_and_save_round_trips(tmp_path, plan):
         observation(plan, windows=True, windows_job="running"),
         plan,
     )
-    evidence = platform_evidence("windows")
+    challenge_path = tmp_path / "wrong-package-challenge.json"
+    state, challenge = controller.issue_calibration_challenge(
+        state,
+        plan,
+        "windows",
+        challenge_path,
+        issued_at_unix=NOW,
+        nonce="a" * 64,
+    )
+    evidence = platform_evidence("windows", challenge)
     evidence["package"]["archive_sha256"] = "sha256:" + "9" * 64
     evidence_path = tmp_path / "wrong.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
@@ -505,11 +655,63 @@ def test_collect_rejects_wrong_package_and_save_round_trips(tmp_path, plan):
         plan,
     )
     with pytest.raises(controller.Gate14ControllerError):
-        controller.collect_platform(state, plan, "windows", evidence_path)
+        controller.collect_platform(
+            state,
+            plan,
+            "windows",
+            evidence_path,
+            challenge_path,
+        )
 
     state_path = tmp_path / "state.json"
     controller.save_state(state_path, state, plan)
     assert controller.load_state(state_path, plan) == state
+
+
+def test_collect_rejects_evidence_from_a_different_challenge(tmp_path, plan):
+    state = controller.reconcile(
+        controller.initial_state(plan),
+        observation(plan, windows=True, windows_job="running"),
+        plan,
+    )
+    issued_path = tmp_path / "issued-challenge.json"
+    state, issued = controller.issue_calibration_challenge(
+        state,
+        plan,
+        "windows",
+        issued_path,
+        issued_at_unix=NOW,
+        nonce="a" * 64,
+    )
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(
+        json.dumps(platform_evidence("windows", issued)),
+        encoding="utf-8",
+    )
+    evidence_digest = "sha256:" + hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    state = controller.reconcile(
+        state,
+        observation(
+            plan,
+            windows=True,
+            windows_job="passed",
+            windows_digest=evidence_digest,
+        ),
+        plan,
+    )
+    different = dict(issued)
+    different["nonce"] = "f" * 64
+    challenge_path = tmp_path / "different-challenge.json"
+    challenge_path.write_text(json.dumps(different), encoding="utf-8")
+
+    with pytest.raises(controller.Gate14ControllerError):
+        controller.collect_platform(
+            state,
+            plan,
+            "windows",
+            evidence_path,
+            challenge_path,
+        )
 
 
 def test_begin_cleanup_is_idempotent_after_terminal_state(plan):
@@ -589,6 +791,15 @@ def test_passed_job_requires_and_binds_exact_evidence_digest(tmp_path, plan):
         observation(plan, windows=True, windows_job="running"),
         plan,
     )
+    challenge_path = tmp_path / "reported-challenge.json"
+    state, challenge = controller.issue_calibration_challenge(
+        state,
+        plan,
+        "windows",
+        challenge_path,
+        issued_at_unix=NOW,
+        nonce="a" * 64,
+    )
     reported_digest = "sha256:" + "c" * 64
     state = controller.reconcile(
         state,
@@ -602,12 +813,18 @@ def test_passed_job_requires_and_binds_exact_evidence_digest(tmp_path, plan):
     )
     evidence_path = tmp_path / "different.json"
     evidence_path.write_text(
-        json.dumps(platform_evidence("windows")),
+        json.dumps(platform_evidence("windows", challenge)),
         encoding="utf-8",
     )
     assert "sha256:" + hashlib.sha256(evidence_path.read_bytes()).hexdigest() != reported_digest
     with pytest.raises(controller.Gate14ControllerError):
-        controller.collect_platform(state, plan, "windows", evidence_path)
+        controller.collect_platform(
+            state,
+            plan,
+            "windows",
+            evidence_path,
+            challenge_path,
+        )
 
 
 @pytest.mark.parametrize("platform", ["windows", "linux"])
@@ -648,6 +865,8 @@ def test_linux_start_requires_absent_disk_and_absent_stale_job(plan):
         "revision": 2,
         "phase": "WINDOWS_DELETING",
         "windows_evidence_digest": windows_digest,
+        "windows_challenge_sha256": "sha256:" + "e" * 64,
+        "windows_challenge_consumed": True,
         "windows_consumed": True,
         "next_action": "delete_windows",
     }
@@ -692,6 +911,10 @@ def test_linux_deletion_escalates_returned_windows_resources(plan, returned_reso
         "phase": "LINUX_DELETING",
         "windows_evidence_digest": windows_digest,
         "linux_evidence_digest": linux_digest,
+        "windows_challenge_sha256": "sha256:" + "e" * 64,
+        "linux_challenge_sha256": "sha256:" + "f" * 64,
+        "windows_challenge_consumed": True,
+        "linux_challenge_consumed": True,
         "windows_consumed": True,
         "linux_consumed": True,
         "next_action": "delete_linux",

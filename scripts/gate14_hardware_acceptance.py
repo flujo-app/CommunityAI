@@ -24,6 +24,8 @@ CLEANUP_SCOPE = "gate14-provider-cleanup"
 AGGREGATE_SCOPE = "gate14-hardware-acceptance"
 MAX_INPUT_BYTES = 262_144
 MAX_DURATION_SECONDS = 300.0
+MAX_CALIBRATION_CHALLENGE_SECONDS = 900
+MAX_CALIBRATION_SAMPLE_SECONDS = 120.0
 MAX_BYTES = 1 << 50
 MAX_BLOCKS = 512
 PROTECTED_INSTANCE = "communityai-bootstrap-1"
@@ -74,6 +76,7 @@ _DOCUMENT_FIELDS = {
     "cache",
     "placement",
     "limits",
+    "calibration_challenge",
     "suspensions",
     "recovery",
     "pause",
@@ -135,6 +138,26 @@ _SUSPENSION_FIELDS = {
     "desired_intent_preserved",
     "worker_count_during",
     "duration_seconds",
+    "calibration",
+}
+_CALIBRATION_CHALLENGE_FIELDS = {
+    "challenge_sha256",
+    "controller_state_revision",
+    "issued_at_unix",
+    "expires_at_unix",
+}
+_CALIBRATION_FIELDS = {
+    "measurement_source",
+    "measurement_scope",
+    "sample_count",
+    "sample_interval_seconds",
+    "baseline_value",
+    "configured_limit",
+    "trigger_value",
+    "resume_value",
+    "challenge_sha256",
+    "sample_started_at_unix",
+    "sample_ended_at_unix",
 }
 _RECOVERY_FIELDS = {
     "worker_crash_observed",
@@ -210,6 +233,10 @@ _TERMINAL_STATE_FIELDS = {
     "failure_code",
     "windows_evidence_digest",
     "linux_evidence_digest",
+    "windows_challenge_sha256",
+    "linux_challenge_sha256",
+    "windows_challenge_consumed",
+    "linux_challenge_consumed",
     "windows_consumed",
     "linux_consumed",
     "cleanup_verified",
@@ -245,6 +272,14 @@ _CLIENT_PLAN_FIELDS = {
     "package_sha256",
     "model_id",
     "manifest_digest",
+    "machine_type",
+    "image_project",
+    "image",
+    "boot_disk_gib",
+    "boot_disk_type",
+    "service_account_disabled",
+    "max_run_seconds",
+    "termination_action",
 }
 _SEQUENCING_FIELDS = {
     "clients_may_run_concurrently",
@@ -427,14 +462,34 @@ def _validate_limits(value: Any, selected_bytes: int, accelerator_memory: int) -
     _true(limits["low_vram_rejected"])
 
 
-def _validate_suspensions(value: Any) -> None:
+def _validate_calibration_challenge(value: Any) -> Mapping[str, Any]:
+    challenge = _mapping(value, _CALIBRATION_CHALLENGE_FIELDS)
+    _string(challenge["challenge_sha256"], _DIGEST_RE)
+    _integer(challenge["controller_state_revision"])
+    issued = _integer(challenge["issued_at_unix"])
+    expires = _integer(challenge["expires_at_unix"])
+    if not 60 <= expires - issued <= MAX_CALIBRATION_CHALLENGE_SECONDS:
+        raise Gate14EvidenceError("calibration challenge lifetime is invalid")
+    return challenge
+
+
+def _validate_suspensions(
+    value: Any,
+    limits: Mapping[str, Any],
+    challenge: Mapping[str, Any],
+) -> None:
     if not isinstance(value, list) or len(value) != 3:
         raise Gate14EvidenceError("three suspension classes are required")
+    expected_calibration = {
+        "bandwidth": ("host-network-counters", "aggregate-host-network", limits["bandwidth_mbps"]),
+        "power": ("nvidia-nvml-device-power", "selected-nvidia-l4-device", limits["power_watts"]),
+        "schedule": ("utc-policy-clock", "utc-schedule-policy", 0.5),
+    }
     seen: set[str] = set()
     for raw in value:
         item = _mapping(raw, _SUSPENSION_FIELDS)
         kind = item["kind"]
-        if kind not in {"bandwidth", "power", "schedule"} or kind in seen:
+        if kind not in expected_calibration or kind in seen:
             raise Gate14EvidenceError("suspension class is invalid")
         seen.add(kind)
         _true(item["suspended"])
@@ -443,6 +498,35 @@ def _validate_suspensions(value: Any) -> None:
         if item["worker_count_during"] != 0:
             raise Gate14EvidenceError("worker remained active while suspended")
         _number(item["duration_seconds"], 0.0, MAX_DURATION_SECONDS)
+        calibration = _mapping(item["calibration"], _CALIBRATION_FIELDS)
+        source, scope, expected_limit = expected_calibration[kind]
+        if calibration["measurement_source"] != source or calibration["measurement_scope"] != scope:
+            raise Gate14EvidenceError("suspension measurement source is invalid")
+        sample_count = _integer(calibration["sample_count"], 3, 10_000)
+        sample_interval = _number(calibration["sample_interval_seconds"], 0.05, 30.0)
+        baseline = _number(calibration["baseline_value"], 0.0, 1_000_000.0)
+        configured = _number(calibration["configured_limit"], 0.001, 1_000_000.0)
+        trigger = _number(calibration["trigger_value"], 0.0, 1_000_000.0)
+        resume = _number(calibration["resume_value"], 0.0, 1_000_000.0)
+        if calibration["challenge_sha256"] != challenge["challenge_sha256"]:
+            raise Gate14EvidenceError("calibration challenge binding is invalid")
+        started = _number(calibration["sample_started_at_unix"], 0.0, 4_102_444_800.0)
+        ended = _number(calibration["sample_ended_at_unix"], 0.0, 4_102_444_800.0)
+        sample_span = ended - started
+        if (
+            started < challenge["issued_at_unix"]
+            or ended > challenge["expires_at_unix"]
+            or sample_span < (sample_count - 1) * sample_interval
+            or sample_span > MAX_CALIBRATION_SAMPLE_SECONDS
+        ):
+            raise Gate14EvidenceError("calibration measurement window is stale or invalid")
+        if configured != expected_limit:
+            raise Gate14EvidenceError("suspension limit does not match resolved policy")
+        if kind == "schedule":
+            if (baseline, trigger, resume) != (1.0, 0.0, 1.0):
+                raise Gate14EvidenceError("schedule trigger calibration is invalid")
+        elif not (baseline < configured < trigger and resume < configured):
+            raise Gate14EvidenceError("physical trigger calibration did not cross its limit")
 
 
 def _validate_recovery(value: Any) -> None:
@@ -512,7 +596,8 @@ def validate_platform_document(value: Mapping[str, Any]) -> Mapping[str, Any]:
         model["selected_artifact_bytes"],
         hardware["accelerator_memory_bytes"],
     )
-    _validate_suspensions(document["suspensions"])
+    challenge = _validate_calibration_challenge(document["calibration_challenge"])
+    _validate_suspensions(document["suspensions"], document["limits"], challenge)
     _validate_recovery(document["recovery"])
     _validate_pause(document["pause"])
     _validate_restart(document["restart"])
@@ -529,6 +614,7 @@ def validate_platform_document(value: Mapping[str, Any]) -> Mapping[str, Any]:
         "manifest_digest": model["manifest_digest"],
         "gate9_envelope_sha256": model["gate9_envelope_sha256"],
         "accelerator": hardware["accelerator"],
+        "calibration_challenge_sha256": challenge["challenge_sha256"],
         "block_start": block_start,
         "block_end": block_end,
     }
@@ -600,6 +686,12 @@ def validate_authorization_document(
     for index, platform in enumerate(("windows", "linux")):
         client = _mapping(by_platform[platform], _CLIENT_PLAN_FIELDS)
         model_id = EXPECTED_PLATFORM_MODELS[platform]
+        expected_image_project = "windows-cloud" if platform == "windows" else "ubuntu-os-cloud"
+        expected_image_pattern = (
+            re.compile(r"windows-server-2022-dc-v[0-9]{8}")
+            if platform == "windows"
+            else re.compile(r"ubuntu-2404-noble-amd64-v[0-9]{8}")
+        )
         if (
             client["platform"] != platform
             or client["instance"] != expected_instances[index]
@@ -608,8 +700,16 @@ def validate_authorization_document(
             or client["package_sha256"] != package_sha256[platform]
             or client["model_id"] != model_id
             or client["manifest_digest"] != MODEL_PROFILES[model_id]["manifest_digest"]
+            or client["machine_type"] != "g2-standard-8"
+            or client["image_project"] != expected_image_project
+            or client["boot_disk_type"] != "pd-balanced"
+            or client["service_account_disabled"] is not True
+            or client["termination_action"] != "DELETE"
         ):
             raise Gate14EvidenceError("authorized client binding is inconsistent")
+        _string(client["image"], expected_image_pattern)
+        _integer(client["boot_disk_gib"], 100, 200)
+        _integer(client["max_run_seconds"], 1_800, 14_400)
         _integer(client["termination_unix"], 1)
 
     cost = _mapping(authorization["authorization"], _AUTHORIZATION_FIELDS)
@@ -647,6 +747,8 @@ def validate_terminal_state(
     provider_plan_digest: str,
     windows_evidence_sha256: str,
     linux_evidence_sha256: str,
+    windows_challenge_sha256: str,
+    linux_challenge_sha256: str,
 ) -> Mapping[str, Any]:
     state = _mapping(value, _TERMINAL_STATE_FIELDS)
     if (
@@ -658,6 +760,10 @@ def validate_terminal_state(
         or state["failure_code"] is not None
         or state["windows_evidence_digest"] != windows_evidence_sha256
         or state["linux_evidence_digest"] != linux_evidence_sha256
+        or state["windows_challenge_sha256"] != windows_challenge_sha256
+        or state["linux_challenge_sha256"] != linux_challenge_sha256
+        or state["windows_challenge_consumed"] is not True
+        or state["linux_challenge_consumed"] is not True
         or state["windows_consumed"] is not True
         or state["linux_consumed"] is not True
         or state["cleanup_verified"] is not True
@@ -771,6 +877,8 @@ def validate_files(
         provider_plan_digest=provider_plan_digest,
         windows_evidence_sha256=_digest(payloads["windows"]),
         linux_evidence_sha256=_digest(payloads["linux"]),
+        windows_challenge_sha256=windows["calibration_challenge_sha256"],
+        linux_challenge_sha256=linux["calibration_challenge_sha256"],
     )
     cleanup = validate_cleanup_document(
         _strict_json(payloads["cleanup"]),
