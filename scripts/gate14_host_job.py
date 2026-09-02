@@ -64,8 +64,8 @@ LINUX_HOST_USER = "gate14"
 LINUX_HOME = "/home/gate14"
 LINUX_RUNTIME_DIR = "/qualification/gate14/runtime"
 LIFECYCLE_CONFIG_NAMES = {
-    "windows": "gate14-windows-run.json",
-    "linux": "gate14-linux-run.json",
+    "windows": "gate14-lifecycle.json",
+    "linux": "gate14-lifecycle.json",
 }
 _JOB_RE = re.compile(r"communityai-gate14-[a-z0-9-]{1,63}-(?:windows|linux)")
 

@@ -52,9 +52,18 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   POSIX ownership or native Windows owner/protected-DACL and per-right access probes, and every
   staged file is read without following a raced path and revalidated around action phases.
   Failure cleanup is unconditional, private facts are removed before final evidence publication,
-  and the persisted evidence is strictly reread and compared. The expanded no-spend Gate 14
-  contract matrix passes 125 tests. This is software and preflight evidence only: no Gate 14
-  hardware pass is claimed yet.
+  and the persisted evidence is strictly reread and compared. Gate 14 now also aligns the
+  controller and lifecycle on the exact `gate14-lifecycle.json` basename and adds a
+  source-digest-bound persistent Windows PowerShell action bridge. The bridge keeps one native
+  host and state nonce across prepare/calibrate/cleanup, accepts only bounded canonical
+  controller-bound frames, rejects duplicate keys, replayed or out-of-order request IDs, and
+  private response material, and force-cleans the product process tree on EOF or failure. Its
+  production prepare/calibrate handlers intentionally fail closed until the release audit
+  companions and Gate 9 warm cache are controller-bound. The expanded no-spend Gate 14 contract
+  matrix passes 154 tests, including native and client-side rejection of Boolean, numeric,
+  array-coerced, and changed controller bindings. This is software and preflight evidence only:
+  no Gate 14 hardware or
+  cloud-run pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,

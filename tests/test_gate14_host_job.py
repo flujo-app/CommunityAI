@@ -27,7 +27,7 @@ def config_factory(tmp_path, monkeypatch):
         adapter.write_bytes(host_job.ADAPTER_PATH.read_bytes())
         entrypoint = root / "gate14_host_lifecycle.py"
         entrypoint.write_text("# bound Gate 14 lifecycle\n", encoding="utf-8")
-        lifecycle_config = root / f"gate14-{platform}-run.json"
+        lifecycle_config = root / "gate14-lifecycle.json"
         lifecycle_config.write_text('{"bound":true}\n', encoding="utf-8")
         python = Path(sys.executable).resolve()
 
@@ -106,6 +106,7 @@ def test_gate14_config_uses_separate_namespace_root_and_run_binding(config_facto
     assert config.job_name == "communityai-gate14-gate14-test-a-linux"
     assert config.host_user == "gate14"
     assert config.adapter_sha256 == raw["adapter_sha256"]
+    assert config.lifecycle_config_path.name == "gate14-lifecycle.json"
 
 
 @pytest.mark.parametrize(
