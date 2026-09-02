@@ -58,6 +58,29 @@ def test_supervisor_reconfigures_only_after_persistence_and_while_idle():
     supervisor.shutdown()
 
 
+def test_automatic_worker_requires_exact_remote_intent_acknowledgement():
+    common = {
+        "worker_id": "automatic",
+        "model_id": "model",
+        "command": (sys.executable, "-c", "raise SystemExit(0)"),
+        "automatic": True,
+        "block_indices": "0:1",
+        "placement_reason": "selected",
+    }
+    with pytest.raises(ValueError, match="remotely acknowledged"):
+        WorkerLaunch(**common)
+    with pytest.raises(ValueError, match="remote acknowledgement"):
+        WorkerLaunch(**common, policy_admitted=False, policy_reason="blocked", intent_published=True)
+    with pytest.raises(ValueError, match="manual workers"):
+        WorkerLaunch(
+            "manual",
+            "model",
+            common["command"],
+            intent_published=True,
+            remote_acknowledged=True,
+        )
+
+
 def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
     initial = WorkerLaunch(
         "automatic",
@@ -78,6 +101,8 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
         automatic=True,
         block_indices="2:3",
         placement_reason="selected least-covered block",
+        intent_published=True,
+        remote_acknowledged=True,
     )
     supervisor = WorkerSupervisor([initial], stop_timeout=2, poll_period=0.01)
     supervisor.start_service()
@@ -89,6 +114,8 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
     assert snapshot["automatic"] is True
     assert snapshot["block_indices"] == "2:3"
     assert snapshot["placement_reason"] == "selected least-covered block"
+    assert snapshot["intent_published"] is True
+    assert snapshot["remote_acknowledged"] is True
 
     with pytest.raises(WorkerReconfigurationBusyError, match="pause contribution worker"):
         supervisor.replace_launch(initial)
@@ -103,6 +130,8 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
         automatic=True,
         block_indices="3:4",
         placement_reason="coverage changed",
+        intent_published=True,
+        remote_acknowledged=True,
     )
     assert supervisor.replace_launch(migrated, start=True) is True
     _wait_for(lambda: supervisor.snapshot("automatic")["state"] == "running")
@@ -121,6 +150,8 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
         automatic=True,
         block_indices="4:5",
         placement_reason="coverage changed again",
+        intent_published=True,
+        remote_acknowledged=True,
     )
     assert supervisor.replace_launch(paused_update, start=True) is True
     snapshot = supervisor.snapshot("automatic")

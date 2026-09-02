@@ -136,6 +136,8 @@ class WorkerLaunch:
     automatic: bool = False
     block_indices: Optional[str] = None
     placement_reason: Optional[str] = None
+    intent_published: bool = False
+    remote_acknowledged: bool = False
     max_disk_bytes: Optional[int] = None
     max_vram_bytes: Optional[int] = None
     vram_device: Optional[str] = None
@@ -157,6 +159,14 @@ class WorkerLaunch:
             raise ValueError("automatic workers require a block range and placement reason")
         if not self.automatic and (self.block_indices is not None or self.placement_reason is not None):
             raise ValueError("manual workers must not carry automatic placement metadata")
+        if type(self.intent_published) is not bool or type(self.remote_acknowledged) is not bool:
+            raise ValueError("placement intent publication fields must be booleans")
+        if self.intent_published != self.remote_acknowledged:
+            raise ValueError("placement intent publication requires a remote acknowledgement")
+        if not self.automatic and self.intent_published:
+            raise ValueError("manual workers must not carry an acknowledged automatic intent")
+        if self.automatic and self.policy_admitted and not self.remote_acknowledged:
+            raise ValueError("admitted automatic workers require a remotely acknowledged intent")
         if self.max_disk_bytes is not None and (
             isinstance(self.max_disk_bytes, bool) or not isinstance(self.max_disk_bytes, int) or self.max_disk_bytes < 1
         ):
@@ -675,6 +685,8 @@ class WorkerSupervisor:
                         "automatic": record.launch.automatic,
                         "block_indices": record.launch.block_indices,
                         "placement_reason": record.launch.placement_reason,
+                        "intent_published": record.launch.intent_published,
+                        "remote_acknowledged": record.launch.remote_acknowledged,
                         "max_disk_bytes": record.launch.max_disk_bytes,
                         "max_vram_bytes": record.launch.max_vram_bytes,
                         "vram_pool_bytes": record.launch.vram_pool_bytes,

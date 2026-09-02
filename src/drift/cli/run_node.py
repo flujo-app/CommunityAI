@@ -461,10 +461,14 @@ def _prepare_worker_supervisor_settings(
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
 
         resolved_model = _model_key(descriptor)
+        intent_published = bool(automatic and placement is not None and placement.intent_published)
+        remote_acknowledged = bool(automatic and placement is not None and placement.remote_acknowledged)
         if not policy.sharing_enabled:
             policy_reason = "sharing is disabled by contribution policy"
         elif automatic and decision is None:
             policy_reason = placement_reason
+        elif automatic and not (intent_published and remote_acknowledged):
+            policy_reason = "automatic placement intent is not remotely acknowledged"
         elif resolved_model in denied_models:
             policy_reason = f"model {descriptor.model_id!r} is denied by contribution policy"
         elif allowed_models and resolved_model not in allowed_models:
@@ -587,6 +591,8 @@ def _prepare_worker_supervisor_settings(
                 automatic=automatic,
                 block_indices=selected_block_indices if automatic else None,
                 placement_reason=placement_reason,
+                intent_published=intent_published,
+                remote_acknowledged=remote_acknowledged,
                 max_disk_bytes=effective_disk_bytes,
                 max_vram_bytes=effective_vram_bytes,
                 vram_device=vram_device,
@@ -819,7 +825,7 @@ def _build_automatic_placement_service(
                     previous = previous_plans.get(worker_id)
                     plans[worker_id] = (
                         previous
-                        if previous is not None and previous.decision is not None
+                        if previous is not None and previous.decision is not None and previous.remote_acknowledged
                         else PlacementPlan(
                             None,
                             "signed placement intent could not be published to a remote peer",
@@ -828,6 +834,11 @@ def _build_automatic_placement_service(
                     )
                     continue
                 planner.commit(proposal)
+                proposal = replace(
+                    proposal,
+                    intent_published=True,
+                    remote_acknowledged=True,
+                )
             plans[worker_id] = proposal
         registry.replace(plans)
         settings = _prepare_worker_supervisor_settings(

@@ -377,11 +377,31 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
         score=100,
         reason="selected 1:2 from fresh verified coverage",
     )
-    placed = _build_worker_supervisor(
+    unacknowledged = _build_worker_supervisor(
         config,
         manager,
         automatic_placements={
             "automatic": PlacementPlan(decision, decision.reason, 1),
+        },
+    )
+    unacknowledged_launch = unacknowledged.launches[0]
+    assert unacknowledged_launch.policy_admitted is False
+    assert unacknowledged_launch.intent_published is False
+    assert unacknowledged_launch.remote_acknowledged is False
+    assert "not remotely acknowledged" in unacknowledged_launch.policy_reason
+    unacknowledged.shutdown()
+
+    placed = _build_worker_supervisor(
+        config,
+        manager,
+        automatic_placements={
+            "automatic": PlacementPlan(
+                decision,
+                decision.reason,
+                1,
+                intent_published=True,
+                remote_acknowledged=True,
+            ),
         },
     )
     launch = placed.launches[0]
@@ -389,6 +409,8 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
     assert launch.policy_admitted is True
     assert launch.automatic is True
     assert launch.block_indices == "1:2"
+    assert launch.intent_published is True
+    assert launch.remote_acknowledged is True
     assert launch.command[launch.command.index("--block_indices") + 1] == "1:2"
     assert "--num_blocks" not in launch.command
     placed.shutdown()
@@ -538,6 +560,10 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         assert launch.model_id == manifest.name
         assert launch.block_indices == "1:2"
         assert launch.policy_admitted is True
+        assert launch.intent_published is True
+        assert launch.remote_acknowledged is True
+        assert snapshot["intent_published"] is True
+        assert snapshot["remote_acknowledged"] is True
         assert "local demand bucket 1" in launch.placement_reason
         assert snapshot["desired_running"] is expected_desired
         assert snapshot["operator_paused"] is pause_while_waiting
@@ -545,6 +571,8 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     else:
         assert launch.model_id == "auto"
         assert launch.policy_admitted is False
+        assert launch.intent_published is False
+        assert launch.remote_acknowledged is False
         assert "signed placement intent" in launch.policy_reason
         assert snapshot["pid"] is None
         assert registry.snapshot()["automatic"].decision is None

@@ -61,6 +61,16 @@ class PlacementPlan:
     decision: Optional[PlacementDecision]
     reason: str
     evaluated_models: int
+    intent_published: bool = False
+    remote_acknowledged: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.intent_published) is not bool or type(self.remote_acknowledged) is not bool:
+            raise ValueError("placement intent publication fields must be booleans")
+        if self.intent_published != self.remote_acknowledged:
+            raise ValueError("placement intent publication requires a remote acknowledgement")
+        if self.decision is None and self.intent_published:
+            raise ValueError("an empty placement cannot carry an acknowledged intent")
 
 
 class PlacementRegistry:
