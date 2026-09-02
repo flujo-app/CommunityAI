@@ -1103,10 +1103,13 @@ def _linux_snapshot(config: HostJobConfig, runner: Runner) -> Mapping[str, Any]:
         "TimeoutStartUSec",
         "RuntimeMaxUSec",
     }
+    if fields.get("LoadState") == "not-found":
+        absent_field_sets = (expected_fields, expected_fields - {"ExecStart"})
+        if set(fields) not in absent_field_sets:
+            raise HostJobError("native supervisor inventory is incomplete")
+        return {"native_state": "absent", "binding_ok": False}
     if set(fields) != expected_fields:
         raise HostJobError("native supervisor inventory is incomplete")
-    if fields["LoadState"] == "not-found":
-        return {"native_state": "absent", "binding_ok": False}
     binding = (
         fields["LoadState"] == "loaded"
         and fields["User"] == config.host_user

@@ -610,6 +610,38 @@ def test_linux_snapshot_binds_exact_service_command(config_factory):
         }
 
 
+def test_linux_snapshot_accepts_fresh_systemd_inventory_without_exec_start(config_factory):
+    path, _raw = config_factory()
+    config = host_job.load_config(path)
+    stdout = "\n".join(
+        [
+            "Restart=no",
+            "TimeoutStartUSec=1min 30s",
+            "RuntimeMaxUSec=infinity",
+            "Environment=",
+            "UMask=0022",
+            "WorkingDirectory=",
+            "User=",
+            "Group=",
+            "PrivateTmp=no",
+            "NoNewPrivileges=no",
+            "KillMode=control-group",
+            "LoadState=not-found",
+            "ActiveState=inactive",
+            "SubState=dead",
+        ]
+    )
+
+    def runner(_argv, timeout):
+        assert timeout == 60
+        return subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+
+    assert host_job._linux_snapshot(config, runner) == {
+        "native_state": "absent",
+        "binding_ok": False,
+    }
+
+
 def test_public_cli_failure_is_bounded_and_path_free(capsys, tmp_path):
     missing = tmp_path / "secret-token-config.json"
 
