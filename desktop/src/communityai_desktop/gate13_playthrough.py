@@ -1,9 +1,10 @@
 """Automate the real packaged Gate 13 desktop playthrough.
 
 This module is deliberately part of the frozen desktop rather than an external UI
-mock.  A qualification invocation opens the normal window, uses the real sharing
-policy dialog and Start/Pause buttons, and performs one bounded localhost inference
-with an ephemeral client key.  It retains only bounded acceptance facts.
+mock.  Qualification invocations reproduce the platform-specific sequence from the
+accepted manual run using the normal window, real sharing-policy dialog, literal
+Start/Pause buttons, and bounded localhost inference with an ephemeral client key.
+It retains only bounded acceptance facts.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 from communityai_desktop.client import normalize_loopback_url
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCOPE = "gate13-packaged-desktop-playthrough"
 MAX_CONFIG_BYTES = 65_536
 MAX_RESPONSE_BYTES = 1_048_576
@@ -62,6 +63,7 @@ def _manual_schedule() -> dict[str, Any]:
 _CONFIG_FIELDS = {
     "schema_version",
     "run_id",
+    "platform",
     "stage",
     "model_id",
     "manifest_digest",
@@ -170,6 +172,7 @@ def _policy(value: Any, model_id: str) -> dict[str, Any]:
 @dataclass(frozen=True)
 class PlaythroughPlan:
     run_id: str
+    platform: str
     stage: str
     model_id: str
     manifest_digest: str
@@ -192,13 +195,16 @@ class PlaythroughPlan:
         if not isinstance(raw, dict) or set(raw) != _CONFIG_FIELDS or raw.get("schema_version") != SCHEMA_VERSION:
             raise PlaythroughError("configuration schema is invalid")
         run_id = raw["run_id"]
+        platform = raw["platform"]
         stage = raw["stage"]
         model_id = raw["model_id"]
         digest = raw["manifest_digest"]
         total_blocks = raw["total_blocks"]
         if not isinstance(run_id, str) or _RUN_RE.fullmatch(run_id) is None:
             raise PlaythroughError("run id is invalid")
-        if stage not in ("start", "resume_pause"):
+        if platform not in ("windows", "linux"):
+            raise PlaythroughError("playthrough platform is invalid")
+        if stage not in ("initial", "restart"):
             raise PlaythroughError("playthrough stage is invalid")
         if not isinstance(model_id, str) or _MODEL_RE.fullmatch(model_id) is None or model_id != model_id.strip():
             raise PlaythroughError("model id is invalid")
@@ -212,6 +218,7 @@ class PlaythroughPlan:
         )
         return cls(
             run_id=run_id,
+            platform=platform,
             stage=stage,
             model_id=model_id,
             manifest_digest=digest,
@@ -391,12 +398,25 @@ class Gate13Playthrough:
         screenshot_path: Path | None = None,
         inference_runner: Callable[[Any, PlaythroughPlan], Mapping[str, Any]] = qualify_localhost_inference,
         clock: Callable[[], float] = time.monotonic,
+        start_observation_seconds: float | None = None,
+        restart_observation_seconds: float | None = None,
     ):
         self.plan = plan
         self.evidence_path = Path(evidence_path)
         self.screenshot_path = None if screenshot_path is None else Path(screenshot_path)
         self._inference_runner = inference_runner
         self._clock = clock
+        default_start_observation = 25.0 if plan.platform == "windows" else 20.0
+        self._start_observation_seconds = (
+            default_start_observation
+            if start_observation_seconds is None
+            else _bounded_number(start_observation_seconds, "start observation", minimum=0.05, maximum=60)
+        )
+        self._restart_observation_seconds = (
+            15.0
+            if restart_observation_seconds is None
+            else _bounded_number(restart_observation_seconds, "restart observation", minimum=0.05, maximum=60)
+        )
         self._started = clock()
         self._state = "wait_ready"
         self._done = False
@@ -405,6 +425,17 @@ class Gate13Playthrough:
         self._application = None
         self._qt: Mapping[str, Any] = {}
         self._timer = None
+        self._observation_deadline: float | None = None
+        self._ui = {
+            "real_window_opened": True,
+            "policy_dialog_saved": False,
+            "start_clicked": False,
+            "pause_control_observed": False,
+            "pause_clicked": False,
+            "restart_resume_observed": False,
+            "sharing_intent_enabled_observed": False,
+            "sharing_intent_disabled_observed": False,
+        }
 
     def install(self, window: Any, application: Any, qt: Mapping[str, Any]) -> None:
         self._window = window
@@ -450,38 +481,55 @@ class Gate13Playthrough:
             if self._state == "wait_ready":
                 if not self._ready():
                     return
-                if self.plan.stage == "start":
-                    self._begin_inference("wait_inference_before_policy")
+                if self.plan.stage == "initial":
+                    self._begin_inference("after_initial_inference")
+                elif self.plan.platform == "windows":
+                    self._begin_policy_edit()
                 else:
                     self._state = "wait_resumed"
             elif self._state == "wait_policy":
                 contribution = self._window._snapshot.get("contribution", {})
                 if not self._window._busy and contribution.get("policy") == self.plan.policy:
+                    self._ui["policy_dialog_saved"] = True
                     self._click_start()
-            elif self._state == "wait_started":
+            elif self._state == "wait_started_intent":
                 contribution = self._window._snapshot.get("contribution", {})
-                workers = self._window._snapshot.get("workers", [])
-                active = any(item.get("model") == self.plan.model_id and item.get("sharing_active") for item in workers)
-                if contribution.get("intent_enabled") and contribution.get("enabled") and active:
-                    self._pass(started=True)
+                if contribution.get("intent_enabled") and self._pause_control_available():
+                    self._ui["sharing_intent_enabled_observed"] = True
+                    self._ui["pause_control_observed"] = True
+                    if self._observation_deadline is None:
+                        self._observation_deadline = self._clock() + self._start_observation_seconds
+                    if self._clock() >= self._observation_deadline:
+                        if self.plan.platform == "windows":
+                            self._click_pause()
+                        else:
+                            self._pass()
             elif self._state == "wait_resumed":
                 contribution = self._window._snapshot.get("contribution", {})
                 workers = self._window._snapshot.get("workers", [])
-                active = any(item.get("model") == self.plan.model_id and item.get("sharing_active") for item in workers)
-                if contribution.get("intent_enabled") and contribution.get("enabled") and active:
-                    self._click_pause()
-            elif self._state == "wait_paused":
+                desired = any(
+                    item.get("model") == self.plan.model_id and item.get("desired_running") for item in workers
+                )
+                if contribution.get("intent_enabled") and desired and self._pause_control_available():
+                    self._ui["sharing_intent_enabled_observed"] = True
+                    self._ui["pause_control_observed"] = True
+                    self._ui["restart_resume_observed"] = True
+                    if self._observation_deadline is None:
+                        self._observation_deadline = self._clock() + self._restart_observation_seconds
+                    if self._clock() >= self._observation_deadline:
+                        self._click_pause()
+            elif self._state == "wait_paused_intent":
                 contribution = self._window._snapshot.get("contribution", {})
-                workers = self._window._snapshot.get("workers", [])
-                target = [item for item in workers if item.get("model") == self.plan.model_id]
                 if (
                     not self._window._busy
                     and not contribution.get("intent_enabled")
-                    and not contribution.get("enabled")
-                    and target
-                    and all(not item.get("desired_running") and not item.get("sharing_active") for item in target)
+                    and self._start_control_available()
                 ):
-                    self._begin_inference("wait_inference_after_pause")
+                    self._ui["sharing_intent_disabled_observed"] = True
+                    if self.plan.platform == "linux":
+                        self._begin_inference("after_restart_inference")
+                    else:
+                        self._pass()
         except BaseException:
             self._fail()
 
@@ -491,10 +539,10 @@ class Gate13Playthrough:
 
         def finished(result: Mapping[str, Any]) -> None:
             self._inference = dict(result)
-            if waiting_state == "wait_inference_before_policy":
+            if waiting_state == "after_initial_inference" and self.plan.platform == "linux":
                 self._begin_policy_edit()
             else:
-                self._pass(paused=True)
+                self._pass()
 
         self._window._submit(
             lambda: self._inference_runner(controller, self.plan),
@@ -543,15 +591,30 @@ class Gate13Playthrough:
         button = self._window.master_share_button
         if button.text() != "Start sharing" or not button.isEnabled():
             return
-        self._state = "wait_started"
+        self._state = "wait_started_intent"
+        self._observation_deadline = None
+        self._ui["start_clicked"] = True
         button.click()
 
     def _click_pause(self) -> None:
         button = self._window.master_share_button
         if button.text() != "Pause sharing" or not button.isEnabled():
             return
-        self._state = "wait_paused"
+        self._state = "wait_paused_intent"
+        self._observation_deadline = None
+        self._ui["pause_clicked"] = True
         button.click()
+
+    def _pause_control_available(self) -> bool:
+        button = self._window.master_share_button
+        return bool(button.text() == "Pause sharing" and button.isEnabled())
+
+    def _start_control_available(self) -> bool:
+        button = self._window.master_share_button
+        # A just-paused worker may remain temporarily resource-suspended while its
+        # process exits, which legitimately leaves Start disabled.  The manual run
+        # accepted the intent transition and literal control text at this boundary.
+        return bool(button.text() == "Start sharing")
 
     def _base_result(self, result: str) -> dict[str, Any]:
         duration = max(0.0, self._clock() - self._started)
@@ -559,6 +622,7 @@ class Gate13Playthrough:
             "schema_version": SCHEMA_VERSION,
             "scope": SCOPE,
             "run_id": self.plan.run_id,
+            "platform": self.plan.platform,
             "stage": self.plan.stage,
             "result": result,
             "model_id": self.plan.model_id,
@@ -566,8 +630,13 @@ class Gate13Playthrough:
             "duration_seconds": round(duration, 6),
         }
 
-    def _pass(self, *, started: bool = False, paused: bool = False) -> None:
-        if self._done or self._inference is None:
+    def _pass(self) -> None:
+        inference_required = (self.plan.platform, self.plan.stage) in {
+            ("windows", "initial"),
+            ("linux", "initial"),
+            ("linux", "restart"),
+        }
+        if self._done or (inference_required and self._inference is None):
             self._fail()
             return
         value = self._base_result("passed")
@@ -579,23 +648,23 @@ class Gate13Playthrough:
                     "covered_blocks": self.plan.total_blocks,
                     "total_blocks": self.plan.total_blocks,
                 },
-                "inference": dict(self._inference),
-                "ui": {
-                    "real_window_opened": True,
-                    "policy_dialog_saved": self.plan.stage == "start",
-                    "start_clicked": started,
-                    "sharing_running_observed": started,
-                    "resumed_after_restart_observed": paused,
-                    "pause_clicked": paused,
-                    "sharing_paused_observed": paused,
-                },
+                "inference": None if self._inference is None else dict(self._inference),
+                "ui": dict(self._ui),
                 "limits": {
-                    "storage": True,
-                    "memory_or_vram": True,
-                    "bandwidth": True,
+                    "storage": self._ui["policy_dialog_saved"],
+                    "memory_or_vram": self._ui["policy_dialog_saved"],
+                    "bandwidth": self._ui["policy_dialog_saved"],
                     "power": False,
-                    "pause_timeout": True,
-                    "schedule": True,
+                    "pause_timeout": self._ui["policy_dialog_saved"],
+                    "schedule": self._ui["policy_dialog_saved"],
+                },
+                "timing": {
+                    "start_observation_seconds": (
+                        self._start_observation_seconds if self._ui["start_clicked"] else 0.0
+                    ),
+                    "restart_observation_seconds": (
+                        self._restart_observation_seconds if self._ui["restart_resume_observed"] else 0.0
+                    ),
                 },
                 "privacy": {
                     "prompt_retained": False,

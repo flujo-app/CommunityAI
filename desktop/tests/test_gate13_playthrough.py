@@ -22,10 +22,11 @@ MODEL_ID = "Qwen 3 8B"
 MANIFEST_DIGEST = "sha256:" + "b" * 64
 
 
-def _config(stage: str) -> dict:
+def _config(stage: str, platform: str = "windows") -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": "gate13-automated-test",
+        "platform": platform,
         "stage": stage,
         "model_id": MODEL_ID,
         "manifest_digest": MANIFEST_DIGEST,
@@ -56,8 +57,8 @@ def _config(stage: str) -> dict:
     }
 
 
-def _write_plan(path: Path, stage: str) -> PlaythroughPlan:
-    path.write_text(json.dumps(_config(stage)), encoding="utf-8")
+def _write_plan(path: Path, stage: str, platform: str = "windows") -> PlaythroughPlan:
+    path.write_text(json.dumps(_config(stage, platform)), encoding="utf-8")
     return PlaythroughPlan.load(path)
 
 
@@ -80,35 +81,36 @@ class PlaythroughPlanTests(unittest.TestCase):
 
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            plan = _write_plan(root / "plan.json", "start")
+            plan = _write_plan(root / "plan.json", "initial")
             self.assertEqual(plan.model_id, MODEL_ID)
             self.assertEqual(plan.policy["allowed_models"], [MODEL_ID])
             self.assertIsNone(plan.policy["max_power_watts"])
 
-            invalid = _config("start")
+            invalid = _config("initial")
             invalid["policy"]["denied_models"] = [MODEL_ID]
             (root / "invalid.json").write_text(json.dumps(invalid), encoding="utf-8")
             with self.assertRaises(PlaythroughError):
                 PlaythroughPlan.load(root / "invalid.json")
 
-            invalid_power = _config("start")
+            invalid_power = _config("initial")
             invalid_power["policy"]["max_power_watts"] = 250.0
             (root / "invalid-power.json").write_text(json.dumps(invalid_power), encoding="utf-8")
             with self.assertRaises(PlaythroughError):
                 PlaythroughPlan.load(root / "invalid-power.json")
 
-            (root / "duplicate.json").write_text('{"schema_version":1,"schema_version":1}', encoding="utf-8")
+            (root / "duplicate.json").write_text('{"schema_version":2,"schema_version":2}', encoding="utf-8")
             with self.assertRaises(PlaythroughError):
                 PlaythroughPlan.load(root / "duplicate.json")
 
     def test_localhost_inference_restores_key_baseline_and_retains_only_counts(self):
         plan = PlaythroughPlan(
             run_id="gate13-automated-test",
-            stage="start",
+            platform="windows",
+            stage="initial",
             model_id=MODEL_ID,
             manifest_digest=MANIFEST_DIGEST,
             total_blocks=36,
-            policy=_config("start")["policy"],
+            policy=_config("initial")["policy"],
             timeout_seconds=30,
             inference_timeout_seconds=10,
         )
@@ -178,7 +180,7 @@ class PlaythroughPlanTests(unittest.TestCase):
 
     def test_hidden_packaged_cli_installs_the_qualification_automation(self):
         lifecycle = SimpleNamespace(close=lambda: None)
-        loaded_plan = SimpleNamespace(stage="start")
+        loaded_plan = SimpleNamespace(stage="initial")
         automation = SimpleNamespace()
         with (
             patch("communityai_desktop.app.NodeLifecycleSupervisor", return_value=lifecycle),
@@ -203,7 +205,77 @@ class PlaythroughPlanTests(unittest.TestCase):
 
 
 class PackagedUiPlaythroughTests(unittest.TestCase):
-    def test_real_window_runs_start_restart_resume_pause_sequence(self):
+    def test_bandwidth_suspension_and_async_worker_exit_do_not_reintroduce_manual_false_failure(self):
+        from tempfile import TemporaryDirectory
+
+        class Button:
+            def __init__(self):
+                self.label = "Pause sharing"
+                self.enabled = True
+                self.clicks = 0
+
+            def text(self):
+                return self.label
+
+            def isEnabled(self):
+                return self.enabled
+
+            def click(self):
+                self.clicks += 1
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = [10.0]
+            button = Button()
+            application = SimpleNamespace(quit=MagicMock())
+            automation = Gate13Playthrough(
+                _write_plan(root / "windows-restart-plan.json", "restart", "windows"),
+                root / "windows-restart-evidence.json",
+                clock=lambda: now[0],
+                start_observation_seconds=0.05,
+                restart_observation_seconds=0.05,
+            )
+            automation._application = application
+            automation._window = SimpleNamespace(
+                _busy=0,
+                master_share_button=button,
+                _snapshot={
+                    "contribution": {"intent_enabled": True, "enabled": False},
+                    "workers": [
+                        {
+                            "model": MODEL_ID,
+                            "desired_running": True,
+                            "sharing_active": False,
+                            "resource_admitted": False,
+                            "resource_reason": "bandwidth usage exceeds contribution budget",
+                        }
+                    ],
+                },
+            )
+            automation._state = "wait_started_intent"
+
+            automation._tick()
+            now[0] += 0.1
+            automation._tick()
+
+            self.assertEqual(button.clicks, 1)
+            self.assertEqual(automation._state, "wait_paused_intent")
+            button.label = "Start sharing"
+            button.enabled = False
+            automation._window._snapshot = {
+                "contribution": {"intent_enabled": False, "enabled": False},
+                # The manual trace still counted workers after Pause.  Their
+                # asynchronous exit is deliberately not this UI gate's boundary.
+                "workers": [{"model": MODEL_ID, "desired_running": False, "sharing_active": True}],
+            }
+            automation._tick()
+
+            evidence = json.loads((root / "windows-restart-evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(evidence["result"], "passed")
+            self.assertTrue(evidence["ui"]["sharing_intent_disabled_observed"])
+            application.quit.assert_called_once()
+
+    def test_real_window_replays_manual_platform_sequences(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         try:
             from PySide6.QtWidgets import QApplication
@@ -215,47 +287,54 @@ class PackagedUiPlaythroughTests(unittest.TestCase):
         from communityai_desktop.pyside_shell import run
 
         QApplication.instance() or QApplication([])
-        with TemporaryDirectory() as directory, fake_node(all_workers_paused=True) as (url, token):
+        with TemporaryDirectory() as directory:
             root = Path(directory)
-            controller = DesktopController(NodeClient(url, token))
-            start = Gate13Playthrough(
-                _write_plan(root / "start-plan.json", "start"),
-                root / "start-evidence.json",
-                inference_runner=_inference,
-            )
-            with patch("communityai_desktop.pyside_shell.login_startup_enabled", return_value=False):
-                self.assertEqual(
-                    run(
-                        controller,
-                        single_instance=False,
-                        qualification_automation=start,
-                    ),
-                    0,
-                )
-            start_evidence = json.loads((root / "start-evidence.json").read_text(encoding="utf-8"))
-            self.assertEqual(start_evidence["result"], "passed")
-            self.assertTrue(start_evidence["ui"]["policy_dialog_saved"])
-            self.assertTrue(start_evidence["ui"]["start_clicked"])
+            for platform in ("windows", "linux"):
+                with self.subTest(platform=platform), fake_node(all_workers_paused=True) as (url, token):
+                    controller = DesktopController(NodeClient(url, token))
+                    initial = Gate13Playthrough(
+                        _write_plan(root / f"{platform}-initial-plan.json", "initial", platform),
+                        root / f"{platform}-initial-evidence.json",
+                        inference_runner=_inference,
+                        start_observation_seconds=0.05,
+                        restart_observation_seconds=0.05,
+                    )
+                    with patch("communityai_desktop.pyside_shell.login_startup_enabled", return_value=False):
+                        self.assertEqual(
+                            run(controller, single_instance=False, qualification_automation=initial),
+                            0,
+                        )
+                    initial_evidence = json.loads(
+                        (root / f"{platform}-initial-evidence.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(initial_evidence["result"], "passed")
+                    self.assertEqual(initial_evidence["platform"], platform)
+                    self.assertEqual(initial_evidence["ui"]["policy_dialog_saved"], platform == "linux")
+                    self.assertEqual(initial_evidence["ui"]["start_clicked"], platform == "linux")
 
-            resume = Gate13Playthrough(
-                _write_plan(root / "resume-plan.json", "resume_pause"),
-                root / "resume-evidence.json",
-                inference_runner=_inference,
-            )
-            with patch("communityai_desktop.pyside_shell.login_startup_enabled", return_value=False):
-                self.assertEqual(
-                    run(
-                        controller,
-                        single_instance=False,
-                        qualification_automation=resume,
-                    ),
-                    0,
-                )
-            resume_evidence = json.loads((root / "resume-evidence.json").read_text(encoding="utf-8"))
-            self.assertEqual(resume_evidence["result"], "passed")
-            self.assertTrue(resume_evidence["ui"]["resumed_after_restart_observed"])
-            self.assertTrue(resume_evidence["ui"]["pause_clicked"])
-            self.assertTrue(resume_evidence["ui"]["sharing_paused_observed"])
+                    restart = Gate13Playthrough(
+                        _write_plan(root / f"{platform}-restart-plan.json", "restart", platform),
+                        root / f"{platform}-restart-evidence.json",
+                        inference_runner=_inference,
+                        start_observation_seconds=0.05,
+                        restart_observation_seconds=0.05,
+                    )
+                    with patch("communityai_desktop.pyside_shell.login_startup_enabled", return_value=False):
+                        self.assertEqual(
+                            run(controller, single_instance=False, qualification_automation=restart),
+                            0,
+                        )
+                    restart_evidence = json.loads(
+                        (root / f"{platform}-restart-evidence.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(restart_evidence["result"], "passed")
+                    self.assertTrue(restart_evidence["ui"]["pause_control_observed"])
+                    self.assertTrue(restart_evidence["ui"]["pause_clicked"])
+                    self.assertTrue(restart_evidence["ui"]["sharing_intent_disabled_observed"])
+                    self.assertEqual(
+                        restart_evidence["ui"]["restart_resume_observed"],
+                        platform == "linux",
+                    )
 
 
 if __name__ == "__main__":

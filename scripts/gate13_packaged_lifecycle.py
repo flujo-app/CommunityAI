@@ -19,7 +19,12 @@ from typing import Any, Mapping, Sequence
 SCHEMA_VERSION = 1
 SCOPE = "gate13-packaged-lifecycle"
 AUTOMATED_REPLAY_SCOPE = "gate13-automated-desktop-replay"
+AUTOMATED_REPLAY_SCHEMA_VERSION = 2
 AUTOMATED_REPLAY_POLICY_PROFILE = "gate13-manual-cpu-v1"
+AUTOMATED_REPLAY_SEQUENCE_PROFILES = {
+    "windows": "gate13-manual-windows-v1",
+    "linux": "gate13-manual-linux-v1",
+}
 MAX_INPUT_BYTES = 1_048_576
 MAX_COUNT = 1_000_000
 MAX_BYTES = 1 << 50
@@ -90,10 +95,13 @@ _AUTOMATED_REPLAY_FIELDS = {
     "localhost_inference_count",
     "policy_dialog_saved",
     "start_clicked",
+    "pause_control_observed",
     "restart_resume_observed",
     "pause_clicked",
-    "sharing_paused",
+    "sharing_intent_paused",
     "policy_profile",
+    "sequence_profile",
+    "start_observation_seconds",
     "session_duration_seconds",
     "privacy_safe",
     "qualification_temporaries_removed",
@@ -683,7 +691,7 @@ def _validate_automated_replay(raw_document: Mapping[str, Any]) -> dict[str, Any
     document = dict(_mapping(raw_document))
     _exact_fields(document, _AUTOMATED_REPLAY_FIELDS)
     if (
-        document["schema_version"] != SCHEMA_VERSION
+        document["schema_version"] != AUTOMATED_REPLAY_SCHEMA_VERSION
         or document["scope"] != AUTOMATED_REPLAY_SCOPE
         or document["result"] != "passed"
         or not isinstance(document["run_id"], str)
@@ -693,6 +701,7 @@ def _validate_automated_replay(raw_document: Mapping[str, Any]) -> dict[str, Any
         or _HEX40_RE.fullmatch(document["source_commit"]) is None
         or document["model_id"] not in MODEL_PROFILES
         or document["policy_profile"] != AUTOMATED_REPLAY_POLICY_PROFILE
+        or document["sequence_profile"] != AUTOMATED_REPLAY_SEQUENCE_PROFILES.get(document["platform"])
     ):
         _fail()
     profile = MODEL_PROFILES[document["model_id"]]
@@ -710,26 +719,36 @@ def _validate_automated_replay(raw_document: Mapping[str, Any]) -> dict[str, Any
         or package["self_test_count"] != 4
     ):
         _fail()
-    if document["real_window_sessions"] != 2 or document["localhost_inference_count"] != 2:
+    expected_inferences = 1 if document["platform"] == "windows" else 2
+    expected_resume = document["platform"] == "linux"
+    expected_start_observation = 25.0 if document["platform"] == "windows" else 20.0
+    if (
+        document["real_window_sessions"] != 2
+        or document["localhost_inference_count"] != expected_inferences
+        or type(document["restart_resume_observed"]) is not bool
+        or document["restart_resume_observed"] is not expected_resume
+        or type(document["start_observation_seconds"]) not in (int, float)
+        or float(document["start_observation_seconds"]) != expected_start_observation
+    ):
         _fail()
     for field in (
         "policy_dialog_saved",
         "start_clicked",
-        "restart_resume_observed",
+        "pause_control_observed",
         "pause_clicked",
-        "sharing_paused",
+        "sharing_intent_paused",
         "privacy_safe",
         "qualification_temporaries_removed",
     ):
         if document[field] is not True:
             _fail()
     durations = _mapping(document["session_duration_seconds"])
-    _exact_fields(durations, {"start", "resume_pause"})
+    _exact_fields(durations, {"initial", "restart"})
     for value in durations.values():
         if type(value) not in (int, float) or not math.isfinite(float(value)) or not 0 <= float(value) <= 3_630:
             _fail()
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": AUTOMATED_REPLAY_SCHEMA_VERSION,
         "scope": AUTOMATED_REPLAY_SCOPE,
         "result": "passed",
         "run_id": document["run_id"],
@@ -746,13 +765,16 @@ def _validate_automated_replay(raw_document: Mapping[str, Any]) -> dict[str, Any
         },
         "lifecycle": {
             "real_window_sessions": 2,
-            "localhost_inference_count": 2,
+            "localhost_inference_count": expected_inferences,
             "policy_dialog_saved": True,
             "start_clicked": True,
-            "restart_resume_observed": True,
+            "pause_control_observed": True,
+            "restart_resume_observed": expected_resume,
             "pause_clicked": True,
-            "sharing_paused": True,
+            "sharing_intent_paused": True,
             "policy_profile": AUTOMATED_REPLAY_POLICY_PROFILE,
+            "sequence_profile": AUTOMATED_REPLAY_SEQUENCE_PROFILES[document["platform"]],
+            "start_observation_seconds": expected_start_observation,
             "response_content_retained": False,
             "token_identifier_count": 0,
         },

@@ -1,9 +1,11 @@
 """Run the proven Gate 13 desktop playthrough without operator UI actions.
 
 Invoke this only after a production archive has been verified and unpacked on a
-clean host.  The frozen desktop opens its real window twice: the first session
-performs inference, edits the real sharing-policy dialog, and clicks Start; the
-second proves restart/resume, clicks Pause, and performs inference again.
+clean host.  The frozen desktop opens its real window twice and replays the exact
+platform-specific chronology accepted in the manual Gate 13 run.  Windows performs
+default-root inference before a full restart, then saves policy, starts, observes for
+25 seconds, and pauses.  Linux performs inference/policy/start before the restart,
+then proves persisted intent, pauses, and performs post-restart inference.
 
 The script prints one bounded aggregate record.  Private per-session files live
 only in an exact run-scoped temporary root and are removed before success.
@@ -25,9 +27,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCOPE = "gate13-automated-desktop-replay"
 POLICY_PROFILE = "gate13-manual-cpu-v1"
+SEQUENCE_PROFILES = {
+    "windows": "gate13-manual-windows-v1",
+    "linux": "gate13-manual-linux-v1",
+}
 MAX_CONFIG_BYTES = 65_536
 MAX_EVIDENCE_BYTES = 65_536
 
@@ -68,6 +74,7 @@ _SESSION_FIELDS = {
     "schema_version",
     "scope",
     "run_id",
+    "platform",
     "stage",
     "result",
     "model_id",
@@ -77,6 +84,7 @@ _SESSION_FIELDS = {
     "inference",
     "ui",
     "limits",
+    "timing",
     "privacy",
 }
 
@@ -261,6 +269,7 @@ def _session_plan(config: ReplayConfig, stage: str) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": config.run_id,
+        "platform": config.platform,
         "stage": stage,
         "model_id": config.model_id,
         "manifest_digest": config.manifest_digest,
@@ -294,6 +303,7 @@ def _validate_session(path: Path, config: ReplayConfig, stage: str) -> Mapping[s
         value["schema_version"] != SCHEMA_VERSION
         or value["scope"] != "gate13-packaged-desktop-playthrough"
         or value["run_id"] != config.run_id
+        or value["platform"] != config.platform
         or value["stage"] != stage
         or value["result"] != "passed"
         or value["model_id"] != config.model_id
@@ -313,34 +323,50 @@ def _validate_session(path: Path, config: ReplayConfig, stage: str) -> Mapping[s
         "total_blocks": config.total_blocks,
     }:
         raise ReplayError("session route evidence is invalid")
-    if (
-        not isinstance(inference, dict)
-        or inference.get("passed") is not True
-        or inference.get("model_id") != config.model_id
-        or inference.get("manifest_digest") != config.manifest_digest
-        or inference.get("completion_count") != 1
-        or inference.get("generated_token_count") != 1
-        or inference.get("response_content_retained") is not False
-        or inference.get("token_identifiers_retained") is not False
-        or inference.get("temporary_key_removed") is not True
-    ):
-        raise ReplayError("session inference evidence is invalid")
+    inference_required = (config.platform, stage) in {
+        ("windows", "initial"),
+        ("linux", "initial"),
+        ("linux", "restart"),
+    }
+    if inference_required:
+        if (
+            not isinstance(inference, dict)
+            or inference.get("passed") is not True
+            or inference.get("model_id") != config.model_id
+            or inference.get("manifest_digest") != config.manifest_digest
+            or inference.get("completion_count") != 1
+            or inference.get("generated_token_count") != 1
+            or inference.get("response_content_retained") is not False
+            or inference.get("token_identifiers_retained") is not False
+            or inference.get("temporary_key_removed") is not True
+        ):
+            raise ReplayError("session inference evidence is invalid")
+    elif inference is not None:
+        raise ReplayError("unexpected session inference evidence")
+    policy_session = (config.platform, stage) in {
+        ("windows", "restart"),
+        ("linux", "initial"),
+    }
+    start_session = policy_session
+    pause_session = stage == "restart"
+    resumed_session = config.platform == "linux" and stage == "restart"
     expected_ui = {
         "real_window_opened": True,
-        "policy_dialog_saved": stage == "start",
-        "start_clicked": stage == "start",
-        "sharing_running_observed": stage == "start",
-        "resumed_after_restart_observed": stage == "resume_pause",
-        "pause_clicked": stage == "resume_pause",
-        "sharing_paused_observed": stage == "resume_pause",
+        "policy_dialog_saved": policy_session,
+        "start_clicked": start_session,
+        "pause_control_observed": start_session or resumed_session,
+        "pause_clicked": pause_session,
+        "restart_resume_observed": resumed_session,
+        "sharing_intent_enabled_observed": start_session or resumed_session,
+        "sharing_intent_disabled_observed": pause_session,
     }
     expected_limits = {
-        "storage": True,
-        "memory_or_vram": True,
-        "bandwidth": True,
+        "storage": policy_session,
+        "memory_or_vram": policy_session,
+        "bandwidth": policy_session,
         "power": False,
-        "pause_timeout": True,
-        "schedule": True,
+        "pause_timeout": policy_session,
+        "schedule": policy_session,
     }
     expected_privacy = {
         "prompt_retained": False,
@@ -350,7 +376,13 @@ def _validate_session(path: Path, config: ReplayConfig, stage: str) -> Mapping[s
         "paths_retained": False,
         "endpoints_retained": False,
     }
-    if ui != expected_ui or limits != expected_limits:
+    expected_timing = {
+        "start_observation_seconds": 25.0
+        if config.platform == "windows" and stage == "restart"
+        else (20.0 if config.platform == "linux" and stage == "initial" else 0.0),
+        "restart_observation_seconds": 15.0 if resumed_session else 0.0,
+    }
+    if ui != expected_ui or limits != expected_limits or value["timing"] != expected_timing:
         raise ReplayError("session UI or limit evidence is invalid")
     if privacy != expected_privacy:
         raise ReplayError("session privacy evidence is invalid")
@@ -441,8 +473,8 @@ def run_replay(
     start: Mapping[str, Any] | None = None
     resumed: Mapping[str, Any] | None = None
     try:
-        start = _run_session(config, "start", runner)
-        resumed = _run_session(config, "resume_pause", runner)
+        start = _run_session(config, "initial", runner)
+        resumed = _run_session(config, "restart", runner)
     finally:
         try:
             resolved = config.work_root.resolve(strict=True)
@@ -476,16 +508,19 @@ def run_replay(
         "model_id": config.model_id,
         "manifest_digest": config.manifest_digest,
         "real_window_sessions": 2,
-        "localhost_inference_count": 2,
+        "localhost_inference_count": 1 if config.platform == "windows" else 2,
         "policy_dialog_saved": True,
         "start_clicked": True,
-        "restart_resume_observed": True,
+        "pause_control_observed": True,
+        "restart_resume_observed": config.platform == "linux",
         "pause_clicked": True,
-        "sharing_paused": True,
+        "sharing_intent_paused": True,
         "policy_profile": POLICY_PROFILE,
+        "sequence_profile": SEQUENCE_PROFILES[config.platform],
+        "start_observation_seconds": 25.0 if config.platform == "windows" else 20.0,
         "session_duration_seconds": {
-            "start": start["duration_seconds"],
-            "resume_pause": resumed["duration_seconds"],
+            "initial": start["duration_seconds"],
+            "restart": resumed["duration_seconds"],
         },
         "privacy_safe": True,
         "qualification_temporaries_removed": True,

@@ -17,15 +17,15 @@ MODEL_ID = "Qwen3.5 2B"
 DIGEST = "sha256:" + "a" * 64
 
 
-def config_document(root: Path) -> dict:
-    executable = root / "CommunityAI.exe"
+def config_document(root: Path, platform: str = "windows") -> dict:
+    executable = root / ("CommunityAI.exe" if platform == "windows" else "CommunityAI")
     executable.write_bytes(b"packaged-desktop")
-    archive = root / "communityai-desktop-windows.zip"
+    archive = root / f"communityai-desktop-{platform}.zip"
     archive.write_bytes(b"verified-production-archive")
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": "gate13-automated-a",
-        "platform": "windows",
+        "platform": platform,
         "source_commit": "1" * 40,
         "package_archive": str(archive.resolve()),
         "package_sha256": "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -63,10 +63,23 @@ def config_document(root: Path) -> dict:
 
 def session_evidence(plan: dict) -> dict:
     stage = plan["stage"]
+    platform = plan["platform"]
+    inference_required = (platform, stage) in {
+        ("windows", "initial"),
+        ("linux", "initial"),
+        ("linux", "restart"),
+    }
+    policy_session = (platform, stage) in {
+        ("windows", "restart"),
+        ("linux", "initial"),
+    }
+    resumed_session = platform == "linux" and stage == "restart"
+    pause_session = stage == "restart"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "scope": "gate13-packaged-desktop-playthrough",
         "run_id": plan["run_id"],
+        "platform": platform,
         "stage": stage,
         "result": "passed",
         "model_id": plan["model_id"],
@@ -87,23 +100,32 @@ def session_evidence(plan: dict) -> dict:
             "response_content_retained": False,
             "token_identifiers_retained": False,
             "temporary_key_removed": True,
-        },
+        }
+        if inference_required
+        else None,
         "ui": {
             "real_window_opened": True,
-            "policy_dialog_saved": stage == "start",
-            "start_clicked": stage == "start",
-            "sharing_running_observed": stage == "start",
-            "resumed_after_restart_observed": stage == "resume_pause",
-            "pause_clicked": stage == "resume_pause",
-            "sharing_paused_observed": stage == "resume_pause",
+            "policy_dialog_saved": policy_session,
+            "start_clicked": policy_session,
+            "pause_control_observed": policy_session or resumed_session,
+            "pause_clicked": pause_session,
+            "restart_resume_observed": resumed_session,
+            "sharing_intent_enabled_observed": policy_session or resumed_session,
+            "sharing_intent_disabled_observed": pause_session,
         },
         "limits": {
-            "storage": True,
-            "memory_or_vram": True,
-            "bandwidth": True,
+            "storage": policy_session,
+            "memory_or_vram": policy_session,
+            "bandwidth": policy_session,
             "power": False,
-            "pause_timeout": True,
-            "schedule": True,
+            "pause_timeout": policy_session,
+            "schedule": policy_session,
+        },
+        "timing": {
+            "start_observation_seconds": 25.0
+            if platform == "windows" and stage == "restart"
+            else (20.0 if platform == "linux" and stage == "initial" else 0.0),
+            "restart_observation_seconds": 15.0 if resumed_session else 0.0,
         },
         "privacy": {
             "prompt_retained": False,
@@ -116,8 +138,11 @@ def session_evidence(plan: dict) -> dict:
     }
 
 
-def test_replay_runs_real_desktop_contract_twice_and_removes_temporaries(tmp_path):
-    document = config_document(tmp_path)
+@pytest.mark.parametrize("platform,expected_inferences,expected_resume", [("windows", 1, False), ("linux", 2, True)])
+def test_replay_runs_real_desktop_contract_twice_and_removes_temporaries(
+    tmp_path, platform, expected_inferences, expected_resume
+):
+    document = config_document(tmp_path, platform)
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(document), encoding="utf-8")
     config = replay.load_config(config_path)
@@ -140,12 +165,15 @@ def test_replay_runs_real_desktop_contract_twice_and_removes_temporaries(tmp_pat
 
     result = replay.run_replay(config, runner=runner)
 
-    assert stages == ["start", "resume_pause"]
+    assert stages == ["initial", "restart"]
     assert self_tests == ["--check-runtime", "--self-test", "--ui-self-test", "--onboarding-ui-self-test"]
     assert result["result"] == "passed"
     assert result["real_window_sessions"] == 2
-    assert result["localhost_inference_count"] == 2
-    assert result["restart_resume_observed"] is True
+    assert result["localhost_inference_count"] == expected_inferences
+    assert result["restart_resume_observed"] is expected_resume
+    assert result["pause_control_observed"] is True
+    assert result["sharing_intent_paused"] is True
+    assert result["sequence_profile"] == replay.SEQUENCE_PROFILES[platform]
     assert result["policy_profile"] == replay.POLICY_PROFILE
     assert result["qualification_temporaries_removed"] is True
     assert not config.work_root.exists()
@@ -171,15 +199,15 @@ def test_config_and_session_evidence_fail_closed(tmp_path):
     valid_path.write_text(json.dumps(valid), encoding="utf-8")
     config = replay.load_config(valid_path)
     config.work_root.mkdir()
-    evidence = session_evidence({**valid, "stage": "start"})
+    evidence = session_evidence({**valid, "stage": "restart"})
     evidence["ui"]["start_clicked"] = False
     evidence_path = config.work_root / "evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
     with pytest.raises(replay.ReplayError):
-        replay._validate_session(evidence_path, config, "start")
+        replay._validate_session(evidence_path, config, "restart")
 
-    evidence = session_evidence({**valid, "stage": "start"})
+    evidence = session_evidence({**valid, "stage": "initial"})
     evidence["inference"]["generated_token_count"] = 2
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
     with pytest.raises(replay.ReplayError):
-        replay._validate_session(evidence_path, config, "start")
+        replay._validate_session(evidence_path, config, "initial")
