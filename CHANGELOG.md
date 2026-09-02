@@ -14,8 +14,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   exact authorization bytes, controller source, provider plan, project, zone, resources,
   and successful terminal state while excluding the protected bootstrap from cleanup targets.
   The focused 49-test suite covers deadline, rollback, orphan/returned-resource inventory, forged-state,
-  evidence-substitution, cross-platform, hidden/excess spend, and cleanup-binding failures. This is software evidence only:
-  no cloud resource or Gate 14 hardware pass is claimed yet.
+  evidence-substitution, cross-platform, hidden/excess spend, and cleanup-binding failures. Exact source
+  `c0f2342e15aa7e12ca7c2980deca64d613204143` passed independent adversarial review, CodeQL,
+  style, Linux/Windows tests, and production-package provenance verification. A native read-only GCP
+  preflight stopped before inventory or quota inspection because the configured account requires
+  interactive reauthentication; no reservation or resource was created, so the current-epoch USD 44
+  remainder is intact. This is software and package evidence only: no Gate 14 hardware pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,
