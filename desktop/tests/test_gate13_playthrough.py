@@ -242,6 +242,122 @@ class PlaythroughPlanTests(unittest.TestCase):
 
 
 class PackagedUiPlaythroughTests(unittest.TestCase):
+    def test_policy_auto_start_is_normalized_through_model_toggle_before_master_start(self):
+        from tempfile import TemporaryDirectory
+
+        class PageButton:
+            def __init__(self, label):
+                self.label = label
+                self.enabled = True
+                self.checked = label == "Home"
+
+            def text(self):
+                return self.label
+
+            def isEnabled(self):
+                return self.enabled
+
+            def isChecked(self):
+                return self.checked
+
+            def click(self):
+                self.checked = True
+
+        class Window:
+            def __init__(self, policy):
+                self._busy = 0
+                self._page_buttons = [PageButton(label) for label in ("Home", "Models", "Sharing", "API access")]
+                self._snapshot = {
+                    "contribution": {"intent_enabled": True, "enabled": True, "policy": policy},
+                    "workers": [{"model": MODEL_ID, "desired_running": True}],
+                }
+                self.master_share_button = MasterButton(self)
+                self.model_toggle = ModelToggle(self)
+
+            def findChildren(self, _kind):
+                return [self.model_toggle]
+
+        class ModelToggle:
+            def __init__(self, window):
+                self.window = window
+                self.checked = True
+                self.clicks = 0
+
+            def accessibleName(self):
+                return f"Share compute with {MODEL_ID}"
+
+            def isChecked(self):
+                return self.checked
+
+            def isEnabled(self):
+                return True
+
+            def click(self):
+                self.clicks += 1
+                self.checked = False
+                self.window._snapshot["contribution"]["intent_enabled"] = False
+                self.window._snapshot["contribution"]["enabled"] = False
+                self.window._snapshot["workers"][0]["desired_running"] = False
+                self.window.master_share_button.label = "Start sharing"
+
+        class MasterButton:
+            def __init__(self, window):
+                self.window = window
+                self.label = "Pause sharing"
+                self.clicks = []
+
+            def text(self):
+                return self.label
+
+            def isEnabled(self):
+                return True
+
+            def click(self):
+                if not self.window._page_buttons[2].isChecked():
+                    raise AssertionError("sharing action was invoked off the Sharing page")
+                self.clicks.append(self.label)
+                enabled = self.label == "Start sharing"
+                self.window._snapshot["contribution"]["intent_enabled"] = enabled
+                self.window._snapshot["contribution"]["enabled"] = enabled
+                self.window._snapshot["workers"][0]["desired_running"] = enabled
+                self.label = "Pause sharing" if enabled else "Start sharing"
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = [10.0]
+            plan = _write_plan(root / "windows-restart-plan.json", "restart", "windows")
+            window = Window(plan.policy)
+            application = SimpleNamespace(quit=MagicMock())
+            automation = Gate13Playthrough(
+                plan,
+                root / "windows-restart-evidence.json",
+                clock=lambda: now[0],
+                start_observation_seconds=0.05,
+            )
+            automation._application = application
+            automation._window = window
+            automation._qt = {"QCheckBox": object}
+            automation._state = "wait_policy"
+
+            automation._tick()
+            self.assertEqual(automation._state, "wait_prestart_paused")
+            self.assertEqual(window.model_toggle.clicks, 1)
+            self.assertEqual(window.master_share_button.clicks, [])
+
+            automation._tick()
+            self.assertEqual(window.master_share_button.clicks, ["Start sharing"])
+            automation._tick()
+            now[0] += 0.1
+            automation._tick()
+            self.assertEqual(window.master_share_button.clicks, ["Start sharing", "Pause sharing"])
+            automation._tick()
+
+            evidence = json.loads((root / "windows-restart-evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(evidence["result"], "passed")
+            self.assertTrue(evidence["ui"]["start_clicked"])
+            self.assertTrue(evidence["ui"]["pause_clicked"])
+            application.quit.assert_called_once()
+
     def test_bandwidth_suspension_and_async_worker_exit_do_not_reintroduce_manual_false_failure(self):
         from tempfile import TemporaryDirectory
 

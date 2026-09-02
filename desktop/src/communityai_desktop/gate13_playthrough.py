@@ -545,6 +545,24 @@ class Gate13Playthrough:
                 contribution = self._window._snapshot.get("contribution", {})
                 if not self._window._busy and contribution.get("policy") == self.plan.policy:
                     self._ui["policy_dialog_saved"] = True
+                    # The manual Windows run toggled the selected model before
+                    # using the master Start control.  Automatic placement can
+                    # race the policy refresh and start that model first; in
+                    # that state the master control already says Pause and the
+                    # old replay waited forever for a Start button.  Restore a
+                    # paused baseline through the literal per-model control,
+                    # then replay the literal master Start action.
+                    if contribution.get("intent_enabled"):
+                        self._click_model_toggle_to_pause()
+                    else:
+                        self._click_start()
+            elif self._state == "wait_prestart_paused":
+                contribution = self._window._snapshot.get("contribution", {})
+                if (
+                    not self._window._busy
+                    and not contribution.get("intent_enabled")
+                    and self._start_control_available()
+                ):
                     self._click_start()
             elif self._state == "wait_started_intent":
                 contribution = self._window._snapshot.get("contribution", {})
@@ -667,6 +685,32 @@ class Gate13Playthrough:
         self._observation_deadline = None
         self._ui["start_clicked"] = True
         button.click()
+
+    def _click_model_toggle_to_pause(self) -> None:
+        if not self._show_sharing_page():
+            self._fail()
+            return
+        checkbox_type = self._qt.get("QCheckBox")
+        if checkbox_type is None:
+            self._fail()
+            return
+        expected_name = f"Share compute with {self.plan.model_id}"
+        matches = [
+            checkbox
+            for checkbox in self._window.findChildren(checkbox_type)
+            if checkbox.accessibleName() == expected_name
+        ]
+        desired = any(
+            worker.get("model") == self.plan.model_id and worker.get("desired_running")
+            for worker in self._window._snapshot.get("workers", [])
+        )
+        if len(matches) != 1 or not desired or not matches[0].isChecked():
+            self._fail()
+            return
+        if not matches[0].isEnabled():
+            return
+        self._state = "wait_prestart_paused"
+        matches[0].click()
 
     def _click_pause(self) -> None:
         if not self._show_sharing_page():
