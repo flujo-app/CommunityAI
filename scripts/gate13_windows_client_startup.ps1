@@ -48,11 +48,13 @@ if (-not (Get-LocalUser -Name "M" -ErrorAction SilentlyContinue)) {
 if (-not (Get-LocalUser -Name "Gate13Admin" -ErrorAction SilentlyContinue)) {
     New-LocalUser -Name "Gate13Admin" -NoPassword -AccountNeverExpires -UserMayNotChangePassword | Out-Null
 }
-if (-not (Get-LocalGroupMember -Group "Administrators" -Member "Gate13Admin" -ErrorAction SilentlyContinue)) {
+$administratorMemberNames = @(Get-LocalGroupMember -Group "Administrators" | ForEach-Object Name)
+if ($administratorMemberNames -notcontains "$env:COMPUTERNAME\Gate13Admin") {
     Add-LocalGroupMember -Group "Administrators" -Member "Gate13Admin"
 }
 $openSshGroup = Get-LocalGroup -Name "OpenSSH Users"
-if (-not (Get-LocalGroupMember -Group $openSshGroup -Member "M" -ErrorAction SilentlyContinue)) {
+$openSshMemberNames = @(Get-LocalGroupMember -Group $openSshGroup | ForEach-Object Name)
+if ($openSshMemberNames -notcontains "$env:COMPUTERNAME\M") {
     Add-LocalGroupMember -Group $openSshGroup -Member "M"
 }
 Remove-LocalGroupMember -Group "Administrators" -Member "M" -ErrorAction SilentlyContinue
