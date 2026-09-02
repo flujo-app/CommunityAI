@@ -537,6 +537,9 @@ class Gate13Playthrough:
                 elif self.plan.platform == "windows":
                     self._begin_policy_edit()
                 else:
+                    if not self._show_sharing_page():
+                        self._fail()
+                        return
                     self._state = "wait_resumed"
             elif self._state == "wait_policy":
                 contribution = self._window._snapshot.get("contribution", {})
@@ -602,6 +605,9 @@ class Gate13Playthrough:
         )
 
     def _begin_policy_edit(self) -> None:
+        if not self._show_sharing_page():
+            self._fail()
+            return
         if self._window.edit_policy_button.isEnabled() is False:
             self._fail()
             return
@@ -638,7 +644,22 @@ class Gate13Playthrough:
         except BaseException:
             self._fail()
 
+    def _show_sharing_page(self) -> bool:
+        window = self._window
+        buttons = None if window is None else getattr(window, "_page_buttons", None)
+        if not isinstance(buttons, list) or len(buttons) != 4:
+            return False
+        button = buttons[2]
+        if button.text() != "Sharing" or not button.isEnabled():
+            return False
+        if not button.isChecked():
+            button.click()
+        return bool(button.isChecked())
+
     def _click_start(self) -> None:
+        if not self._show_sharing_page():
+            self._fail()
+            return
         button = self._window.master_share_button
         if button.text() != "Start sharing" or not button.isEnabled():
             return
@@ -648,6 +669,9 @@ class Gate13Playthrough:
         button.click()
 
     def _click_pause(self) -> None:
+        if not self._show_sharing_page():
+            self._fail()
+            return
         button = self._window.master_share_button
         if button.text() != "Pause sharing" or not button.isEnabled():
             return

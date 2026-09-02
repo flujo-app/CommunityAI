@@ -246,10 +246,11 @@ class PackagedUiPlaythroughTests(unittest.TestCase):
         from tempfile import TemporaryDirectory
 
         class Button:
-            def __init__(self):
+            def __init__(self, navigation):
                 self.label = "Pause sharing"
                 self.enabled = True
                 self.clicks = 0
+                self.navigation = navigation
 
             def text(self):
                 return self.label
@@ -258,12 +259,35 @@ class PackagedUiPlaythroughTests(unittest.TestCase):
                 return self.enabled
 
             def click(self):
+                if not self.navigation.isChecked():
+                    raise AssertionError("sharing action was invoked off the Sharing page")
                 self.clicks += 1
+
+        class PageButton:
+            def __init__(self, label):
+                self.label = label
+                self.enabled = True
+                self.checked = label == "Home"
+                self.clicks = 0
+
+            def text(self):
+                return self.label
+
+            def isEnabled(self):
+                return self.enabled
+
+            def isChecked(self):
+                return self.checked
+
+            def click(self):
+                self.clicks += 1
+                self.checked = True
 
         with TemporaryDirectory() as directory:
             root = Path(directory)
             now = [10.0]
-            button = Button()
+            pages = [PageButton(label) for label in ("Home", "Models", "Sharing", "API access")]
+            button = Button(pages[2])
             application = SimpleNamespace(quit=MagicMock())
             automation = Gate13Playthrough(
                 _write_plan(root / "windows-restart-plan.json", "restart", "windows"),
@@ -275,6 +299,7 @@ class PackagedUiPlaythroughTests(unittest.TestCase):
             automation._application = application
             automation._window = SimpleNamespace(
                 _busy=0,
+                _page_buttons=pages,
                 master_share_button=button,
                 _snapshot={
                     "contribution": {"intent_enabled": True, "enabled": False},
@@ -296,6 +321,7 @@ class PackagedUiPlaythroughTests(unittest.TestCase):
             automation._tick()
 
             self.assertEqual(button.clicks, 1)
+            self.assertEqual(pages[2].clicks, 1)
             self.assertEqual(automation._state, "wait_paused_intent")
             button.label = "Start sharing"
             button.enabled = False
