@@ -38,9 +38,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   Gate 14 also has a separate exact-once native Scheduled Task/systemd host-job namespace that
   validates only the final strict platform evidence. Its shared process-safety core is canonical-
   digest-bound by the already hashed adapter and compiled directly from the verified in-memory
-  bytes, preserving Gate 13 defaults while rejecting changed, linked, or raced core input. The
-  combined Gate 13/Gate 14 host-job and Gate 14 contract suite passes 106 tests.
-  This is software and preflight evidence only: no Gate 14 hardware pass is claimed yet.
+  bytes, preserving Gate 13 defaults while rejecting changed, linked, or raced core input. Exact
+  source `5632cc528b7a3e39296fd3fef8a0b3fd6dd620d0` passed both Windows and Linux production-package
+  jobs in run `33679402658`, including exact-source build/smoke, independent checksum/provenance
+  verification, and archive-bound uploads. A final no-spend audit also replaced a stale Gate 13
+  Linux HOME/runtime hardcode with the configured host-job values, so the Gate 14 desktop session
+  accepts its isolated paths. The combined Gate 13/Gate 14 host-job and Gate 14 contract suite now
+  passes 107 tests. This is software and preflight evidence only: no Gate 14 hardware pass is
+  claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,

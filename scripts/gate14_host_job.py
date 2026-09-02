@@ -19,7 +19,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import gate14_hardware_acceptance as acceptance
 
-_EXPECTED_SHARED_CORE_SHA256 = "d558048955890a2cb721e27343d6efe380c6fe2db9de734184155fff57fa6f2d"
+_EXPECTED_SHARED_CORE_SHA256 = "c4a94fda88f25ad0bbab6e500fada7bd78f63a6cad34063fe71a363cf5638bd4"
 _MAX_SHARED_CORE_BYTES = 8 * 1024 * 1024
 
 

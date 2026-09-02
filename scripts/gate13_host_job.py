@@ -1219,8 +1219,8 @@ def _execute_linux_desktop_session(config_path: Path) -> Mapping[str, Any]:
         raise HostJobError("Linux desktop session used on another platform")
     expected = {
         "DISPLAY": ":99",
-        "HOME": "/home/gate13",
-        "XDG_RUNTIME_DIR": "/qualification/runtime",
+        "HOME": LINUX_HOME,
+        "XDG_RUNTIME_DIR": LINUX_RUNTIME_DIR,
     }
     if any(os.environ.get(key) != value for key, value in expected.items()):
         raise HostJobError("Linux desktop environment is not bound")

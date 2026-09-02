@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -234,3 +235,24 @@ def test_linux_native_command_is_gate14_bound(config_factory):
     assert f"--setenv=HOME={host_job.LINUX_HOME}" in argv
     assert f"--setenv=XDG_RUNTIME_DIR={host_job.LINUX_RUNTIME_DIR}" in argv
     assert str(host_job.ADAPTER_PATH) in argv
+
+
+def test_linux_desktop_session_accepts_gate14_home_and_runtime(config_factory, monkeypatch):
+    path, _raw = config_factory()
+    host_job._configure_core()
+    monkeypatch.setattr(host_job.core.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setenv("HOME", host_job.LINUX_HOME)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", host_job.LINUX_RUNTIME_DIR)
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/gate14/bus")
+    monkeypatch.setattr(
+        host_job.core.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "", ""),
+    )
+    monkeypatch.setattr(host_job.core, "execute", lambda value: {"result": "passed", "config": value})
+
+    assert host_job.core._execute_linux_desktop_session(path) == {
+        "result": "passed",
+        "config": path,
+    }
