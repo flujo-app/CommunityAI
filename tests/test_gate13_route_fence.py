@@ -143,6 +143,44 @@ def test_fence_fails_if_standby_is_still_active(tmp_path):
         )
 
 
+def test_fence_retries_when_stale_advertisement_expires_during_settle(tmp_path):
+    item = profile(tmp_path)
+    opener = ready_opener(item)
+    ready_responses = list(opener.open.side_effect)
+    incomplete_models = {
+        "data": [
+            {
+                "id": item.model_id,
+                "availability": "incomplete",
+                "manifest_digest": item.manifest_digest,
+            }
+        ]
+    }
+    opener.open.side_effect = [
+        *ready_responses[:2],
+        Response(incomplete_models),
+        ready_responses[3],
+        *ready_responses,
+    ]
+
+    def runner(argv, **_kwargs):
+        inactive_probe = argv[1:3] == ["is-active", "--quiet"] and argv[3] == item.other_service
+        return subprocess.CompletedProcess(argv, 3 if inactive_probe else 0)
+
+    sleeps = []
+    result = fence.fence_route(
+        item,
+        timeout_seconds=60,
+        settle_seconds=30,
+        runner=runner,
+        opener=opener,
+        sleeper=sleeps.append,
+    )
+
+    assert result["result"] == "passed"
+    assert sleeps == [30, 5.0, 30]
+
+
 def test_snapshot_rejects_wrong_model_manifest_even_when_control_coverage_is_complete(tmp_path):
     item = profile(tmp_path)
     opener = ready_opener(item)

@@ -188,31 +188,37 @@ def fence_route(
     )
     deadline = clock() + timeout_seconds
     while clock() < deadline:
+        candidate_ready = False
         try:
             _systemctl(("is-active", "--quiet", profile.service), runner)
-            if _snapshot(profile, opener):
-                break
+            candidate_ready = _snapshot(profile, opener)
         except FenceError:
             pass
+        if candidate_ready:
+            sleeper(settle_seconds)
+            try:
+                _systemctl(("is-active", "--quiet", profile.service), runner)
+                result = runner(
+                    ["/usr/bin/systemctl", "is-active", "--quiet", profile.other_service],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=60,
+                    close_fds=True,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise FenceError("standby route state is unavailable") from exc
+            if result.returncode == 0:
+                raise FenceError("route fence did not remain stable")
+            try:
+                if _snapshot(profile, opener):
+                    break
+            except FenceError:
+                pass
         sleeper(5.0)
     else:
         raise FenceError("route did not become ready before the deadline")
-    sleeper(settle_seconds)
-    _systemctl(("is-active", "--quiet", profile.service), runner)
-    try:
-        result = runner(
-            ["/usr/bin/systemctl", "is-active", "--quiet", profile.other_service],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=60,
-            close_fds=True,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise FenceError("standby route state is unavailable") from exc
-    if result.returncode == 0 or not _snapshot(profile, opener):
-        raise FenceError("route fence did not remain stable")
     return {
         "schema_version": SCHEMA_VERSION,
         "scope": SCOPE,
