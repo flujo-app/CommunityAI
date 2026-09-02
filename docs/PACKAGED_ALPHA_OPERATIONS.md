@@ -68,6 +68,15 @@ selected worker running. The process then exits normally so the desktop-owned no
 stopped. A second fresh desktop process proves sharing resumed after restart, clicks
 **Pause sharing**, proves the worker stopped, and performs another localhost inference.
 
+The replay preserves the literal manual control order. It opens **Sharing** before using
+page-scoped controls. After saving policy, it checks whether automatic placement already
+enabled the selected model. If so, it clicks the exact checked **Share compute with
+&lt;model&gt;** control to restore a paused baseline before exercising literal **Start
+sharing** and **Pause sharing**. This normalization prevents policy-save reconciliation
+from bypassing the manual Start step. If the first inference reports `Model unavailable`,
+the replay polls the exact model in `/v1/models` every five seconds for at most 90 seconds
+and retries the same `model:auto`, one-token request once.
+
 Each inference creates one in-memory temporary client key, retains only completion and
 token counts, revokes the key, and proves the active-key baseline was restored. It requests
 and requires exactly one generated token, matching the manual Gate 13 procedure. Session
@@ -148,6 +157,17 @@ Gate 13 host-job adapter accepts this Python entrypoint on both platforms, binds
 config and source commit, and validates the aggregate before collection. A cloud replay
 still requires a fresh cost authorization, route acceptance, exact clean clients, and
 provider cleanup; prior Gate 13 reservations must not be reused.
+
+[Paid-cloud run `gate13-20260901-a`](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json)
+proves this automation from production packages without manual UI recovery. Windows/Qwen
+passed two real-window sessions in 260.828 and 66.328 seconds; Linux/Gemma passed in
+229.270 and 44.956 seconds, including automatic sharing resume and the second inference.
+Both formal client jobs passed as attempt ordinal 1. The route preflight now allows a
+bounded 180 seconds for GPU service actions and keeps polling when a stale complete DHT
+advertisement expires during restart. On a fresh Linux host, `LoadState=not-found` is
+accepted with systemd's exact field set even though Ubuntu omits `ExecStart`; loaded units
+still require the complete strict binding. All run resources were deleted after evidence
+collection, L4 usage returned to zero, and the protected bootstrap remained running.
 
 ## Combined 16-phase Gate 13/15 evidence contract
 

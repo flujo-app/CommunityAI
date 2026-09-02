@@ -197,5 +197,24 @@
     "retain_credentials": false,
     "retain_signed_urls": false,
     "retain_provider_endpoints": false
+  },
+  "completion": {
+    "result": "passed",
+    "recorded_at": "2026-09-02T08:54:19Z",
+    "qualification_evidence": "gate13-20260901-a-automated-qualification-and-cleanup.json",
+    "package_source_commit": "e904d36416a4f186c0bec05ff20210df9ca19848",
+    "final_route_fence_commit": "66f440bc02d7920b0a697b4095c243c0ff17ae78",
+    "final_host_job_adapter_commit": "4c6eaca8b0de8d20885c932e5bdcd1f50fc67947",
+    "windows_attempt_ordinal": 1,
+    "linux_attempt_ordinal": 1,
+    "manual_ui_recovery_accepted": false,
+    "reservation_state": "cleaned-committed-pending-provider-billing",
+    "provider_billing_available": false,
+    "cost_note": "The USD 56 value was a maximum-lifetime fail-safe reservation, not an estimate of the provider bill. The owner reports comparable real-world use at approximately USD 10.",
+    "exact_run_instances_absent": true,
+    "exact_run_disks_absent": true,
+    "exact_run_firewalls_absent": true,
+    "regional_l4_usage": 0,
+    "protected_bootstrap_running": true
   }
 }
