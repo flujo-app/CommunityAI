@@ -35,6 +35,11 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   and acknowledged by a remote DHT peer. The privileged worker contract carries both facts into the
   source-bound host evidence path; failed publication cannot admit an unacknowledged assignment.
   The broader placement, discovery, supervisor, and control-API verification passes 141 tests.
+  Gate 14 also has a separate exact-once native Scheduled Task/systemd host-job namespace that
+  validates only the final strict platform evidence. Its shared process-safety core is canonical-
+  digest-bound by the already hashed adapter and compiled directly from the verified in-memory
+  bytes, preserving Gate 13 defaults while rejecting changed, linked, or raced core input. The
+  combined Gate 13/Gate 14 host-job and Gate 14 contract suite passes 106 tests.
   This is software and preflight evidence only: no Gate 14 hardware pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform

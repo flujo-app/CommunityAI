@@ -87,6 +87,15 @@ HOST_PYTHON = {
     "linux": Path("/usr/bin/python3"),
 }
 ADAPTER_PATH = Path(__file__).resolve()
+GATE_NAME = "gate13"
+LINUX_HOST_USER = "gate13"
+LINUX_HOME = "/home/gate13"
+LINUX_RUNTIME_DIR = "/qualification/runtime"
+LIFECYCLE_CONFIG_NAMES = {
+    "windows": "gate13-windows-run.json",
+    "linux": "gate13-linux-run.json",
+}
+LIFECYCLE_RUN_ID_BUILDER: Callable[[str, str], str] = lambda run_id, platform: f"{run_id}-{platform}"
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _USER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
@@ -287,15 +296,15 @@ def load_config(path: Path) -> HostJobConfig:
         raise HostJobError("platform is invalid")
     run_id = _string(raw["run_id"], _RUN_RE, "run id")
     lifecycle_run_id = raw["lifecycle_run_id"]
-    if lifecycle_run_id != f"{run_id}-{platform}":
+    if lifecycle_run_id != LIFECYCLE_RUN_ID_BUILDER(run_id, platform):
         raise HostJobError("lifecycle run id is invalid")
     attempt = _integer(raw["attempt_ordinal"], "attempt ordinal", 1, 1)
     source_commit = _string(raw["source_commit"], _COMMIT_RE, "source commit")
     job_name = _string(raw["job_name"], _JOB_RE, "job name")
-    if job_name != f"communityai-gate13-{run_id}-{platform}":
+    if job_name != f"communityai-{GATE_NAME}-{run_id}-{platform}":
         raise HostJobError("job name is not source-bound")
     host_user = _string(raw["host_user"], _USER_RE, "host user")
-    if (platform == "linux" and host_user != "gate13") or host_user.casefold() in {
+    if (platform == "linux" and host_user != LINUX_HOST_USER) or host_user.casefold() in {
         "system",
         "local service",
         "network service",
@@ -336,7 +345,7 @@ def load_config(path: Path) -> HostJobConfig:
             raise HostJobError(f"{field} escapes the host root")
     if not _same_path(config_path, values["config_path"]):
         raise HostJobError("config path binding changed")
-    expected_lifecycle_name = "gate13-windows-run.json" if platform == "windows" else "gate13-linux-run.json"
+    expected_lifecycle_name = LIFECYCLE_CONFIG_NAMES[platform]
     if values["lifecycle_config_path"].name != expected_lifecycle_name:
         raise HostJobError("lifecycle config path changed")
     if platform == "windows" and not _same_path(
@@ -708,11 +717,18 @@ def _run_entrypoint(config: HostJobConfig) -> int:
     return int(process.returncode)
 
 
+def _validate_gate13_evidence(payload: bytes) -> Mapping[str, Any]:
+    document = lifecycle.load_lifecycle_json(payload.decode("utf-8"))
+    return lifecycle.validate_lifecycle_document(document)
+
+
+EVIDENCE_VALIDATOR: Callable[[bytes], Mapping[str, Any]] = _validate_gate13_evidence
+
+
 def _validate_evidence(config: HostJobConfig) -> tuple[bytes, str]:
     payload = _regular_bytes(config.evidence_path, MAX_EVIDENCE_BYTES)
     try:
-        document = lifecycle.load_lifecycle_json(payload.decode("utf-8"))
-        summary = lifecycle.validate_lifecycle_document(document)
+        summary = EVIDENCE_VALIDATOR(payload)
     except Exception as exc:
         raise HostJobError("lifecycle evidence is invalid") from exc
     if (
@@ -985,8 +1001,8 @@ def _linux_start_argv(config: HostJobConfig) -> list[str]:
         "--property=TimeoutStartSec=120",
         f"--property=RuntimeMaxSec={config.max_run_seconds + 2 * SUPERVISOR_GRACE_SECONDS}",
         "--setenv=DISPLAY=:99",
-        "--setenv=HOME=/home/gate13",
-        "--setenv=XDG_RUNTIME_DIR=/qualification/runtime",
+        f"--setenv=HOME={LINUX_HOME}",
+        f"--setenv=XDG_RUNTIME_DIR={LINUX_RUNTIME_DIR}",
         "/usr/bin/dbus-run-session",
         os.fspath(config.python_executable),
         os.fspath(config.adapter_path),
@@ -1046,8 +1062,8 @@ def _systemd_environment_matches(value: str) -> bool:
     rendered = {quoted or plain for quoted, plain in assignments}
     return rendered == {
         "DISPLAY=:99",
-        "HOME=/home/gate13",
-        "XDG_RUNTIME_DIR=/qualification/runtime",
+        f"HOME={LINUX_HOME}",
+        f"XDG_RUNTIME_DIR={LINUX_RUNTIME_DIR}",
     }
 
 
