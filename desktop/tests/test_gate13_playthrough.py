@@ -174,9 +174,7 @@ class PlaythroughPlanTests(unittest.TestCase):
         self.assertFalse(result["response_content_retained"])
         self.assertEqual({item["id"] for item in client.list_keys() if item["revoked_at"] is None}, {"baseline"})
 
-        unavailable_then_ready = MagicMock(
-            side_effect=[PlaythroughError("localhost inference failed"), completion]
-        )
+        unavailable_then_ready = MagicMock(side_effect=[PlaythroughError("localhost inference failed"), completion])
         with (
             patch(
                 "communityai_desktop.gate13_playthrough._completion_request",

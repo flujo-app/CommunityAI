@@ -275,7 +275,9 @@ def test_linux_desktop_session_starts_secret_service_before_execute(tmp_path, mo
 
     def run(argv, **kwargs):
         observed.append((argv, kwargs))
-        return subprocess.CompletedProcess(argv, 0, stdout="GNOME_KEYRING_CONTROL=/qualification/runtime/keyring\n", stderr="")
+        return subprocess.CompletedProcess(
+            argv, 0, stdout="GNOME_KEYRING_CONTROL=/qualification/runtime/keyring\n", stderr=""
+        )
 
     monkeypatch.setattr(host_job.subprocess, "run", run)
     monkeypatch.setattr(host_job, "execute", lambda path: {"result": "passed", "path": str(path)})

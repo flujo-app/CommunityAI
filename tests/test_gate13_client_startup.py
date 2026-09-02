@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "scripts" / "gate13_windows_client_startup.ps1"
 LINUX = ROOT / "scripts" / "gate13_linux_client_startup.sh"
