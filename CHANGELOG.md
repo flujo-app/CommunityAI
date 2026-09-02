@@ -7,6 +7,15 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Gate 14 hardware acceptance now has a fail-closed, source-bound verifier and durable GCP
+  lifecycle controller. They pin the exact Gate 13 packaged lifecycle and Windows/Qwen plus
+  Linux/Gemma Gate 9 envelopes, enforce the USD 100 aggregate ledger ceiling, serialize fresh
+  L4 hosts, bind host-reported evidence before collection, and require cleanup proof for the
+  exact authorization bytes, controller source, provider plan, project, zone, resources,
+  and successful terminal state while excluding the protected bootstrap from cleanup targets.
+  The focused 49-test suite covers deadline, rollback, orphan/returned-resource inventory, forged-state,
+  evidence-substitution, cross-platform, hidden/excess spend, and cleanup-binding failures. This is software evidence only:
+  no cloud resource or Gate 14 hardware pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,
