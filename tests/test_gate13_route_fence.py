@@ -61,9 +61,7 @@ def ready_opener(item: fence.Profile):
             {
                 "id": item.model_id,
                 "availability": "complete",
-                "covered_blocks": item.total_blocks,
-                "total_blocks": item.total_blocks,
-                "peer_count": 1,
+                "manifest_digest": item.manifest_digest,
             }
         ]
     }
@@ -140,6 +138,25 @@ def test_fence_fails_if_standby_is_still_active(tmp_path):
             opener=ready_opener(item),
             sleeper=lambda _seconds: None,
         )
+
+
+def test_snapshot_rejects_wrong_model_manifest_even_when_control_coverage_is_complete(tmp_path):
+    item = profile(tmp_path)
+    opener = ready_opener(item)
+    wrong_manifest_models = {
+        "data": [
+            {
+                "id": item.model_id,
+                "availability": "complete",
+                "manifest_digest": "sha256:" + "b" * 64,
+            }
+        ]
+    }
+    responses = list(opener.open.side_effect)
+    responses[0] = Response(wrong_manifest_models)
+    opener.open.side_effect = responses
+
+    assert fence._snapshot(item, opener) is False
 
 
 def test_secret_rejects_links(tmp_path):

@@ -148,10 +148,7 @@ def _snapshot(profile: Profile, opener: Any) -> bool:
         return False
     return bool(
         model.get("availability") == "complete"
-        and model.get("covered_blocks") == profile.total_blocks
-        and model.get("total_blocks") == profile.total_blocks
-        and isinstance(model.get("peer_count"), int)
-        and model["peer_count"] > 0
+        and model.get("manifest_digest") == profile.manifest_digest
         and selection.get("status") == "selected"
         and selection.get("model") == profile.model_id
         and selection.get("manifest_digest") == profile.manifest_digest
