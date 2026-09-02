@@ -71,9 +71,19 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   Outer archive, extracted member, and materialization-record drift is rechecked at every lifecycle
   boundary, and the immutable challenge-ready checkpoint binds all three identities. The lifecycle/
   controller focus passes 75 tests, including unknown nested cache fields, wrong repository,
-  non-finite timing, historical-artifact mutation, and source/member substitution. No physical Gate 9
-  cache survives the cleaned historical hosts, so the paid run still requires a fresh source-bound
-  production build and direct host materialization. This is software and preflight evidence only:
+  non-finite timing, historical-artifact mutation, and source/member substitution. Exact source
+  `d4586f02530be7ce052ce9298ae95207e4368f05` passed both jobs in production desktop run
+  `33695073372`. Its retained Actions artifacts are Windows install
+  `sha256:3eea3254309fac149de210fa7c397cc94d0bf3f38c8a302e2f8d4b52671caa4e`
+  (2,695,093,223 bytes), Windows audit
+  `sha256:afb5a6201f0a1d5788c43ead11f1fcb0994f8749d6d64525b8aa5ae4e78a2c4f`
+  (468,612 bytes), Linux install
+  `sha256:ee1a9dccba6dbdb800e9b65cca6f0abbe7a8f38cb8f425802cebdb3cbffff47c`
+  (3,360,731,719 bytes), and Linux audit
+  `sha256:210e65d8b7fbe6517813638eecbcc8eddfe639a48f5180e5e9ef8dac80b658d0`
+  (514,751 bytes), expiring 2026-09-09. No physical Gate 9 cache survives the cleaned historical
+  hosts, so the paid run still requires fresh direct host materialization. This is software and
+  preflight evidence only:
   no Gate 14 hardware or
   cloud-run pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
