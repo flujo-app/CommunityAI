@@ -7,6 +7,16 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Qwen3.8-27B FP8 now has exact candidate and BF16 reference manifests plus an
+  explicit `fp8_dequant` execution profile. Source quantization metadata is
+  preserved and validated bidirectionally; block loading expands fine-grained
+  scale grids into the manifested BF16/FP16 dtype; server advertisement,
+  memory accounting, CLI selection, and the product qualification worker carry
+  the same profile. A synthetic FP8 checkpoint passes the production
+  config/load/forward path, and independent offline verification passes 158
+  primary and 146 regression tests. The source-bound checkpoint is partial:
+  official artifact verification, a real Qwen3.8 layer, the complete 64-block
+  route, parity, recovery, packaging, and hardware measurements remain open.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
