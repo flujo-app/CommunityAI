@@ -48,6 +48,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   Independent bypass review, 102 focused, 423 adjacent, and 1,651 offline unit
   tests pass. This is a USD 0 controller checkpoint: the ledger contains no
   Q3.8 reservation, so no cloud create or complete-route result is claimed.
+- Qwen3.8 complete-route attempts now have a source-bound GCP adapter that
+  compiles the exact private eleven-resource start specification, validates
+  run-prefixed inventory and plan-scoped network isolation, and performs
+  retry-safe best-effort cleanup including terminal resources. Paid start and
+  collection reject before any provider call until the protected host runtime
+  and fresh status/evidence transport are bound. This USD 0 checkpoint passes
+  137 focused, 168 adjacent, and 1,686 offline unit tests.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce

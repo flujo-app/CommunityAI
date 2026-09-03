@@ -12,6 +12,7 @@ import pytest
 from scripts import gateq38_route_controller as route
 
 REAL_ASSERT_PROTECTED_PATH = route._assert_protected_path
+RUN_ID = "q38route-001"
 SOURCE_BYTES = b"# production artifact verifier fixture\n"
 LEDGER_BYTES = SOURCE_BYTES + (
     b"Q38_ROUTE_RESERVATION run_id=q38route-001 "
@@ -59,8 +60,8 @@ def _workers() -> list[dict[str, object]]:
             {
                 "worker_id": f"worker-{index}",
                 "machine_id": f"machine-{index}",
-                "instance": f"q38-worker-{index}",
-                "disk": f"q38-worker-{index}-disk",
+                "instance": f"{RUN_ID}-worker-{index}",
+                "disk": f"{RUN_ID}-worker-{index}-disk",
                 "span": span,
                 "artifact_bytes": artifact_bytes,
                 "artifact_set_digest": artifact_digest,
@@ -73,21 +74,21 @@ def _workers() -> list[dict[str, object]]:
 def _resources(workers: list[dict[str, object]]) -> list[dict[str, object]]:
     result = [
         {
-            "name": "q38-bootstrap-disk",
+            "name": f"{RUN_ID}-bootstrap-disk",
             "kind": "bootstrap_disk",
             "provider": "gcp",
             "region": "us-central1",
             "worker_id": None,
         },
         {
-            "name": "q38-bootstrap-instance",
+            "name": f"{RUN_ID}-bootstrap-instance",
             "kind": "bootstrap_instance",
             "provider": "gcp",
             "region": "us-central1",
             "worker_id": None,
         },
         {
-            "name": "q38-firewall",
+            "name": f"{RUN_ID}-firewall",
             "kind": "firewall",
             "provider": "gcp",
             "region": "us-central1",
@@ -121,7 +122,7 @@ def _plan_value(*, authorized: bool = True) -> dict[str, object]:
     return {
         "schema_version": route.SCHEMA_VERSION,
         "gate": route.GATE,
-        "run_id": "q38route-001",
+        "run_id": RUN_ID,
         "route_job_id": "q38route-job-001",
         "source_commit": "a" * 40,
         "manifest_digest": route.EXPECTED_MANIFEST_DIGEST,
@@ -358,6 +359,10 @@ def test_load_plan_binds_exact_route_and_current_ledger(tmp_path: Path) -> None:
             "one exact provider",
         ),
         (
+            lambda value: value["resources"][0].update(name="foreign-disk"),
+            "not run-scoped",
+        ),
+        (
             lambda value: [resource.update(provider="fly") for resource in value["resources"]],
             "one exact provider",
         ),
@@ -375,6 +380,27 @@ def test_load_plan_rejects_substitution(
         _load_plan(tmp_path, value)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "1leading-digit",
+        f"{RUN_ID}-has.dot",
+        f"{RUN_ID}-has_under",
+        "a" * 64,
+        f"{RUN_ID}-trailing-",
+    ],
+)
+def test_load_plan_rejects_non_rfc1035_gcp_resource_names(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    value = _plan_value()
+    value["resources"][0]["name"] = name
+
+    with pytest.raises(route.RouteControllerError, match="resource name is invalid"):
+        _load_plan(tmp_path, value)
+
+
 def test_load_plan_rejects_missing_execution_source_binding(tmp_path: Path) -> None:
     value = _plan_value()
     value["source_bindings"] = value["source_bindings"][:-1]
@@ -389,6 +415,16 @@ def test_load_plan_rejects_missing_execution_source_binding(tmp_path: Path) -> N
 def test_load_plan_rejects_changed_source_binding(tmp_path: Path) -> None:
     source_root = _source_root(tmp_path)
     (source_root / route.VERIFIER_SOURCE_PATH).write_bytes(b"changed")
+    plan_path = tmp_path / "plan.json"
+    _write_json(plan_path, _plan_value())
+
+    with pytest.raises(route.RouteControllerError, match="source binding"):
+        route.load_plan(plan_path, source_root)
+
+
+def test_load_plan_rejects_changed_gcp_adapter_binding(tmp_path: Path) -> None:
+    source_root = _source_root(tmp_path)
+    (source_root / route.GCP_ADAPTER_SOURCE_PATH).write_bytes(b"changed")
     plan_path = tmp_path / "plan.json"
     _write_json(plan_path, _plan_value())
 
@@ -1488,7 +1524,7 @@ def test_authorization_rejects_pricing_shorter_or_longer_than_resource_lifetime(
     authorization_root = _write_authorization_records(tmp_path, value)
     reservation_path = authorization_root / value["authorization"]["reservation_record_path"]
     reservation = json.loads(reservation_path.read_text(encoding="utf-8"))
-    cost = next(item for item in reservation["resource_costs"] if item["resource_name"] == "q38-worker-0")
+    cost = next(item for item in reservation["resource_costs"] if item["resource_name"] == f"{RUN_ID}-worker-0")
     cost["duration_hours"] = "24.00"
     cost["maximum_usd"] = "19.20"
     _write_json(reservation_path, reservation)

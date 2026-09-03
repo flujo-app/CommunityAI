@@ -48,9 +48,11 @@ EXPECTED_ARTIFACTS_PER_SPAN = 18
 VERIFIER_SOURCE_PATH = "src/drift/model_manifest.py"
 READINESS_LEDGER_PATH = "docs/RELEASE_READINESS.md"
 PROTECTION_SOURCE_PATH = "scripts/gate14_packaged_lifecycle.py"
+GCP_ADAPTER_SOURCE_PATH = "scripts/gateq38_gcp_adapter.py"
 REQUIRED_SOURCE_PATHS = {
     "docs/RELEASE_READINESS.md",
     "scripts/gate14_packaged_lifecycle.py",
+    "scripts/gateq38_gcp_adapter.py",
     "scripts/gateq38_route_controller.py",
     "scripts/qualify_model_multimachine.py",
     "src/drift/model_manifest.py",
@@ -98,6 +100,7 @@ JOB_STATES = {"absent", "running", "passed", "failed"}
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{2,62}")
 _LABEL_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_GCP_RESOURCE_RE = re.compile(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 _REVISION_RE = re.compile(r"[0-9a-f]{40}")
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -759,8 +762,8 @@ def load_plan(path: Path, source_root: Path) -> RoutePlan:
             WorkerPlan(
                 worker_id=_string(worker["worker_id"], _LABEL_RE, "worker_id"),
                 machine_id=_string(worker["machine_id"], _LABEL_RE, "machine_id"),
-                instance=_string(worker["instance"], _LABEL_RE, "instance"),
-                disk=_string(worker["disk"], _LABEL_RE, "disk"),
+                instance=_string(worker["instance"], _GCP_RESOURCE_RE, "instance"),
+                disk=_string(worker["disk"], _GCP_RESOURCE_RE, "disk"),
                 span=span,
                 artifact_bytes=artifact_bytes,
                 artifact_set_digest=artifact_digest,
@@ -799,7 +802,9 @@ def load_plan(path: Path, source_root: Path) -> RoutePlan:
                 raise RouteControllerError("resource references an unknown worker")
         elif worker_id is not None:
             raise RouteControllerError("non-worker resource has a worker_id")
-        name = _string(resource["name"], _LABEL_RE, "resource name")
+        name = _string(resource["name"], _GCP_RESOURCE_RE, "resource name")
+        if not name.startswith(f"{run_id}-"):
+            raise RouteControllerError("resource name is not run-scoped")
         if name == PROTECTED_INSTANCE:
             raise RouteControllerError("protected bootstrap is targeted")
         resources.append(
@@ -988,7 +993,7 @@ def revalidate_authorization_evidence(
     total_cost = Decimal("0.00")
     for index, value in enumerate(resource_costs):
         item = _mapping(value, _COST_FIELDS, f"resource_costs[{index}]")
-        observed_cost_names.append(_string(item["resource_name"], _LABEL_RE, "cost resource name"))
+        observed_cost_names.append(_string(item["resource_name"], _GCP_RESOURCE_RE, "cost resource name"))
         observed_cost_spec_digests.append(
             _string(item["resource_spec_digest"], _DIGEST_RE, "cost resource spec digest")
         )
@@ -1070,7 +1075,7 @@ def revalidate_authorization_evidence(
     observed_spec_digests: list[str] = []
     for index, value in enumerate(resource_specs):
         spec = _mapping(value, _RESOURCE_SPEC_FIELDS, f"resource_specs[{index}]")
-        name = _string(spec["resource_name"], _LABEL_RE, "spec resource name")
+        name = _string(spec["resource_name"], _GCP_RESOURCE_RE, "spec resource name")
         observed_spec_names.append(name)
         resource = plan.resource_by_name.get(name)
         if (
