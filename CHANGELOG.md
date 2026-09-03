@@ -81,10 +81,17 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   `sha256:ee1a9dccba6dbdb800e9b65cca6f0abbe7a8f38cb8f425802cebdb3cbffff47c`
   (3,360,731,719 bytes), and Linux audit
   `sha256:210e65d8b7fbe6517813638eecbcc8eddfe639a48f5180e5e9ef8dac80b658d0`
-  (514,751 bytes), expiring 2026-09-09. No physical Gate 9 cache survives the cleaned historical
-  hosts, so the paid run still requires fresh direct host materialization. This is software and
-  preflight evidence only:
-  no Gate 14 hardware or
+  (514,751 bytes), expiring 2026-09-09. Gate 14 now has a native cross-platform lifecycle
+  entrypoint and an equivalent source-digest-bound persistent Linux action host alongside the
+  Windows PowerShell host. Both carry the complete safe controller challenge summary into
+  calibration, enforce operation-specific bounded timeouts, retain one process/state identity
+  across prepare, challenge wait, calibration, and cleanup, reject malformed/replayed/coerced
+  frames, and clean on EOF or failure. The Linux parent also kills its owned process group if
+  graceful host cleanup times out. Production prepare/calibrate remain fail-closed until their
+  real package/cache/control handlers are installed; the transport self-test cannot manufacture
+  acceptance evidence. The cross-platform action/entrypoint focus passes 64 tests. No physical
+  Gate 9 cache survives the cleaned historical hosts, so the paid run still requires fresh direct
+  host materialization. This is software and preflight evidence only: no Gate 14 hardware or
   cloud-run pass is claimed yet.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform

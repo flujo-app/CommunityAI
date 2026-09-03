@@ -1,12 +1,4 @@
-"""Persistent, bounded RPC transport for Gate 14 Windows lifecycle actions.
-
-The production action handlers live in one Windows PowerShell process so its
-kill-on-close Job Object, control credential, and packaged process state survive
-the controller-owned challenge wait. This module only owns source verification,
-framing, sequencing, and fail-closed process cleanup. The PowerShell host
-intentionally rejects prepare/calibrate in production until controller-bound
-release-audit and warm-cache inputs are available.
-"""
+"""Persistent, bounded RPC transport for Gate 14 Linux lifecycle actions."""
 
 from __future__ import annotations
 
@@ -16,9 +8,10 @@ import os
 import queue
 import re
 import secrets
-import shutil
+import signal
 import stat
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -26,7 +19,7 @@ from typing import Any, Callable, Mapping, Sequence
 import gate14_calibration_challenge as challenge_contract
 
 SCHEMA_VERSION = 1
-SCOPE = "gate14-windows-lifecycle-actions"
+SCOPE = "gate14-linux-lifecycle-actions"
 MAX_FRAME_BYTES = 262_144
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
 DEFAULT_OPERATION_TIMEOUT_SECONDS = {
@@ -36,9 +29,9 @@ DEFAULT_OPERATION_TIMEOUT_SECONDS = {
 }
 DEFAULT_CLOSE_TIMEOUT_SECONDS = 30.0
 
-_GATE13_LIFECYCLE_SHA256 = "a85c51eb0231bcef991a77c57b622fad575049f000c8b95bbeec7f78eaec7a1e"
-_GATE13_INFERENCE_SHA256 = "2d53424c886ff4a70367a3a0844e33a234bc6c290828a21b70a134b5bf115611"
-_ACTION_HOST_SHA256 = "e597f02099b44d63caa0b9dfe8993bb046e79a21d38f83d0467cbda353e71e14"
+_GATE13_LIFECYCLE_SHA256 = "90f3af65bb4f77317f707a6b52e329e1d5f81cdeddcb9615a210ec9a5a4cf535"
+_GATE13_INFERENCE_SHA256 = "ccf10f9b19f505afb4efde4a86a49e73e3e7c88e9d51ead4991dec68f0c15209"
+_ACTION_HOST_SHA256 = "11ba1e4a081b86d404152e3f4f27bfd06190432a8aeb859339fd5386e2ca6b80"
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
@@ -76,19 +69,10 @@ _RESPONSE_FIELDS = {
     "scope",
     "session_id",
 }
-_FRAME_FIELDS = {
-    "binding",
-    "operation",
-    "payload",
-    "request_id",
-    "schema_version",
-    "scope",
-    "session_id",
-}
 
 
 class Gate14ActionTransportError(ValueError):
-    """The action host source, RPC stream, or process failed closed."""
+    """The Linux action host source, RPC stream, or process failed closed."""
 
 
 ProcessFactory = Callable[..., subprocess.Popen[bytes]]
@@ -190,7 +174,7 @@ def _binding(config: Any) -> dict[str, Any]:
     if (
         type(value["attempt_ordinal"]) is not int
         or not 1 <= value["attempt_ordinal"] <= 100
-        or value["platform"] != "windows"
+        or value["platform"] != "linux"
         or not isinstance(value["run_id"], str)
         or _RUN_RE.fullmatch(value["run_id"]) is None
         or not isinstance(value["source_commit"], str)
@@ -204,7 +188,22 @@ def _binding(config: Any) -> dict[str, Any]:
     return value
 
 
-def _operation_timeouts(value: Mapping[str, float] | None) -> dict[str, float]:
+def _file_digest(path: Path, maximum: int) -> str:
+    candidate = Path(path)
+    try:
+        metadata = candidate.lstat()
+    except OSError as exc:
+        raise Gate14ActionTransportError("lifecycle configuration is unavailable") from exc
+    reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    if reparse or candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 1 <= metadata.st_size <= maximum:
+        raise Gate14ActionTransportError("lifecycle configuration is unsafe")
+    try:
+        return "sha256:" + hashlib.sha256(candidate.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise Gate14ActionTransportError("lifecycle configuration is unreadable") from exc
+
+
+def _timeouts(value: Mapping[str, float] | None) -> dict[str, float]:
     result = dict(DEFAULT_OPERATION_TIMEOUT_SECONDS if value is None else value)
     if set(result) != set(DEFAULT_OPERATION_TIMEOUT_SECONDS):
         raise Gate14ActionTransportError("action transport timeout schema is invalid")
@@ -226,29 +225,14 @@ def _challenge_payload(challenge: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _file_digest(path: Path, maximum: int) -> str:
-    candidate = Path(path)
-    try:
-        metadata = candidate.lstat()
-    except OSError as exc:
-        raise Gate14ActionTransportError("lifecycle configuration is unavailable") from exc
-    reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-    if reparse or candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 1 <= metadata.st_size <= maximum:
-        raise Gate14ActionTransportError("lifecycle configuration is unsafe")
-    try:
-        return "sha256:" + hashlib.sha256(candidate.read_bytes()).hexdigest()
-    except OSError as exc:
-        raise Gate14ActionTransportError("lifecycle configuration is unreadable") from exc
-
-
-class WindowsActionTransport:
-    """Own exactly one source-bound PowerShell action host."""
+class LinuxActionTransport:
+    """Own exactly one source-bound Linux action host."""
 
     def __init__(
         self,
         config: Any,
         *,
-        powershell: str | None = None,
+        python: str | None = None,
         process_factory: ProcessFactory = subprocess.Popen,
         operation_timeouts: Mapping[str, float] | None = None,
         close_timeout_seconds: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
@@ -257,7 +241,7 @@ class WindowsActionTransport:
     ) -> None:
         if type(close_timeout_seconds) not in (int, float) or not 0.1 <= float(close_timeout_seconds) <= 60.0:
             raise Gate14ActionTransportError("action transport timeout is invalid")
-        self._operation_timeouts = _operation_timeouts(operation_timeouts)
+        self._timeouts = _timeouts(operation_timeouts)
         self._binding = _binding(config)
         config_path = Path(config.config_path)
         if config_path.name != "gate14-lifecycle.json" or _file_digest(config_path, 65_536) != config.config_sha256:
@@ -265,65 +249,57 @@ class WindowsActionTransport:
 
         directory = Path(__file__).resolve().parent
         self._host_path = _normalized_source(
-            directory / "gate14_windows_lifecycle_actions.ps1",
+            directory / "gate14_linux_lifecycle_actions.py",
             _ACTION_HOST_SHA256,
         )
         self._gate13_lifecycle_path = _normalized_source(
-            directory / "gate13_windows_packaged_lifecycle.ps1",
+            directory / "gate13_linux_packaged_lifecycle.py",
             _GATE13_LIFECYCLE_SHA256,
         )
         self._gate13_inference_path = _normalized_source(
-            directory / "gate13_windows_localhost_inference.ps1",
+            directory / "gate13_linux_localhost_inference.py",
             _GATE13_INFERENCE_SHA256,
         )
         if not (
-            self._gate13_lifecycle_path.parent == self._gate13_inference_path.parent
-            and self._host_path.parent == self._gate13_lifecycle_path.parent
+            self._host_path.parent == self._gate13_lifecycle_path.parent
+            and self._gate13_lifecycle_path.parent == self._gate13_inference_path.parent
         ):
             raise Gate14ActionTransportError("action sources are not colocated")
 
-        executable = powershell or shutil.which("powershell.exe")
-        if not executable:
-            raise Gate14ActionTransportError("Windows PowerShell 5.1 is unavailable")
+        executable = python or sys.executable
         self._session_id = secrets.token_hex(32)
         arguments = [
             executable,
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
+            "-u",
             os.fspath(self._host_path),
-            "-SessionId",
+            "--session-id",
             self._session_id,
-            "-RunId",
+            "--run-id",
             self._binding["run_id"],
-            "-AttemptOrdinal",
+            "--attempt-ordinal",
             str(self._binding["attempt_ordinal"]),
-            "-SourceCommit",
+            "--source-commit",
             self._binding["source_commit"],
-            "-PackageSha256",
+            "--package-sha256",
             self._binding["package_sha256"],
-            "-Gate13Lifecycle",
+            "--gate13-lifecycle",
             os.fspath(self._gate13_lifecycle_path),
-            "-Gate13Inference",
+            "--gate13-inference",
             os.fspath(self._gate13_inference_path),
-            "-Gate13LifecycleSha256",
+            "--gate13-lifecycle-sha256",
             _GATE13_LIFECYCLE_SHA256,
-            "-Gate13InferenceSha256",
+            "--gate13-inference-sha256",
             _GATE13_INFERENCE_SHA256,
-            "-LifecycleConfig",
+            "--lifecycle-config",
             os.fspath(config_path),
-            "-LifecycleConfigSha256",
+            "--lifecycle-config-sha256",
             config.config_sha256,
         ]
         if transport_self_test:
-            arguments.append("-TransportSelfTest")
+            arguments.append("--transport-self-test")
             if self_test_cleanup_marker is not None:
-                arguments.extend(("-SelfTestCleanupMarker", os.fspath(Path(self_test_cleanup_marker))))
+                arguments.extend(("--self-test-cleanup-marker", os.fspath(Path(self_test_cleanup_marker))))
 
-        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             self._process = process_factory(
                 arguments,
@@ -331,7 +307,7 @@ class WindowsActionTransport:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
-                creationflags=creation_flags,
+                start_new_session=True,
             )
         except (OSError, ValueError) as exc:
             raise Gate14ActionTransportError("action host could not start") from exc
@@ -348,12 +324,12 @@ class WindowsActionTransport:
         self._closed = False
         self._reader = threading.Thread(
             target=self._read_stdout,
-            name="gate14-windows-action-stdout",
+            name="gate14-linux-action-stdout",
             daemon=True,
         )
         self._stderr_reader = threading.Thread(
             target=self._drain_stderr,
-            name="gate14-windows-action-stderr",
+            name="gate14-linux-action-stderr",
             daemon=True,
         )
         self._reader.start()
@@ -398,9 +374,15 @@ class WindowsActionTransport:
             process.wait(timeout=getattr(self, "_close_timeout", DEFAULT_CLOSE_TIMEOUT_SECONDS))
         except (subprocess.TimeoutExpired, OSError):
             try:
-                process.kill()
+                if hasattr(os, "killpg"):
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
             except OSError:
-                pass
+                try:
+                    process.kill()
+                except OSError:
+                    pass
             try:
                 process.wait(timeout=DEFAULT_CLOSE_TIMEOUT_SECONDS)
             except (subprocess.TimeoutExpired, OSError):
@@ -438,7 +420,7 @@ class WindowsActionTransport:
             self._fail("action host ended before request")
 
         try:
-            response_item = self._responses.get(timeout=self._operation_timeouts[operation])
+            response_item = self._responses.get(timeout=self._timeouts[operation])
         except queue.Empty:
             self._fail("action response timed out")
         if response_item is None:
@@ -497,10 +479,7 @@ class WindowsActionTransport:
         if self._phase != "prepared":
             self._fail("action operation order is invalid")
         try:
-            result = self.request(
-                "calibrate",
-                _challenge_payload(challenge),
-            )
+            result = self.request("calibrate", _challenge_payload(challenge))
         except BaseException:
             self._phase = "failed"
             raise
@@ -518,10 +497,10 @@ class WindowsActionTransport:
             "action_temporaries_removed": True,
             "attempt_ordinal": config.attempt_ordinal,
             "credentials_removed": True,
-            "platform": "windows",
+            "platform": "linux",
             "processes_absent": True,
             "run_id": config.run_id,
-            "schema_version": 1,
+            "schema_version": SCHEMA_VERSION,
             "scope": "gate14-host-lifecycle-cleanup",
         }
         if result != expected:
@@ -535,7 +514,7 @@ class WindowsActionTransport:
         self._closed = True
         self._terminate()
 
-    def __enter__(self) -> "WindowsActionTransport":
+    def __enter__(self) -> "LinuxActionTransport":
         return self
 
     def __exit__(self, _type, _value, _traceback) -> None:

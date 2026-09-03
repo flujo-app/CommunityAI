@@ -264,10 +264,21 @@ try {
                 if ($script:Gate14Phase -cne "prepared") {
                     throw "RPC operation order is invalid"
                 }
-                Assert-Gate14ExactProperties -Value $frame.payload -Names @("challenge_sha256")
+                Assert-Gate14ExactProperties -Value $frame.payload -Names @(
+                    "challenge_sha256",
+                    "controller_state_revision",
+                    "issued_at_unix",
+                    "expires_at_unix"
+                )
                 if (
                     $frame.payload.challenge_sha256 -isnot [string] -or
-                    $frame.payload.challenge_sha256 -cnotmatch "^sha256:[0-9a-f]{64}$"
+                    $frame.payload.challenge_sha256 -cnotmatch "^sha256:[0-9a-f]{64}$" -or
+                    $frame.payload.controller_state_revision -isnot [int] -or
+                    $frame.payload.controller_state_revision -lt 0 -or
+                    $frame.payload.issued_at_unix -isnot [int] -or
+                    $frame.payload.expires_at_unix -isnot [int] -or
+                    ($frame.payload.expires_at_unix - $frame.payload.issued_at_unix) -lt 60 -or
+                    ($frame.payload.expires_at_unix - $frame.payload.issued_at_unix) -gt 900
                 ) {
                     throw "RPC calibration binding is invalid"
                 }
