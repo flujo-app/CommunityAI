@@ -31,6 +31,15 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   config and revalidates the exact plan before announcement or weight access.
   This no-spend checkpoint passes 147 focused, 259 related, and 1,568 offline
   tests without downloading model weights or claiming real Qwen execution.
+- The exact Qwen3.8 `0:1` worker plan now has a real local Windows/CUDA
+  outcome: a new isolated cache anonymously acquired and rehashed the official
+  384,054,133-byte config/index/layer selection, loaded it in manifested BF16,
+  and returned a finite changed `[1,1,5120]` exact-peer result in 0.363
+  seconds. A later network-disabled cache-reuse replay bound 19 production
+  paths to pushed commit `af7d887`, repeated the same deterministic result,
+  exited cleanly, and retained an exact PID/listener/tagged-process cleanup
+  audit. Complete-route parity, recovery, packaging, and RTX 30/40/50
+  qualification remain open.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce

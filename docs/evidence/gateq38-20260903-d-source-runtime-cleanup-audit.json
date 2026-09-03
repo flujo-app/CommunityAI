@@ -1,0 +1,222 @@
+{
+  "schema": "communityai.gateq38.source-runtime-cleanup-audit.v1",
+  "audit_kind": "source-bound offline cache-reuse replay after the fresh single-span run",
+  "checkpoint_date": "2026-09-03",
+  "fresh_run": {
+    "source_attestation_at_launch": false,
+    "claim_boundary": "The retained fresh-run assets prove new-cache acquisition, manifested block load, exact-peer inference, and supervisor return. They do not independently attest the Git tree at original process start.",
+    "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+    "block_indices": "0:1",
+    "artifact_bytes": 384054133,
+    "artifact_set_sha256": "43d8b1d59667b556e77b0ff7febcbb44d1831608f30f47f82c0eba0f3bf87aca",
+    "inference_elapsed_seconds": 0.363,
+    "raw_assets": [
+      {
+        "name": "bound-worker.log",
+        "bytes": 6307,
+        "sha256": "768568e2e661c0d051fd6a3792fbc19152d6023e2bd8af51bcd34a2b9e9cd8bd"
+      },
+      {
+        "name": "bound-rpc.log",
+        "bytes": 742,
+        "sha256": "9bd39827d34af0f607faea3c52b408bd02360f5cb9192c4dc5d4ecf50d695948"
+      },
+      {
+        "name": "run_bound_worker.py",
+        "bytes": 3750,
+        "sha256": "9ba92da0da0d45676fa7cfe2d689c4bb490b03ac5af512af5cc1ee8a0d079ab1"
+      },
+      {
+        "name": "run_bound_rpc.py",
+        "bytes": 4061,
+        "sha256": "4f529e40d5c01671d56a30d6f716473a81562cfb9bcbb8df67059ea5dfc6d16d"
+      }
+    ]
+  },
+  "source_bound_replay": {
+    "network_mode": "HF_HUB_OFFLINE=1 with token variables empty and upper/lowercase proxy variables cleared",
+    "cache_mode": "reuse of the exact selected files rehashed after the fresh run",
+    "repository": {
+      "commit": "af7d887a471c295bd593a6feb4f47f34056eb3e3",
+      "tree": "4c064b2a60b57bc3136db89b17f2ad8cbf96353f",
+      "tracked_origin_commit": "af7d887a471c295bd593a6feb4f47f34056eb3e3"
+    },
+    "production_sources": [
+      {
+        "path": "manifests/candidates/qwen3.8-27b-fp8-dequant-eager.json",
+        "git_blob_sha1": "2759bf08038dea06fc65a9abe1072b99706c8176",
+        "worktree_sha256": "0591317317adf4752425725658732997597c51150a7b165bcd674cbc319bf2a1"
+      },
+      {
+        "path": "src/drift/__init__.py",
+        "git_blob_sha1": "4cbbacdd285285416f975a2a8541b226aa96516b",
+        "worktree_sha256": "25413cb38a8cbd8d9903301d2da628e39cc91769d564b6c1838f6252a7f3de6e"
+      },
+      {
+        "path": "src/drift/client/__init__.py",
+        "git_blob_sha1": "1613ad1e17f04e1b518e8b763da7a4bbf1b4b8aa",
+        "worktree_sha256": "51c204cabf56fddb8bbab110041df34f9c5df9b09dabfd958705b2d389332d97"
+      },
+      {
+        "path": "src/drift/client/config.py",
+        "git_blob_sha1": "3e7370b159c07d29e71708d12e1083bc370fea55",
+        "worktree_sha256": "b05f476f59bf4bd7ec9d89d9facda83b85c677eda8adecad6cd1a0b5038c79a5"
+      },
+      {
+        "path": "src/drift/client/remote_sequential.py",
+        "git_blob_sha1": "e3f88fee23a9619b866552045e58fc10609ee7b2",
+        "worktree_sha256": "40d4042db011531a15953e16c6cb685d7bfdbeb6667a28f26e6593ae1dc9af82"
+      },
+      {
+        "path": "src/drift/client/routing/sequence_manager.py",
+        "git_blob_sha1": "3643fb498b261f8f5b1fc1b3b96fa066d3e8a3fe",
+        "worktree_sha256": "080e4798bdb21a9c1941c9f2b926169b84b363b0f8cdb31e07cb1bf819b979ea"
+      },
+      {
+        "path": "src/drift/cli/__init__.py",
+        "git_blob_sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+        "worktree_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "src/drift/cli/__main__.py",
+        "git_blob_sha1": "89fa53db4a4f5b144ab9aa99a36c635f2b944ac3",
+        "worktree_sha256": "995060738b41c25af633a81e4819a3c01b85af143d8878e06c69100dc44d2323"
+      },
+      {
+        "path": "src/drift/cli/run_server.py",
+        "git_blob_sha1": "f730fdb5bd3b6d3db6a0f5d2f53ea6c9d6f51244",
+        "worktree_sha256": "0ac20e620e0d94a13dd81f19dec679e926a99d6f46b163f00e218774763749d3"
+      },
+      {
+        "path": "src/drift/model_manifest.py",
+        "git_blob_sha1": "e462b37a7703a7f3e0259686f28b7a6212b446c4",
+        "worktree_sha256": "b4684eeb9b83395b352275048c4959d9513c9e83768f75d489aec1eba5ff6913"
+      },
+      {
+        "path": "src/drift/models/__init__.py",
+        "git_blob_sha1": "5eba9d6d101055da50d3624fb08bfc85b812a68f",
+        "worktree_sha256": "ece5852c7907a00d6f6921b3d8b868e42b19f5a474c131d25e5cd7ebc8231fef"
+      },
+      {
+        "path": "src/drift/models/qwen3_5/__init__.py",
+        "git_blob_sha1": "d3700385f72e5ee09dfdf147e19fd55769c14652",
+        "worktree_sha256": "7a5c3bc89c45a882832adced740b8d19c2dded51218a5d31fccaf098fc7408a5"
+      },
+      {
+        "path": "src/drift/models/qwen3_5/block.py",
+        "git_blob_sha1": "745e9bc2793fca9c12f9c09f2b7e123140bbfb63",
+        "worktree_sha256": "cb506f75ad664086ee5e750cfaa0cfd8ebf3b1b289efa210039bb38bf549165f"
+      },
+      {
+        "path": "src/drift/models/qwen3_5/config.py",
+        "git_blob_sha1": "23331aff0566b3beeeff886f4bbaf9953dbf29ce",
+        "worktree_sha256": "6c467fc6948a2f06e2a7068864b473fa00b7d5cc6c5824420693a183d8a5a726"
+      },
+      {
+        "path": "src/drift/models/qwen3_5/model.py",
+        "git_blob_sha1": "56a0c6d655ecb09fd5229c3a6572680b8f9a1cc2",
+        "worktree_sha256": "b9092f62eb2a26881e2b2452b74f192bc6bf4e70f9091116cb6f7ac5a0a0dffb"
+      },
+      {
+        "path": "src/drift/node/worker_supervisor.py",
+        "git_blob_sha1": "42ea6224003fce4060ce4c2f9fda50052a7ed543",
+        "worktree_sha256": "ac80b3759831bed4f7ce018b9592d65f0acc876ba521cb51ec8bfbc048493020"
+      },
+      {
+        "path": "src/drift/server/backend.py",
+        "git_blob_sha1": "6560fe7f29a95b9bc6dabb5bb90b5195436378dc",
+        "worktree_sha256": "38858453c0bd28c9941a0f9f9a88d1dfb0c04b363b19ef0cf1fac30776aa70da"
+      },
+      {
+        "path": "src/drift/server/server.py",
+        "git_blob_sha1": "4ab4a43814ba29938188f98cbfa4aacfcbb27fbb",
+        "worktree_sha256": "6dd709d3f38e089510d741b2eaa1375ead69aab12c6be1059a25f01558f4d535"
+      },
+      {
+        "path": "src/drift/utils/dht.py",
+        "git_blob_sha1": "d022cc6fa8c528529589dc4f42b2a57b59122fc3",
+        "worktree_sha256": "6b142a0333af466873c14a451047503f49e68f272fd4d5c48d4aa3ee69b73d14"
+      }
+    ],
+    "runtime": {
+      "platform": "Windows-10-10.0.19045-SP0",
+      "python": "3.12.9",
+      "drift": "2.3.0.dev2",
+      "torch": "2.6.0+cu124",
+      "cuda": "12.4",
+      "transformers": "5.13.1",
+      "hivemind": "1.1.12",
+      "gpu": "NVIDIA GeForce RTX 2070 SUPER",
+      "gpu_memory_bytes": 8589606912
+    },
+    "launch_contract": {
+      "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+      "block_indices": "0:1",
+      "artifact_bytes": 384054133,
+      "artifact_set_sha256": "43d8b1d59667b556e77b0ff7febcbb44d1831608f30f47f82c0eba0f3bf87aca",
+      "device": "cuda:0",
+      "max_device_memory": "6GiB",
+      "max_disk_space": "2GiB",
+      "listener": "loopback only",
+      "source_preflight_before_worker_launch": true,
+      "client_source_preflight_before_rpc": true
+    },
+    "result": {
+      "worker_exit_code": 0,
+      "rpc_exit_code": 0,
+      "server_dtype": "bfloat16",
+      "server_quant_type": "fp8_dequant",
+      "shape": [1, 1, 5120],
+      "input_sha256": "87c62484d2e6c3ce38e94a9064871fff63c1f7f940b7975f588dd96c61996871",
+      "output_sha256": "877302b713404bb60ccab8d72160156d360066828a71e0de2977cc048dafe631",
+      "finite": true,
+      "changed": true,
+      "elapsed_seconds": 0.206
+    },
+    "cleanup": {
+      "audit_utc": "2026-09-03T09:07:59.4135315Z",
+      "retained_worker_pid": 31612,
+      "pid_present": false,
+      "loopback_port": 50593,
+      "listener_count": 0,
+      "tagged_process_count": 0,
+      "worker_session_exit_code": 0,
+      "rpc_exit_code": 0,
+      "claim_boundary": "This proves the recorded worker PID, exact listener, and replay-script-tagged command lines were absent. It is not an all-descendant forensic claim."
+    },
+    "raw_assets": [
+      {
+        "name": "run_bound_worker_replay.py",
+        "bytes": 6770,
+        "sha256": "93ef83d640ff26815081aac26cd4899f9801bccd9cf2640fd1d99fce950e3d34"
+      },
+      {
+        "name": "run_bound_rpc_replay.py",
+        "bytes": 5825,
+        "sha256": "4ffb94dd6bb7272b729be6a8b790b414b9e6acfe78ccc7f8a48b8645ee82d7c8"
+      },
+      {
+        "name": "source-bound-worker-replay.log",
+        "bytes": 9422,
+        "sha256": "c536cb3e735e2396c78f4aaa8e797fda693419df9544683d3540ff4cf7e33c5b"
+      },
+      {
+        "name": "source-bound-rpc-replay.log",
+        "bytes": 2521,
+        "sha256": "7fc6716bbf25c2a94700675885f6fe76ac7232dc5b554332f0dfaaeab12afe09"
+      },
+      {
+        "name": "source-bound-cleanup-audit.json",
+        "bytes": 206,
+        "sha256": "e085da5fb97effc7f4627de99329115f2b736dbe492b5d58b21da710bef6df5d"
+      }
+    ]
+  },
+  "limitations": [
+    "The replay source list is a curated production-path binding, not a complete Python import trace.",
+    "The replay proves source-bound cache reuse, not another cold acquisition.",
+    "The original fresh run did not emit a source attestation at launch, so the fresh acquisition and source-bound replay are reported as separate outcomes.",
+    "No complete route, stock parity, selected-worker recovery, packaged acquisition, RTX 30/40/50 qualification, or cloud execution is claimed."
+  ],
+  "spend_usd": 0
+}
