@@ -15,7 +15,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
-
 SCHEMA_VERSION = 1
 PLATFORMS = ("windows", "linux")
 TERMINAL_RESULTS = frozenset({"passed", "failed"})
@@ -47,7 +46,8 @@ class PackageArtifact:
 class PackageSource(Protocol):
     """Build or resolve the exact production packages for one run."""
 
-    def prepare(self) -> Mapping[str, PackageArtifact]: ...
+    def prepare(self) -> Mapping[str, PackageArtifact]:
+        ...
 
 
 class CloudProvider(Protocol):
@@ -55,27 +55,38 @@ class CloudProvider(Protocol):
 
     name: str
 
-    def preflight(self) -> Mapping[str, Any]: ...
+    def preflight(self) -> Mapping[str, Any]:
+        ...
 
-    def create_route(self) -> None: ...
+    def create_route(self) -> None:
+        ...
 
-    def prepare_route(self) -> Mapping[str, Any]: ...
+    def prepare_route(self) -> Mapping[str, Any]:
+        ...
 
-    def fence_route(self, platform: str) -> Mapping[str, Any]: ...
+    def fence_route(self, platform: str) -> Mapping[str, Any]:
+        ...
 
-    def create_client(self, platform: str, package: PackageArtifact) -> None: ...
+    def create_client(self, platform: str, package: PackageArtifact) -> None:
+        ...
 
-    def prepare_client(self, platform: str, package: PackageArtifact) -> Mapping[str, Any]: ...
+    def prepare_client(self, platform: str, package: PackageArtifact) -> Mapping[str, Any]:
+        ...
 
-    def run_client(self, platform: str, package: PackageArtifact) -> bytes: ...
+    def run_client(self, platform: str, package: PackageArtifact) -> bytes:
+        ...
 
-    def delete_client(self, platform: str) -> None: ...
+    def delete_client(self, platform: str) -> None:
+        ...
 
-    def delete_route(self) -> None: ...
+    def delete_route(self) -> None:
+        ...
 
-    def cleanup_all(self) -> Mapping[str, Any]: ...
+    def cleanup_all(self) -> Mapping[str, Any]:
+        ...
 
-    def verify_cleanup(self) -> Mapping[str, Any]: ...
+    def verify_cleanup(self) -> Mapping[str, Any]:
+        ...
 
 
 def _canonical_json(value: Mapping[str, Any]) -> bytes:
@@ -134,8 +145,7 @@ def _validate_platforms(packages: Mapping[str, PackageArtifact]) -> dict[str, Pa
         if package.platform != platform:
             raise Gate13CloudError("production package platform changed")
         if any(
-            len(digest) != 64
-            or any(character not in "0123456789abcdef" for character in digest)
+            len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest)
             for digest in (package.wrapper_sha256, package.archive_sha256)
         ):
             raise Gate13CloudError("production package digest is invalid")
@@ -239,9 +249,7 @@ class Gate13CloudOrchestrator:
             _require_passed(self.provider.preflight(), "cloud preflight")
             recorder.phase("PACKAGES_RESOLVING")
             packages = _validate_platforms(self.package_source.prepare())
-            recorder.package_records = {
-                platform: packages[platform].public_record() for platform in PLATFORMS
-            }
+            recorder.package_records = {platform: packages[platform].public_record() for platform in PLATFORMS}
 
             # From this point onward every exit path must execute provider cleanup.
             cloud_mutated = True

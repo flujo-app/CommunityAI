@@ -12,7 +12,6 @@ import run_gate13_gcp as launcher
 from gate13_cloud_orchestrator import Gate13CloudError
 from gate13_gcp_provider import GcpConfig
 
-
 RUN_ID = "g13-20260902-000000-abcd"
 
 

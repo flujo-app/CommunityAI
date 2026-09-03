@@ -14,18 +14,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import gate13_packaged_lifecycle as lifecycle
-from gate13_cloud_orchestrator import (
-    Gate13CloudError,
-    Gate13CloudOrchestrator,
-    PackageArtifact,
-)
-from gate13_gcp_provider import (
-    GcpConfig,
-    GcpProvider,
-    GitHubPackageSource,
-    LoggedRunner,
-)
-
+from gate13_cloud_orchestrator import Gate13CloudError, Gate13CloudOrchestrator, PackageArtifact
+from gate13_gcp_provider import GcpConfig, GcpProvider, GitHubPackageSource, LoggedRunner
 
 REPOSITORY = "flujo-app/CommunityAI"
 WORKFLOW = "desktop.yaml"
@@ -55,10 +45,7 @@ def _strict_object(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
-    payload = (
-        json.dumps(value, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True)
-        + "\n"
-    )
+    payload = json.dumps(value, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -114,9 +101,7 @@ class LauncherLock:
 
 
 def _evidence_validator(run_id: str):
-    def validate(
-        platform: str, payload: bytes, package: PackageArtifact
-    ) -> Mapping[str, Any]:
+    def validate(platform: str, payload: bytes, package: PackageArtifact) -> Mapping[str, Any]:
         try:
             raw = lifecycle.load_lifecycle_json(payload.decode("utf-8"))
             value = lifecycle.validate_lifecycle_document(raw)
@@ -145,9 +130,7 @@ def _evidence_validator(run_id: str):
             raise Gate13CloudError(f"{platform} lifecycle evidence binding changed")
         durations = raw.get("session_duration_seconds")
         session_duration = (
-            round(sum(float(item) for item in durations.values()), 6)
-            if isinstance(durations, dict)
-            else None
+            round(sum(float(item) for item in durations.values()), 6) if isinstance(durations, dict) else None
         )
         return {"result": "passed", "session_duration_seconds": session_duration}
 
@@ -221,10 +204,7 @@ def _recover_previous(
         "cleanup": cleanup,
         "verification": verification,
         "result": (
-            "passed"
-            if cleanup.get("result") == "passed"
-            and verification.get("result") == "passed"
-            else "failed"
+            "passed" if cleanup.get("result") == "passed" and verification.get("result") == "passed" else "failed"
         ),
     }
     _write_json(output_root / "recovery.json", recovery)

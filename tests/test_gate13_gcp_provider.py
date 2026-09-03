@@ -10,7 +10,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from gate13_cloud_orchestrator import PackageArtifact
 from gate13_gcp_provider import GcpConfig, GcpProvider, LoggedRunner
 
-
 RUN_ID = "g13-20260902-000000-abcd"
 
 
@@ -24,9 +23,7 @@ def artifact(platform):
         wrapper_sha256="c" * 64,
         wrapper_bytes=130,
         archive_name=(
-            "communityai-desktop-windows.zip"
-            if platform == "windows"
-            else "communityai-desktop-linux.tar.gz"
+            "communityai-desktop-windows.zip" if platform == "windows" else "communityai-desktop-linux.tar.gz"
         ),
         archive_sha256="b" * 64,
         archive_bytes=123,
@@ -73,10 +70,12 @@ class CreateRunner:
                 "name": name,
                 "labels": {"communityai_run": RUN_ID},
                 "deletionProtection": False,
-                "disks": [{
-                    "autoDelete": True,
-                    "source": f"https://example.invalid/disks/{name}",
-                }],
+                "disks": [
+                    {
+                        "autoDelete": True,
+                        "source": f"https://example.invalid/disks/{name}",
+                    }
+                ],
             }
             return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -103,11 +102,7 @@ def test_client_creation_uses_the_proven_private_route_relay(tmp_path, monkeypat
     assert "package-url=http://10.42.0.26:38081/artifact-wrapper.zip" in flattened
     assert "package-sha256=" + "b" * 64 in flattened
     assert "package-bytes=123" in flattened
-    create = next(
-        command
-        for command, _kwargs in fake.calls
-        if "instances" in command and "create" in command
-    )
+    create = next(command for command, _kwargs in fake.calls if "instances" in command and "create" in command)
     assert "--enable-display-device" in create
     assert "--no-service-account" in create
     assert "no-address" not in flattened
@@ -120,18 +115,12 @@ def test_route_creation_preserves_the_successful_private_relay_firewall(tmp_path
     item.create_route()
 
     relay = next(
-        command
-        for command, _kwargs in fake.calls
-        if "firewall-rules" in command and item.relay_firewall in command
+        command for command, _kwargs in fake.calls if "firewall-rules" in command and item.relay_firewall in command
     )
     assert relay[relay.index("--rules") + 1] == "tcp:38081"
     assert relay[relay.index("--source-tags") + 1] == item.client_tag
     assert relay[relay.index("--target-tags") + 1] == item.route
-    route = next(
-        command
-        for command, _kwargs in fake.calls
-        if "instances" in command and "create" in command
-    )
+    route = next(command for command, _kwargs in fake.calls if "instances" in command and "create" in command)
     assert route[route.index("--machine-type") + 1] == "g2-standard-8"
     assert route[route.index("--boot-disk-size") + 1] == "200GB"
     assert route[route.index("--max-run-duration") + 1] == "57600s"
@@ -180,6 +169,8 @@ def test_route_bundle_reuses_the_exact_successful_inputs(tmp_path):
         payload = (bundle / name).read_bytes()
         assert len(payload) == byte_count
         assert hashlib.sha256(payload).hexdigest() == digest
+
+
 def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
     item = provider(
         tmp_path,
@@ -202,9 +193,7 @@ def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
         assert hashlib.sha256(payload).hexdigest() == digest
 
 
-def test_client_readiness_cleans_the_route_relay_before_job_staging(
-    tmp_path, monkeypatch
-):
+def test_client_readiness_cleans_the_route_relay_before_job_staging(tmp_path, monkeypatch):
     item = provider(
         tmp_path,
         LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
@@ -237,9 +226,7 @@ def test_client_readiness_cleans_the_route_relay_before_job_staging(
     monkeypatch.setattr(
         item,
         "_ssh",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            [], 0, '{"result":"passed","ready":true}\n', ""
-        ),
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, '{"result":"passed","ready":true}\n', ""),
     )
 
     result = item.prepare_client("linux", artifact("linux"))

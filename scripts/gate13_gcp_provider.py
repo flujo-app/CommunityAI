@@ -19,7 +19,6 @@ from typing import Any, Callable, Mapping, Sequence
 
 from gate13_cloud_orchestrator import Gate13CloudError, PackageArtifact
 
-
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _RUN_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?")
@@ -133,7 +132,9 @@ def _strict_object(payload: str, label: str) -> dict[str, Any]:
         return result
 
     try:
-        value = json.loads(payload, object_pairs_hook=unique, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        value = json.loads(
+            payload, object_pairs_hook=unique, parse_constant=lambda _: (_ for _ in ()).throw(ValueError())
+        )
     except (json.JSONDecodeError, ValueError) as exc:
         raise Gate13CloudError(f"{label} is not strict JSON") from exc
     if not isinstance(value, dict):
@@ -181,9 +182,9 @@ class GitHubPackageSource:
         branch = self._git("symbolic-ref", "--short", "HEAD", action="Checking package source branch")
         if not _COMMIT_RE.fullmatch(head) or not branch:
             raise Gate13CloudError("package source is not a named Git branch")
-        remote_url = self._git(
-            "remote", "get-url", "origin", action="Checking canonical package source remote"
-        ).rstrip("/")
+        remote_url = self._git("remote", "get-url", "origin", action="Checking canonical package source remote").rstrip(
+            "/"
+        )
         repository = self.repository.removesuffix(".git")
         if remote_url not in {
             f"https://github.com/{repository}",
@@ -257,9 +258,7 @@ class GitHubPackageSource:
                         self.progress(f"Using existing production package run {run_id}")
                         return run_id, artifacts
 
-        prior_run_ids = {
-            item.get("id") for item in prior_runs if isinstance(item.get("id"), int)
-        }
+        prior_run_ids = {item.get("id") for item in prior_runs if isinstance(item.get("id"), int)}
         self.runner.run(
             ["gh", "workflow", "run", self.workflow, "--repo", self.repository, "--ref", branch],
             action="Starting production package workflow",
@@ -269,11 +268,7 @@ class GitHubPackageSource:
         while time.monotonic() < deadline:
             for run in self._workflow_runs(branch):
                 run_id = run.get("id")
-                if (
-                    run.get("head_sha") != head
-                    or not isinstance(run_id, int)
-                    or run_id in prior_run_ids
-                ):
+                if run.get("head_sha") != head or not isinstance(run_id, int) or run_id in prior_run_ids:
                     continue
                 matching_run_id = run_id
                 if run.get("status") == "completed":
@@ -327,9 +322,7 @@ class GitHubPackageSource:
                 raise Gate13CloudError("package provenance does not bind the pushed HEAD")
             expected_platform = "Windows" if platform == "windows" else "Linux"
             expected_archive = (
-                "communityai-desktop-windows.zip"
-                if platform == "windows"
-                else "communityai-desktop-linux.tar.gz"
+                "communityai-desktop-windows.zip" if platform == "windows" else "communityai-desktop-linux.tar.gz"
             )
             digest = install.get("sha256")
             byte_count = install.get("size_bytes")
@@ -393,9 +386,7 @@ class GitHubPackageSource:
                 "User-Agent": "CommunityAI-Gate13/1",
             },
         )
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), _RejectRedirects()
-        )
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectRedirects())
         try:
             opener.open(request, timeout=30)
         except urllib.error.HTTPError as exc:
@@ -459,10 +450,7 @@ class GcpConfig:
         string_fields = expected - {"route_wheel_bytes"}
         if (
             set(value) != expected
-            or not all(
-                isinstance(value[field], str) and value[field]
-                for field in string_fields
-            )
+            or not all(isinstance(value[field], str) and value[field] for field in string_fields)
             or not isinstance(value["route_wheel_bytes"], int)
             or isinstance(value["route_wheel_bytes"], bool)
             or value["route_wheel_bytes"] <= 0
@@ -513,7 +501,9 @@ class GcpProvider:
         self.progress = progress
         self.sleeper = sleeper
         self.route = f"{run_id}-route"
-        self.clients = {platform: f"{run_id}-{'win' if platform == 'windows' else 'linux'}" for platform in ("windows", "linux")}
+        self.clients = {
+            platform: f"{run_id}-{'win' if platform == 'windows' else 'linux'}" for platform in ("windows", "linux")
+        }
         self.dht_firewall = f"{run_id}-dht"
         self.iap_firewall = f"{run_id}-iap"
         self.relay_firewall = f"{run_id}-relay"
@@ -529,10 +519,10 @@ class GcpProvider:
             if not _RUN_RE.fullmatch(name):
                 raise Gate13CloudError("derived GCP resource name is invalid")
 
-    def _gcloud(self, *arguments: str, action: str, timeout: float = 300, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return self.runner.run(
-            ["gcloud", *arguments], action=action, timeout=timeout, check=check, stdin="n\n"
-        )
+    def _gcloud(
+        self, *arguments: str, action: str, timeout: float = 300, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return self.runner.run(["gcloud", *arguments], action=action, timeout=timeout, check=check, stdin="n\n")
 
     def _gcloud_json(self, *arguments: str, action: str, timeout: float = 300) -> Any:
         result = self._gcloud(*arguments, "--format=json", action=action, timeout=timeout)
@@ -691,38 +681,43 @@ class GcpProvider:
             self.relay_firewall,
         }
         instance_inventory = self._gcloud_json(
-            "compute", "instances", "list",
-            "--project", self.config.project,
+            "compute",
+            "instances",
+            "list",
+            "--project",
+            self.config.project,
             action="Inventorying run-scoped GCP instances",
             timeout=120,
         )
         disk_inventory = self._gcloud_json(
-            "compute", "disks", "list",
-            "--project", self.config.project,
+            "compute",
+            "disks",
+            "list",
+            "--project",
+            self.config.project,
             action="Inventorying run-scoped GCP disks",
             timeout=120,
         )
         firewall_inventory = self._gcloud_json(
-            "compute", "firewall-rules", "list",
-            "--project", self.config.project,
+            "compute",
+            "firewall-rules",
+            "list",
+            "--project",
+            self.config.project,
             action="Inventorying run-scoped GCP firewalls",
             timeout=120,
         )
-        if not all(
-            isinstance(value, list)
-            for value in (instance_inventory, disk_inventory, firewall_inventory)
-        ):
+        if not all(isinstance(value, list) for value in (instance_inventory, disk_inventory, firewall_inventory)):
             raise Gate13CloudError("GCP resource inventory is invalid")
         instances = sorted(
-            item["name"] for item in instance_inventory
-            if isinstance(item, dict) and item.get("name") in targets
+            item["name"] for item in instance_inventory if isinstance(item, dict) and item.get("name") in targets
         )
         disks = sorted(
-            item["name"] for item in disk_inventory
-            if isinstance(item, dict) and item.get("name") in targets
+            item["name"] for item in disk_inventory if isinstance(item, dict) and item.get("name") in targets
         )
         firewalls = sorted(
-            item["name"] for item in firewall_inventory
+            item["name"]
+            for item in firewall_inventory
             if isinstance(item, dict) and item.get("name") in firewall_targets
         )
         return instances, disks, firewalls
@@ -734,9 +729,7 @@ class GcpProvider:
             or wheel.stat().st_size != self.config.route_wheel_bytes
             or _sha256(wheel) != self.config.route_wheel_sha256
         ):
-            raise Gate13CloudError(
-                "the exact successful-run route wheel is absent or changed"
-            )
+            raise Gate13CloudError("the exact successful-run route wheel is absent or changed")
         return wheel
 
     def _validate_immutable_sources(self) -> None:
@@ -800,18 +793,44 @@ class GcpProvider:
             raise Gate13CloudError("GCP access token is unavailable")
         credential = ""
         self._gcloud_json(
-            "compute", "networks", "describe", self.config.network, "--project", self.config.project,
-            action="Checking the GCP network", timeout=60,
+            "compute",
+            "networks",
+            "describe",
+            self.config.network,
+            "--project",
+            self.config.project,
+            action="Checking the GCP network",
+            timeout=60,
         )
         self._gcloud_json(
-            "compute", "networks", "subnets", "describe", self.config.subnet,
-            "--project", self.config.project, "--region", self.config.region,
-            action="Checking the GCP subnet", timeout=60,
+            "compute",
+            "networks",
+            "subnets",
+            "describe",
+            self.config.subnet,
+            "--project",
+            self.config.project,
+            "--region",
+            self.config.region,
+            action="Checking the GCP subnet",
+            timeout=60,
         )
-        for machine_type in {self.config.route_machine_type, self.config.windows_machine_type, self.config.linux_machine_type}:
+        for machine_type in {
+            self.config.route_machine_type,
+            self.config.windows_machine_type,
+            self.config.linux_machine_type,
+        }:
             self._gcloud_json(
-                "compute", "machine-types", "describe", machine_type, "--project", self.config.project,
-                "--zone", self.config.zone, action=f"Checking GCP machine type {machine_type}", timeout=60,
+                "compute",
+                "machine-types",
+                "describe",
+                machine_type,
+                "--project",
+                self.config.project,
+                "--zone",
+                self.config.zone,
+                action=f"Checking GCP machine type {machine_type}",
+                timeout=60,
             )
         for image, project in (
             (self.config.route_image, self.config.route_image_project),
@@ -819,22 +838,43 @@ class GcpProvider:
             (self.config.linux_image, self.config.linux_image_project),
         ):
             self._gcloud_json(
-                "compute", "images", "describe", image, "--project", project,
-                action=f"Checking GCP image {image}", timeout=60,
+                "compute",
+                "images",
+                "describe",
+                image,
+                "--project",
+                project,
+                action=f"Checking GCP image {image}",
+                timeout=60,
             )
         bootstrap = self._gcloud_json(
-            "compute", "instances", "describe", self.config.protected_instance,
-            "--project", self.config.project, "--zone", self.config.protected_zone,
-            action="Checking the protected bootstrap", timeout=60,
+            "compute",
+            "instances",
+            "describe",
+            self.config.protected_instance,
+            "--project",
+            self.config.project,
+            "--zone",
+            self.config.protected_zone,
+            action="Checking the protected bootstrap",
+            timeout=60,
         )
         if not isinstance(bootstrap, dict) or bootstrap.get("status") != "RUNNING":
             raise Gate13CloudError("protected bootstrap is not running")
         region = self._gcloud_json(
-            "compute", "regions", "describe", self.config.region, "--project", self.config.project,
-            action="Checking GCP L4 quota", timeout=60,
+            "compute",
+            "regions",
+            "describe",
+            self.config.region,
+            "--project",
+            self.config.project,
+            action="Checking GCP L4 quota",
+            timeout=60,
         )
         quota = region.get("quotas") if isinstance(region, dict) else None
-        l4 = next((item for item in quota or [] if isinstance(item, dict) and item.get("metric") == "NVIDIA_L4_GPUS"), None)
+        l4 = next(
+            (item for item in quota or [] if isinstance(item, dict) and item.get("metric") == "NVIDIA_L4_GPUS"), None
+        )
         if not isinstance(l4, dict) or float(l4.get("limit", 0)) - float(l4.get("usage", 0)) < 1:
             raise Gate13CloudError("one free regional NVIDIA L4 is required")
         self._ensure_ssh_key()
@@ -853,63 +893,113 @@ class GcpProvider:
     def create_route(self) -> None:
         labels = f"communityai_run={self.run_id},communityai_scope=gate13_one_click"
         self._gcloud(
-            "compute", "firewall-rules", "create", self.dht_firewall,
-            "--project", self.config.project,
-            "--network", self.config.network,
-            "--direction", "INGRESS",
-            "--action", "ALLOW",
-            "--rules", "tcp:31337-31338",
-            "--source-ranges", "0.0.0.0/0",
-            "--target-tags", self.route,
+            "compute",
+            "firewall-rules",
+            "create",
+            self.dht_firewall,
+            "--project",
+            self.config.project,
+            "--network",
+            self.config.network,
+            "--direction",
+            "INGRESS",
+            "--action",
+            "ALLOW",
+            "--rules",
+            "tcp:31337-31338",
+            "--source-ranges",
+            "0.0.0.0/0",
+            "--target-tags",
+            self.route,
             action="Creating the run-scoped route firewall",
             timeout=180,
         )
         self._gcloud(
-            "compute", "firewall-rules", "create", self.iap_firewall,
-            "--project", self.config.project,
-            "--network", self.config.network,
-            "--direction", "INGRESS",
-            "--action", "ALLOW",
-            "--rules", "tcp:22",
-            "--source-ranges", "35.235.240.0/20",
-            "--target-tags", f"{self.route},{self.client_tag}",
+            "compute",
+            "firewall-rules",
+            "create",
+            self.iap_firewall,
+            "--project",
+            self.config.project,
+            "--network",
+            self.config.network,
+            "--direction",
+            "INGRESS",
+            "--action",
+            "ALLOW",
+            "--rules",
+            "tcp:22",
+            "--source-ranges",
+            "35.235.240.0/20",
+            "--target-tags",
+            f"{self.route},{self.client_tag}",
             action="Creating the run-scoped IAP firewall",
             timeout=180,
         )
         self._gcloud(
-            "compute", "firewall-rules", "create", self.relay_firewall,
-            "--project", self.config.project,
-            "--network", self.config.network,
-            "--direction", "INGRESS",
-            "--priority", "1000",
-            "--action", "ALLOW",
-            "--rules", "tcp:38081",
-            "--source-tags", self.client_tag,
-            "--target-tags", self.route,
+            "compute",
+            "firewall-rules",
+            "create",
+            self.relay_firewall,
+            "--project",
+            self.config.project,
+            "--network",
+            self.config.network,
+            "--direction",
+            "INGRESS",
+            "--priority",
+            "1000",
+            "--action",
+            "ALLOW",
+            "--rules",
+            "tcp:38081",
+            "--source-tags",
+            self.client_tag,
+            "--target-tags",
+            self.route,
             action="Creating the proven private package-relay firewall",
             timeout=180,
         )
         self._gcloud(
-            "compute", "instances", "create", self.route,
-            "--project", self.config.project,
-            "--zone", self.config.zone,
-            "--machine-type", self.config.route_machine_type,
-            "--network", self.config.network,
-            "--subnet", self.config.subnet,
-            "--maintenance-policy", "TERMINATE",
-            "--provisioning-model", "STANDARD",
+            "compute",
+            "instances",
+            "create",
+            self.route,
+            "--project",
+            self.config.project,
+            "--zone",
+            self.config.zone,
+            "--machine-type",
+            self.config.route_machine_type,
+            "--network",
+            self.config.network,
+            "--subnet",
+            self.config.subnet,
+            "--maintenance-policy",
+            "TERMINATE",
+            "--provisioning-model",
+            "STANDARD",
             "--no-service-account",
             "--no-scopes",
-            "--image", self.config.route_image,
-            "--image-project", self.config.route_image_project,
-            "--boot-disk-type", "pd-balanced",
-            "--boot-disk-size", "200GB",
-            "--boot-disk-device-name", self.route,
+            "--image",
+            self.config.route_image,
+            "--image-project",
+            self.config.route_image_project,
+            "--boot-disk-type",
+            "pd-balanced",
+            "--boot-disk-size",
+            "200GB",
+            "--boot-disk-device-name",
+            self.route,
             "--boot-disk-auto-delete",
-            "--tags", self.route,
-            "--labels", labels,
-            "--max-run-duration", "57600s",
-            "--instance-termination-action", "DELETE",
+            "--tags",
+            self.route,
+            "--labels",
+            labels,
+            "--max-run-duration",
+            "57600s",
+            "--instance-termination-action",
+            "DELETE",
             action="Creating the GCP route VM",
             timeout=900,
         )
@@ -951,8 +1041,13 @@ class GcpProvider:
         catalog = bundle / "catalog-v1.tar"
         self.runner.run(
             [
-                "git", "-C", self.repository_root, "archive", "--format=tar",
-                f"--output={catalog}", self.config.catalog_source_commit,
+                "git",
+                "-C",
+                self.repository_root,
+                "archive",
+                "--format=tar",
+                f"--output={catalog}",
+                self.config.catalog_source_commit,
                 "public-alpha/catalog-v1",
             ],
             action="Archiving the exact successful signed catalog",
@@ -986,17 +1081,20 @@ class GcpProvider:
             raise Gate13CloudError("route VM has no public address")
         bundle = self._build_route_bundle()
         self._wait_ssh(
-            self.route, "test -f /etc/os-release",
+            self.route,
+            "test -f /etc/os-release",
             action="Waiting for route SSH",
             timeout_seconds=1_800,
         )
         files = [path for path in bundle.iterdir() if path.is_file()]
         self._ssh(
-            self.route, "rm -rf -- /tmp/gate13-route && install -d -m 0700 /tmp/gate13-route",
+            self.route,
+            "rm -rf -- /tmp/gate13-route && install -d -m 0700 /tmp/gate13-route",
             action="Preparing the route staging directory",
         )
         self._scp(
-            files, f"{self.route}:/tmp/gate13-route/",
+            files,
+            f"{self.route}:/tmp/gate13-route/",
             action="Staging the immutable route bundle",
             timeout=1_800,
         )
@@ -1018,8 +1116,7 @@ class GcpProvider:
         fence_digest = _sha256(fence)
         self._ssh(
             self.route,
-            "test \"$(sha256sum /tmp/gate13_route_fence.py | cut -d' ' -f1)\" "
-            f'= "{fence_digest}"',
+            "test \"$(sha256sum /tmp/gate13_route_fence.py | cut -d' ' -f1)\" " f'= "{fence_digest}"',
             action="Verifying the exact final route fence",
             timeout=120,
         )
@@ -1049,9 +1146,7 @@ class GcpProvider:
         interfaces = value.get("networkInterfaces") if isinstance(value, Mapping) else None
         private_ip = (
             interfaces[0].get("networkIP")
-            if isinstance(interfaces, list)
-            and len(interfaces) == 1
-            and isinstance(interfaces[0], dict)
+            if isinstance(interfaces, list) and len(interfaces) == 1 and isinstance(interfaces[0], dict)
             else None
         )
         try:
@@ -1070,9 +1165,7 @@ class GcpProvider:
             raise Gate13CloudError("client platform is invalid")
         return f"{self.run_id}-{platform}-relay"
 
-    def _relay_download_script(
-        self, platform: str, package: PackageArtifact
-    ) -> Path:
+    def _relay_download_script(self, platform: str, package: PackageArtifact) -> Path:
         stage = self.output_root / "route-relay" / platform
         stage.mkdir(parents=True, exist_ok=False)
         path = stage / f"route-download-{platform}.sh"
@@ -1117,9 +1210,7 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
         path.write_text(content, encoding="utf-8", newline="\n")
         return path
 
-    def _prepare_route_relay(
-        self, platform: str, package: PackageArtifact
-    ) -> str:
+    def _prepare_route_relay(self, platform: str, package: PackageArtifact) -> str:
         script = self._relay_download_script(platform, package)
         remote_script = f"/tmp/{self.run_id}-route-download-{platform}.sh"
         private_ip = self._route_private_ip()
@@ -1131,10 +1222,16 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
         metadata_added = False
         try:
             self._gcloud(
-                "compute", "instances", "add-metadata", self.route,
-                "--project", self.config.project,
-                "--zone", self.config.zone,
-                "--metadata-from-file", f"artifact-probe-url={url_path}",
+                "compute",
+                "instances",
+                "add-metadata",
+                self.route,
+                "--project",
+                self.config.project,
+                "--zone",
+                self.config.zone,
+                "--metadata-from-file",
+                f"artifact-probe-url={url_path}",
                 "--quiet",
                 action=f"Authorizing the proven {platform} route-relay download",
                 timeout=180,
@@ -1156,10 +1253,16 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
             url_path.unlink(missing_ok=True)
             if metadata_added:
                 self._gcloud(
-                    "compute", "instances", "remove-metadata", self.route,
-                    "--project", self.config.project,
-                    "--zone", self.config.zone,
-                    "--keys", "artifact-probe-url",
+                    "compute",
+                    "instances",
+                    "remove-metadata",
+                    self.route,
+                    "--project",
+                    self.config.project,
+                    "--zone",
+                    self.config.zone,
+                    "--keys",
+                    "artifact-probe-url",
                     "--quiet",
                     action=f"Removing the {platform} signed URL from route metadata",
                     timeout=180,
@@ -1228,29 +1331,51 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
             metadata_files.append(f"startup-script={startup}")
             disk_size = "120GB"
         self._gcloud(
-            "compute", "instances", "create", name,
-            "--project", self.config.project,
-            "--zone", self.config.zone,
-            "--machine-type", machine_type,
-            "--network", self.config.network,
-            "--subnet", self.config.subnet,
-            "--network-tier", "PREMIUM",
-            "--maintenance-policy", "MIGRATE",
-            "--provisioning-model", "STANDARD",
+            "compute",
+            "instances",
+            "create",
+            name,
+            "--project",
+            self.config.project,
+            "--zone",
+            self.config.zone,
+            "--machine-type",
+            machine_type,
+            "--network",
+            self.config.network,
+            "--subnet",
+            self.config.subnet,
+            "--network-tier",
+            "PREMIUM",
+            "--maintenance-policy",
+            "MIGRATE",
+            "--provisioning-model",
+            "STANDARD",
             "--no-service-account",
             "--no-scopes",
-            "--image", image,
-            "--image-project", image_project,
-            "--boot-disk-type", "pd-balanced",
-            "--boot-disk-size", disk_size,
-            "--boot-disk-device-name", name,
+            "--image",
+            image,
+            "--image-project",
+            image_project,
+            "--boot-disk-type",
+            "pd-balanced",
+            "--boot-disk-size",
+            disk_size,
+            "--boot-disk-device-name",
+            name,
             "--boot-disk-auto-delete",
-            "--tags", self.client_tag,
-            "--labels", labels,
-            "--metadata", metadata,
-            "--metadata-from-file", ",".join(metadata_files),
-            "--max-run-duration", "21600s",
-            "--instance-termination-action", "DELETE",
+            "--tags",
+            self.client_tag,
+            "--labels",
+            labels,
+            "--metadata",
+            metadata,
+            "--metadata-from-file",
+            ",".join(metadata_files),
+            "--max-run-duration",
+            "21600s",
+            "--instance-termination-action",
+            "DELETE",
             *(("--enable-display-device",) if platform == "windows" else ()),
             action=f"Creating the clean {platform} client VM",
             timeout=1_200,
@@ -1274,11 +1399,13 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
             "pause_timeout": 120.0,
             "schedule": {
                 "timezone": "UTC",
-                "windows": [{
-                    "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
-                    "start": "00:00",
-                    "end": "23:59",
-                }],
+                "windows": [
+                    {
+                        "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                        "start": "00:00",
+                        "end": "23:59",
+                    }
+                ],
             },
         }
 
@@ -1316,9 +1443,7 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
             "inference_timeout_seconds": 600,
         }
 
-    def _host_config(
-        self, platform: str, package: PackageArtifact, lifecycle_sha256: str
-    ) -> dict[str, Any]:
+    def _host_config(self, platform: str, package: PackageArtifact, lifecycle_sha256: str) -> dict[str, Any]:
         if platform == "windows":
             root = r"C:\Gate13Run"
             separator = "\\"
@@ -1329,8 +1454,10 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
             separator = "/"
             host_user = "gate13"
             python = "/usr/bin/python3"
+
         def remote(name: str) -> str:
             return root + separator + name
+
         return {
             "schema_version": 1,
             "run_id": self.run_id,
@@ -1341,14 +1468,11 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
             "job_name": f"communityai-gate13-{self.run_id}-{platform}",
             "host_user": host_user,
             "adapter_path": remote("gate13_host_job.py"),
-            "adapter_sha256": "sha256:" + _sha256(
-                self.repository_root / "scripts" / "gate13_host_job.py"
-            ),
+            "adapter_sha256": "sha256:" + _sha256(self.repository_root / "scripts" / "gate13_host_job.py"),
             "config_path": remote("host-job.json"),
             "entrypoint_path": remote("gate13_automated_playthrough.py"),
-            "entrypoint_sha256": "sha256:" + _sha256(
-                self.repository_root / "scripts" / "gate13_automated_playthrough.py"
-            ),
+            "entrypoint_sha256": "sha256:"
+            + _sha256(self.repository_root / "scripts" / "gate13_automated_playthrough.py"),
             "lifecycle_config_path": remote(f"gate13-{platform}-run.json"),
             "lifecycle_config_sha256": "sha256:" + lifecycle_sha256,
             "evidence_path": remote("evidence.json"),
@@ -1362,23 +1486,16 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
 
     @staticmethod
     def _write_json(path: Path, value: Mapping[str, Any]) -> None:
-        payload = (
-            json.dumps(value, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n"
-        )
+        payload = json.dumps(value, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         path.write_text(payload, encoding="utf-8", newline="\n")
 
-    def _build_client_stage(
-        self, platform: str, package: PackageArtifact
-    ) -> tuple[Path, Path]:
+    def _build_client_stage(self, platform: str, package: PackageArtifact) -> tuple[Path, Path]:
         stage = self.output_root / f"{platform}-stage"
         stage.mkdir(parents=True, exist_ok=False)
         lifecycle_path = stage / f"gate13-{platform}-run.json"
         self._write_json(lifecycle_path, self._lifecycle_config(platform, package))
         host_path = stage / "host-job.json"
-        self._write_json(
-            host_path, self._host_config(platform, package, _sha256(lifecycle_path))
-        )
+        self._write_json(host_path, self._host_config(platform, package, _sha256(lifecycle_path)))
         scripts = (
             "gate13_host_job.py",
             "gate13_automated_playthrough.py",
@@ -1399,13 +1516,8 @@ printf '%s\\n' '{{"result":"passed","scope":"gate13-{platform}-artifact-relay","
         lifecycle_path: Path,
         host_path: Path,
     ) -> Path:
-        expected = {
-            name: _sha256(stage / name)
-            for name in (*scripts, lifecycle_path.name, host_path.name)
-        }
-        entries = "\n".join(
-            f'    "{name}" = "{digest}"' for name, digest in expected.items()
-        )
+        expected = {name: _sha256(stage / name) for name in (*scripts, lifecycle_path.name, host_path.name)}
+        entries = "\n".join(f'    "{name}" = "{digest}"' for name, digest in expected.items())
         content = f"""$ErrorActionPreference = "Stop"
 $root = "C:\\Gate13Run"
 $expected = @{{
@@ -1446,13 +1558,9 @@ if ($explorer.Count -ne 1 -or $explorer[0].SessionId -lt 1) {{
         host_path: Path,
         package: PackageArtifact,
     ) -> Path:
-        expected = {
-            name: _sha256(stage / name)
-            for name in (*scripts, lifecycle_path.name, host_path.name)
-        }
+        expected = {name: _sha256(stage / name) for name in (*scripts, lifecycle_path.name, host_path.name)}
         installs = "\n".join(
-            f'install -o gate13 -g gate13 -m 0700 /tmp/{name} /qualification/{name}'
-            for name in scripts
+            f"install -o gate13 -g gate13 -m 0700 /tmp/{name} /qualification/{name}" for name in scripts
         )
         checks = "\n".join(
             f'test "$(sha256sum /qualification/{name} | cut -d\' \' -f1)" = "{digest}"'
@@ -1475,9 +1583,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         path.write_text(content, encoding="utf-8", newline="\n")
         return path
 
-    def prepare_client(
-        self, platform: str, package: PackageArtifact
-    ) -> Mapping[str, Any]:
+    def prepare_client(self, platform: str, package: PackageArtifact) -> Mapping[str, Any]:
         name = self.clients[platform]
         if platform == "windows":
             user = "Gate13Admin"
@@ -1487,13 +1593,12 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
                 "-PathType Leaf)) { exit 1 }; "
                 "$p=@(Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | "
                 "Where-Object {$_.UserName -like '*\\M'}); "
-                "if ($p.Count -ne 1 -or $p[0].SessionId -lt 1) { exit 1 }\""
+                'if ($p.Count -ne 1 -or $p[0].SessionId -lt 1) { exit 1 }"'
             )
         else:
             user = None
             ready_command = (
-                "test -f /var/lib/gate13-bootstrap-ready && "
-                "sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null"
+                "test -f /var/lib/gate13-bootstrap-ready && " "sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null"
             )
         self._wait_ssh(
             name,
@@ -1621,23 +1726,32 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
 
     def _delete_orphan_disk(self, name: str) -> None:
         inventory = self._gcloud_json(
-            "compute", "disks", "list",
-            "--project", self.config.project,
+            "compute",
+            "disks",
+            "list",
+            "--project",
+            self.config.project,
             action=f"Checking orphan disk {name}",
             timeout=120,
         )
-        present = [
-            item for item in inventory
-            if isinstance(item, dict) and item.get("name") == name
-        ] if isinstance(inventory, list) else []
+        present = (
+            [item for item in inventory if isinstance(item, dict) and item.get("name") == name]
+            if isinstance(inventory, list)
+            else []
+        )
         if not present:
             return
         if len(present) != 1:
             raise Gate13CloudError(f"disk inventory for {name} is ambiguous")
         disk = self._gcloud_json(
-            "compute", "disks", "describe", name,
-            "--project", self.config.project,
-            "--zone", self.config.zone,
+            "compute",
+            "disks",
+            "describe",
+            name,
+            "--project",
+            self.config.project,
+            "--zone",
+            self.config.zone,
             action=f"Binding orphan disk {name}",
             timeout=120,
         )
@@ -1651,9 +1765,14 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         ):
             raise Gate13CloudError(f"refusing to delete unbound disk {name}")
         self._gcloud(
-            "compute", "disks", "delete", name,
-            "--project", self.config.project,
-            "--zone", self.config.zone,
+            "compute",
+            "disks",
+            "delete",
+            name,
+            "--project",
+            self.config.project,
+            "--zone",
+            self.config.zone,
             "--quiet",
             action=f"Deleting orphan disk {name}",
             timeout=600,
@@ -1664,10 +1783,16 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         if value is not None:
             self._assert_owned_instance(name, value)
             self._gcloud(
-                "compute", "instances", "delete", name,
-                "--project", self.config.project,
-                "--zone", self.config.zone,
-                "--delete-disks", "all",
+                "compute",
+                "instances",
+                "delete",
+                name,
+                "--project",
+                self.config.project,
+                "--zone",
+                self.config.zone,
+                "--delete-disks",
+                "all",
                 "--quiet",
                 action=f"Deleting {label}",
                 timeout=900,
@@ -1698,22 +1823,30 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         if name not in bindings:
             raise Gate13CloudError(f"refusing to inspect unknown firewall {name}")
         inventory = self._gcloud_json(
-            "compute", "firewall-rules", "list",
-            "--project", self.config.project,
+            "compute",
+            "firewall-rules",
+            "list",
+            "--project",
+            self.config.project,
             action=f"Checking firewall {name}",
             timeout=120,
         )
-        present = [
-            item for item in inventory
-            if isinstance(item, dict) and item.get("name") == name
-        ] if isinstance(inventory, list) else []
+        present = (
+            [item for item in inventory if isinstance(item, dict) and item.get("name") == name]
+            if isinstance(inventory, list)
+            else []
+        )
         if not present:
             return
         if len(present) != 1:
             raise Gate13CloudError(f"firewall inventory for {name} is ambiguous")
         firewall = self._gcloud_json(
-            "compute", "firewall-rules", "describe", name,
-            "--project", self.config.project,
+            "compute",
+            "firewall-rules",
+            "describe",
+            name,
+            "--project",
+            self.config.project,
             action=f"Binding firewall {name}",
             timeout=120,
         )
@@ -1725,20 +1858,21 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             or firewall.get("name") != name
             or self._basename(firewall.get("network")) != self.config.network
             or firewall.get("direction") != "INGRESS"
-            or sorted(firewall.get("sourceRanges") or [])
-            != sorted(expected["source_ranges"])
-            or sorted(firewall.get("sourceTags") or [])
-            != sorted(expected["source_tags"])
-            or sorted(firewall.get("targetTags") or [])
-            != sorted(expected["target_tags"])
+            or sorted(firewall.get("sourceRanges") or []) != sorted(expected["source_ranges"])
+            or sorted(firewall.get("sourceTags") or []) != sorted(expected["source_tags"])
+            or sorted(firewall.get("targetTags") or []) != sorted(expected["target_tags"])
             or not isinstance(first_allow, dict)
             or first_allow.get("IPProtocol") != "tcp"
             or first_allow.get("ports") != expected["ports"]
         ):
             raise Gate13CloudError(f"refusing to delete unbound firewall {name}")
         self._gcloud(
-            "compute", "firewall-rules", "delete", name,
-            "--project", self.config.project,
+            "compute",
+            "firewall-rules",
+            "delete",
+            name,
+            "--project",
+            self.config.project,
             "--quiet",
             action=f"Deleting firewall {name}",
             timeout=300,
@@ -1775,15 +1909,18 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
     def verify_cleanup(self) -> Mapping[str, Any]:
         instances, disks, firewalls = self._resource_absence()
         bootstrap = self._gcloud_json(
-            "compute", "instances", "describe", self.config.protected_instance,
-            "--project", self.config.project,
-            "--zone", self.config.protected_zone,
+            "compute",
+            "instances",
+            "describe",
+            self.config.protected_instance,
+            "--project",
+            self.config.project,
+            "--zone",
+            self.config.protected_zone,
             action="Rechecking the protected bootstrap",
             timeout=120,
         )
-        protected_running = (
-            isinstance(bootstrap, dict) and bootstrap.get("status") == "RUNNING"
-        )
+        protected_running = isinstance(bootstrap, dict) and bootstrap.get("status") == "RUNNING"
         passed = not instances and not disks and not firewalls and protected_running
         return {
             "result": "passed" if passed else "failed",
