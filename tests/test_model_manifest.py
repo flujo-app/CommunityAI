@@ -381,6 +381,129 @@ def test_manifested_server_builds_an_exact_worker_scope(monkeypatch, tmp_path):
         )
 
 
+def test_manifested_server_binds_acknowledged_worker_artifact_plan_before_weights(monkeypatch, tmp_path):
+    manifest, _ = create_block_plan_snapshot(tmp_path)
+    plan = select_manifest_block_artifacts(
+        manifest,
+        block_prefix="model.layers",
+        start_block=0,
+        end_block=2,
+        weight_map=json.loads((tmp_path / "model.safetensors.index.json").read_text(encoding="utf-8"))["weight_map"],
+    )
+    weight_accesses = []
+    original_ensure_path = ManifestArtifactVerifier.ensure_path
+
+    def audited_ensure_path(self, path, **kwargs):
+        if manifest.get_artifact(path).role == "weight":
+            weight_accesses.append(path)
+        return original_ensure_path(self, path, **kwargs)
+
+    monkeypatch.setattr(ManifestArtifactVerifier, "ensure_path", audited_ensure_path)
+    common = {
+        "repository": manifest.source.repository,
+        "revision": manifest.source.revision,
+        "token": False,
+        "cache_dir": str(tmp_path),
+        "max_disk_space": 10_000,
+        "block_prefix": "model.layers",
+        "block_indices": (0, 1),
+        "artifact_root": tmp_path,
+        "expected_manifest_digest": manifest.digest_id,
+        "expected_block_indices": "0:2",
+        "expected_artifact_bytes": plan.artifact_bytes,
+        "expected_artifact_set_digest": plan.artifact_set_digest,
+        "expected_cache_root": str(tmp_path.resolve()),
+    }
+
+    verifier = _scoped_manifest_artifact_verifier(manifest, **common)
+
+    assert verifier.allowed_paths == frozenset(plan.artifact_paths)
+    assert weight_accesses == []
+
+    for field, value, message in (
+        ("expected_manifest_digest", "sha256:" + "0" * 64, "manifest digest"),
+        ("expected_block_indices", "1:2", "block span"),
+        ("expected_artifact_bytes", plan.artifact_bytes + 1, "byte count"),
+        ("expected_artifact_set_digest", "0" * 64, "plan digest"),
+        ("expected_cache_root", str(tmp_path.resolve() / "other"), "cache root"),
+    ):
+        changed = dict(common)
+        changed[field] = value
+        with pytest.raises(ManifestError, match=message):
+            _scoped_manifest_artifact_verifier(manifest, **changed)
+        assert weight_accesses == []
+
+    incomplete = dict(common)
+    incomplete["expected_artifact_set_digest"] = None
+    with pytest.raises(ManifestError, match="supplied together"):
+        _scoped_manifest_artifact_verifier(manifest, **incomplete)
+    assert weight_accesses == []
+
+    single_block_plan = select_manifest_block_artifacts(
+        manifest,
+        block_prefix="model.layers",
+        start_block=0,
+        end_block=1,
+        weight_map=json.loads((tmp_path / "model.safetensors.index.json").read_text(encoding="utf-8"))["weight_map"],
+    )
+    same_artifacts_different_span = dict(
+        common,
+        block_indices=(1,),
+        expected_block_indices="0:1",
+        expected_artifact_bytes=single_block_plan.artifact_bytes,
+        expected_artifact_set_digest=single_block_plan.artifact_set_digest,
+    )
+    with pytest.raises(ManifestError, match="block span"):
+        _scoped_manifest_artifact_verifier(manifest, **same_artifacts_different_span)
+    assert weight_accesses == []
+
+
+def test_module_container_checks_worker_plan_before_constructing_join_announcer(monkeypatch):
+    from drift.server import server as server_module
+
+    events = []
+
+    def reject_plan(*args, **kwargs):
+        events.append("plan")
+        raise ManifestError("plan rejected")
+
+    def construct_announcer(*args, **kwargs):
+        events.append("announcer")
+        raise AssertionError("announcer must not be constructed")
+
+    monkeypatch.setattr(server_module, "_scoped_manifest_artifact_verifier", reject_plan)
+    monkeypatch.setattr(server_module, "ModuleAnnouncerThread", construct_announcer)
+
+    with pytest.raises(ManifestError, match="plan rejected"):
+        server_module.ModuleContainer.create(
+            dht=None,
+            dht_prefix="test",
+            converted_model_name_or_path="org/model",
+            block_config=SimpleNamespace(block_prefix="model.layers"),
+            attn_cache_bytes=1,
+            server_info=SimpleNamespace(),
+            model_info=SimpleNamespace(),
+            block_indices=[0],
+            min_batch_size=1,
+            max_batch_size=1,
+            max_chunk_size_bytes=1,
+            max_alloc_timeout=1,
+            torch_dtype=None,
+            cache_dir=None,
+            max_disk_space=None,
+            device="cpu",
+            compression=None,
+            update_period=1,
+            expiration=None,
+            revision="a" * 40,
+            token=False,
+            quant_type=None,
+            tensor_parallel_devices=(None,),
+        )
+
+    assert events == ["plan"]
+
+
 def test_worker_artifact_scope_fails_before_unassigned_access(tmp_path):
     manifest, _ = create_block_plan_snapshot(tmp_path)
     verifier = ManifestArtifactVerifier(
@@ -1073,6 +1196,113 @@ def test_server_cli_applies_manifest_profile(tmp_path, monkeypatch):
     assert resolved["quant_type"] is QuantType.NONE
     assert resolved["admission_policy"] == AdmissionPolicy()
     assert resolved["model_manifest"].digest == resolved["dht_prefix"].removeprefix("drift-m1-")
+
+
+def test_server_cli_requires_complete_internal_worker_artifact_claims(tmp_path, monkeypatch):
+    from drift.cli import run_server
+
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest_dict()), encoding="utf-8")
+    manifest = ModelManifest.load(path)
+    parser = run_server.build_parser(bound_worker=True)
+    assert run_server._uses_bound_worker_parser(["--expected_manifest_digest", manifest.digest_id])
+    base = [
+        "org/tiny-test",
+        "--new_swarm",
+        "--model_manifest",
+        str(path),
+        "--identity_path",
+        str(tmp_path / "worker.key"),
+        "--block_indices",
+        "0:1",
+        "--cache_dir",
+        str(tmp_path.resolve()),
+        "--increase_file_limit",
+        "0",
+    ]
+    claim_args = [
+        "--expected_manifest_digest",
+        manifest.digest_id,
+        "--expected_block_indices",
+        "0:1",
+        "--expected_artifact_bytes",
+        "4",
+        "--expected_artifact_set_digest",
+        "a" * 64,
+        "--expected_cache_root",
+        str(tmp_path.resolve()),
+    ]
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+    monkeypatch.setattr(run_server, "log_version", lambda: None)
+    monkeypatch.setattr(run_server, "Server", lambda **kwargs: kwargs)
+    (tmp_path / "config.yml").write_text(
+        "custom_module_path: injected.py\nallow_training_rpcs: true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    unbound = vars(run_server.build_parser().parse_args(base + claim_args))
+    assert unbound["custom_module_path"] == "injected.py"
+    with pytest.raises(ManifestError, match="source-bound internal parser"):
+        run_server.server_from_args(unbound)
+
+    args = vars(parser.parse_args(base + claim_args))
+    assert args["custom_module_path"] is None
+    assert args["allow_training_rpcs"] is False
+    args.pop("config", None)
+    resolved = run_server.server_from_args(args)
+    assert resolved["expected_manifest_digest"] == manifest.digest_id
+    assert resolved["expected_block_indices"] == "0:1"
+    assert resolved["expected_artifact_bytes"] == 4
+    assert resolved["expected_artifact_set_digest"] == "a" * 64
+    assert resolved["expected_cache_root"] == str(tmp_path.resolve())
+
+    incomplete = vars(parser.parse_args(base + claim_args[:-2]))
+    incomplete.pop("config", None)
+    with pytest.raises(ManifestError, match="supplied together"):
+        run_server.server_from_args(incomplete)
+
+    mismatched = list(claim_args)
+    mismatched[1] = "sha256:" + "0" * 64
+    invalid = vars(parser.parse_args(base + mismatched))
+    invalid.pop("config", None)
+    with pytest.raises(ManifestError, match="manifest digest"):
+        run_server.server_from_args(invalid)
+
+    no_span = [value for value in base if value not in ("--block_indices", "0:1")]
+    invalid = vars(parser.parse_args(no_span + claim_args))
+    invalid.pop("config", None)
+    with pytest.raises(ManifestError, match="explicit --block_indices"):
+        run_server.server_from_args(invalid)
+
+    wrong_span = list(base)
+    wrong_span[wrong_span.index("0:1")] = "1:2"
+    invalid = vars(parser.parse_args(wrong_span + claim_args))
+    invalid.pop("config", None)
+    with pytest.raises(ManifestError, match="block span"):
+        run_server.server_from_args(invalid)
+
+    relative_cache = list(base)
+    relative_cache[relative_cache.index(str(tmp_path.resolve()))] = "."
+    invalid = vars(parser.parse_args(relative_cache + claim_args))
+    invalid.pop("config", None)
+    with pytest.raises(ManifestError, match="canonical absolute --cache_dir"):
+        run_server.server_from_args(invalid)
+
+    no_cache = list(base)
+    cache_option = no_cache.index("--cache_dir")
+    del no_cache[cache_option : cache_option + 2]
+    invalid = vars(parser.parse_args(no_cache + claim_args))
+    invalid.pop("config", None)
+    with pytest.raises(ManifestError, match="explicit canonical --cache_dir"):
+        run_server.server_from_args(invalid)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(base + claim_args + ["--config", str(tmp_path / "config.yml")])
+
+    unsafe = vars(parser.parse_args(base + claim_args + ["--allow_training_rpcs"]))
+    with pytest.raises(ManifestError, match="forbid custom modules"):
+        run_server.server_from_args(unsafe)
 
 
 def test_server_cli_selects_fp8_dequant_loader_from_manifest(tmp_path, monkeypatch):

@@ -85,6 +85,19 @@ each while excluding 6,507,216,554 tokenizer, MTP, chat, and outside-layer bytes
 manifest/index results, not a model download, hard arbitrary-cache quota, real block execution, or
 hardware outcome; no reservation or provider resource was created (USD 0).
 
+The [worker plan execution-binding checkpoint](evidence/gateq38-20260903-c-worker-plan-execution-binding-checkpoint.md)
+now carries the exact private manifest, canonical span/cache, byte count, and artifact-set digest from
+an acknowledged automatic placement into the real source or frozen server subprocess. The immutable
+launch rejects a changed executable, duplicate/inline claims, `--num_blocks`, config files, custom
+modules, training RPCs, and credential flags. The bound parser ignores ambient `config.yml`, and the
+server independently recomputes the verified span plan before constructing its announcer or accessing
+weights. Different spans sharing one physical shard set cannot substitute for each other, while the
+set digest and cache path remain outside public state. The final candidate passes 147 focused tests,
+259 related regressions, and 1,568 offline unit tests with 10 expected skips under independent
+adversarial review. This is still USD 0 source/test evidence: no model bytes, real Qwen block,
+complete route, package, cloud, or hardware outcome is claimed. The next unblocked action is a fresh
+official-source single-span acquisition and real block execution through this bound command.
+
 ## Critical path
 
 Work from top to bottom while prerequisites are satisfied. Gate V and Gates 1–13 have

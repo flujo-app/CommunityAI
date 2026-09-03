@@ -379,6 +379,7 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
         replica_counts=(0,),
         score=100,
         reason="selected 1:2 from fresh verified coverage",
+        artifact_set_digest="a" * 64,
     )
     unacknowledged = _build_worker_supervisor(
         config,
@@ -393,6 +394,35 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
     assert unacknowledged_launch.remote_acknowledged is False
     assert "not remotely acknowledged" in unacknowledged_launch.policy_reason
     unacknowledged.shutdown()
+
+    unbound_decision = PlacementDecision(
+        model_id=manifest.name,
+        manifest_digest=manifest.digest_id,
+        block_indices="1:2",
+        artifact_bytes=decision.artifact_bytes,
+        replica_counts=(0,),
+        score=100,
+        reason=decision.reason,
+    )
+    unbound = _build_worker_supervisor(
+        config,
+        manager,
+        automatic_placements={
+            "automatic": PlacementPlan(
+                unbound_decision,
+                unbound_decision.reason,
+                1,
+                intent_published=True,
+                remote_acknowledged=True,
+            ),
+        },
+    )
+    unbound_launch = unbound.launches[0]
+    assert unbound_launch.policy_admitted is False
+    assert "no exact artifact-set binding" in unbound_launch.policy_reason
+    assert "--expected_artifact_set_digest" not in unbound_launch.command
+    assert unbound_launch.placement_manifest_digest is None
+    unbound.shutdown()
 
     placed = _build_worker_supervisor(
         config,
@@ -415,6 +445,17 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
     assert launch.intent_published is True
     assert launch.remote_acknowledged is True
     assert launch.command[launch.command.index("--block_indices") + 1] == "1:2"
+    assert launch.command[launch.command.index("--expected_manifest_digest") + 1] == manifest.digest_id
+    assert launch.command[launch.command.index("--expected_block_indices") + 1] == "1:2"
+    assert launch.command[launch.command.index("--expected_artifact_bytes") + 1] == str(decision.artifact_bytes)
+    assert launch.command[launch.command.index("--expected_artifact_set_digest") + 1] == "a" * 64
+    expected_cache_root = str(Path(run_node_module.DEFAULT_CACHE_DIR).expanduser().resolve())
+    assert launch.command[launch.command.index("--cache_dir") + 1] == expected_cache_root
+    assert launch.command[launch.command.index("--expected_cache_root") + 1] == expected_cache_root
+    assert launch.placement_manifest_digest == manifest.digest_id
+    assert launch.placement_artifact_bytes == decision.artifact_bytes
+    assert launch.placement_artifact_set_digest == "a" * 64
+    assert launch.placement_cache_root == expected_cache_root
     assert "--num_blocks" not in launch.command
     placed.shutdown()
     manager.shutdown()

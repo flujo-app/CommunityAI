@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -138,6 +139,10 @@ class WorkerLaunch:
     placement_reason: Optional[str] = None
     intent_published: bool = False
     remote_acknowledged: bool = False
+    placement_manifest_digest: Optional[str] = None
+    placement_artifact_bytes: Optional[int] = None
+    placement_artifact_set_digest: Optional[str] = None
+    placement_cache_root: Optional[str] = None
     max_disk_bytes: Optional[int] = None
     max_vram_bytes: Optional[int] = None
     vram_device: Optional[str] = None
@@ -167,6 +172,91 @@ class WorkerLaunch:
             raise ValueError("manual workers must not carry an acknowledged automatic intent")
         if self.automatic and self.policy_admitted and not self.remote_acknowledged:
             raise ValueError("admitted automatic workers require a remotely acknowledged intent")
+        placement_claims = (
+            self.placement_manifest_digest,
+            self.placement_artifact_bytes,
+            self.placement_artifact_set_digest,
+            self.placement_cache_root,
+        )
+        if any(value is not None for value in placement_claims) and not all(
+            value is not None for value in placement_claims
+        ):
+            raise ValueError("automatic placement artifact claims must be configured together")
+        if not self.automatic and any(value is not None for value in placement_claims):
+            raise ValueError("manual workers must not carry automatic placement artifact claims")
+        if self.automatic and self.policy_admitted and not all(value is not None for value in placement_claims):
+            raise ValueError("admitted automatic workers require an exact placement artifact binding")
+        if self.placement_manifest_digest is not None and (
+            not isinstance(self.placement_manifest_digest, str)
+            or len(self.placement_manifest_digest) != 71
+            or not self.placement_manifest_digest.startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in self.placement_manifest_digest[7:])
+        ):
+            raise ValueError("placement manifest digest must be canonical sha256")
+        if self.placement_artifact_bytes is not None and (
+            isinstance(self.placement_artifact_bytes, bool)
+            or not isinstance(self.placement_artifact_bytes, int)
+            or self.placement_artifact_bytes < 0
+        ):
+            raise ValueError("placement artifact bytes must be a non-negative integer")
+        if self.placement_artifact_set_digest is not None and (
+            not isinstance(self.placement_artifact_set_digest, str)
+            or len(self.placement_artifact_set_digest) != 64
+            or any(character not in "0123456789abcdef" for character in self.placement_artifact_set_digest)
+        ):
+            raise ValueError("placement artifact-set digest must be lowercase SHA-256")
+        if self.placement_cache_root is not None:
+            if not isinstance(self.placement_cache_root, str) or not self.placement_cache_root:
+                raise ValueError("placement cache root must be a canonical absolute path")
+            canonical_cache_root = os.path.realpath(os.path.abspath(os.path.expanduser(self.placement_cache_root)))
+            if self.placement_cache_root != canonical_cache_root:
+                raise ValueError("placement cache root must be a canonical absolute path")
+
+            command = self.command
+            if any(not isinstance(value, str) or not value for value in command):
+                raise ValueError("placement-bound worker command arguments must be non-empty strings")
+            if command[0] != sys.executable or os.path.realpath(command[0]) != os.path.realpath(sys.executable):
+                raise ValueError("placement-bound worker command must use the current node executable")
+            forbidden_options = (
+                "-c",
+                "--config",
+                "--custom_module_path",
+                "--allow_training_rpcs",
+                "--token",
+                "--use_auth_token",
+            )
+            if any(
+                value == option or value.startswith(f"{option}=") or (option == "-c" and value.startswith("-c"))
+                for value in command
+                for option in forbidden_options
+            ):
+                raise ValueError("placement-bound worker command contains a forbidden server option")
+            module_entrypoint = len(command) >= 4 and command[1:4] == ("-m", "drift.cli", "server")
+            frozen_entrypoint = len(command) >= 2 and command[1] == "server"
+            if not module_entrypoint and not frozen_entrypoint:
+                raise ValueError("placement-bound worker command must invoke the drift server entrypoint")
+            if any(value == "--num_blocks" or value.startswith("--num_blocks=") for value in command):
+                raise ValueError("placement-bound worker command must not use --num_blocks")
+
+            def bound_option(option: str) -> str:
+                positions = [
+                    index for index, value in enumerate(command) if value == option or value.startswith(f"{option}=")
+                ]
+                if len(positions) != 1 or command[positions[0]] != option or positions[0] + 1 >= len(command):
+                    raise ValueError(f"placement-bound worker command requires exactly one {option}")
+                return command[positions[0] + 1]
+
+            for option, expected in (
+                ("--block_indices", self.block_indices),
+                ("--expected_block_indices", self.block_indices),
+                ("--expected_manifest_digest", self.placement_manifest_digest),
+                ("--expected_artifact_bytes", str(self.placement_artifact_bytes)),
+                ("--expected_artifact_set_digest", self.placement_artifact_set_digest),
+                ("--cache_dir", self.placement_cache_root),
+                ("--expected_cache_root", self.placement_cache_root),
+            ):
+                if bound_option(option) != expected:
+                    raise ValueError(f"placement-bound worker command has a mismatched {option}")
         if self.max_disk_bytes is not None and (
             isinstance(self.max_disk_bytes, bool) or not isinstance(self.max_disk_bytes, int) or self.max_disk_bytes < 1
         ):

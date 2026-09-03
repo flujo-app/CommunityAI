@@ -24,6 +24,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   proposal, identity-key, or lease-expiry changes. Public v1 intent claims keep
   the same privacy-safe shape. This checkpoint passes 142 focused, 132 adjacent,
   and 1,564 offline unit tests without downloading model weights or using cloud.
+- Acknowledged automatic worker plans now bind the exact manifest, canonical
+  span/cache, byte count, and artifact-set digest into the real source or frozen
+  server command. The supervisor rejects executable or flag substitution and
+  unsafe config/module/training/credential options; the server ignores ambient
+  config and revalidates the exact plan before announcement or weight access.
+  This no-spend checkpoint passes 147 focused, 259 related, and 1,568 offline
+  tests without downloading model weights or claiming real Qwen execution.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce

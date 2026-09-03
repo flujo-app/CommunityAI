@@ -52,6 +52,7 @@ from drift.protocol_identity import (
     create_route_demand,
 )
 from drift.utils.auto_config import AutoDistributedConfig
+from drift.utils.disk_cache import DEFAULT_CACHE_DIR
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
@@ -309,6 +310,11 @@ def _resolve_policy_models(
     return resolved
 
 
+def _resolved_automatic_cache_root(worker, model_config: NodeModelConfig) -> Path:
+    configured = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
+    return Path(DEFAULT_CACHE_DIR if configured is None else configured).expanduser().resolve()
+
+
 def _manifest_artifact_plans(
     manifest: ModelManifest,
     worker,
@@ -408,7 +414,7 @@ def _automatic_placement_candidates(
                     manifest,
                     worker,
                     token=token,
-                    cache_dir=worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir,
+                    cache_dir=_resolved_automatic_cache_root(worker, model_config),
                     max_disk_space=effective_disk_bytes,
                 )
             except (ManifestError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -527,6 +533,8 @@ def _prepare_worker_supervisor_settings(
             policy_reason = placement_reason
         elif automatic and not (intent_published and remote_acknowledged):
             policy_reason = "automatic placement intent is not remotely acknowledged"
+        elif automatic and decision.artifact_set_digest is None:
+            policy_reason = "automatic placement has no exact artifact-set binding"
         elif resolved_model in denied_models:
             policy_reason = f"model {descriptor.model_id!r} is denied by contribution policy"
         elif allowed_models and resolved_model not in allowed_models:
@@ -619,9 +627,30 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--num_blocks", str(selected_num_blocks)))
         else:
             command.extend(("--block_indices", selected_block_indices))
+        cache_dir = (
+            _resolved_automatic_cache_root(worker, model_config)
+            if automatic
+            else worker.cache_dir
+            if worker.cache_dir is not None
+            else model_config.cache_dir
+        )
+        if automatic and decision is not None and decision.artifact_set_digest is not None:
+            command.extend(
+                (
+                    "--expected_manifest_digest",
+                    decision.manifest_digest,
+                    "--expected_block_indices",
+                    selected_block_indices,
+                    "--expected_artifact_bytes",
+                    str(decision.artifact_bytes),
+                    "--expected_artifact_set_digest",
+                    decision.artifact_set_digest,
+                    "--expected_cache_root",
+                    str(cache_dir),
+                )
+            )
         if worker.device is not None:
             command.extend(("--device", worker.device))
-        cache_dir = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
         if cache_dir is not None:
             command.extend(("--cache_dir", str(cache_dir)))
         if effective_disk_space is not None:
@@ -634,6 +663,7 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--public_ip", worker.public_ip))
         for revocation_file in model_config.revocation_files:
             command.extend(("--revocation_file", str(revocation_file)))
+        placement_binding = decision if decision is not None and decision.artifact_set_digest is not None else None
 
         launches.append(
             WorkerLaunch(
@@ -651,6 +681,12 @@ def _prepare_worker_supervisor_settings(
                 placement_reason=placement_reason,
                 intent_published=intent_published,
                 remote_acknowledged=remote_acknowledged,
+                placement_manifest_digest=(None if placement_binding is None else placement_binding.manifest_digest),
+                placement_artifact_bytes=(None if placement_binding is None else placement_binding.artifact_bytes),
+                placement_artifact_set_digest=(
+                    None if placement_binding is None else placement_binding.artifact_set_digest
+                ),
+                placement_cache_root=None if placement_binding is None else str(cache_dir),
                 max_disk_bytes=effective_disk_bytes,
                 max_vram_bytes=effective_vram_bytes,
                 vram_device=vram_device,

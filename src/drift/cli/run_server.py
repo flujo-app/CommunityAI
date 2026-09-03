@@ -3,6 +3,8 @@ import faulthandler
 import logging
 import os
 import signal
+import sys
+from pathlib import Path
 from typing import Callable, Optional
 
 import configargparse
@@ -35,6 +37,20 @@ from drift.utils.server_registry import register_server, unregister_server
 from drift.utils.version import log_version
 
 logger = get_logger(__name__)
+
+_BOUND_WORKER_CLAIM_FLAGS = (
+    "--expected_manifest_digest",
+    "--expected_block_indices",
+    "--expected_artifact_bytes",
+    "--expected_artifact_set_digest",
+    "--expected_cache_root",
+)
+
+
+def _uses_bound_worker_parser(argv) -> bool:
+    return any(
+        value == option or value.startswith(f"{option}=") for value in argv for option in _BOUND_WORKER_CLAIM_FLAGS
+    )
 
 
 def _install_graceful_sigterm() -> None:
@@ -74,11 +90,13 @@ def serve(server: Server, *, model: Optional[str], on_ready: Optional[Callable[[
         server.shutdown()
 
 
-def build_parser() -> configargparse.ArgParser:
+def build_parser(*, bound_worker: bool = False) -> configargparse.ArgParser:
     # fmt:off
-    parser = configargparse.ArgParser(default_config_files=["config.yml"],
+    parser = configargparse.ArgParser(default_config_files=[] if bound_worker else ["config.yml"],
                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add('-c', '--config', required=False, is_config_file=True, help='config file path')
+    parser.set_defaults(_bound_worker_parser=bound_worker)
+    if not bound_worker:
+        parser.add('-c', '--config', required=False, is_config_file=True, help='config file path')
 
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--converted_model_name_or_path', type=str, default=None,
@@ -94,6 +112,11 @@ def build_parser() -> configargparse.ArgParser:
 
     parser.add_argument('--num_blocks', type=int, default=None, help="The number of blocks to serve")
     parser.add_argument('--block_indices', type=str, default=None, help="Specific block indices to serve")
+    parser.add_argument('--expected_manifest_digest', type=str, default=None, help=argparse.SUPPRESS)
+    parser.add_argument('--expected_block_indices', type=str, default=None, help=argparse.SUPPRESS)
+    parser.add_argument('--expected_artifact_bytes', type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument('--expected_artifact_set_digest', type=str, default=None, help=argparse.SUPPRESS)
+    parser.add_argument('--expected_cache_root', type=str, default=None, help=argparse.SUPPRESS)
     parser.add_argument('--dht_prefix', type=str, default=None, help="Announce all blocks with this DHT prefix")
 
     parser.add_argument('--port', type=int, required=False,
@@ -284,7 +307,42 @@ def server_from_args(args: dict) -> Server:
     # Arm this before anything can spawn a p2pd, so a hard-killed server does not orphan its daemons
     tie_child_processes_to_this_process()
 
+    bound_worker_parser = args.pop("_bound_worker_parser", False)
     requested_model = args.pop("model") or args["converted_model_name_or_path"]
+    artifact_claims = (
+        args.get("expected_manifest_digest"),
+        args.get("expected_block_indices"),
+        args.get("expected_artifact_bytes"),
+        args.get("expected_artifact_set_digest"),
+        args.get("expected_cache_root"),
+    )
+    if any(value is not None for value in artifact_claims):
+        if bound_worker_parser is not True:
+            raise ManifestError("Worker artifact-plan claims require the source-bound internal parser")
+        if any(value is None for value in artifact_claims):
+            raise ManifestError("Worker manifest, span, cache, and artifact-plan claims must be supplied together")
+        if (
+            args.get("model_manifest") is None
+            or args.get("block_indices") is None
+            or args.get("num_blocks") is not None
+        ):
+            raise ManifestError("Worker artifact-plan claims require --model_manifest and explicit --block_indices")
+        if args["block_indices"] != args["expected_block_indices"]:
+            raise ManifestError("Worker block span does not match the acknowledged placement decision")
+        cache_dir = args.get("cache_dir")
+        if not isinstance(cache_dir, str) or not cache_dir:
+            raise ManifestError("Worker artifact-plan claims require an explicit canonical --cache_dir")
+        canonical_cache_root = str(Path(cache_dir).expanduser().resolve())
+        if cache_dir != canonical_cache_root:
+            raise ManifestError("Worker artifact-plan claims require a canonical absolute --cache_dir")
+        if args["expected_cache_root"] != canonical_cache_root:
+            raise ManifestError("Worker cache root does not match the acknowledged placement decision")
+        if (
+            args.get("custom_module_path") is not None
+            or args.get("allow_training_rpcs") is not False
+            or args.get("token") is not None
+        ):
+            raise ManifestError("Placement-bound workers forbid custom modules, training RPCs, and credential flags")
     admission_values = {
         "max_active_sessions": args.pop("admission_max_active_sessions"),
         "max_active_sessions_per_peer": args.pop("admission_max_active_sessions_per_peer"),
@@ -301,6 +359,8 @@ def server_from_args(args: dict) -> Server:
     if manifest_path is not None:
         manifest = ModelManifest.load(manifest_path)
         manifest.validate_runtime(drift.__version__)
+        if args.get("expected_manifest_digest") is not None and args["expected_manifest_digest"] != manifest.digest_id:
+            raise ManifestError("Worker manifest digest does not match the acknowledged placement decision")
         if requested_model is None:
             requested_model = manifest.source.repository
         args["converted_model_name_or_path"] = requested_model
@@ -424,7 +484,7 @@ def server_from_args(args: dict) -> Server:
 
 
 def main():
-    parser = build_parser()
+    parser = build_parser(bound_worker=_uses_bound_worker_parser(sys.argv[1:]))
     args = vars(parser.parse_args())
     args.pop("config", None)
 

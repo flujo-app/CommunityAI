@@ -80,6 +80,61 @@ def parse_block_indices(value: str, num_hidden_layers: int) -> range:
     return range(start_block, end_block)
 
 
+def _validate_artifact_plan_claim(
+    manifest: Optional[ModelManifest],
+    artifact_plan,
+    *,
+    cache_dir: Optional[str],
+    expected_manifest_digest: Optional[str],
+    expected_block_indices: Optional[str],
+    expected_artifact_bytes: Optional[int],
+    expected_artifact_set_digest: Optional[str],
+    expected_cache_root: Optional[str],
+) -> None:
+    claims = (
+        expected_manifest_digest,
+        expected_block_indices,
+        expected_artifact_bytes,
+        expected_artifact_set_digest,
+        expected_cache_root,
+    )
+    if all(value is None for value in claims):
+        return
+    if any(value is None for value in claims):
+        raise ManifestError("Worker manifest, span, cache, and artifact-plan claims must be supplied together")
+    if manifest is None or artifact_plan is None:
+        raise ManifestError("Worker artifact-plan claims require a manifested explicit block span")
+    if not isinstance(expected_manifest_digest, str) or expected_manifest_digest != manifest.digest_id:
+        raise ManifestError("Worker manifest digest does not match the acknowledged placement decision")
+    actual_block_indices = f"{artifact_plan.start_block}:{artifact_plan.end_block}"
+    if expected_block_indices != actual_block_indices:
+        raise ManifestError("Worker block span does not match the acknowledged placement decision")
+    if not isinstance(cache_dir, str) or not cache_dir:
+        raise ManifestError("Worker artifact-plan claims require an explicit canonical cache root")
+    canonical_cache_root = os.path.realpath(os.path.abspath(os.path.expanduser(cache_dir)))
+    if cache_dir != canonical_cache_root:
+        raise ManifestError("Worker artifact-plan claims require a canonical absolute cache root")
+    if expected_cache_root != canonical_cache_root:
+        raise ManifestError("Worker cache root does not match the acknowledged placement decision")
+    if (
+        isinstance(expected_artifact_bytes, bool)
+        or not isinstance(expected_artifact_bytes, int)
+        or expected_artifact_bytes < 0
+    ):
+        raise ManifestError("Worker artifact-plan byte count must be a non-negative integer")
+    if (
+        not isinstance(expected_artifact_set_digest, str)
+        or len(expected_artifact_set_digest) != 64
+        or expected_artifact_set_digest.lower() != expected_artifact_set_digest
+        or any(character not in "0123456789abcdef" for character in expected_artifact_set_digest)
+    ):
+        raise ManifestError("Worker artifact-plan digest must be lowercase SHA-256")
+    if artifact_plan.artifact_bytes != expected_artifact_bytes:
+        raise ManifestError("Worker artifact plan byte count does not match the acknowledged placement decision")
+    if artifact_plan.artifact_set_digest != expected_artifact_set_digest:
+        raise ManifestError("Worker artifact plan digest does not match the acknowledged placement decision")
+
+
 def _scoped_manifest_artifact_verifier(
     manifest: Optional[ModelManifest],
     *,
@@ -90,9 +145,24 @@ def _scoped_manifest_artifact_verifier(
     max_disk_space: int,
     block_prefix: str,
     block_indices: Sequence[int],
+    expected_manifest_digest: Optional[str] = None,
+    expected_block_indices: Optional[str] = None,
+    expected_artifact_bytes: Optional[int] = None,
+    expected_artifact_set_digest: Optional[str] = None,
+    expected_cache_root: Optional[str] = None,
     artifact_root=None,
 ) -> Optional[ManifestArtifactVerifier]:
     if manifest is None:
+        _validate_artifact_plan_claim(
+            manifest,
+            None,
+            cache_dir=cache_dir,
+            expected_manifest_digest=expected_manifest_digest,
+            expected_block_indices=expected_block_indices,
+            expected_artifact_bytes=expected_artifact_bytes,
+            expected_artifact_set_digest=expected_artifact_set_digest,
+            expected_cache_root=expected_cache_root,
+        )
         return None
     if not block_indices:
         raise ManifestError("Manifested module container requires at least one block")
@@ -110,10 +180,20 @@ def _scoped_manifest_artifact_verifier(
         artifact_root=artifact_root,
         allowed_paths=startup_paths,
     )
-    verifier.bind_block_artifact_plan(
+    artifact_plan = verifier.bind_block_artifact_plan(
         block_prefix=block_prefix,
         start_block=start_block,
         end_block=end_block,
+    )
+    _validate_artifact_plan_claim(
+        manifest,
+        artifact_plan,
+        cache_dir=cache_dir,
+        expected_manifest_digest=expected_manifest_digest,
+        expected_block_indices=expected_block_indices,
+        expected_artifact_bytes=expected_artifact_bytes,
+        expected_artifact_set_digest=expected_artifact_set_digest,
+        expected_cache_root=expected_cache_root,
     )
     return verifier
 
@@ -153,6 +233,11 @@ class Server:
         throughput: Union[float, str],
         num_blocks: Optional[int] = None,
         block_indices: Optional[str] = None,
+        expected_manifest_digest: Optional[str] = None,
+        expected_block_indices: Optional[str] = None,
+        expected_artifact_bytes: Optional[int] = None,
+        expected_artifact_set_digest: Optional[str] = None,
+        expected_cache_root: Optional[str] = None,
         num_handlers: int = 1,
         inference_max_length: Optional[int] = None,
         min_batch_size: int = 1,
@@ -446,6 +531,38 @@ class Server:
         if block_indices is not None:
             block_indices = parse_block_indices(block_indices, self.block_config.num_hidden_layers)
             num_blocks = len(block_indices)
+        artifact_claims = (
+            expected_manifest_digest,
+            expected_block_indices,
+            expected_artifact_bytes,
+            expected_artifact_set_digest,
+            expected_cache_root,
+        )
+        artifact_plan = None
+        if all(value is not None for value in artifact_claims):
+            if artifact_verifier is not None and block_indices is not None:
+                artifact_plan = artifact_verifier.plan_block_artifacts(
+                    block_prefix=self.block_config.block_prefix,
+                    start_block=block_indices.start,
+                    end_block=block_indices.stop,
+                )
+        _validate_artifact_plan_claim(
+            model_manifest,
+            artifact_plan,
+            cache_dir=cache_dir,
+            expected_manifest_digest=expected_manifest_digest,
+            expected_block_indices=expected_block_indices,
+            expected_artifact_bytes=expected_artifact_bytes,
+            expected_artifact_set_digest=expected_artifact_set_digest,
+            expected_cache_root=expected_cache_root,
+        )
+        (
+            self.expected_manifest_digest,
+            self.expected_block_indices,
+            self.expected_artifact_bytes,
+            self.expected_artifact_set_digest,
+            self.expected_cache_root,
+        ) = artifact_claims
         self.strict_block_indices, self.num_blocks = block_indices, num_blocks
 
         if self.device_memory_limits is not None:
@@ -632,6 +749,11 @@ class Server:
             revision=self.revision,
             token=self.token,
             model_manifest=self.model_manifest,
+            expected_manifest_digest=self.expected_manifest_digest,
+            expected_block_indices=self.expected_block_indices,
+            expected_artifact_bytes=self.expected_artifact_bytes,
+            expected_artifact_set_digest=self.expected_artifact_set_digest,
+            expected_cache_root=self.expected_cache_root,
             admission_policy=self.admission_policy,
             protocol_identity=self.protocol_identity,
             manifest_execution_profile=self.manifest_execution_profile,
@@ -769,6 +891,11 @@ class ModuleContainer(threading.Thread):
         revision: Optional[str],
         token: Optional[Union[str, bool]],
         model_manifest: Optional[ModelManifest] = None,
+        expected_manifest_digest: Optional[str] = None,
+        expected_block_indices: Optional[str] = None,
+        expected_artifact_bytes: Optional[int] = None,
+        expected_artifact_set_digest: Optional[str] = None,
+        expected_cache_root: Optional[str] = None,
         protocol_identity: Optional[NodeIdentity] = None,
         manifest_execution_profile: Optional[Dict[str, object]] = None,
         revocations: Optional[RevocationStore] = None,
@@ -778,6 +905,21 @@ class ModuleContainer(threading.Thread):
         **kwargs,
     ) -> ModuleContainer:
         module_uids = [f"{dht_prefix}{UID_DELIMITER}{block_index}" for block_index in block_indices]
+        artifact_verifier = _scoped_manifest_artifact_verifier(
+            model_manifest,
+            repository=converted_model_name_or_path,
+            revision=revision,
+            token=token,
+            cache_dir=cache_dir,
+            max_disk_space=max_disk_space,
+            block_prefix=block_config.block_prefix,
+            block_indices=block_indices,
+            expected_manifest_digest=expected_manifest_digest,
+            expected_block_indices=expected_block_indices,
+            expected_artifact_bytes=expected_artifact_bytes,
+            expected_artifact_set_digest=expected_artifact_set_digest,
+            expected_cache_root=expected_cache_root,
+        )
         memory_cache = MemoryCache(attn_cache_bytes, max_alloc_timeout, paged=paged_cache, page_size=page_size)
 
         server_info.state = ServerState.JOINING
@@ -803,16 +945,6 @@ class ModuleContainer(threading.Thread):
 
         blocks = {}
         try:
-            artifact_verifier = _scoped_manifest_artifact_verifier(
-                model_manifest,
-                repository=converted_model_name_or_path,
-                revision=revision,
-                token=token,
-                cache_dir=cache_dir,
-                max_disk_space=max_disk_space,
-                block_prefix=block_config.block_prefix,
-                block_indices=block_indices,
-            )
             for module_uid, block_index in zip(module_uids, block_indices):
                 block = load_pretrained_block(
                     converted_model_name_or_path,
