@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from gate13_cloud_orchestrator import PackageArtifact
-from gate13_gcp_provider import GcpConfig, GcpProvider, LoggedRunner
+from gate13_gcp_provider import GcpConfig, GcpProvider, GitHubPackageSource, LoggedRunner
 
 RUN_ID = "g13-20260902-000000-abcd"
 
@@ -39,6 +39,48 @@ def provider(tmp_path, runner, signed_url=lambda package: "https://productionres
         runner=runner,
         signed_url=signed_url,
     )
+
+
+def test_package_build_is_fresh_even_when_a_matching_old_run_exists(tmp_path):
+    calls = []
+
+    class Runner:
+        def run(self, argv, **_kwargs):
+            calls.append([str(item) for item in argv])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+    source = GitHubPackageSource(
+        repository_root=ROOT,
+        output_root=tmp_path,
+        repository="flujo-app/CommunityAI",
+        workflow="desktop.yaml",
+        runner=Runner(),
+        sleeper=lambda _seconds: None,
+    )
+    old = {
+        "id": 10,
+        "head_sha": "a" * 40,
+        "status": "completed",
+        "conclusion": "success",
+    }
+    fresh = {
+        "id": 11,
+        "head_sha": "a" * 40,
+        "status": "completed",
+        "conclusion": "success",
+    }
+    listings = iter([[old], [fresh]])
+    source._workflow_runs = lambda _branch: next(listings)
+    source._artifacts = lambda run_id: {
+        f"communityai-desktop-{kind}-{platform}": {"id": run_id}
+        for kind in ("install", "audit")
+        for platform in ("windows", "linux")
+    }
+
+    run_id, _artifacts = source._select_or_build_run("a" * 40, "test-branch")
+
+    assert run_id == 11
+    assert any(command[1:3] == ["workflow", "run"] for command in calls)
 
 
 def test_logged_runner_does_not_retain_argv_or_output(tmp_path):

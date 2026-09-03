@@ -249,15 +249,6 @@ class GitHubPackageSource:
 
     def _select_or_build_run(self, head: str, branch: str) -> tuple[int, dict[str, Mapping[str, Any]]]:
         prior_runs = self._workflow_runs(branch)
-        for run in prior_runs:
-            if run.get("head_sha") == head and run.get("status") == "completed" and run.get("conclusion") == "success":
-                run_id = run.get("id")
-                if isinstance(run_id, int):
-                    artifacts = self._artifacts(run_id)
-                    if self._has_required_artifacts(artifacts):
-                        self.progress(f"Using existing production package run {run_id}")
-                        return run_id, artifacts
-
         prior_run_ids = {item.get("id") for item in prior_runs if isinstance(item.get("id"), int)}
         self.runner.run(
             ["gh", "workflow", "run", self.workflow, "--repo", self.repository, "--ref", branch],
