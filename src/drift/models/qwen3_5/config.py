@@ -27,7 +27,7 @@ def _peek_top_level_model_type(model_name_or_path: Union[str, os.PathLike, None]
     try:
         config_dict, _ = PretrainedConfig.get_config_dict(model_name_or_path, **peek_kwargs)
     except Exception as exc:
-        raise RuntimeError(f"Could not inspect Qwen3.5 checkpoint config at {model_name_or_path}") from exc
+        raise RuntimeError(f"Could not inspect Qwen3.5/Qwen3.8 checkpoint config at {model_name_or_path}") from exc
     return config_dict.get("model_type")
 
 

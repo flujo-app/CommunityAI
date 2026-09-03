@@ -85,3 +85,23 @@ def test_block_size_uses_the_requested_hybrid_layer_geometry():
 
     assert first == 4
     assert third == 12
+
+
+def test_fp8_dequant_memory_budget_uses_execution_dtype():
+    class Block(torch.nn.Module):
+        def __init__(self, config, layer_idx=0):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.empty(16))
+
+    config = SimpleNamespace(block_class=Block, torch_dtype=torch.bfloat16)
+
+    assert (
+        get_block_size(
+            config,
+            "memory",
+            dtype=torch.bfloat16,
+            quant_type=QuantType.FP8_DEQUANT,
+            eps=0,
+        )
+        == 32
+    )

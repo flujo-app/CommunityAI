@@ -1,10 +1,15 @@
 from types import SimpleNamespace
 
+import pytest
 import torch
 from torch import nn
 
 from drift.client.lm_head import LMHead
-from drift.server.from_pretrained import _find_unconsumed_checkpoint_keys, _load_state_dict_from_local_file
+from drift.server.from_pretrained import (
+    _find_unconsumed_checkpoint_keys,
+    _load_state_dict_from_local_file,
+    dequantize_finegrained_fp8_state_dict,
+)
 from drift.utils.asyncio import patch_hivemind_task_cleanup, safe_cancel_task_if_running
 
 
@@ -24,6 +29,33 @@ def test_legacy_rotary_frequency_is_derived_but_other_state_stays_strict():
         "mystery_scale",
         "self_attn.rotary_emb.trained_scale",
     ]
+
+
+def test_finegrained_fp8_checkpoint_weights_dequantize_from_their_scale_grid():
+    fp8_dtype = getattr(torch, "float8_e4m3fn", None)
+    if fp8_dtype is None:
+        pytest.skip("torch build has no float8_e4m3fn dtype")
+    state_dict = {
+        "proj.weight": torch.ones(4, 4, dtype=fp8_dtype),
+        "proj.weight_scale_inv": torch.tensor([[2.0, 4.0], [0.5, 1.0]]),
+        "norm.weight": torch.arange(4, dtype=torch.bfloat16),
+    }
+
+    loaded = dequantize_finegrained_fp8_state_dict(state_dict, output_dtype=torch.bfloat16)
+
+    expected = torch.tensor(
+        [[2.0, 2.0, 4.0, 4.0], [2.0, 2.0, 4.0, 4.0], [0.5, 0.5, 1.0, 1.0], [0.5, 0.5, 1.0, 1.0]],
+        dtype=torch.bfloat16,
+    )
+    assert torch.equal(loaded["proj.weight"], expected)
+    assert loaded["proj.weight"].dtype == torch.bfloat16
+    assert torch.equal(loaded["norm.weight"], state_dict["norm.weight"])
+    assert "proj.weight_scale_inv" not in loaded
+
+
+def test_finegrained_fp8_checkpoint_rejects_an_orphan_scale():
+    with pytest.raises(ValueError, match="has no matching"):
+        dequantize_finegrained_fp8_state_dict({"proj.weight_scale_inv": torch.ones(1, 1)}, output_dtype=torch.bfloat16)
 
 
 def test_safetensors_block_load_copies_selected_tensors_out_of_the_file_mapping(monkeypatch):

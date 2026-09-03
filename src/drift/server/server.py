@@ -88,7 +88,7 @@ def _probe_quantization(quant_type: QuantType, device: torch.device) -> Optional
     weights are already downloaded. A tiny quantization exercises the shared native library that both
     the nf4 and int8 paths depend on, so we can catch the problem before loading anything.
     """
-    if quant_type == QuantType.NONE:
+    if quant_type in (QuantType.NONE, QuantType.FP8_DEQUANT):
         return None
     try:
         import bitsandbytes as bnb
@@ -788,6 +788,7 @@ class ModuleContainer(threading.Thread):
                     cache_dir=cache_dir,
                     max_disk_space=max_disk_space,
                     artifact_verifier=artifact_verifier,
+                    quant_type=quant_type,
                 )
                 block = convert_block(
                     block,

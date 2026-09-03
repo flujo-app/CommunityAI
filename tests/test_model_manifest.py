@@ -65,6 +65,49 @@ def test_qwen3_5_edge_primary_candidate_is_exactly_pinned():
     }
 
 
+def test_qwen3_8_27b_bf16_reference_is_exactly_pinned():
+    reference = Path(__file__).resolve().parents[1] / "manifests" / "reference" / "qwen3.8-27b-bfloat16-eager.json"
+    manifest = ModelManifest.load(reference)
+
+    assert manifest.name == "Qwen3.8 27B BF16 Reference"
+    assert manifest.aliases == ("qwen3.8-27b-bf16-reference",)
+    assert manifest.source.repository == "Qwen/Qwen3.8-27B"
+    assert manifest.source.revision == "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+    assert manifest.model.architecture == "Qwen3_5ForConditionalGeneration"
+    assert manifest.model.num_blocks == 64
+    assert manifest.model.context_length == 262144
+    assert manifest.model.license == "apache-2.0"
+    assert manifest.model.gated is False
+    assert manifest.runtime.dtype == "bfloat16"
+    assert manifest.runtime.attention_implementation == "eager"
+    assert manifest.runtime.quantization == "none"
+    assert manifest.digest_id == "sha256:3d70e5be1eb079143b82a139e12823529d1294810f1df0265ba6aa10e7a48c0e"
+    assert len(manifest.artifacts) == 25
+    assert sum(artifact.size for artifact in manifest.artifacts) == 55_586_035_522
+    assert sum(artifact.size for artifact in manifest.artifacts if artifact.role == "weight") == 55_563_006_776
+
+
+def test_qwen3_8_27b_fp8_dequant_candidate_is_exactly_pinned():
+    candidate = Path(__file__).resolve().parents[1] / "manifests" / "candidates" / "qwen3.8-27b-fp8-dequant-eager.json"
+    manifest = ModelManifest.load(candidate)
+
+    assert manifest.name == "Qwen3.8 27B FP8 Dequant"
+    assert manifest.aliases == ("qwen3.8-27b", "qwen3.8-27b-fp8")
+    assert manifest.source.repository == "Qwen/Qwen3.8-27B-FP8"
+    assert manifest.source.revision == "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
+    assert manifest.model.architecture == "Qwen3_5ForConditionalGeneration"
+    assert manifest.model.num_blocks == 64
+    assert manifest.model.context_length == 262144
+    assert manifest.model.license == "apache-2.0"
+    assert manifest.model.gated is False
+    assert manifest.runtime.dtype == "bfloat16"
+    assert manifest.runtime.quantization == "fp8_dequant"
+    assert manifest.digest_id == "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4"
+    assert len(manifest.artifacts) == 73
+    assert sum(artifact.size for artifact in manifest.artifacts) == 30_889_967_831
+    assert sum(artifact.size for artifact in manifest.artifacts if artifact.role == "weight") == 30_866_866_928
+
+
 def test_gemma4_edge_standby_candidate_is_exactly_pinned():
     candidate = Path(__file__).resolve().parents[1] / "manifests" / "candidates" / "gemma-4-e2b-it-bfloat16-eager.json"
     manifest = ModelManifest.load(candidate)
@@ -257,6 +300,50 @@ def test_wrapper_manifest_validation_uses_preserved_source_architecture():
             max_position_embeddings=262144,
         )
     )
+
+
+def test_manifest_rejects_unimplemented_prequantized_source_profile():
+    manifest = ModelManifest.from_dict(manifest_dict())
+
+    with pytest.raises(ManifestError, match="pre-quantized 'fp8'.*explicit compatible profile"):
+        manifest.validate_model_config(
+            SimpleNamespace(
+                architectures=["LlamaForCausalLM"],
+                num_hidden_layers=8,
+                max_position_embeddings=2048,
+                _source_quantization_method="fp8",
+            )
+        )
+
+
+def test_manifest_accepts_finegrained_fp8_dequant_profile():
+    source = manifest_dict()
+    source["runtime"]["quantization"] = "fp8_dequant"
+    manifest = ModelManifest.from_dict(source)
+
+    manifest.validate_model_config(
+        SimpleNamespace(
+            architectures=["LlamaForCausalLM"],
+            num_hidden_layers=8,
+            max_position_embeddings=2048,
+            _source_quantization_method="fp8",
+        )
+    )
+
+
+def test_manifest_rejects_fp8_dequant_profile_without_fp8_source_metadata():
+    source = manifest_dict()
+    source["runtime"]["quantization"] = "fp8_dequant"
+    manifest = ModelManifest.from_dict(source)
+
+    with pytest.raises(ManifestError, match="fp8_dequant.*requires source config quant_method='fp8'"):
+        manifest.validate_model_config(
+            SimpleNamespace(
+                architectures=["LlamaForCausalLM"],
+                num_hidden_layers=8,
+                max_position_embeddings=2048,
+            )
+        )
 
 
 def test_artifact_verification(tmp_path):
@@ -699,6 +786,40 @@ def test_server_cli_applies_manifest_profile(tmp_path, monkeypatch):
     assert resolved["quant_type"] is QuantType.NONE
     assert resolved["admission_policy"] == AdmissionPolicy()
     assert resolved["model_manifest"].digest == resolved["dht_prefix"].removeprefix("drift-m1-")
+
+
+def test_server_cli_selects_fp8_dequant_loader_from_manifest(tmp_path, monkeypatch):
+    from drift.cli import run_server
+    from drift.utils.convert_block import QuantType
+
+    source = manifest_dict()
+    source["runtime"]["dtype"] = "bfloat16"
+    source["runtime"]["quantization"] = "fp8_dequant"
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(source), encoding="utf-8")
+    args = vars(
+        run_server.build_parser().parse_args(
+            [
+                "org/tiny-test",
+                "--new_swarm",
+                "--model_manifest",
+                str(path),
+                "--identity_path",
+                str(tmp_path / "worker.key"),
+                "--increase_file_limit",
+                "0",
+            ]
+        )
+    )
+    args.pop("config", None)
+
+    monkeypatch.setattr(run_server, "tie_child_processes_to_this_process", lambda: None)
+    monkeypatch.setattr(run_server, "log_version", lambda: None)
+    monkeypatch.setattr(run_server, "Server", lambda **kwargs: kwargs)
+    resolved = run_server.server_from_args(args)
+
+    assert resolved["torch_dtype"] == "bfloat16"
+    assert resolved["quant_type"] is QuantType.FP8_DEQUANT
 
 
 def test_server_cli_derives_repository_from_manifest(tmp_path, monkeypatch):

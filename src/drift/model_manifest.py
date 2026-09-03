@@ -36,7 +36,7 @@ _ARTIFACT_ROLES = {
     "weight_index",
 }
 _DTYPES = {"bfloat16", "float16", "float32"}
-_QUANTIZATIONS = {"int8", "nf4", "none"}
+_QUANTIZATIONS = {"fp8_dequant", "int8", "nf4", "none"}
 _ATTENTION_IMPLEMENTATIONS = {"auto", "eager", "sdpa"}
 _CHECKPOINT_ROLES = {"converted_weight", "quantized_weight", "weight"}
 _TOKENIZER_FILENAMES = {
@@ -452,6 +452,17 @@ class ModelManifest:
         if context_length != self.model.context_length:
             raise ManifestError(
                 f"Manifest declares context length {self.model.context_length} but config declares {context_length!r}"
+            )
+        source_quantization = getattr(config, "_source_quantization_method", None)
+        compatible_source_profile = (source_quantization, self.runtime.quantization) in {
+            ("fp8", "fp8_dequant"),
+        }
+        if self.runtime.quantization == "fp8_dequant" and not compatible_source_profile:
+            raise ManifestError("Manifest runtime profile 'fp8_dequant' requires source config quant_method='fp8'")
+        if source_quantization is not None and not compatible_source_profile:
+            raise ManifestError(
+                f"Source config declares pre-quantized {source_quantization!r} weights, but the manifest runtime "
+                f"profile declares {self.runtime.quantization!r}; this checkpoint needs an explicit compatible profile"
             )
 
 
