@@ -121,6 +121,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   paid start/collection remain blocked. The final USD 0 candidate passes 412 complete
   Gate Q3.8 tests with five native-platform skips plus Black, isort, compilation, and
   whitespace checks; native Linux and provider-read probes remain open.
+- Qwen3.8 protected-host behavior now has a native Linux root result. An
+  ephemeral network-disabled container ran the exact pushed controller, adapter,
+  transport, runtime, and staging matrix from read-only mounts: 415 tests passed
+  and only two Windows-only checks skipped. Linux ownership, private modes,
+  nonroot traversal, symlink rejection, atomic delivery, receipt/replay,
+  generation-bracketed fake-provider reads, and terminal cleanup executed at
+  USD 0. No live GCP, IAP, metadata, capacity, or paid-route result is claimed;
+  paid start/collection remain blocked pending a committed reservation.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
