@@ -274,7 +274,8 @@ def test_route_preparation_waits_five_minutes_and_for_ubuntu_installer(
     assert "/proc/uptime" in waits[0]
     assert "-ge 300" in waits[0]
     assert "/var/lib/dpkg/lock-frontend" in waits[0]
-    assert any("gate13_route_setup.sh" in command for command in ssh_commands)
+    setup_command = next(command for command in ssh_commands if "gate13_route_setup.sh" in command)
+    assert "install -d -m 0755 /tmp/gate13-route/catalog-v1" in setup_command
     assert result["result"] == "passed"
 
 

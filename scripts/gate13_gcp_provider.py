@@ -1096,7 +1096,7 @@ class GcpProvider:
         )
         setup = self._ssh(
             self.route,
-            "install -d -m 0700 /tmp/gate13-route/catalog-v1 && "
+            "install -d -m 0755 /tmp/gate13-route/catalog-v1 && "
             "tar -xf /tmp/gate13-route/catalog-v1.tar -C /tmp/gate13-route/catalog-v1 "
             "--strip-components=2 && sudo bash /tmp/gate13-route/gate13_route_setup.sh",
             action="Installing and starting the route services",
