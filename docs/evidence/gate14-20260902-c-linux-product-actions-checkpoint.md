@@ -12,9 +12,9 @@ platform handlers were being implemented. This checkpoint makes the partial
 Linux slice reproducible and leaves the Windows half and all physical
 qualification work explicitly open.
 
-GitHub Issues are disabled for `flujo-app/CommunityAI`, so the pushed draft PR
-for this branch is the restart ticket. The PR link should be added here after it
-is created.
+GitHub Issues are disabled for `flujo-app/CommunityAI`, so [draft PR #26](https://github.com/flujo-app/CommunityAI/pull/26)
+is the restart ticket. It carries the remaining implementation, verification,
+staging, budget-revalidation, hardware-run, and cleanup checklist.
 
 ## Implemented Linux slice
 
