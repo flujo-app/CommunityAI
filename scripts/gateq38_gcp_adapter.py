@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Sequence
 
+from scripts import gateq38_linux_host_transport as transport
 from scripts import gateq38_route_controller as controller
 
 MAX_OUTPUT_BYTES = 1_048_576
@@ -28,6 +29,10 @@ ROUTE_TAG_PREFIX = "communityai-q38-"
 ROUTE_TCP_RULE = "tcp:31330-31339"
 IAP_TCP_RULE = "tcp:22"
 IAP_SOURCE_RANGE = "35.235.240.0/20"
+GUEST_ATTRIBUTE_NAMESPACE = "communityai-q38"
+GUEST_ATTRIBUTE_KEY = "status-v1"
+GUEST_ATTRIBUTE_QUERY_PATH = f"{GUEST_ATTRIBUTE_NAMESPACE}/{GUEST_ATTRIBUTE_KEY}"
+MAX_GUEST_ATTRIBUTE_OUTPUT_BYTES = transport.MAX_ENVELOPE_BYTES * 2 + 4_096
 RUNTIME_ACTIONS_BLOCKED = "source-bound Qwen3.8 host runtime is not plan-bound"
 
 
@@ -43,6 +48,8 @@ class CommandResult:
 
 
 Runner = Callable[[Sequence[str], int], CommandResult]
+StatusKeyResolver = Callable[[str, str], bytes]
+StatusCheckpointResolver = Callable[[str, str], tuple[str | None, int]]
 
 
 def _default_runner(argv: Sequence[str], timeout: int) -> CommandResult:
@@ -267,11 +274,19 @@ class GcpAdapter:
         *,
         runner: Runner = _default_runner,
         clock: Callable[[], float] = time.time,
+        status_key_resolver: StatusKeyResolver | None = None,
+        status_checkpoint_resolver: StatusCheckpointResolver | None = None,
     ) -> None:
+        if (status_key_resolver is None) != (status_checkpoint_resolver is None):
+            raise Q38GcpAdapterError(
+                "authenticated host status requires key and checkpoint resolvers"
+            )
         self.plan = plan
         self.source_root = source_root.resolve()
         self.runner = runner
         self.clock = clock
+        self.status_key_resolver = status_key_resolver
+        self.status_checkpoint_resolver = status_checkpoint_resolver
         _assert_source_bound(plan, self.source_root)
 
     def _gcloud(
@@ -590,35 +605,10 @@ class GcpAdapter:
                 raise Q38GcpAdapterError("run-scoped provider inventory is not exact")
         return values, self._protected_bootstrap_running()
 
-    def inventory(
+    def _resource_observations(
         self,
-        host_status: Mapping[str, Any],
-        *,
-        manifest_path: Path | None,
-        artifact_root: Path | None,
-        evidence_root: Path | None = None,
-        cleanup_only: bool = False,
-    ) -> dict[str, Any]:
-        if cleanup_only:
-            host = blank_host_status(self.plan)
-        else:
-            host = validate_host_status(host_status, self.plan)
-            if host != blank_host_status(self.plan):
-                raise Q38GcpAdapterError("protected Qwen3.8 host status transport is not plan-bound")
-        provider, protected = self._provider_inventory()
-        now = int(self.clock())
-        if cleanup_only:
-            revalidation: Mapping[str, Any] | None = None
-        else:
-            if manifest_path is None or artifact_root is None:
-                raise Q38GcpAdapterError("production artifact inputs are required")
-            revalidation = controller.revalidate_production_artifact_plan(
-                self.plan,
-                manifest_path,
-                artifact_root,
-                self.source_root,
-                verified_at_unix=now,
-            )
+        provider: Mapping[str, Mapping[str, Any] | None],
+    ) -> dict[str, dict[str, Any]]:
         resources: dict[str, dict[str, Any]] = {}
         for resource in self.plan.resources:
             value = provider[resource.name]
@@ -643,12 +633,202 @@ class GcpAdapter:
                 "source_commit": self.plan.source_commit if present else None,
                 "deadline_unix": self.plan.deadline_unix if present else None,
                 "plan_digest": self.plan.plan_digest if present else None,
-                "start_action_id": controller._action_id(self.plan, "start_route") if present else None,
+                "start_action_id": (
+                    controller._action_id(self.plan, "start_route") if present else None
+                ),
                 "worker_id": resource.worker_id if present else None,
                 "instance_id": instance_id,
                 "creation_timestamp": creation_timestamp,
                 "instance_generation_digest": instance_generation_digest,
             }
+        return resources
+
+    def _guest_attribute(self, resource: controller.ResourcePlan) -> bytes | None:
+        if not resource.kind.endswith("instance"):
+            raise Q38GcpAdapterError("guest attribute target is not an instance")
+        result = self._gcloud(
+            "compute",
+            "instances",
+            "get-guest-attributes",
+            resource.name,
+            f"--project={controller.EXPECTED_PROJECT}",
+            f"--zone={controller.EXPECTED_ZONE}",
+            f"--query-path={GUEST_ATTRIBUTE_QUERY_PATH}",
+            "--format=json",
+            timeout=60,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise Q38GcpAdapterError("guest attribute read failed")
+        value = _json_bytes(
+            result.stdout,
+            "guest attribute",
+            maximum=MAX_GUEST_ATTRIBUTE_OUTPUT_BYTES,
+        )
+        allowed_fields = {"kind", "queryPath", "queryValue", "selfLink"}
+        if (
+            not isinstance(value, dict)
+            or not set(value).issubset(allowed_fields)
+            or value.get("queryPath") != GUEST_ATTRIBUTE_QUERY_PATH
+            or value.get("kind", "compute#guestAttributes")
+            != "compute#guestAttributes"
+        ):
+            raise Q38GcpAdapterError("guest attribute response is invalid")
+        query_value = value.get("queryValue")
+        if not isinstance(query_value, dict) or set(query_value) != {"items"}:
+            raise Q38GcpAdapterError("guest attribute response is invalid")
+        items = query_value["items"]
+        if not isinstance(items, list) or len(items) > 1:
+            raise Q38GcpAdapterError("guest attribute response is ambiguous")
+        if not items:
+            return None
+        item = items[0]
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"namespace", "key", "value"}
+            or item["namespace"] != GUEST_ATTRIBUTE_NAMESPACE
+            or item["key"] != GUEST_ATTRIBUTE_KEY
+            or not isinstance(item["value"], str)
+        ):
+            raise Q38GcpAdapterError("guest attribute item is invalid")
+        try:
+            payload = item["value"].encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise Q38GcpAdapterError("guest attribute value is invalid") from exc
+        if not 1 <= len(payload) <= transport.MAX_ENVELOPE_BYTES:
+            raise Q38GcpAdapterError("guest attribute value exceeded its size bound")
+        return payload
+
+    def _authenticated_host_status(
+        self,
+        pre_provider: Mapping[str, Mapping[str, Any] | None],
+        pre_protected: bool,
+        *,
+        now_unix: int,
+    ) -> tuple[
+        dict[str, Any],
+        dict[str, Mapping[str, Any] | None],
+        bool,
+    ]:
+        key_resolver = self.status_key_resolver
+        checkpoint_resolver = self.status_checkpoint_resolver
+        if key_resolver is None or checkpoint_resolver is None:
+            raise Q38GcpAdapterError("authenticated host status is not configured")
+        host = blank_host_status(self.plan)
+        pre_resources = self._resource_observations(pre_provider)
+        pre_digest = controller.observation_instance_generations_digest(
+            pre_resources,
+            self.plan,
+        )
+        for resource in self.plan.resources:
+            if not resource.kind.endswith("instance"):
+                continue
+            observed = pre_resources[resource.name]
+            generation = observed["instance_generation_digest"]
+            if generation is None:
+                continue
+            payload = self._guest_attribute(resource)
+            if payload is None:
+                continue
+            try:
+                key = key_resolver(resource.name, generation)
+                checkpoint = checkpoint_resolver(resource.name, generation)
+            except Exception as exc:
+                raise Q38GcpAdapterError(
+                    "protected host status material is unavailable"
+                ) from exc
+            if (
+                not isinstance(checkpoint, tuple)
+                or len(checkpoint) != 2
+                or checkpoint[0] is not None
+                and not isinstance(checkpoint[0], str)
+                or not isinstance(checkpoint[1], int)
+                or isinstance(checkpoint[1], bool)
+                or checkpoint[1] < 0
+                or checkpoint[1] > 0
+                and checkpoint[0] is None
+            ):
+                raise Q38GcpAdapterError("protected host status checkpoint is invalid")
+            try:
+                envelope = transport.validate_status_envelope(
+                    transport.decode_status_envelope(payload),
+                    self.plan,
+                    key=key,
+                    now_unix=now_unix,
+                    expected_resource_name=resource.name,
+                    expected_generation_digest=generation,
+                    expected_boot_id=checkpoint[0],
+                    minimum_revision=checkpoint[1],
+                )
+            except transport.Q38LinuxHostTransportError as exc:
+                raise Q38GcpAdapterError(
+                    "authenticated guest attribute is invalid"
+                ) from exc
+            context = envelope["context"]
+            if (
+                context["instance_id"] != observed["instance_id"]
+                or context["creation_timestamp"] != observed["creation_timestamp"]
+            ):
+                raise Q38GcpAdapterError(
+                    "authenticated guest attribute generation changed"
+                )
+            if resource.kind == "worker_instance":
+                host["workers"][resource.worker_id] = envelope["payload"]
+            else:
+                host["route_job"] = envelope["payload"]
+        post_provider, post_protected = self._provider_inventory()
+        post_resources = self._resource_observations(post_provider)
+        post_digest = controller.observation_instance_generations_digest(
+            post_resources,
+            self.plan,
+        )
+        if (
+            pre_digest != post_digest
+            or not pre_protected
+            or not post_protected
+            or pre_protected != post_protected
+        ):
+            raise Q38GcpAdapterError(
+                "provider generation changed during authenticated host-status read"
+            )
+        return validate_host_status(host, self.plan), post_provider, post_protected
+
+    def inventory(
+        self,
+        host_status: Mapping[str, Any],
+        *,
+        manifest_path: Path | None,
+        artifact_root: Path | None,
+        evidence_root: Path | None = None,
+        cleanup_only: bool = False,
+    ) -> dict[str, Any]:
+        if cleanup_only:
+            host = blank_host_status(self.plan)
+        else:
+            host = validate_host_status(host_status, self.plan)
+            if host != blank_host_status(self.plan):
+                raise Q38GcpAdapterError("protected Qwen3.8 host status transport is not plan-bound")
+        provider, protected = self._provider_inventory()
+        now = int(self.clock())
+        if not cleanup_only and self.status_key_resolver is not None:
+            host, provider, protected = self._authenticated_host_status(
+                provider,
+                protected,
+                now_unix=now,
+            )
+        if cleanup_only:
+            revalidation: Mapping[str, Any] | None = None
+        else:
+            if manifest_path is None or artifact_root is None:
+                raise Q38GcpAdapterError("production artifact inputs are required")
+            revalidation = controller.revalidate_production_artifact_plan(
+                self.plan,
+                manifest_path,
+                artifact_root,
+                self.source_root,
+                verified_at_unix=now,
+            )
+        resources = self._resource_observations(provider)
         workers: dict[str, Any] = {}
         for worker in self.plan.workers:
             instance_value = provider[worker.instance]

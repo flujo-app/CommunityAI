@@ -13,7 +13,11 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import test_gateq38_route_controller as route_test  # noqa: E402
 
-from scripts import gateq38_gcp_adapter as adapter, gateq38_route_controller as route  # noqa: E402
+from scripts import (  # noqa: E402
+    gateq38_gcp_adapter as adapter,
+    gateq38_linux_host_transport as transport,
+    gateq38_route_controller as route,
+)
 
 NOW = 1_900_000_000
 
@@ -58,6 +62,9 @@ class FakeGcloud:
         }
         self.fail_delete_once: set[str] = set()
         self.fail_create_once: set[str] = set()
+        self.guest_attributes: dict[str, bytes] = {}
+        self.guest_response_overrides: dict[str, object] = {}
+        self.recreate_after_guest_read: str | None = None
 
     @staticmethod
     def result(value: object | None = None, *, returncode: int = 0, stderr: bytes = b""):
@@ -207,6 +214,32 @@ class FakeGcloud:
             return adapter.CommandResult(0, b"operator@example.invalid\n", b"")
         if args[:2] == ["projects", "describe"]:
             return self.result({"lifecycleState": "ACTIVE"})
+        if args[:3] == ["compute", "instances", "get-guest-attributes"]:
+            name = args[3]
+            if name not in self.resources:
+                return self.result(returncode=1, stderr=b"resource was not found")
+            if name in self.guest_response_overrides:
+                response = self.guest_response_overrides[name]
+            else:
+                items = []
+                payload = self.guest_attributes.get(name)
+                if payload is not None:
+                    items.append(
+                        {
+                            "namespace": adapter.GUEST_ATTRIBUTE_NAMESPACE,
+                            "key": adapter.GUEST_ATTRIBUTE_KEY,
+                            "value": payload.decode("ascii"),
+                        }
+                    )
+                response = {
+                    "kind": "compute#guestAttributes",
+                    "queryPath": adapter.GUEST_ATTRIBUTE_QUERY_PATH,
+                    "queryValue": {"items": items},
+                }
+            if self.recreate_after_guest_read == name:
+                self.resources[name]["id"] = str(int(self.resources[name]["id"]) + 1)
+                self.recreate_after_guest_read = None
+            return self.result(response)
         if args[:3] == ["compute", "instances", "describe"]:
             name = args[3]
             if name == route.PROTECTED_INSTANCE:
@@ -316,6 +349,70 @@ def _ready_status(plan: route.RoutePlan) -> dict[str, object]:
         "workers": observation["workers"],
         "route_job": observation["route_job"],
     }
+
+
+STATUS_KEY = b"q" * 32
+STATUS_BOOT_ID = "123e4567-e89b-12d3-a456-426614174000"
+PREPARED_RECORD_DIGEST = "sha256:" + "a" * 64
+
+
+def _publish_authenticated_status(
+    plan: route.RoutePlan,
+    fake: FakeGcloud,
+    *,
+    key: bytes = STATUS_KEY,
+    revision: int = 1,
+) -> None:
+    status = _ready_status(plan)
+    for resource in plan.resources:
+        if not resource.kind.endswith("instance"):
+            continue
+        provider_value = fake.resources[resource.name]
+        context = transport.build_instance_context(
+            plan,
+            resource.name,
+            provider_value["id"],
+            provider_value["creationTimestamp"],
+            issued_at_unix=NOW - 60,
+            expires_at_unix=min(plan.deadline_unix, NOW + 600),
+            key=key,
+        )
+        payload = (
+            status["workers"][resource.worker_id]
+            if resource.kind == "worker_instance"
+            else status["route_job"]
+        )
+        envelope = transport.build_status_envelope(
+            context,
+            payload,
+            plan,
+            key=key,
+            boot_id=STATUS_BOOT_ID,
+            revision=revision,
+            published_at_unix=NOW,
+            prepared_record_digest=PREPARED_RECORD_DIGEST,
+        )
+        fake.guest_attributes[resource.name] = transport.encode_status_envelope(
+            envelope
+        )
+
+
+def _authenticated_provider(
+    plan: route.RoutePlan,
+    fake: FakeGcloud,
+    tmp_path: Path,
+    *,
+    key: bytes = STATUS_KEY,
+    checkpoint: tuple[str | None, int] = (None, 0),
+) -> adapter.GcpAdapter:
+    return adapter.GcpAdapter(
+        plan,
+        tmp_path / "source",
+        runner=fake,
+        clock=lambda: NOW,
+        status_key_resolver=lambda _resource, _generation: key,
+        status_checkpoint_resolver=lambda _resource, _generation: checkpoint,
+    )
 
 
 def _execute(
@@ -857,3 +954,218 @@ def test_provider_observation_carries_exact_instance_generation_inventory(
             assert observed["instance_id"] is None
             assert observed["creation_timestamp"] is None
             assert observed["instance_generation_digest"] is None
+
+
+def test_authenticated_guest_status_requires_both_protected_resolvers(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+
+    with pytest.raises(
+        adapter.Q38GcpAdapterError,
+        match="key and checkpoint resolvers",
+    ):
+        adapter.GcpAdapter(
+            plan,
+            tmp_path / "source",
+            runner=fake,
+            status_key_resolver=lambda _resource, _generation: STATUS_KEY,
+        )
+
+
+def test_authenticated_guest_status_is_consumed_between_stable_inventories(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    _publish_authenticated_status(plan, fake)
+    provider = _authenticated_provider(plan, fake, tmp_path)
+
+    observation = provider.inventory(
+        adapter.blank_host_status(plan),
+        manifest_path=tmp_path / "manifest.json",
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert {item["state"] for item in observation["workers"].values()} == {
+        "ready"
+    }
+    assert observation["route_job"]["state"] == "absent"
+    guest_calls = [
+        call
+        for call in fake.calls
+        if call[1:4]
+        == ("compute", "instances", "get-guest-attributes")
+    ]
+    assert len(guest_calls) == 5
+    assert all(
+        f"--query-path={adapter.GUEST_ATTRIBUTE_QUERY_PATH}" in call
+        and f"--project={route.EXPECTED_PROJECT}" in call
+        and f"--zone={route.EXPECTED_ZONE}" in call
+        and "--format=json" in call
+        for call in guest_calls
+    )
+    worker = next(
+        item for item in plan.resources if item.kind == "worker_instance"
+    )
+    worker_describes = [
+        call
+        for call in fake.calls
+        if call[1:5]
+        == ("compute", "instances", "describe", worker.name)
+    ]
+    assert len(worker_describes) == 2
+
+
+def test_absent_guest_attributes_do_not_resolve_keys_or_promote_workers(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    resolutions: list[tuple[str, str]] = []
+    provider = adapter.GcpAdapter(
+        plan,
+        tmp_path / "source",
+        runner=fake,
+        clock=lambda: NOW,
+        status_key_resolver=lambda resource, generation: (
+            resolutions.append((resource, generation)) or STATUS_KEY
+        ),
+        status_checkpoint_resolver=lambda _resource, _generation: (None, 0),
+    )
+
+    observation = provider.inventory(
+        adapter.blank_host_status(plan),
+        manifest_path=tmp_path / "manifest.json",
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert resolutions == []
+    assert {item["state"] for item in observation["workers"].values()} == {
+        "starting"
+    }
+    assert observation["route_job"]["state"] == "absent"
+
+
+def test_authenticated_guest_status_rejects_wrong_key(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    _publish_authenticated_status(plan, fake)
+    provider = _authenticated_provider(
+        plan,
+        fake,
+        tmp_path,
+        key=b"x" * 32,
+    )
+
+    with pytest.raises(
+        adapter.Q38GcpAdapterError,
+        match="authenticated guest attribute is invalid",
+    ):
+        provider.inventory(
+            adapter.blank_host_status(plan),
+            manifest_path=tmp_path / "manifest.json",
+            artifact_root=tmp_path / "artifacts",
+        )
+
+
+def test_authenticated_guest_status_rejects_replayed_revision(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    _publish_authenticated_status(plan, fake, revision=1)
+    provider = _authenticated_provider(
+        plan,
+        fake,
+        tmp_path,
+        checkpoint=(STATUS_BOOT_ID, 1),
+    )
+
+    with pytest.raises(
+        adapter.Q38GcpAdapterError,
+        match="authenticated guest attribute is invalid",
+    ):
+        provider.inventory(
+            adapter.blank_host_status(plan),
+            manifest_path=tmp_path / "manifest.json",
+            artifact_root=tmp_path / "artifacts",
+        )
+
+
+def test_guest_attribute_response_rejects_ambiguous_items(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    resource = next(
+        item for item in plan.resources if item.kind.endswith("instance")
+    )
+    item = {
+        "namespace": adapter.GUEST_ATTRIBUTE_NAMESPACE,
+        "key": adapter.GUEST_ATTRIBUTE_KEY,
+        "value": "{}",
+    }
+    fake.guest_response_overrides[resource.name] = {
+        "kind": "compute#guestAttributes",
+        "queryPath": adapter.GUEST_ATTRIBUTE_QUERY_PATH,
+        "queryValue": {"items": [item, item]},
+    }
+    provider = _authenticated_provider(plan, fake, tmp_path)
+
+    with pytest.raises(
+        adapter.Q38GcpAdapterError,
+        match="guest attribute response is ambiguous",
+    ):
+        provider.inventory(
+            adapter.blank_host_status(plan),
+            manifest_path=tmp_path / "manifest.json",
+            artifact_root=tmp_path / "artifacts",
+        )
+
+
+def test_authenticated_guest_status_rejects_generation_drift_during_read(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    _publish_authenticated_status(plan, fake)
+    resource = next(
+        item for item in plan.resources if item.kind.endswith("instance")
+    )
+    fake.recreate_after_guest_read = resource.name
+    provider = _authenticated_provider(plan, fake, tmp_path)
+
+    with pytest.raises(
+        adapter.Q38GcpAdapterError,
+        match="provider generation changed during authenticated host-status read",
+    ):
+        provider.inventory(
+            adapter.blank_host_status(plan),
+            manifest_path=tmp_path / "manifest.json",
+            artifact_root=tmp_path / "artifacts",
+        )
+
+
+def test_cleanup_never_reads_authenticated_guest_attributes(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    _publish_authenticated_status(plan, fake)
+    provider = _authenticated_provider(plan, fake, tmp_path)
+
+    _execute(
+        provider,
+        plan,
+        _cleanup_state(plan),
+        adapter.blank_host_status(plan),
+        tmp_path,
+    )
+
+    assert not any(
+        call[1:4] == ("compute", "instances", "get-guest-attributes")
+        for call in fake.calls
+    )
