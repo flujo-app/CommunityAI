@@ -143,6 +143,17 @@ class FakeGcloud:
         return value
 
     def firewall_value(self, resource: route.ResourcePlan) -> dict[str, object]:
+        if resource.kind == "iap_firewall":
+            return {
+                "name": resource.name,
+                "network": f"global/networks/{route.EXPECTED_NETWORK}",
+                "direction": "INGRESS",
+                "sourceRanges": [adapter.IAP_SOURCE_RANGE],
+                "targetTags": [adapter._route_tag(self.plan)],
+                "allowed": [{"IPProtocol": "tcp", "ports": ["22"]}],
+                "disabled": False,
+                "description": adapter._description(self.plan, resource),
+            }
         return {
             "name": resource.name,
             "network": f"global/networks/{route.EXPECTED_NETWORK}",
@@ -177,7 +188,9 @@ class FakeGcloud:
             }
         else:
             names = {
-                item.name for item in self.plan.resources if item.kind == "firewall" and item.name in self.resources
+                item.name
+                for item in self.plan.resources
+                if item.kind.endswith("firewall") and item.name in self.resources
             }
         return [{"name": name} for name in sorted(names | self.extra[kind])]
 
@@ -351,14 +364,14 @@ def test_running_instance_without_host_record_is_only_starting(tmp_path: Path) -
     assert all(item["peer_id"] is None for item in observation["workers"].values())
 
 
-def test_compiled_start_is_exact_private_eleven_resource_inventory(
+def test_compiled_start_is_exact_private_twelve_resource_inventory(
     tmp_path: Path,
 ) -> None:
     plan, fake, provider = _make(tmp_path)
 
     creates = list(provider.compiled_start_commands())
 
-    assert len(creates) == 11
+    assert len(creates) == 12
     assert fake.calls == []
     assert fake.resources == {}
     instance_creates = [call for call in creates if call[1:4] == ("compute", "instances", "create")]
@@ -379,10 +392,68 @@ def test_compiled_start_is_exact_private_eleven_resource_inventory(
     assert len(disk_creates) == 5
     assert all("--image=common-cu129-ubuntu-2404-nvidia-580-v20260831" in call for call in disk_creates)
     assert all("--image-project=deeplearning-platform-release" in call for call in disk_creates)
-    firewall = next(call for call in creates if call[1:4] == ("compute", "firewall-rules", "create"))
-    assert f"--source-tags={adapter._route_tag(plan)}" in firewall
-    assert not any("0.0.0.0/0" in item or "source-ranges" in item or item.startswith("--labels=") for item in firewall)
+    firewall_creates = [call for call in creates if call[1:4] == ("compute", "firewall-rules", "create")]
+    assert len(firewall_creates) == 2
+    route_firewall = next(
+        call for call in firewall_creates if call[4].endswith("-firewall") and not call[4].endswith("-iap-firewall")
+    )
+    iap_firewall = next(call for call in firewall_creates if call[4].endswith("-iap-firewall"))
+    assert f"--source-tags={adapter._route_tag(plan)}" in route_firewall
+    assert not any(
+        "0.0.0.0/0" in item or "source-ranges" in item or item.startswith("--labels=") for item in route_firewall
+    )
+    assert f"--source-ranges={adapter.IAP_SOURCE_RANGE}" in iap_firewall
+    assert "--rules=tcp:22" in iap_firewall
+    assert f"--target-tags={adapter._route_tag(plan)}" in iap_firewall
+    assert not any(item.startswith("--source-tags=") or item.startswith("--labels=") for item in iap_firewall)
     assert all(route.PROTECTED_INSTANCE not in call for call in creates)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sourceRanges", ["0.0.0.0/0"]),
+        ("sourceTags", ["foreign"]),
+        ("targetTags", ["foreign"]),
+        ("allowed", [{"IPProtocol": "tcp", "ports": ["2222"]}]),
+        ("direction", "EGRESS"),
+        ("disabled", True),
+        ("network", "global/networks/default"),
+    ],
+)
+def test_iap_firewall_policy_is_exact_and_fail_closed(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    plan, fake, provider = _make(tmp_path)
+    fake.populate_all()
+    resource = next(item for item in plan.resources if item.kind == "iap_firewall")
+    fake.resources[resource.name][field] = value
+
+    with pytest.raises(adapter.Q38GcpAdapterError, match="IAP firewall policy"):
+        provider.inventory(
+            adapter.blank_host_status(plan),
+            manifest_path=tmp_path / "manifest.json",
+            artifact_root=tmp_path / "artifacts",
+        )
+
+
+def test_route_firewall_cannot_substitute_for_iap_firewall(tmp_path: Path) -> None:
+    plan, fake, provider = _make(tmp_path)
+    fake.populate_all()
+    route_firewall = next(item for item in plan.resources if item.kind == "firewall")
+    iap_firewall = next(item for item in plan.resources if item.kind == "iap_firewall")
+    fake.resources[iap_firewall.name] = fake.firewall_value(route_firewall)
+    fake.resources[iap_firewall.name]["name"] = iap_firewall.name
+    fake.resources[iap_firewall.name]["description"] = adapter._description(plan, iap_firewall)
+
+    with pytest.raises(adapter.Q38GcpAdapterError, match="IAP firewall policy"):
+        provider.inventory(
+            adapter.blank_host_status(plan),
+            manifest_path=tmp_path / "manifest.json",
+            artifact_root=tmp_path / "artifacts",
+        )
 
 
 def test_route_network_tags_are_plan_scoped_and_rfc1035(tmp_path: Path) -> None:
@@ -434,7 +505,7 @@ def test_start_execution_is_blocked_before_provider_access(tmp_path: Path) -> No
     assert fake.resources == {}
 
 
-@pytest.mark.parametrize("kind", ["instances", "disks"])
+@pytest.mark.parametrize("kind", ["instances", "disks", "firewall"])
 def test_extra_run_scoped_unlabelled_resource_fails_closed(
     tmp_path: Path,
     kind: str,

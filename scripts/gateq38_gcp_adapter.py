@@ -26,6 +26,8 @@ MAX_JSON_BYTES = controller.MAX_JSON_BYTES
 SCOPE_LABEL = "q38-complete-route"
 ROUTE_TAG_PREFIX = "communityai-q38-"
 ROUTE_TCP_RULE = "tcp:31330-31339"
+IAP_TCP_RULE = "tcp:22"
+IAP_SOURCE_RANGE = "35.235.240.0/20"
 RUNTIME_ACTIONS_BLOCKED = "source-bound Qwen3.8 host runtime is not plan-bound"
 
 
@@ -303,7 +305,7 @@ class GcpAdapter:
             raise Q38GcpAdapterError("authorized GCP project is unavailable")
 
     def _describe(self, resource: controller.ResourcePlan) -> Mapping[str, Any] | None:
-        if resource.kind == "firewall":
+        if resource.kind.endswith("firewall"):
             arguments = (
                 "compute",
                 "firewall-rules",
@@ -459,7 +461,7 @@ class GcpAdapter:
         resource: controller.ResourcePlan,
         value: Mapping[str, Any],
     ) -> None:
-        if value.get("name") != resource.name:
+        if resource.kind != "firewall" or value.get("name") != resource.name:
             raise Q38GcpAdapterError("planned firewall identity is invalid")
         allowed = value.get("allowed")
         if (
@@ -474,6 +476,26 @@ class GcpAdapter:
             raise Q38GcpAdapterError("planned firewall policy is invalid")
         self._validate_description(resource, value)
 
+    def _validate_iap_firewall(
+        self,
+        resource: controller.ResourcePlan,
+        value: Mapping[str, Any],
+    ) -> None:
+        if resource.kind != "iap_firewall" or value.get("name") != resource.name:
+            raise Q38GcpAdapterError("planned IAP firewall identity is invalid")
+        allowed = value.get("allowed")
+        if (
+            value.get("direction") != "INGRESS"
+            or _basename(value.get("network")) != controller.EXPECTED_NETWORK
+            or value.get("sourceTags") not in (None, [])
+            or value.get("targetTags") != [_route_tag(self.plan)]
+            or value.get("sourceRanges") != [IAP_SOURCE_RANGE]
+            or allowed != [{"IPProtocol": "tcp", "ports": ["22"]}]
+            or value.get("disabled") not in (None, False)
+        ):
+            raise Q38GcpAdapterError("planned IAP firewall policy is invalid")
+        self._validate_description(resource, value)
+
     def _validate_resource(
         self,
         resource: controller.ResourcePlan,
@@ -485,8 +507,12 @@ class GcpAdapter:
             self._validate_disk(resource, value, cleanup=cleanup)
         elif resource.kind.endswith("instance"):
             self._validate_instance(resource, value, cleanup=cleanup)
-        else:
+        elif resource.kind == "firewall":
             self._validate_firewall(resource, value)
+        elif resource.kind == "iap_firewall":
+            self._validate_iap_firewall(resource, value)
+        else:
+            raise Q38GcpAdapterError("planned resource kind is invalid")
 
     def _listed_names(self, kind: str) -> set[str]:
         command_kind = "firewall-rules" if kind == "firewall" else kind
@@ -554,7 +580,9 @@ class GcpAdapter:
                 if item.kind.endswith("disk") and values[item.name] is not None
             },
             "firewall": {
-                item.name for item in self.plan.resources if item.kind == "firewall" and values[item.name] is not None
+                item.name
+                for item in self.plan.resources
+                if item.kind.endswith("firewall") and values[item.name] is not None
             },
         }
         for kind, expected in expected_by_kind.items():
@@ -721,6 +749,25 @@ class GcpAdapter:
             "--no-enable-logging",
         )
 
+    def _iap_firewall_create_arguments(self, resource: controller.ResourcePlan) -> tuple[str, ...]:
+        if resource.kind != "iap_firewall":
+            raise Q38GcpAdapterError("IAP firewall resource kind is invalid")
+        return (
+            "compute",
+            "firewall-rules",
+            "create",
+            resource.name,
+            f"--project={controller.EXPECTED_PROJECT}",
+            f"--network={controller.EXPECTED_NETWORK}",
+            "--direction=INGRESS",
+            "--action=ALLOW",
+            f"--rules={IAP_TCP_RULE}",
+            f"--source-ranges={IAP_SOURCE_RANGE}",
+            f"--target-tags={_route_tag(self.plan)}",
+            f"--description={_description(self.plan, resource)}",
+            "--no-enable-logging",
+        )
+
     def _instance_create_arguments(self, resource: controller.ResourcePlan) -> tuple[str, ...]:
         spec = controller._expected_resource_spec(resource)
         disk = self._disk_for_instance(resource)
@@ -753,13 +800,18 @@ class GcpAdapter:
             for resource in self.plan.resources
             if resource.kind.endswith("disk")
         )
-        firewall = next(item for item in self.plan.resources if item.kind == "firewall")
+        route_firewall = next(item for item in self.plan.resources if item.kind == "firewall")
+        iap_firewall = next(item for item in self.plan.resources if item.kind == "iap_firewall")
+        firewalls = (
+            ("gcloud", *self._firewall_create_arguments(route_firewall), "--quiet"),
+            ("gcloud", *self._iap_firewall_create_arguments(iap_firewall), "--quiet"),
+        )
         instances = tuple(
             ("gcloud", *self._instance_create_arguments(resource), "--quiet")
             for resource in self.plan.resources
             if resource.kind.endswith("instance")
         )
-        return (*disks, ("gcloud", *self._firewall_create_arguments(firewall), "--quiet"), *instances)
+        return (*disks, *firewalls, *instances)
 
     def _delete_resource(self, resource: controller.ResourcePlan) -> None:
         value = self._describe(resource)
@@ -802,7 +854,7 @@ class GcpAdapter:
         order = (
             [item for item in self.plan.resources if item.kind.endswith("instance")]
             + [item for item in self.plan.resources if item.kind.endswith("disk")]
-            + [item for item in self.plan.resources if item.kind == "firewall"]
+            + [item for item in self.plan.resources if item.kind.endswith("firewall")]
         )
         for resource in order:
             try:

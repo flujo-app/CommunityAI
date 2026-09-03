@@ -127,6 +127,13 @@ def _resources(workers: list[dict[str, object]]) -> list[dict[str, object]]:
             "region": "us-central1",
             "worker_id": None,
         },
+        {
+            "name": f"{RUN_ID}-iap-firewall",
+            "kind": "iap_firewall",
+            "provider": "gcp",
+            "region": "us-central1",
+            "worker_id": None,
+        },
     ]
     for worker in workers:
         result.extend(
@@ -495,6 +502,12 @@ def test_runtime_package_digest_domain_is_distinct() -> None:
             lambda value: [resource.update(provider="fly") for resource in value["resources"]],
             "one exact provider",
         ),
+        (
+            lambda value: next(
+                resource for resource in value["resources"] if resource["kind"] == "iap_firewall"
+            ).update(kind="firewall"),
+            "resource kind inventory",
+        ),
     ],
 )
 def test_load_plan_rejects_substitution(
@@ -593,10 +606,13 @@ def test_initial_start_emits_one_durable_exact_action(tmp_path: Path) -> None:
     assert first_action == repeated_action
     assert first_action["action_id"].startswith("sha256:")
     assert first_action["worker_plan_digest"] == plan.worker_plan_digest
-    assert len(first_action["resources"]) == 11
+    assert len(first_action["resources"]) == 12
     assert first_action["resource_specs"] == [route._expected_resource_spec(resource) for resource in plan.resources]
     worker_spec = next(spec for spec in first_action["resource_specs"] if spec["kind"] == "worker_instance")
     bootstrap_spec = next(spec for spec in first_action["resource_specs"] if spec["kind"] == "bootstrap_instance")
+    iap_spec = next(spec for spec in first_action["resource_specs"] if spec["kind"] == "iap_firewall")
+    assert iap_spec["resource_name"] == f"{RUN_ID}-iap-firewall"
+    assert iap_spec["network"] == route.EXPECTED_NETWORK
     assert worker_spec["machine_type"] == "g2-standard-8"
     assert worker_spec["accelerator_type"] == "nvidia-l4"
     assert worker_spec["accelerator_count"] == 1

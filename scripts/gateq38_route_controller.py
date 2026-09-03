@@ -102,6 +102,7 @@ EXPECTED_RESOURCE_KINDS = {
     "worker_instance": 4,
     "worker_disk": 4,
     "firewall": 1,
+    "iap_firewall": 1,
 }
 ACTIONS = {"start_route", "collect_route", "cleanup_route", "none"}
 PHASES = {
@@ -929,8 +930,8 @@ def load_plan(path: Path, source_root: Path) -> RoutePlan:
         raise RouteControllerError("protected bootstrap is targeted")
 
     raw_resources = raw["resources"]
-    if not isinstance(raw_resources, list) or len(raw_resources) != 11:
-        raise RouteControllerError("resource inventory must contain exactly 11 resources")
+    if not isinstance(raw_resources, list) or len(raw_resources) != 12:
+        raise RouteControllerError("resource inventory must contain exactly 12 resources")
     resources: list[ResourcePlan] = []
     kind_counts = {kind: 0 for kind in EXPECTED_RESOURCE_KINDS}
     worker_by_id = {worker.worker_id: worker for worker in workers}
@@ -1173,8 +1174,8 @@ def revalidate_authorization_evidence(
         if (
             quantity != Decimal("1.00")
             or duration != EXPECTED_PRICED_DURATION_HOURS
-            or (resource.kind == "firewall" and maximum != Decimal("0.00"))
-            or (resource.kind != "firewall" and maximum <= Decimal("0.00"))
+            or (resource.kind.endswith("firewall") and maximum != Decimal("0.00"))
+            or (not resource.kind.endswith("firewall") and maximum <= Decimal("0.00"))
         ):
             raise RouteControllerError("reservation pricing horizon or quantity is invalid")
         total_cost += maximum
