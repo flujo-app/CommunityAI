@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -150,12 +151,23 @@ def _write_plan(
     template_payload = materializer._canonical(template_value)
     template_path = staging / materializer.TEMPLATE_NAME
     template_path.write_bytes(template_payload)
+    source_manifest = MANIFESTS[platform_name] if manifest_path is None else manifest_path
+    staged_manifest = staging / materializer._MANIFEST_NAMES[platform_name]
+    staged_manifest.write_bytes(source_manifest.read_bytes())
+    acquirer_root = staging.joinpath(*materializer._ACQUIRER_RUNTIME_PARTS)
+    acquirer_root.mkdir(parents=True)
+    acquirer_path = acquirer_root / materializer._ACQUIRER_NAMES[platform_name]
+    acquirer_path.write_bytes(b"packaged-node")
     plan = {
         "schema_version": 1,
         "scope": materializer.PLAN_SCOPE,
         "platform": platform_name,
         "source_commit": SOURCE,
-        "manifest_path": str((MANIFESTS[platform_name] if manifest_path is None else manifest_path).resolve()),
+        "manifest_path": str(staged_manifest.resolve()),
+        "manifest_sha256": lifecycle._digest(staged_manifest.read_bytes()),
+        "acquirer_path": str(acquirer_path.resolve()),
+        "acquirer_sha256": lifecycle._digest(acquirer_path.read_bytes()),
+        "acquirer_bytes": acquirer_path.stat().st_size,
         "work_root": str(work.resolve()),
         "staging_root": str(staging.resolve()),
         "lifecycle_template_sha256": lifecycle._digest(template_payload),
@@ -220,6 +232,14 @@ def test_materializer_emits_private_handoff_for_both_exact_profiles(
         "token": False,
         "max_resumptions": 3,
         "require_direct_upstream": True,
+        "manifest_path": staging / materializer._MANIFEST_NAMES[platform_name],
+        "manifest_sha256": lifecycle._digest((staging / materializer._MANIFEST_NAMES[platform_name]).read_bytes()),
+        "acquirer_path": staging.joinpath(
+            *materializer._ACQUIRER_RUNTIME_PARTS,
+            materializer._ACQUIRER_NAMES[platform_name],
+        ),
+        "acquirer_sha256": lifecycle._digest(b"packaged-node"),
+        "acquirer_bytes": len(b"packaged-node"),
     }
     assert result["phase"] == "materialized"
     assert result["platform"] == platform_name
@@ -338,6 +358,31 @@ def test_changed_source_binding_fails_before_cache_creation(
     with pytest.raises(
         materializer.Gate14CacheMaterializationError,
         match="source binding",
+    ):
+        materializer.materialize(
+            plan_path=plan_path,
+            ownership_verifier=_allow_owned,
+            native_platform="windows",
+        )
+    assert not (work / materializer.CACHE_NAME).exists()
+
+
+@pytest.mark.parametrize("target", ["manifest", "acquirer"])
+def test_changed_bound_acquisition_input_fails_before_cache_creation(
+    tmp_path,
+    monkeypatch,
+    target,
+):
+    plan_path, plan, work, _staging = _write_plan(
+        tmp_path,
+        monkeypatch,
+        "windows",
+    )
+    Path(plan[f"{target}_path"]).write_bytes(b"substituted")
+
+    with pytest.raises(
+        materializer.Gate14CacheMaterializationError,
+        match=f"{target}.*identity changed",
     ):
         materializer.materialize(
             plan_path=plan_path,
@@ -940,6 +985,329 @@ def test_internal_metadata_is_exact_and_removed(tmp_path):
     )
     assert not partial.exists()
     assert not locks.exists()
+
+
+def test_packaged_acquirer_runs_source_bound_binary_without_credentials(
+    tmp_path,
+    monkeypatch,
+):
+    acquirer_path = tmp_path / "CommunityAI-Node.exe"
+    acquirer_path.write_bytes(b"source-bound-node")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(b"{}")
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    observed = {}
+
+    for name in (
+        "HOME",
+        "LOCALAPPDATA",
+        "USERPROFILE",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HTTPS_PROXY",
+    ):
+        monkeypatch.setenv(name, "must-not-cross-process-boundary")
+
+    def run(argv, **kwargs):
+        observed["argv"] = argv
+        observed["kwargs"] = kwargs
+        Path(argv[argv.index("--output") + 1]).write_bytes(b'{"ok":true}\n')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(materializer.subprocess, "run", run)
+    payload = acquirer_path.read_bytes()
+    manifest_payload = manifest_path.read_bytes()
+    result = materializer._packaged_acquirer(
+        materializer.ManifestProfile(name="test"),
+        cache_dir=cache,
+        token=False,
+        max_resumptions=3,
+        require_direct_upstream=True,
+        manifest_path=manifest_path,
+        manifest_sha256=lifecycle._digest(manifest_payload),
+        acquirer_path=acquirer_path,
+        acquirer_sha256=lifecycle._digest(payload),
+        acquirer_bytes=len(payload),
+    )
+
+    result_path = cache / materializer.ACQUIRER_RESULT_NAME
+    assert result == {"ok": True}
+    argv = observed["argv"]
+    assert argv[0] == str(acquirer_path)
+    assert argv[1:] == [
+        "edge-acquire",
+        "--manifest_stdin_sha256",
+        lifecycle._digest(manifest_payload),
+        "--cache_dir",
+        str(cache),
+        "--max_resumptions",
+        "3",
+        "--require_direct_upstream",
+        "--no_token",
+        "--output",
+        str(result_path),
+    ]
+    kwargs = observed["kwargs"]
+    assert kwargs["check"] is False
+    assert kwargs["input"] == manifest_payload
+    assert kwargs["stdout"] == materializer.subprocess.DEVNULL
+    assert kwargs["stderr"] == materializer.subprocess.DEVNULL
+    assert kwargs["timeout"] == materializer.ACQUIRER_TIMEOUT_SECONDS
+    assert kwargs["shell"] is False
+    assert kwargs["cwd"] == str(acquirer_path.parent)
+    if sys.platform == "win32":
+        assert "executable" not in kwargs
+        assert "pass_fds" not in kwargs
+    else:
+        assert len(kwargs["pass_fds"]) == 1
+        assert kwargs["executable"] == f"/proc/self/fd/{kwargs['pass_fds'][0]}"
+        assert kwargs["close_fds"] is True
+    assert kwargs["env"]["HF_HUB_DISABLE_IMPLICIT_TOKEN"] == "1"
+    assert not {
+        "HOME",
+        "LOCALAPPDATA",
+        "USERPROFILE",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HTTPS_PROXY",
+    } & set(kwargs["env"])
+    assert not result_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("returncode", "result_payload"),
+    [
+        (1, b"{}"),
+        (0, b"not-json"),
+        (0, b"x" * (materializer.MAX_ACQUIRER_OUTPUT_BYTES + 1)),
+    ],
+    ids=["nonzero", "malformed", "oversized"],
+)
+def test_packaged_acquirer_rejects_failed_or_unbounded_results(
+    tmp_path,
+    monkeypatch,
+    returncode,
+    result_payload,
+):
+    acquirer_path = tmp_path / "CommunityAI-Node"
+    acquirer_path.write_bytes(b"source-bound-node")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(b"{}")
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    def run(argv, **_kwargs):
+        Path(argv[argv.index("--output") + 1]).write_bytes(result_payload)
+        return SimpleNamespace(returncode=returncode)
+
+    payload = acquirer_path.read_bytes()
+    monkeypatch.setattr(materializer.subprocess, "run", run)
+
+    with pytest.raises(materializer.Gate14CacheMaterializationError):
+        materializer._packaged_acquirer(
+            materializer.ManifestProfile(name="test"),
+            cache_dir=cache,
+            token=False,
+            max_resumptions=3,
+            require_direct_upstream=True,
+            manifest_path=manifest_path,
+            manifest_sha256=lifecycle._digest(manifest_path.read_bytes()),
+            acquirer_path=acquirer_path,
+            acquirer_sha256=lifecycle._digest(payload),
+            acquirer_bytes=len(payload),
+        )
+    assert not (cache / materializer.ACQUIRER_RESULT_NAME).exists()
+
+
+def test_packaged_acquirer_mutation_removes_partial_materialization(
+    tmp_path,
+    monkeypatch,
+):
+    platform_name = materializer._native_platform()
+    plan_path, plan, work, _staging = _write_plan(
+        tmp_path,
+        monkeypatch,
+        platform_name,
+    )
+    acquirer_path = Path(plan["acquirer_path"])
+    captured = {}
+    bind = materializer._bound_acquirer_execution
+
+    def capture_bind(path, lease):
+        captured["lease"] = lease
+        return bind(path, lease)
+
+    def run(argv, **_kwargs):
+        cache = Path(argv[argv.index("--cache_dir") + 1])
+        (cache / "partial.bin").write_bytes(b"partial")
+        Path(argv[argv.index("--output") + 1]).write_bytes(b"{}\n")
+        captured["lease"].close()
+        acquirer_path.write_bytes(b"mutated-node")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(materializer, "_bound_acquirer_execution", capture_bind)
+    monkeypatch.setattr(materializer.subprocess, "run", run)
+    with pytest.raises(
+        materializer.Gate14CacheMaterializationError,
+        match="identity changed",
+    ):
+        materializer.materialize(
+            plan_path=plan_path,
+            ownership_verifier=_allow_owned,
+            native_platform=platform_name,
+        )
+
+    assert not (work / materializer.CACHE_NAME).exists()
+    assert not (work / materializer.RECORD_NAME).exists()
+    assert not (work / materializer.BINDING_NAME).exists()
+    assert not (work / materializer.HANDOFF_NAME).exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires native Windows sharing semantics")
+def test_windows_packaged_acquirer_locks_inputs_across_launch_boundary(tmp_path, monkeypatch):
+    acquirer_path = tmp_path / "CommunityAI-Node.exe"
+    acquirer_path.write_bytes(b"source-bound-node")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(b"{}\n")
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    blocked = []
+
+    def run(argv, **_kwargs):
+        for target in (manifest_path, acquirer_path):
+            replacement = target.with_suffix(target.suffix + ".replacement")
+            replacement.write_bytes(b"substituted")
+            for operation in (
+                lambda: target.write_bytes(b"substituted"),
+                target.unlink,
+                lambda: os.replace(replacement, target),
+            ):
+                with pytest.raises(OSError):
+                    operation()
+                blocked.append((target.name, operation))
+            replacement.unlink()
+        Path(argv[argv.index("--output") + 1]).write_bytes(b'{"ok":true}\n')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(materializer.subprocess, "run", run)
+    acquirer_payload = acquirer_path.read_bytes()
+    manifest_payload = manifest_path.read_bytes()
+    result = materializer._packaged_acquirer(
+        materializer.ManifestProfile(name="test"),
+        cache_dir=cache,
+        token=False,
+        max_resumptions=3,
+        require_direct_upstream=True,
+        manifest_path=manifest_path,
+        manifest_sha256=lifecycle._digest(manifest_payload),
+        acquirer_path=acquirer_path,
+        acquirer_sha256=lifecycle._digest(acquirer_payload),
+        acquirer_bytes=len(acquirer_payload),
+    )
+
+    assert result == {"ok": True}
+    assert len(blocked) == 6
+    manifest_path.write_bytes(b"released")
+    acquirer_path.write_bytes(b"released")
+    assert manifest_path.read_bytes() == b"released"
+    assert acquirer_path.read_bytes() == b"released"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires native Windows CreateProcess")
+def test_windows_locked_executable_still_launches_original_image(tmp_path):
+    acquirer_path = tmp_path / "CommunityAI-Node.exe"
+    shutil.copyfile(os.environ["COMSPEC"], acquirer_path)
+    payload = acquirer_path.read_bytes()
+    lease = materializer._lock_verified_acquirer(
+        acquirer_path,
+        materializer.MAX_ACQUIRER_BYTES,
+        len(payload),
+        lifecycle._digest(payload),
+    )
+    replacement = tmp_path / "replacement.exe"
+    replacement.write_bytes(b"substituted")
+
+    try:
+        executable, options = materializer._bound_acquirer_execution(acquirer_path, lease)
+        with pytest.raises(OSError):
+            os.replace(replacement, acquirer_path)
+        result = materializer.subprocess.run(
+            [executable, "/d", "/c", "ver"],
+            check=False,
+            stdout=materializer.subprocess.DEVNULL,
+            stderr=materializer.subprocess.DEVNULL,
+            **options,
+        )
+        assert result.returncode == 0
+        lease.assert_stable("packaged acquirer")
+    finally:
+        lease.close()
+
+    os.replace(replacement, acquirer_path)
+    assert acquirer_path.read_bytes() == b"substituted"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="requires Linux fd execution")
+def test_linux_packaged_acquirer_executes_verified_fd_after_path_replacement(tmp_path):
+    acquirer_path = tmp_path / "CommunityAI-Node"
+    shutil.copyfile(sys.executable, acquirer_path)
+    acquirer_path.chmod(0o700)
+    payload = acquirer_path.read_bytes()
+    lease = materializer._lock_verified_acquirer(
+        acquirer_path,
+        materializer.MAX_ACQUIRER_BYTES,
+        len(payload),
+        lifecycle._digest(payload),
+    )
+    verified_marker = tmp_path / "verified"
+    substituted_marker = tmp_path / "substituted"
+    moved_path = tmp_path / "verified-original"
+    acquirer_path.rename(moved_path)
+    acquirer_path.write_text(
+        f'#!/bin/sh\nprintf substituted > "{substituted_marker}"\n',
+        encoding="utf-8",
+    )
+    acquirer_path.chmod(0o700)
+
+    try:
+        executable, options = materializer._bound_acquirer_execution(acquirer_path, lease)
+        result = materializer.subprocess.run(
+            [
+                executable,
+                "-c",
+                f'from pathlib import Path; Path(r"{verified_marker}").write_text("verified")',
+            ],
+            check=False,
+            **options,
+        )
+        assert result.returncode == 0
+        assert verified_marker.read_text(encoding="utf-8") == "verified"
+        assert not substituted_marker.exists()
+        with pytest.raises(materializer.Gate14CacheMaterializationError, match="identity changed"):
+            lease.assert_stable("packaged acquirer")
+    finally:
+        lease.close()
+
+
+def test_source_bindings_execute_without_site_packages():
+    result = materializer.subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(ROOT / "scripts" / "gate14_cache_materializer.py"),
+            "source-bindings",
+        ],
+        check=False,
+        capture_output=True,
+        cwd=ROOT,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["scope"] == "gate14-cache-materializer-sources"
+    assert set(payload["sources"]) == set(materializer._SOURCE_NAMES)
 
 
 def test_materializer_cli_uses_two_explicit_phases():

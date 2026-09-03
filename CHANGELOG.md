@@ -111,9 +111,16 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   receives no write, delete, owner-change, or DACL-change grant. Promotion has a retryable commit
   point, and invalid templates fail before any acquisition. The cache/lifecycle focus passes 97
   tests and the complete Gate 14 matrix passes 254 under independent adversarial review. No
-  production model bytes, reservation, or cloud resource were used (USD 0). Real fresh native
-  materialization, bootstrap integration, packaged execution, and physical Windows/Linux L4
-  qualification remain open.
+  production model bytes, reservation, or cloud resource were used (USD 0). The clean-host
+  materializer now invokes the exact packaged node without reopening a verified manifest or
+  executable by pathname: controller mode sends the once-read bounded manifest through stdin
+  under its exact digest, Windows holds restrictive read-only-share handles through process exit,
+  and Linux executes the verified descriptor through procfs while preserving the original onedir
+  path as argv zero. Native mutation/launch probes, malformed-input tests, the 64-test focused
+  cache/acquisition suite, the 264-test Gate 14 matrix, and packaged dispatch regressions pass
+  locally with the Linux-native descriptor test deferred to Linux CI. Real fresh native
+  materialization, complete onedir sidecar-inventory verification, bootstrap integration,
+  packaged execution, and physical Windows/Linux L4 qualification remain open.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,

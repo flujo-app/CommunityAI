@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,12 +17,6 @@ from typing import Any, BinaryIO, Callable, Mapping, Sequence
 from urllib.request import getproxies
 
 import gate14_packaged_lifecycle as lifecycle
-
-import drift
-import drift.model_manifest as model_manifest_module
-import drift.node.edge_acquisition as edge_acquisition_module
-from drift.model_manifest import ManifestError, ModelManifest
-from drift.node.edge_acquisition import acquire_client_artifacts
 
 SCHEMA_VERSION = 1
 PLAN_SCOPE = "gate14-cache-materialization-plan"
@@ -42,6 +37,15 @@ _MANIFEST_NAMES = {
     "windows": "qwen3.5-2b-bfloat16-eager.json",
     "linux": "gemma-4-e2b-it-bfloat16-eager.json",
 }
+_ACQUIRER_NAMES = {
+    "windows": "CommunityAI-Node.exe",
+    "linux": "CommunityAI-Node",
+}
+_ACQUIRER_RUNTIME_PARTS = ("acquirer-runtime", "CommunityAI", "node")
+MAX_ACQUIRER_BYTES = 2 * 1024**3
+MAX_ACQUIRER_OUTPUT_BYTES = MAX_JSON_BYTES
+ACQUIRER_TIMEOUT_SECONDS = 14_400
+ACQUIRER_RESULT_NAME = ".gate14-acquirer-result.json"
 _OVERRIDE_NAMES = (
     "HF_ENDPOINT",
     "HTTP_PROXY",
@@ -58,8 +62,6 @@ _OVERRIDE_NAMES = (
 _SOURCE_NAMES = (
     "gate14_cache_materializer.py",
     "gate14_packaged_lifecycle.py",
-    "drift/node/edge_acquisition.py",
-    "drift/model_manifest.py",
 )
 _PLAN_FIELDS = {
     "schema_version",
@@ -67,6 +69,10 @@ _PLAN_FIELDS = {
     "platform",
     "source_commit",
     "manifest_path",
+    "manifest_sha256",
+    "acquirer_path",
+    "acquirer_sha256",
+    "acquirer_bytes",
     "work_root",
     "staging_root",
     "lifecycle_template_sha256",
@@ -100,10 +106,19 @@ OwnershipVerifier = Callable[..., None]
 
 
 @dataclass(frozen=True)
+class ManifestProfile:
+    name: str
+
+
+@dataclass(frozen=True)
 class CachePlan:
     platform: str
     source_commit: str
     manifest_path: Path
+    manifest_sha256: str
+    acquirer_path: Path
+    acquirer_sha256: str
+    acquirer_bytes: int
     work_root: Path
     staging_root: Path
     template_path: Path
@@ -158,6 +173,30 @@ class _RawHandle:
         if self.value:
             value, self.value = self.value, 0
             self._closer(value)
+
+
+@dataclass
+class _LockedRegular:
+    path: Path
+    handle: BinaryIO
+    opened: os.stat_result
+
+    def assert_stable(self, label: str) -> None:
+        try:
+            after_handle = os.fstat(self.handle.fileno())
+            after_path = self.path.lstat()
+        except (OSError, ValueError) as exc:
+            raise Gate14CacheMaterializationError(f"{label} identity changed") from exc
+        if (
+            _file_identity(self.opened) != _file_identity(after_handle)
+            or _file_identity(self.opened) != _file_identity(after_path)
+            or _reparse(after_path)
+            or self.path.is_symlink()
+        ):
+            raise Gate14CacheMaterializationError(f"{label} identity changed")
+
+    def close(self) -> None:
+        self.handle.close()
 
 
 def _native_platform() -> str:
@@ -339,6 +378,104 @@ def _read_locked_regular(
     return payload
 
 
+def _hash_locked_regular(path: Path, maximum: int) -> tuple[int, str]:
+    handle, opened = _open_locked_regular(path, maximum)
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            total += len(chunk)
+            digest.update(chunk)
+        after_handle = os.fstat(handle.fileno())
+        after_path = Path(path).lstat()
+    except OSError as exc:
+        raise Gate14CacheMaterializationError("required file is unreadable") from exc
+    finally:
+        handle.close()
+    if (
+        total != opened.st_size
+        or _file_identity(opened) != _file_identity(after_handle)
+        or _file_identity(opened) != _file_identity(after_path)
+        or _reparse(after_path)
+        or Path(path).is_symlink()
+    ):
+        raise Gate14CacheMaterializationError("required file changed while hashing")
+    return total, "sha256:" + digest.hexdigest()
+
+
+def _lock_verified_payload(
+    path: Path,
+    maximum: int,
+    expected_sha256: str,
+    label: str,
+) -> tuple[_LockedRegular, bytes]:
+    try:
+        handle, opened = _open_locked_regular(path, maximum)
+    except Gate14CacheMaterializationError as exc:
+        raise Gate14CacheMaterializationError(f"{label} identity changed") from exc
+    lease = _LockedRegular(Path(path), handle, opened)
+    try:
+        payload = handle.read(maximum + 1)
+        if len(payload) != opened.st_size or lifecycle._digest(payload) != expected_sha256:
+            raise Gate14CacheMaterializationError(f"{label} identity changed")
+        lease.assert_stable(label)
+        return lease, payload
+    except BaseException:
+        lease.close()
+        raise
+
+
+def _lock_verified_acquirer(
+    path: Path,
+    maximum: int,
+    expected_bytes: int,
+    expected_sha256: str,
+) -> _LockedRegular:
+    try:
+        handle, opened = _open_locked_regular(path, maximum)
+    except Gate14CacheMaterializationError as exc:
+        raise Gate14CacheMaterializationError("packaged acquirer identity changed") from exc
+    lease = _LockedRegular(Path(path), handle, opened)
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            total += len(chunk)
+            digest.update(chunk)
+        if total != expected_bytes or "sha256:" + digest.hexdigest() != expected_sha256:
+            raise Gate14CacheMaterializationError("packaged acquirer identity changed")
+        lease.assert_stable("packaged acquirer")
+        return lease
+    except BaseException:
+        lease.close()
+        raise
+
+
+def _bound_acquirer_execution(
+    acquirer_path: Path,
+    lease: _LockedRegular,
+) -> tuple[str, Mapping[str, Any]]:
+    original_path = os.fspath(acquirer_path)
+    if os.name == "nt":
+        return original_path, {}
+    if not sys.platform.startswith("linux"):
+        raise Gate14CacheMaterializationError("unsupported packaged acquirer platform")
+    descriptor = lease.handle.fileno()
+    descriptor_path = f"/proc/self/fd/{descriptor}"
+    try:
+        descriptor_identity = os.stat(descriptor_path)
+        handle_identity = os.fstat(descriptor)
+    except OSError as exc:
+        raise Gate14CacheMaterializationError("verified acquirer descriptor is unavailable") from exc
+    if _file_identity(descriptor_identity) != _file_identity(handle_identity):
+        raise Gate14CacheMaterializationError("verified acquirer descriptor identity changed")
+    return original_path, {
+        "executable": descriptor_path,
+        "pass_fds": (descriptor,),
+        "close_fds": True,
+    }
+
+
 def _open_locked_directory(path: Path) -> tuple[Any, os.stat_result]:
     candidate = Path(path)
     try:
@@ -383,8 +520,6 @@ def _source_paths() -> Mapping[str, Path]:
     return {
         "gate14_cache_materializer.py": Path(__file__),
         "gate14_packaged_lifecycle.py": Path(lifecycle.__file__),
-        "drift/node/edge_acquisition.py": Path(edge_acquisition_module.__file__),
-        "drift/model_manifest.py": Path(model_manifest_module.__file__),
     }
 
 
@@ -414,6 +549,12 @@ def _load_plan(
         or raw.get("platform") not in _MANIFEST_NAMES
         or not isinstance(raw.get("source_commit"), str)
         or _COMMIT_RE.fullmatch(raw["source_commit"]) is None
+        or not isinstance(raw.get("manifest_sha256"), str)
+        or _DIGEST_RE.fullmatch(raw["manifest_sha256"]) is None
+        or not isinstance(raw.get("acquirer_sha256"), str)
+        or _DIGEST_RE.fullmatch(raw["acquirer_sha256"]) is None
+        or type(raw.get("acquirer_bytes")) is not int
+        or not 1 <= raw["acquirer_bytes"] <= MAX_ACQUIRER_BYTES
         or not isinstance(raw.get("lifecycle_template_sha256"), str)
         or _DIGEST_RE.fullmatch(raw["lifecycle_template_sha256"]) is None
         or not isinstance(raw.get("sources"), dict)
@@ -423,6 +564,7 @@ def _load_plan(
         raise Gate14CacheMaterializationError("cache materialization plan binding is invalid")
     try:
         manifest_path = Path(raw["manifest_path"])
+        acquirer_path = Path(raw["acquirer_path"])
         work_root = Path(raw["work_root"])
         staging_root = Path(raw["staging_root"])
     except TypeError as exc:
@@ -433,24 +575,44 @@ def _load_plan(
         raise Gate14CacheMaterializationError("materialization roots overlap")
     exact_plan = staging / PLAN_NAME
     exact_template = staging / TEMPLATE_NAME
+    exact_manifest = staging / _MANIFEST_NAMES[raw["platform"]]
+    acquirer_root = staging.joinpath(*_ACQUIRER_RUNTIME_PARTS)
+    exact_acquirer = acquirer_root / _ACQUIRER_NAMES[raw["platform"]]
     if (
         Path(os.path.abspath(os.fspath(plan_path))) != exact_plan
-        or not manifest_path.is_absolute()
-        or manifest_path.name != _MANIFEST_NAMES[raw["platform"]]
+        or Path(os.path.abspath(os.fspath(manifest_path))) != exact_manifest
+        or Path(os.path.abspath(os.fspath(acquirer_path))) != exact_acquirer
     ):
         raise Gate14CacheMaterializationError("cache materialization plan path binding is invalid")
+    acquirer_parents = [
+        staging.joinpath(*_ACQUIRER_RUNTIME_PARTS[:index]) for index in range(1, len(_ACQUIRER_RUNTIME_PARTS) + 1)
+    ]
     try:
         ownership_verifier(staging.parent, directory=True)
         ownership_verifier(staging, directory=True)
-        ownership_verifier(exact_plan, directory=False)
-        ownership_verifier(exact_template, directory=False)
+        for directory in acquirer_parents:
+            _safe_directory(directory, "packaged acquirer directory")
+            ownership_verifier(directory, directory=True)
+        for staged_file in (exact_plan, exact_template, exact_manifest, exact_acquirer):
+            ownership_verifier(staged_file, directory=False)
     except lifecycle.Gate14LifecycleError as exc:
         raise Gate14CacheMaterializationError("cache materialization plan is not controller-owned") from exc
+    if _hash_locked_regular(exact_manifest, lifecycle.MAX_CONFIG_BYTES)[1] != raw["manifest_sha256"]:
+        raise Gate14CacheMaterializationError("manifest file identity changed")
+    if _hash_locked_regular(exact_acquirer, MAX_ACQUIRER_BYTES) != (
+        raw["acquirer_bytes"],
+        raw["acquirer_sha256"],
+    ):
+        raise Gate14CacheMaterializationError("packaged acquirer identity changed")
     sources = dict(raw["sources"])
     return CachePlan(
         platform=raw["platform"],
         source_commit=raw["source_commit"],
-        manifest_path=manifest_path,
+        manifest_path=exact_manifest,
+        manifest_sha256=raw["manifest_sha256"],
+        acquirer_path=exact_acquirer,
+        acquirer_sha256=raw["acquirer_sha256"],
+        acquirer_bytes=raw["acquirer_bytes"],
         work_root=work,
         staging_root=staging,
         template_path=exact_template,
@@ -466,19 +628,18 @@ def _verify_sources(plan: CachePlan) -> None:
         raise Gate14CacheMaterializationError("cache materializer source binding changed")
 
 
-def _safe_manifest(path: Path, platform_name: str) -> ModelManifest:
-    if not Path(path).is_absolute() or Path(path).name != _MANIFEST_NAMES[platform_name]:
-        raise Gate14CacheMaterializationError("manifest path binding is invalid")
-    payload = _read_locked_regular(path, lifecycle.MAX_CONFIG_BYTES)
+def _safe_manifest(plan: CachePlan) -> Mapping[str, Any]:
+    payload = _read_locked_regular(plan.manifest_path, lifecycle.MAX_CONFIG_BYTES)
+    if lifecycle._digest(payload) != plan.manifest_sha256:
+        raise Gate14CacheMaterializationError("manifest file identity changed")
     try:
-        manifest = ModelManifest.from_json(payload.decode("utf-8"))
-    except (UnicodeError, ManifestError) as exc:
+        return lifecycle._strict_json(payload, lifecycle.MAX_CONFIG_BYTES)
+    except lifecycle.Gate14LifecycleError as exc:
         raise Gate14CacheMaterializationError("manifest is invalid") from exc
-    return manifest
 
 
 def _validate_manifest(
-    manifest: ModelManifest,
+    manifest: Mapping[str, Any],
     *,
     platform_name: str,
 ) -> tuple[str, str]:
@@ -486,25 +647,147 @@ def _validate_manifest(
     profile = lifecycle.acceptance.MODEL_PROFILES[model_id]
     repository, dtype = lifecycle._MODEL_SOURCE[model_id]
     expected = lifecycle._GATE9_WARM_CACHE[platform_name]["artifacts"]
-    observed = tuple(
-        (item.path, item.role, "sha256:" + item.sha256, item.size)
-        for item in sorted(manifest.artifacts, key=lambda value: value.path)
-    )
+    try:
+        source = manifest["source"]
+        runtime = manifest["runtime"]
+        artifacts = manifest["artifacts"]
+        if (
+            set(manifest) != {"schema_version", "name", "aliases", "source", "model", "runtime", "artifacts"}
+            or manifest["schema_version"] != 1
+            or not isinstance(source, dict)
+            or set(source) != {"repository", "revision"}
+            or not isinstance(runtime, dict)
+            or not isinstance(artifacts, list)
+            or any(
+                not isinstance(item, dict)
+                or set(item) != {"path", "role", "sha256", "size"}
+                or not isinstance(item["path"], str)
+                or not isinstance(item["role"], str)
+                or not isinstance(item["sha256"], str)
+                or type(item["size"]) is not int
+                for item in artifacts
+            )
+        ):
+            raise Gate14CacheMaterializationError("manifest profile binding changed")
+        canonical = dict(manifest)
+        aliases = canonical["aliases"]
+        if not isinstance(aliases, list) or any(not isinstance(item, str) for item in aliases):
+            raise Gate14CacheMaterializationError("manifest profile binding changed")
+        canonical["aliases"] = sorted(aliases)
+        canonical["artifacts"] = sorted(artifacts, key=lambda item: (item["path"], item["role"]))
+        manifest_digest = lifecycle._digest(lifecycle._canonical(canonical))
+        observed = tuple(
+            (item["path"], item["role"], "sha256:" + item["sha256"], item["size"])
+            for item in sorted(artifacts, key=lambda item: item["path"])
+        )
+    except (KeyError, TypeError) as exc:
+        raise Gate14CacheMaterializationError("manifest profile binding changed") from exc
     if (
-        manifest.name != model_id
-        or manifest.digest_id != profile["manifest_digest"]
-        or manifest.source.repository != repository
-        or manifest.source.revision != profile["revision_commit"]
-        or manifest.runtime.dtype != dtype
-        or manifest.runtime.adapter_profile != "none"
+        manifest["name"] != model_id
+        or manifest_digest != profile["manifest_digest"]
+        or source["repository"] != repository
+        or source["revision"] != profile["revision_commit"]
+        or runtime.get("dtype") != dtype
+        or runtime.get("adapter_profile") != "none"
         or observed != expected
     ):
         raise Gate14CacheMaterializationError("manifest profile binding changed")
-    try:
-        manifest.validate_runtime(drift.__version__)
-    except ManifestError as exc:
-        raise Gate14CacheMaterializationError("manifest runtime binding changed") from exc
     return model_id, profile["manifest_digest"]
+
+
+def _packaged_acquirer(
+    manifest: ManifestProfile,
+    *,
+    cache_dir: Path,
+    token: bool,
+    max_resumptions: int,
+    require_direct_upstream: bool,
+    manifest_path: Path,
+    manifest_sha256: str,
+    acquirer_path: Path,
+    acquirer_sha256: str,
+    acquirer_bytes: int,
+) -> Mapping[str, Any]:
+    if token is not False or max_resumptions != 3 or require_direct_upstream is not True:
+        raise Gate14CacheMaterializationError("packaged acquirer invocation is invalid")
+
+    result_path = cache_dir / ACQUIRER_RESULT_NAME
+    if _entry_exists(result_path):
+        raise Gate14CacheMaterializationError("packaged acquirer output is not fresh")
+    allowed_environment = {
+        name: os.environ[name]
+        for name in (
+            "COMSPEC",
+            "PATH",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "WINDIR",
+        )
+        if name in os.environ
+    }
+    allowed_environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+    manifest_lease: _LockedRegular | None = None
+    acquirer_lease: _LockedRegular | None = None
+    try:
+        manifest_lease, manifest_payload = _lock_verified_payload(
+            manifest_path,
+            lifecycle.MAX_CONFIG_BYTES,
+            manifest_sha256,
+            "manifest file",
+        )
+        acquirer_lease = _lock_verified_acquirer(
+            acquirer_path,
+            MAX_ACQUIRER_BYTES,
+            acquirer_bytes,
+            acquirer_sha256,
+        )
+        executable, platform_options = _bound_acquirer_execution(acquirer_path, acquirer_lease)
+        argv = [
+            executable,
+            "edge-acquire",
+            "--manifest_stdin_sha256",
+            manifest_sha256,
+            "--cache_dir",
+            os.fspath(cache_dir),
+            "--max_resumptions",
+            "3",
+            "--require_direct_upstream",
+            "--no_token",
+            "--output",
+            os.fspath(result_path),
+        ]
+        try:
+            result = subprocess.run(
+                argv,
+                check=False,
+                input=manifest_payload,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=ACQUIRER_TIMEOUT_SECONDS,
+                shell=False,
+                cwd=os.fspath(acquirer_path.parent),
+                env=allowed_environment,
+                **platform_options,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise Gate14CacheMaterializationError("packaged acquirer failed") from exc
+        if result.returncode != 0:
+            raise Gate14CacheMaterializationError("packaged acquirer failed")
+        manifest_lease.assert_stable("manifest file")
+        acquirer_lease.assert_stable("packaged acquirer")
+        try:
+            payload = _read_locked_regular(result_path, MAX_ACQUIRER_OUTPUT_BYTES)
+            return lifecycle._strict_json(payload, MAX_ACQUIRER_OUTPUT_BYTES)
+        except (Gate14CacheMaterializationError, lifecycle.Gate14LifecycleError) as exc:
+            raise Gate14CacheMaterializationError("packaged acquirer result is invalid") from exc
+    finally:
+        if _entry_exists(result_path):
+            _unlink_retry(result_path)
+        if acquirer_lease is not None:
+            acquirer_lease.close()
+        if manifest_lease is not None:
+            manifest_lease.close()
 
 
 def _transport_overridden() -> bool:
@@ -882,7 +1165,7 @@ def _cleanup_materialization(
 def materialize(
     *,
     plan_path: Path,
-    acquirer: Acquirer = acquire_client_artifacts,
+    acquirer: Acquirer | None = None,
     ownership_verifier: OwnershipVerifier = lifecycle._assert_controller_owned,
     cache_verifier: Callable[[Path, Mapping[str, Any]], CacheLease] = verify_exact_cache,
     native_platform: str | None = None,
@@ -901,7 +1184,7 @@ def materialize(
     if _transport_overridden():
         raise Gate14CacheMaterializationError("official upstream transport is overridden")
     _verify_sources(plan)
-    manifest = _safe_manifest(plan.manifest_path, plan.platform)
+    manifest = _safe_manifest(plan)
     model_id, manifest_digest = _validate_manifest(
         manifest,
         platform_name=plan.platform,
@@ -922,12 +1205,18 @@ def materialize(
     try:
         cache.mkdir(mode=0o700)
         cache_created = True
-        record = acquirer(
-            manifest,
+        acquisition = _packaged_acquirer if acquirer is None else acquirer
+        record = acquisition(
+            ManifestProfile(name=model_id),
             cache_dir=cache,
             token=False,
             max_resumptions=3,
             require_direct_upstream=True,
+            manifest_path=plan.manifest_path,
+            manifest_sha256=plan.manifest_sha256,
+            acquirer_path=plan.acquirer_path,
+            acquirer_sha256=plan.acquirer_sha256,
+            acquirer_bytes=plan.acquirer_bytes,
         )
         record_payload = _canonical(record)
         binding = lifecycle.build_warm_cache_binding(
@@ -1319,7 +1608,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (
         Gate14CacheMaterializationError,
         lifecycle.Gate14LifecycleError,
-        ManifestError,
         OSError,
         ValueError,
     ) as exc:
