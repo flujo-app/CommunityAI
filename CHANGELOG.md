@@ -83,6 +83,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   collection remain fail-closed until the protected host bootstrap/status bridge
   is complete. This USD 0 checkpoint passes 170 focused and 264 complete Gate
   Q3.8 tests with four native-platform skips.
+- Qwen3.8 Linux host status now has a bounded canonical authenticated-envelope
+  primitive. Controller contexts and HMAC-signed worker/job records bind the exact
+  source, plan, actions, provider generation, boot UUID, monotonic revision, and
+  prepared-record digest while rejecting stale, replayed, substituted, deeply nested,
+  or oversized input. This USD 0 checkpoint passes 41 transport, 211 controller/adapter,
+  and 305 complete Gate Q3.8 tests with four native-platform skips; protected key and
+  context installation, prepared-record equality, adapter consumption, and native
+  Linux bootstrap remain open.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
