@@ -99,6 +99,18 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   checkpoint passes 119 focused, 328 complete Gate Q3.8, and 1,877 offline
   tests; key/context delivery, external publication, adapter consumption, and
   native Linux execution remain open.
+- Qwen3.8 route plans now bind a separate exact run-scoped IAP SSH
+  firewall, and the GCP adapter can consume canonical authenticated guest
+  attributes only through paired protected key/replay resolvers and only
+  between generation-stable complete provider inventories. Broadened or
+  substituted firewall state, malformed or ambiguous carriers, wrong keys,
+  replayed revisions, instance recreation, and protected-bootstrap loss fail
+  closed; cleanup never depends on status material. The firewall candidate
+  passes 180 focused and 368 complete Gate Q3.8 tests, and the consumer
+  candidate passes 101 focused and 376 complete Gate Q3.8 tests, with four
+  native-platform skips in each complete matrix. Both are USD 0 checkpoints;
+  key generation, vaulting, protected delivery, and native Linux probes remain
+  open, and paid start/collection remain disabled.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
