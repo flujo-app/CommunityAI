@@ -162,19 +162,9 @@ def _release_root(
     return root
 
 
-def _validate(
-    root: Path,
-    manifest: Path = MANIFEST,
-    *,
-    source_commit: str = SOURCE_COMMIT,
-    source_tree: str = SOURCE_TREE,
-    protection_verifier: stage.ProtectionVerifier | None = None,
-) -> dict[str, object]:
+def _source_bindings() -> list[dict[str, object]]:
     bindings = []
-    for relative in (
-        controller.DESKTOP_RELEASE_VERIFIER_SOURCE_PATH,
-        controller.STAGE_PACKAGE_SOURCE_PATH,
-    ):
+    for relative in sorted(controller.REQUIRED_SOURCE_PATHS):
         payload = (SOURCE_ROOT / relative).read_bytes()
         bindings.append(
             {
@@ -183,6 +173,28 @@ def _validate(
                 "byte_size": len(payload),
             }
         )
+    return bindings
+
+
+def _source_context() -> dict[str, object]:
+    return {
+        "schema_version": stage.SCHEMA_VERSION,
+        "scope": stage.SOURCE_CONTEXT_SCOPE,
+        "source_commit": SOURCE_COMMIT,
+        "source_tree": SOURCE_TREE,
+        "source_bindings": _source_bindings(),
+    }
+
+
+def _validate(
+    root: Path,
+    manifest: Path = MANIFEST,
+    *,
+    source_commit: str = SOURCE_COMMIT,
+    source_tree: str = SOURCE_TREE,
+    protection_verifier: stage.ProtectionVerifier | None = None,
+) -> dict[str, object]:
+    bindings = _source_bindings()
     return stage.validate_release_root(
         root,
         manifest,
@@ -205,6 +217,7 @@ def test_binds_complete_linux_node_runtime(
     assert record["platform"] == "linux"
     assert record["source_commit"] == SOURCE_COMMIT
     assert record["source_tree"] == SOURCE_TREE
+    assert record["source_bindings_digest"] == controller._source_bindings_digest(_source_bindings())
     assert record["manifest_digest"] == controller.EXPECTED_MANIFEST_DIGEST
     assert record["manifest_sha256"].startswith("sha256:")
     assert record["node_executable"] == "CommunityAI/node/CommunityAI-Node"
@@ -456,19 +469,15 @@ def test_rejects_mutation_after_release_verification(
 
 
 def test_rejects_unbound_verifier_source() -> None:
-    bindings = []
-    for relative in (
-        controller.STAGE_PACKAGE_SOURCE_PATH,
-        controller.DESKTOP_RELEASE_VERIFIER_SOURCE_PATH,
-    ):
-        payload = (SOURCE_ROOT / relative).read_bytes()
-        bindings.append(
-            {
-                "relative_path": relative,
-                "sha256": stage._sha256(payload),
-                "byte_size": len(payload),
-            }
-        )
+    bindings = [
+        binding
+        for binding in _source_bindings()
+        if binding["relative_path"]
+        in {
+            controller.STAGE_PACKAGE_SOURCE_PATH,
+            controller.DESKTOP_RELEASE_VERIFIER_SOURCE_PATH,
+        }
+    ]
 
     with pytest.raises(stage.Q38StagePackageError, match="not plan-bound"):
         stage._assert_verifier_sources(SOURCE_ROOT, bindings[:1])
@@ -505,3 +514,201 @@ def test_atomic_record_round_trip_and_unsafe_target(
     output.mkdir()
     with pytest.raises(stage.Q38StagePackageError, match="target is unsafe"):
         stage._atomic_record(output, record)
+
+
+def test_source_context_drives_cli_without_loading_a_final_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _release_root(tmp_path, monkeypatch)
+    context_path = tmp_path / "source-context.json"
+    context_path.write_text(json.dumps(_source_context(), sort_keys=True) + "\n", encoding="utf-8")
+    output = tmp_path / "runtime-package.json"
+    protected_calls: list[tuple[Path, bool]] = []
+    monkeypatch.setattr(
+        controller,
+        "_assert_protected_path_from_bindings",
+        lambda path, _bindings, _root, *, directory: protected_calls.append((path.resolve(), directory)),
+    )
+    monkeypatch.setattr(
+        controller,
+        "load_plan",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("final plan must not be loaded")),
+    )
+
+    assert (
+        stage.main(
+            [
+                "--release-root",
+                str(root),
+                "--manifest",
+                str(MANIFEST),
+                "--source-context",
+                str(context_path),
+                "--source-root",
+                str(SOURCE_ROOT),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert record["source_commit"] == SOURCE_COMMIT
+    assert record["source_tree"] == SOURCE_TREE
+    assert record["source_bindings_digest"] == controller._source_bindings_digest(_source_bindings())
+    assert (context_path.parent.resolve(), True) in protected_calls
+    assert (context_path.resolve(), False) in protected_calls
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", True),
+        ("scope", "wrong"),
+        ("source_commit", "0" * 39),
+        ("source_tree", "0" * 41),
+    ],
+)
+def test_source_context_rejects_invalid_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    context = _source_context()
+    context[field] = value
+    path = tmp_path / "source-context.json"
+    path.write_text(json.dumps(context, sort_keys=True) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        controller,
+        "_assert_protected_path_from_bindings",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(stage.Q38StagePackageError, match="identity"):
+        stage.load_source_context(path, SOURCE_ROOT)
+
+
+def test_source_context_rejects_duplicate_or_incomplete_bindings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        controller,
+        "_assert_protected_path_from_bindings",
+        lambda *_args, **_kwargs: None,
+    )
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_text(
+        '{"schema_version":1,"schema_version":1}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(stage.Q38StagePackageError, match="duplicate JSON field"):
+        stage.load_source_context(duplicate, SOURCE_ROOT)
+
+    context = _source_context()
+    context["source_bindings"] = context["source_bindings"][:-1]
+    incomplete = tmp_path / "incomplete.json"
+    incomplete.write_text(json.dumps(context, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(stage.Q38StagePackageError, match="incomplete"):
+        stage.load_source_context(incomplete, SOURCE_ROOT)
+
+
+def test_source_context_rejects_mutation_during_protection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "source-context.json"
+    path.write_text(json.dumps(_source_context(), sort_keys=True) + "\n", encoding="utf-8")
+
+    def mutate_context(protected: Path, *_args: object, **_kwargs: object) -> None:
+        if protected == path:
+            protected.write_text(protected.read_text(encoding="utf-8") + " ", encoding="utf-8")
+
+    monkeypatch.setattr(controller, "_assert_protected_path_from_bindings", mutate_context)
+
+    with pytest.raises(stage.Q38StagePackageError, match="changed while validated"):
+        stage.load_source_context(path, SOURCE_ROOT)
+
+
+def test_record_rejects_source_binding_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _release_root(tmp_path, monkeypatch)
+    bindings = _source_bindings()
+    record = _validate(root)
+    changed = list(bindings)
+    changed[0] = dict(changed[0])
+    changed[0]["sha256"] = "sha256:" + "0" * 64
+
+    with pytest.raises(stage.Q38StagePackageError, match="source bindings changed"):
+        stage.validate_record(record, expected_source_bindings=changed)
+
+
+@pytest.mark.parametrize("target", ("context", "manifest", "release"))
+def test_cli_rejects_output_alias_without_overwriting_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    root = _release_root(tmp_path, monkeypatch)
+    context_path = tmp_path / "source-context.json"
+    context_path.write_text(json.dumps(_source_context(), sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(MANIFEST.read_bytes())
+    output = {
+        "context": context_path,
+        "manifest": manifest_path,
+        "release": root / build_desktop.PROVENANCE_NAME,
+    }[target]
+    protected = {
+        context_path: context_path.read_bytes(),
+        manifest_path: manifest_path.read_bytes(),
+        root / build_desktop.PROVENANCE_NAME: (root / build_desktop.PROVENANCE_NAME).read_bytes(),
+    }
+
+    with pytest.raises(SystemExit, match="output"):
+        stage.main(
+            [
+                "--release-root",
+                str(root),
+                "--manifest",
+                str(manifest_path),
+                "--source-context",
+                str(context_path),
+                "--source-root",
+                str(SOURCE_ROOT),
+                "--output",
+                str(output),
+            ]
+        )
+
+    assert {path: path.read_bytes() for path in protected} == protected
+
+
+def test_output_isolation_rejects_source_root_and_resolved_descendants(tmp_path: Path) -> None:
+    release_root = tmp_path / "release"
+    release_root.mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}\n", encoding="utf-8")
+    context = tmp_path / "context.json"
+    context.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(stage.Q38StagePackageError, match="protected input root"):
+        stage._assert_output_isolation(
+            SOURCE_ROOT / "forbidden-runtime-record.json",
+            release_root=release_root,
+            manifest_path=manifest,
+            source_context_path=context,
+            source_root=SOURCE_ROOT,
+        )
+    with pytest.raises(stage.Q38StagePackageError, match="protected input root"):
+        stage._assert_output_isolation(
+            release_root / "nested" / "runtime-record.json",
+            release_root=release_root,
+            manifest_path=manifest,
+            source_context_path=context,
+            source_root=SOURCE_ROOT,
+        )

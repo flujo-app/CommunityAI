@@ -23,42 +23,22 @@ from desktop import build_desktop
 from drift.model_manifest import ManifestError, ModelManifest
 from scripts import gateq38_route_controller as controller
 
-SCHEMA_VERSION = 1
-SCOPE = "qwen3.8-linux-runtime-package"
+SCHEMA_VERSION = controller.RUNTIME_PACKAGE_SCHEMA_VERSION
+SCOPE = controller.RUNTIME_PACKAGE_SCOPE
+SOURCE_CONTEXT_SCOPE = "qwen3.8-runtime-package-source-context"
 MAX_RECORD_BYTES = 262_144
 HASH_CHUNK_BYTES = 1_048_576
-NODE_ROOT = f"{build_desktop.APP_NAME}/{build_desktop.NODE_DIRECTORY}"
-NODE_EXECUTABLE = f"{NODE_ROOT}/{build_desktop.NODE_NAME}"
-_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+NODE_ROOT = controller.RUNTIME_PACKAGE_NODE_ROOT
+NODE_EXECUTABLE = controller.RUNTIME_PACKAGE_NODE_EXECUTABLE
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 _WEIGHT_ROLES = {"converted_weight", "quantized_weight", "weight"}
 ProtectionVerifier = Callable[[Path, bool], None]
-_RECORD_FIELDS = {
+_SOURCE_CONTEXT_FIELDS = {
     "schema_version",
     "scope",
-    "platform",
     "source_commit",
     "source_tree",
-    "release_archive_name",
-    "release_archive_sha256",
-    "release_archive_bytes",
-    "checksums_sha256",
-    "checksums_bytes",
-    "provenance_sha256",
-    "provenance_bytes",
-    "desktop_metrics_sha256",
-    "desktop_metrics_bytes",
-    "manifest_digest",
-    "manifest_sha256",
-    "manifest_bytes",
-    "node_root",
-    "node_executable",
-    "node_executable_sha256",
-    "node_executable_bytes",
-    "node_runtime_entry_count",
-    "node_runtime_bytes",
-    "node_runtime_inventory_digest",
-    "runtime_package_digest",
+    "source_bindings",
 }
 
 
@@ -105,7 +85,10 @@ def _canonical_bytes(value: Any) -> bytes:
 
 
 def _package_digest(value: Mapping[str, Any]) -> str:
-    return _sha256(_canonical_bytes({key: value[key] for key in sorted(value) if key != "runtime_package_digest"}))
+    try:
+        return controller._runtime_package_digest(value)
+    except controller.RouteControllerError as exc:
+        raise Q38StagePackageError(str(exc)) from exc
 
 
 def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -254,65 +237,25 @@ def _is_model_weight(path: str, manifested_weight_names: set[str]) -> bool:
     )
 
 
-def _strict_record(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != _RECORD_FIELDS:
-        raise Q38StagePackageError("runtime package record schema is invalid")
-    if (
-        type(value["schema_version"]) is not int
-        or value["schema_version"] != SCHEMA_VERSION
-        or value["scope"] != SCOPE
-        or value["platform"] != "linux"
-        or not isinstance(value["source_commit"], str)
-        or _COMMIT_RE.fullmatch(value["source_commit"]) is None
-        or not isinstance(value["source_tree"], str)
-        or _COMMIT_RE.fullmatch(value["source_tree"]) is None
-        or value["node_root"] != NODE_ROOT
-        or value["node_executable"] != NODE_EXECUTABLE
-    ):
-        raise Q38StagePackageError("runtime package identity is invalid")
-    for field in (
-        "release_archive_name",
-        "release_archive_sha256",
-        "checksums_sha256",
-        "provenance_sha256",
-        "desktop_metrics_sha256",
-        "manifest_digest",
-        "manifest_sha256",
-        "node_executable_sha256",
-        "node_runtime_inventory_digest",
-        "runtime_package_digest",
-    ):
-        item = value[field]
-        if field == "release_archive_name":
-            if item != "communityai-desktop-linux.tar.gz":
-                raise Q38StagePackageError("runtime package archive identity is invalid")
-        elif not isinstance(item, str) or _DIGEST_RE.fullmatch(item) is None:
-            raise Q38StagePackageError(f"runtime package digest is invalid: {field}")
-    for field in (
-        "release_archive_bytes",
-        "checksums_bytes",
-        "provenance_bytes",
-        "desktop_metrics_bytes",
-        "manifest_bytes",
-        "node_executable_bytes",
-        "node_runtime_entry_count",
-        "node_runtime_bytes",
-    ):
-        if type(value[field]) is not int or value[field] <= 0:
-            raise Q38StagePackageError(f"runtime package size is invalid: {field}")
-    if value["runtime_package_digest"] != _package_digest(value):
-        raise Q38StagePackageError("runtime package record digest changed")
-    return dict(value)
-
-
 def validate_record(
     value: Any,
     *,
     expected_source_commit: str | None = None,
     expected_source_tree: str | None = None,
     expected_manifest_digest: str | None = None,
+    expected_source_bindings: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    record = _strict_record(value)
+    try:
+        record = dict(
+            controller.validate_runtime_package_record(
+                value,
+                expected_source_commit=expected_source_commit,
+                expected_manifest_digest=expected_manifest_digest,
+                expected_source_bindings=expected_source_bindings,
+            )
+        )
+    except controller.RouteControllerError as exc:
+        raise Q38StagePackageError(str(exc)) from exc
     if expected_source_commit is not None and record["source_commit"] != expected_source_commit:
         raise Q38StagePackageError("runtime package source commit changed")
     if expected_source_tree is not None and record["source_tree"] != expected_source_tree:
@@ -451,6 +394,7 @@ def validate_release_root(
         "platform": "linux",
         "source_commit": expected_source_commit,
         "source_tree": expected_source_tree,
+        "source_bindings_digest": controller._source_bindings_digest(source_bindings),
         "release_archive_name": archive["path"],
         "release_archive_sha256": archive_digest,
         "release_archive_bytes": archive_bytes,
@@ -478,7 +422,38 @@ def validate_release_root(
         expected_source_commit=expected_source_commit,
         expected_source_tree=expected_source_tree,
         expected_manifest_digest=controller.EXPECTED_MANIFEST_DIGEST,
+        expected_source_bindings=source_bindings,
     )
+
+
+def _assert_output_isolation(
+    output: Path,
+    *,
+    release_root: Path,
+    manifest_path: Path,
+    source_context_path: Path,
+    source_root: Path,
+) -> None:
+    try:
+        candidate = output.resolve(strict=False)
+        protected_files = {
+            manifest_path.resolve(strict=True),
+            source_context_path.resolve(strict=True),
+        }
+        protected_roots = {
+            release_root.resolve(strict=True),
+            source_root.resolve(strict=True),
+        }
+    except (OSError, RuntimeError) as exc:
+        raise Q38StagePackageError("runtime package output isolation could not be resolved") from exc
+    if candidate in protected_files:
+        raise Q38StagePackageError("runtime package output aliases a protected input")
+    for root in protected_roots:
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        raise Q38StagePackageError("runtime package output is inside a protected input root")
 
 
 def _atomic_record(path: Path, record: Mapping[str, Any]) -> None:
@@ -511,13 +486,62 @@ def _atomic_record(path: Path, record: Mapping[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def load_source_context(path: Path, source_root: Path) -> dict[str, Any]:
+    payload = _regular_bytes(path, MAX_RECORD_BYTES)
+    try:
+        raw = controller._mapping(
+            controller._strict_json(payload),
+            _SOURCE_CONTEXT_FIELDS,
+            "runtime package source context",
+        )
+        if (
+            type(raw["schema_version"]) is not int
+            or raw["schema_version"] != SCHEMA_VERSION
+            or raw["scope"] != SOURCE_CONTEXT_SCOPE
+            or not isinstance(raw["source_commit"], str)
+            or _COMMIT_RE.fullmatch(raw["source_commit"]) is None
+            or not isinstance(raw["source_tree"], str)
+            or _COMMIT_RE.fullmatch(raw["source_tree"]) is None
+        ):
+            raise Q38StagePackageError("runtime package source context identity is invalid")
+        source_bindings = controller._validate_source_bindings(raw["source_bindings"], source_root)
+    except controller.RouteControllerError as exc:
+        raise Q38StagePackageError(str(exc)) from exc
+    if {item["relative_path"] for item in source_bindings} != controller.REQUIRED_SOURCE_PATHS:
+        raise Q38StagePackageError("runtime package source context is incomplete")
+    try:
+        controller._assert_protected_path_from_bindings(
+            path.parent,
+            source_bindings,
+            source_root,
+            directory=True,
+        )
+        controller._assert_protected_path_from_bindings(
+            path,
+            source_bindings,
+            source_root,
+            directory=False,
+        )
+    except controller.RouteControllerError as exc:
+        raise Q38StagePackageError(str(exc)) from exc
+    if _regular_bytes(path, MAX_RECORD_BYTES) != payload:
+        raise Q38StagePackageError("runtime package source context changed while validated")
+    _assert_verifier_sources(source_root, source_bindings)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "scope": SOURCE_CONTEXT_SCOPE,
+        "source_commit": raw["source_commit"],
+        "source_tree": raw["source_tree"],
+        "source_bindings": source_bindings,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bind an exact Qwen3.8 Linux packaged runtime")
     parser.add_argument("--release-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--source-context", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
-    parser.add_argument("--source-tree", required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -525,17 +549,25 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        plan = controller.load_plan(args.plan, args.source_root)
+        _assert_output_isolation(
+            args.output,
+            release_root=args.release_root,
+            manifest_path=args.manifest,
+            source_context_path=args.source_context,
+            source_root=args.source_root,
+        )
+        context = load_source_context(args.source_context, args.source_root)
+        source_bindings = context["source_bindings"]
         record = validate_release_root(
             args.release_root,
             args.manifest,
-            expected_source_commit=plan.source_commit,
-            expected_source_tree=args.source_tree,
+            expected_source_commit=context["source_commit"],
+            expected_source_tree=context["source_tree"],
             source_root=args.source_root,
-            source_bindings=plan.source_bindings,
-            protection_verifier=lambda path, directory: controller._assert_protected_path(
+            source_bindings=source_bindings,
+            protection_verifier=lambda path, directory: controller._assert_protected_path_from_bindings(
                 path,
-                plan,
+                source_bindings,
                 args.source_root,
                 directory=directory,
             ),

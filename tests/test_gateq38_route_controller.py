@@ -53,6 +53,39 @@ def _binding(relative_path: str = route.VERIFIER_SOURCE_PATH) -> dict[str, objec
     }
 
 
+def _runtime_package(source_bindings: list[dict[str, object]]) -> dict[str, object]:
+    record: dict[str, object] = {
+        "schema_version": route.RUNTIME_PACKAGE_SCHEMA_VERSION,
+        "scope": route.RUNTIME_PACKAGE_SCOPE,
+        "platform": route.RUNTIME_PACKAGE_PLATFORM,
+        "source_commit": "a" * 40,
+        "source_tree": "d" * 40,
+        "source_bindings_digest": route._source_bindings_digest(source_bindings),
+        "release_archive_name": route.RUNTIME_PACKAGE_ARCHIVE,
+        "release_archive_sha256": "sha256:" + "1" * 64,
+        "release_archive_bytes": 3_360_000_000,
+        "checksums_sha256": "sha256:" + "2" * 64,
+        "checksums_bytes": 100_000,
+        "provenance_sha256": "sha256:" + "3" * 64,
+        "provenance_bytes": 100_000,
+        "desktop_metrics_sha256": "sha256:" + "4" * 64,
+        "desktop_metrics_bytes": 10_000,
+        "manifest_digest": route.EXPECTED_MANIFEST_DIGEST,
+        "manifest_sha256": "sha256:" + "5" * 64,
+        "manifest_bytes": 50_000,
+        "node_root": route.RUNTIME_PACKAGE_NODE_ROOT,
+        "node_executable": route.RUNTIME_PACKAGE_NODE_EXECUTABLE,
+        "node_executable_sha256": "sha256:" + "6" * 64,
+        "node_executable_bytes": 10_000_000,
+        "node_runtime_entry_count": 2_000,
+        "node_runtime_bytes": 2_500_000_000,
+        "node_runtime_inventory_digest": "sha256:" + "7" * 64,
+        "runtime_package_digest": "",
+    }
+    record["runtime_package_digest"] = route._runtime_package_digest(record)
+    return record
+
+
 def _workers() -> list[dict[str, object]]:
     result = []
     for index, (span, (artifact_bytes, artifact_digest)) in enumerate(route.EXPECTED_SPANS.items()):
@@ -119,6 +152,7 @@ def _resources(workers: list[dict[str, object]]) -> list[dict[str, object]]:
 
 def _plan_value(*, authorized: bool = True) -> dict[str, object]:
     workers = _workers()
+    source_bindings = [_binding(relative_path) for relative_path in sorted(route.REQUIRED_SOURCE_PATHS)]
     return {
         "schema_version": route.SCHEMA_VERSION,
         "gate": route.GATE,
@@ -146,7 +180,8 @@ def _plan_value(*, authorized: bool = True) -> dict[str, object]:
             "preflight_record_byte_size": 100,
             "readiness_ledger_sha256": _binding(route.READINESS_LEDGER_PATH)["sha256"],
         },
-        "source_bindings": [_binding(relative_path) for relative_path in sorted(route.REQUIRED_SOURCE_PATHS)],
+        "source_bindings": source_bindings,
+        "runtime_package": _runtime_package(source_bindings),
         "resources": _resources(workers),
         "workers": workers,
     }
@@ -319,7 +354,82 @@ def test_load_plan_binds_exact_route_and_current_ledger(tmp_path: Path) -> None:
     assert plan.authorization["combined_cloud_ceiling_usd"] == "100.00"
     assert plan.authorization["ledger_committed_before_run_usd"] == "56.00"
     assert plan.worker_plan_digest.startswith("sha256:")
+    assert plan.runtime_package["runtime_package_digest"].startswith("sha256:")
     assert route.EXPECTED_BLOCK_PREFIX == "model.language_model.layers"
+
+
+def test_runtime_package_is_immutable_and_bound_to_every_action_identity(tmp_path: Path) -> None:
+    original_value = _plan_value()
+    changed_value = copy.deepcopy(original_value)
+    changed_value["runtime_package"]["node_executable_sha256"] = "sha256:" + "8" * 64
+    changed_value["runtime_package"]["runtime_package_digest"] = route._runtime_package_digest(
+        changed_value["runtime_package"]
+    )
+    original = _load_plan(tmp_path / "original", original_value)
+    changed = _load_plan(tmp_path / "changed", changed_value)
+
+    assert original.plan_digest != changed.plan_digest
+    assert original.execution_inventory_digest != changed.execution_inventory_digest
+    assert route._action_id(original, "start_route") != route._action_id(changed, "start_route")
+    assert (
+        route.action_record(route.initial_state(changed), changed)["runtime_package"]
+        == changed_value["runtime_package"]
+    )
+    with pytest.raises(TypeError):
+        original.runtime_package["node_runtime_bytes"] = 1
+    with pytest.raises(TypeError):
+        original.source_bindings[0]["sha256"] = "sha256:" + "0" * 64
+    with pytest.raises(TypeError):
+        original.authorization["maximum_estimate_usd"] = "0.00"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda value: value.pop("runtime_package"), "plan schema"),
+        (lambda value: value["runtime_package"].update(extra=True), "runtime_package schema"),
+        (
+            lambda value: value["runtime_package"].update(source_commit="b" * 40),
+            "source commit changed",
+        ),
+        (
+            lambda value: value["runtime_package"].update(manifest_digest="sha256:" + "0" * 64),
+            "manifest binding changed",
+        ),
+        (
+            lambda value: value["runtime_package"].update(source_bindings_digest="sha256:" + "0" * 64),
+            "source bindings changed",
+        ),
+        (
+            lambda value: value["runtime_package"].update(runtime_package_digest="sha256:" + "0" * 64),
+            "record digest changed",
+        ),
+        (
+            lambda value: value["runtime_package"].update(node_runtime_bytes=True),
+            "node_runtime_bytes",
+        ),
+    ],
+)
+def test_load_plan_rejects_runtime_package_substitution(
+    tmp_path: Path,
+    mutation,
+    message: str,
+) -> None:
+    value = _plan_value()
+    mutation(value)
+
+    with pytest.raises(route.RouteControllerError, match=message):
+        _load_plan(tmp_path, value)
+
+
+def test_runtime_package_digest_domain_is_distinct() -> None:
+    value = _plan_value()["runtime_package"]
+    without_self = {key: item for key, item in value.items() if key != "runtime_package_digest"}
+
+    assert value["runtime_package_digest"] == route._runtime_package_digest(value)
+    assert value["runtime_package_digest"] != route._canonical_digest(without_self)
+    serialized = json.dumps(value, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n"
+    assert "sha256:" + hashlib.sha256(serialized.encode()).hexdigest() != value["runtime_package_digest"]
 
 
 @pytest.mark.parametrize(
@@ -1305,6 +1415,8 @@ def test_production_revalidation_uses_source_bound_module_and_exact_metadata(
             }
         )
     value["source_bindings"] = source_bindings
+    value["runtime_package"]["source_bindings_digest"] = route._source_bindings_digest(source_bindings)
+    value["runtime_package"]["runtime_package_digest"] = route._runtime_package_digest(value["runtime_package"])
     value["authorization"]["readiness_ledger_sha256"] = next(
         binding["sha256"] for binding in source_bindings if binding["relative_path"] == route.READINESS_LEDGER_PATH
     )

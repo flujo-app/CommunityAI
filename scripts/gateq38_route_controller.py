@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import Any, Iterator, Mapping, Sequence
 
 SCHEMA_VERSION = 1
@@ -51,6 +52,12 @@ PROTECTION_SOURCE_PATH = "scripts/gate14_packaged_lifecycle.py"
 GCP_ADAPTER_SOURCE_PATH = "scripts/gateq38_gcp_adapter.py"
 DESKTOP_RELEASE_VERIFIER_SOURCE_PATH = "desktop/build_desktop.py"
 STAGE_PACKAGE_SOURCE_PATH = "scripts/gateq38_stage_package.py"
+RUNTIME_PACKAGE_SCHEMA_VERSION = 1
+RUNTIME_PACKAGE_SCOPE = "qwen3.8-linux-runtime-package"
+RUNTIME_PACKAGE_PLATFORM = "linux"
+RUNTIME_PACKAGE_ARCHIVE = "communityai-desktop-linux.tar.gz"
+RUNTIME_PACKAGE_NODE_ROOT = "CommunityAI/node"
+RUNTIME_PACKAGE_NODE_EXECUTABLE = "CommunityAI/node/CommunityAI-Node"
 REQUIRED_SOURCE_PATHS = {
     "desktop/build_desktop.py",
     "docs/RELEASE_READINESS.md",
@@ -121,8 +128,37 @@ _PLAN_FIELDS = {
     "deadline_unix",
     "authorization",
     "source_bindings",
+    "runtime_package",
     "resources",
     "workers",
+}
+_RUNTIME_PACKAGE_FIELDS = {
+    "schema_version",
+    "scope",
+    "platform",
+    "source_commit",
+    "source_tree",
+    "source_bindings_digest",
+    "release_archive_name",
+    "release_archive_sha256",
+    "release_archive_bytes",
+    "checksums_sha256",
+    "checksums_bytes",
+    "provenance_sha256",
+    "provenance_bytes",
+    "desktop_metrics_sha256",
+    "desktop_metrics_bytes",
+    "manifest_digest",
+    "manifest_sha256",
+    "manifest_bytes",
+    "node_root",
+    "node_executable",
+    "node_executable_sha256",
+    "node_executable_bytes",
+    "node_runtime_entry_count",
+    "node_runtime_bytes",
+    "node_runtime_inventory_digest",
+    "runtime_package_digest",
 }
 _AUTH_FIELDS = {
     "combined_cloud_ceiling_usd",
@@ -404,6 +440,7 @@ class RoutePlan:
     deadline_unix: int
     authorization: Mapping[str, Any]
     source_bindings: tuple[Mapping[str, Any], ...]
+    runtime_package: Mapping[str, Any]
     resources: tuple[ResourcePlan, ...]
     workers: tuple[WorkerPlan, ...]
     plan_digest: str
@@ -432,6 +469,7 @@ class RoutePlan:
                 "deadline_unix": self.deadline_unix,
                 "plan_digest": self.plan_digest,
                 "source_bindings": [dict(binding) for binding in self.source_bindings],
+                "runtime_package": dict(self.runtime_package),
                 "worker_plan_digest": self.worker_plan_digest,
                 "resources": [
                     {
@@ -582,6 +620,84 @@ def _canonical_digest(value: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
+def _source_bindings_digest(source_bindings: Sequence[Mapping[str, Any]]) -> str:
+    return _canonical_digest({"source_bindings": [dict(binding) for binding in source_bindings]})
+
+
+def _runtime_package_digest(value: Mapping[str, Any]) -> str:
+    try:
+        payload = (
+            json.dumps(
+                {key: value[key] for key in sorted(value) if key != "runtime_package_digest"},
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RouteControllerError("runtime package record is not canonical JSON") from exc
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def validate_runtime_package_record(
+    value: Any,
+    *,
+    expected_source_commit: str | None = None,
+    expected_manifest_digest: str | None = None,
+    expected_source_bindings: Sequence[Mapping[str, Any]] | None = None,
+) -> Mapping[str, Any]:
+    record = dict(_mapping(value, _RUNTIME_PACKAGE_FIELDS, "runtime_package"))
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != RUNTIME_PACKAGE_SCHEMA_VERSION
+        or record["scope"] != RUNTIME_PACKAGE_SCOPE
+        or record["platform"] != RUNTIME_PACKAGE_PLATFORM
+        or record["release_archive_name"] != RUNTIME_PACKAGE_ARCHIVE
+        or record["node_root"] != RUNTIME_PACKAGE_NODE_ROOT
+        or record["node_executable"] != RUNTIME_PACKAGE_NODE_EXECUTABLE
+    ):
+        raise RouteControllerError("runtime package identity is invalid")
+    source_commit = _string(record["source_commit"], _COMMIT_RE, "runtime package source commit")
+    _string(record["source_tree"], _COMMIT_RE, "runtime package source tree")
+    manifest_digest = _string(record["manifest_digest"], _DIGEST_RE, "runtime package manifest digest")
+    for field in (
+        "source_bindings_digest",
+        "release_archive_sha256",
+        "checksums_sha256",
+        "provenance_sha256",
+        "desktop_metrics_sha256",
+        "manifest_sha256",
+        "node_executable_sha256",
+        "node_runtime_inventory_digest",
+        "runtime_package_digest",
+    ):
+        _string(record[field], _DIGEST_RE, f"runtime package {field}")
+    for field in (
+        "release_archive_bytes",
+        "checksums_bytes",
+        "provenance_bytes",
+        "desktop_metrics_bytes",
+        "manifest_bytes",
+        "node_executable_bytes",
+        "node_runtime_entry_count",
+        "node_runtime_bytes",
+    ):
+        _integer(record[field], f"runtime package {field}", 1)
+    if expected_source_commit is not None and source_commit != expected_source_commit:
+        raise RouteControllerError("runtime package source commit changed")
+    if expected_manifest_digest is not None and manifest_digest != expected_manifest_digest:
+        raise RouteControllerError("runtime package manifest binding changed")
+    if expected_source_bindings is not None and record["source_bindings_digest"] != _source_bindings_digest(
+        expected_source_bindings
+    ):
+        raise RouteControllerError("runtime package source bindings changed")
+    if record["runtime_package_digest"] != _runtime_package_digest(record):
+        raise RouteControllerError("runtime package record digest changed")
+    return MappingProxyType(record)
+
+
 def _stable_plan_digest(raw: Mapping[str, Any]) -> str:
     """Bind the exact plan without introducing record-hash self-reference."""
 
@@ -673,7 +789,7 @@ def _validate_source_bindings(value: Any, source_root: Path) -> tuple[Mapping[st
         observed_digest = "sha256:" + hashlib.sha256(payload).hexdigest()
         if observed_digest != expected_digest:
             raise RouteControllerError("source binding digest changed")
-        bindings.append(dict(binding))
+        bindings.append(MappingProxyType(dict(binding)))
     return tuple(bindings)
 
 
@@ -747,6 +863,13 @@ def load_plan(path: Path, source_root: Path) -> RoutePlan:
     ledger_binding = next(binding for binding in source_bindings if binding["relative_path"] == READINESS_LEDGER_PATH)
     if ledger_binding["sha256"] != authorization["readiness_ledger_sha256"]:
         raise RouteControllerError("authorization is not bound to the readiness ledger")
+
+    runtime_package = validate_runtime_package_record(
+        raw["runtime_package"],
+        expected_source_commit=source_commit,
+        expected_manifest_digest=manifest_digest,
+        expected_source_bindings=source_bindings,
+    )
 
     raw_workers = raw["workers"]
     if not isinstance(raw_workers, list) or len(raw_workers) != 4:
@@ -847,8 +970,9 @@ def load_plan(path: Path, source_root: Path) -> RoutePlan:
         manifest_digest=manifest_digest,
         model_revision=model_revision,
         deadline_unix=deadline_unix,
-        authorization=authorization,
+        authorization=MappingProxyType(authorization),
         source_bindings=source_bindings,
+        runtime_package=runtime_package,
         resources=tuple(resources),
         workers=tuple(workers),
         plan_digest=_stable_plan_digest(raw),
@@ -875,9 +999,9 @@ def _bound_record_bytes(
     return payload
 
 
-def _assert_protected_path(
+def _assert_protected_path_from_bindings(
     path: Path,
-    plan: RoutePlan,
+    source_bindings: Sequence[Mapping[str, Any]],
     source_root: Path,
     *,
     directory: bool,
@@ -891,11 +1015,13 @@ def _assert_protected_path(
     expected_module = (source_root.resolve() / Path(*PurePosixPath(PROTECTION_SOURCE_PATH).parts)).resolve()
     imported_module = Path(lifecycle.__file__).resolve()
     protection_binding = next(
-        binding for binding in plan.source_bindings if binding["relative_path"] == PROTECTION_SOURCE_PATH
+        (binding for binding in source_bindings if binding["relative_path"] == PROTECTION_SOURCE_PATH),
+        None,
     )
     expected_payload = _regular_bytes(expected_module)
     if (
-        imported_module != expected_module
+        protection_binding is None
+        or imported_module != expected_module
         or "sha256:" + hashlib.sha256(expected_payload).hexdigest() != protection_binding["sha256"]
     ):
         raise RouteControllerError("controller protection verifier is not source-bound")
@@ -903,6 +1029,21 @@ def _assert_protected_path(
         lifecycle._assert_controller_owned(path, directory=directory)
     except (OSError, lifecycle.Gate14LifecycleError) as exc:
         raise RouteControllerError("controller-managed input is not protected") from exc
+
+
+def _assert_protected_path(
+    path: Path,
+    plan: RoutePlan,
+    source_root: Path,
+    *,
+    directory: bool,
+) -> None:
+    _assert_protected_path_from_bindings(
+        path,
+        plan.source_bindings,
+        source_root,
+        directory=directory,
+    )
 
 
 def _protected_record_bytes(
@@ -1921,6 +2062,7 @@ def action_record(state: Mapping[str, Any], plan: RoutePlan) -> dict[str, Any]:
         "action_id": action_id,
         "authorization": dict(plan.authorization),
         "source_bindings": [dict(binding) for binding in plan.source_bindings],
+        "runtime_package": dict(plan.runtime_package),
         "resources": resources,
         "resource_specs": [_expected_resource_spec(resource) for resource in plan.resources],
         "workers": workers,
