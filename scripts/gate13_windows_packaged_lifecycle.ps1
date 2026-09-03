@@ -50,6 +50,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
@@ -101,6 +102,32 @@ namespace Gate13
                 return process == IntPtr.Zero ||
                     NativeHost.WaitForSingleObject(process, 0) == NativeHost.WaitObject0;
             }
+        }
+
+        public bool ContainsProcessId(int candidateProcessId)
+        {
+            if (closed || job == IntPtr.Zero || candidateProcessId < 1)
+            {
+                return false;
+            }
+            return NativeHost.IsJobMember(job, checked((UInt32)candidateProcessId));
+        }
+
+        public void KillMemberProcess(int candidateProcessId, int timeoutMilliseconds)
+        {
+            if (closed || job == IntPtr.Zero || candidateProcessId < 1)
+            {
+                throw new InvalidOperationException("contained process identity unavailable");
+            }
+            if (timeoutMilliseconds < 1 || timeoutMilliseconds > 300000)
+            {
+                throw new ArgumentOutOfRangeException("timeoutMilliseconds");
+            }
+            NativeHost.TerminateJobMember(
+                job,
+                checked((UInt32)candidateProcessId),
+                timeoutMilliseconds
+            );
         }
 
         private void ReleaseHandles()
@@ -171,35 +198,77 @@ namespace Gate13
                 throw new ArgumentOutOfRangeException("timeoutMilliseconds");
             }
 
-            Exception failure = null;
-            try
+            Exception terminationFailure = null;
+            if (job != IntPtr.Zero && !NativeHost.TerminateJobObject(job, 209))
             {
-                if (job != IntPtr.Zero && !NativeHost.TerminateJobObject(job, 209))
+                int error = Marshal.GetLastWin32Error();
+                if (error != NativeHost.ErrorAccessDenied)
                 {
-                    int error = Marshal.GetLastWin32Error();
-                    if (error != NativeHost.ErrorAccessDenied)
-                    {
-                        failure = new Win32Exception(error);
-                    }
-                }
-                if (!WaitForEmpty(timeoutMilliseconds))
-                {
-                    failure = new InvalidOperationException("contained process tree survived");
+                    terminationFailure = new Win32Exception(error);
                 }
             }
-            finally
+            if (!WaitForEmpty(timeoutMilliseconds))
             {
-                ReleaseHandles();
+                if (terminationFailure != null)
+                {
+                    throw terminationFailure;
+                }
+                throw new InvalidOperationException("contained process tree survived");
             }
-            if (failure != null)
-            {
-                throw failure;
-            }
+            ReleaseHandles();
         }
 
         public void Dispose()
         {
             ForceAndVerify(30000);
+        }
+    }
+
+    public sealed class LockedPath : IDisposable
+    {
+        private IntPtr handle;
+        private readonly bool directory;
+
+        public bool IsDirectory { get { return directory; } }
+        public long Length { get; private set; }
+        public string FileIdentity { get; private set; }
+
+        internal LockedPath(
+            IntPtr nativeHandle,
+            bool isDirectory,
+            long length,
+            string fileIdentity
+        )
+        {
+            handle = nativeHandle;
+            directory = isDirectory;
+            Length = length;
+            FileIdentity = fileIdentity;
+        }
+
+        public string Sha256()
+        {
+            if (handle == IntPtr.Zero || directory)
+            {
+                throw new InvalidOperationException("locked file is unavailable");
+            }
+            using (SafeFileHandle safe = new SafeFileHandle(handle, false))
+            using (FileStream stream = new FileStream(safe, FileAccess.Read, 4096, false))
+            using (SHA256 hasher = SHA256.Create())
+            {
+                stream.Position = 0;
+                byte[] digest = hasher.ComputeHash(stream);
+                return BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
+        public void Dispose()
+        {
+            if (handle != IntPtr.Zero)
+            {
+                NativeHost.CloseHandle(handle);
+                handle = IntPtr.Zero;
+            }
         }
     }
 
@@ -217,11 +286,19 @@ namespace Gate13
         private const UInt32 JobObjectBasicAccountingInformation = 1;
         private const UInt32 JobObjectLimitKillOnJobClose = 0x00002000;
         private const UInt32 StdInputHandle = 0xfffffff6;
+        private const UInt32 GenericRead = 0x80000000;
         private const UInt32 GenericWrite = 0x40000000;
         private const UInt32 FileShareRead = 0x00000001;
         private const UInt32 FileShareWrite = 0x00000002;
         private const UInt32 OpenExisting = 3;
+        private const UInt32 FileAttributeDirectory = 0x00000010;
+        private const UInt32 FileAttributeReparsePoint = 0x00000400;
         private const UInt32 FileAttributeNormal = 0x00000080;
+        private const UInt32 FileFlagBackupSemantics = 0x02000000;
+        private const UInt32 FileFlagOpenReparsePoint = 0x00200000;
+        private const UInt32 ProcessTerminate = 0x00000001;
+        private const UInt32 ProcessQueryLimitedInformation = 0x00001000;
+        private const UInt32 Synchronize = 0x00100000;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct SecurityAttributes
@@ -230,6 +307,28 @@ namespace Gate13
             public IntPtr SecurityDescriptor;
             [MarshalAs(UnmanagedType.Bool)]
             public bool InheritHandle;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileTime
+        {
+            public UInt32 LowDateTime;
+            public UInt32 HighDateTime;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public UInt32 FileAttributes;
+            public FileTime CreationTime;
+            public FileTime LastAccessTime;
+            public FileTime LastWriteTime;
+            public UInt32 VolumeSerialNumber;
+            public UInt32 FileSizeHigh;
+            public UInt32 FileSizeLow;
+            public UInt32 NumberOfLinks;
+            public UInt32 FileIndexHigh;
+            public UInt32 FileIndexLow;
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -371,6 +470,25 @@ namespace Gate13
         private static extern UInt32 GetProcessId(IntPtr process);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(
+            UInt32 desiredAccess,
+            [MarshalAs(UnmanagedType.Bool)] bool inheritHandle,
+            UInt32 processId
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsProcessInJob(
+            IntPtr processHandle,
+            IntPtr jobHandle,
+            [MarshalAs(UnmanagedType.Bool)] out bool result
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool TerminateProcess(IntPtr processHandle, UInt32 exitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
         private static extern UInt32 ResumeThread(IntPtr thread);
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -399,6 +517,12 @@ namespace Gate13
             IntPtr templateFile
         );
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(
+            IntPtr file,
+            out ByHandleFileInformation information
+        );
+
         [DllImport("kernel32.dll")]
         private static extern IntPtr GetStdHandle(UInt32 standardHandle);
 
@@ -415,6 +539,75 @@ namespace Gate13
             ref StartupInfo startupInfo,
             out ProcessInformation processInformation
         );
+
+        public static LockedPath OpenReadOnlyNoFollow(string path, bool directory)
+        {
+            if (String.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+            {
+                throw new ArgumentException("locked path is invalid", "path");
+            }
+            SecurityAttributes attributes = new SecurityAttributes();
+            attributes.Length = checked((UInt32)Marshal.SizeOf(typeof(SecurityAttributes)));
+            UInt32 flags = FileFlagOpenReparsePoint;
+            if (directory)
+            {
+                flags |= FileFlagBackupSemantics;
+            }
+            IntPtr handle = CreateFile(
+                path,
+                GenericRead,
+                FileShareRead,
+                ref attributes,
+                OpenExisting,
+                flags,
+                IntPtr.Zero
+            );
+            if (handle == new IntPtr(-1))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            try
+            {
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                if ((information.FileAttributes & FileAttributeReparsePoint) != 0)
+                {
+                    throw new InvalidOperationException("locked path is a reparse point");
+                }
+                bool actualDirectory =
+                    (information.FileAttributes & FileAttributeDirectory) != 0;
+                if (actualDirectory != directory)
+                {
+                    throw new InvalidOperationException("locked path type changed");
+                }
+                long length =
+                    ((long)information.FileSizeHigh << 32) | information.FileSizeLow;
+                string identity = String.Format(
+                    "{0:x8}:{1:x8}{2:x8}",
+                    information.VolumeSerialNumber,
+                    information.FileIndexHigh,
+                    information.FileIndexLow
+                );
+                LockedPath result = new LockedPath(
+                    handle,
+                    actualDirectory,
+                    length,
+                    identity
+                );
+                handle = IntPtr.Zero;
+                return result;
+            }
+            finally
+            {
+                if (handle != IntPtr.Zero)
+                {
+                    CloseHandle(handle);
+                }
+            }
+        }
 
         private static string Quote(string value)
         {
@@ -564,6 +757,69 @@ namespace Gate13
                 Thread.Sleep(20);
             }
             return QueryActiveProcesses(job) == 0;
+        }
+
+        internal static bool IsJobMember(IntPtr job, UInt32 processId)
+        {
+            IntPtr member = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+            if (member == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            try
+            {
+                bool result;
+                if (!IsProcessInJob(member, job, out result))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                return result;
+            }
+            finally
+            {
+                CloseHandle(member);
+            }
+        }
+
+        internal static void TerminateJobMember(
+            IntPtr job,
+            UInt32 processId,
+            int timeoutMilliseconds
+        )
+        {
+            IntPtr member = OpenProcess(
+                ProcessTerminate | ProcessQueryLimitedInformation | Synchronize,
+                false,
+                processId
+            );
+            if (member == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            try
+            {
+                bool inJob;
+                if (!IsProcessInJob(member, job, out inJob))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                if (!inJob)
+                {
+                    throw new InvalidOperationException("process is outside the contained job");
+                }
+                if (!TerminateProcess(member, 215))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                if (WaitForSingleObject(member, checked((UInt32)timeoutMilliseconds)) != WaitObject0)
+                {
+                    throw new InvalidOperationException("contained member survived termination");
+                }
+            }
+            finally
+            {
+                CloseHandle(member);
+            }
         }
 
         internal static int QueryActiveProcesses(IntPtr job)
@@ -1101,11 +1357,11 @@ function Stop-Gate13Product {
         return
     }
     $owned = $script:LifecycleProcess
-    $script:LifecycleProcess = $null
     $graceful = $owned.StopGracefully(60000)
     if (-not $graceful -or $owned.ActiveProcessCount -ne 0) {
         throw "graceful product cleanup failed"
     }
+    $script:LifecycleProcess = $null
 }
 
 function Stop-Gate13ProductForFault {
@@ -1113,11 +1369,11 @@ function Stop-Gate13ProductForFault {
         throw "fault target unavailable"
     }
     $owned = $script:LifecycleProcess
-    $script:LifecycleProcess = $null
     $owned.ForceAndVerify(30000)
     if ($owned.ActiveProcessCount -ne 0) {
         throw "fault cleanup failed"
     }
+    $script:LifecycleProcess = $null
 }
 
 function Force-Gate13ProductCleanup {
@@ -1125,11 +1381,11 @@ function Force-Gate13ProductCleanup {
         return
     }
     $owned = $script:LifecycleProcess
-    $script:LifecycleProcess = $null
     $owned.ForceAndVerify(30000)
     if ($owned.ActiveProcessCount -ne 0) {
         throw "product cleanup failed"
     }
+    $script:LifecycleProcess = $null
 }
 
 function Get-Gate13CredentialCount {

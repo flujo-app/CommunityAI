@@ -8,6 +8,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Gate13Inference,
     [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-f]{64}$")][string]$Gate13LifecycleSha256,
     [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-f]{64}$")][string]$Gate13InferenceSha256,
+    [Parameter(Mandatory = $true)][string]$ProductActions,
+    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-f]{64}$")][string]$ProductActionsSha256,
     [Parameter(Mandatory = $true)][string]$LifecycleConfig,
     [Parameter(Mandatory = $true)][ValidatePattern("^sha256:[0-9a-f]{64}$")][string]$LifecycleConfigSha256,
     [switch]$TransportSelfTest,
@@ -26,6 +28,7 @@ $script:Gate14Scope = "gate14-windows-lifecycle-actions"
 $script:Gate14Phase = "new"
 $script:Gate14Binding = $null
 $script:Gate14Cleaned = $false
+$script:Gate14CleanupResult = $null
 $script:Gate14StateNonce = [Guid]::NewGuid().ToString("N")
 
 function Get-Gate14NormalizedSha256 {
@@ -143,25 +146,43 @@ function Write-Gate14Response {
 
 function Invoke-Gate14Cleanup {
     if ($script:Gate14Cleaned) {
-        return
+        return $script:Gate14CleanupResult
     }
+    if ($TransportSelfTest) {
+        if ($SelfTestCleanupMarker.Length -gt 0) {
+            [IO.File]::WriteAllText($SelfTestCleanupMarker, "cleaned", (New-Object Text.UTF8Encoding($false)))
+        }
+        $result = [ordered]@{
+            action_temporaries_removed = $true
+            attempt_ordinal = [int]$AttemptOrdinal
+            credentials_removed = $true
+            platform = "windows"
+            processes_absent = $true
+            run_id = [string]$RunId
+            schema_version = 1
+            scope = "gate14-host-lifecycle-cleanup"
+        }
+    }
+    else {
+        $result = Invoke-Gate14WindowsProductCleanup
+    }
+    $script:Gate14CleanupResult = $result
     $script:Gate14Cleaned = $true
-    if ($null -ne (Get-Command Force-Gate13ProductCleanup -ErrorAction SilentlyContinue)) {
-        Force-Gate13ProductCleanup
-    }
-    if ($TransportSelfTest -and $SelfTestCleanupMarker.Length -gt 0) {
-        [IO.File]::WriteAllText($SelfTestCleanupMarker, "cleaned", (New-Object Text.UTF8Encoding($false)))
-    }
+    return $result
 }
 
 $lifecyclePath = (Get-Item -LiteralPath $Gate13Lifecycle -Force).FullName
 $inferencePath = (Get-Item -LiteralPath $Gate13Inference -Force).FullName
+$productActionsPath = (Get-Item -LiteralPath $ProductActions -Force).FullName
 if (
     [IO.Path]::GetFileName($lifecyclePath) -cne "gate13_windows_packaged_lifecycle.ps1" -or
     [IO.Path]::GetFileName($inferencePath) -cne "gate13_windows_localhost_inference.ps1" -or
+    [IO.Path]::GetFileName($productActionsPath) -cne "gate14_windows_product_actions.ps1" -or
     [IO.Path]::GetDirectoryName($lifecyclePath) -cne [IO.Path]::GetDirectoryName($inferencePath) -or
+    [IO.Path]::GetDirectoryName($lifecyclePath) -cne [IO.Path]::GetDirectoryName($productActionsPath) -or
     (Get-Gate14NormalizedSha256 -Path $lifecyclePath) -cne $Gate13LifecycleSha256 -or
-    (Get-Gate14NormalizedSha256 -Path $inferencePath) -cne $Gate13InferenceSha256
+    (Get-Gate14NormalizedSha256 -Path $inferencePath) -cne $Gate13InferenceSha256 -or
+    (Get-Gate14NormalizedSha256 -Path $productActionsPath) -cne $ProductActionsSha256
 ) {
     throw "action helper binding is invalid"
 }
@@ -187,11 +208,26 @@ if ($configDigest -cne $LifecycleConfigSha256) {
 }
 
 . $lifecyclePath
+. $inferencePath
+. $productActionsPath
 if (
     $null -eq (Get-Command Force-Gate13ProductCleanup -ErrorAction SilentlyContinue) -or
-    $null -eq (Get-Command Invoke-Gate13LoopbackJson -ErrorAction SilentlyContinue)
+    $null -eq (Get-Command Invoke-Gate13LoopbackJson -ErrorAction SilentlyContinue) -or
+    $null -eq (Get-Command Initialize-Gate14WindowsProductActions -ErrorAction SilentlyContinue) -or
+    $null -eq (Get-Command Invoke-Gate14WindowsProductPrepare -ErrorAction SilentlyContinue) -or
+    $null -eq (Get-Command Invoke-Gate14WindowsProductCalibrate -ErrorAction SilentlyContinue) -or
+    $null -eq (Get-Command Invoke-Gate14WindowsProductCleanup -ErrorAction SilentlyContinue)
 ) {
     throw "required action helpers are unavailable"
+}
+if (-not $TransportSelfTest) {
+    Initialize-Gate14WindowsProductActions `
+        -LifecycleConfig $configItem.FullName `
+        -RunId $RunId `
+        -AttemptOrdinal $AttemptOrdinal `
+        -SourceCommit $SourceCommit `
+        -PackageSha256 $PackageSha256 `
+        -ProductActionsPath $productActionsPath
 }
 
 $expectedRequestId = 1
@@ -246,17 +282,25 @@ try {
                     throw "RPC operation order is invalid"
                 }
                 Assert-Gate14ExactProperties -Value $frame.payload -Names @()
-                if (-not $TransportSelfTest) {
-                    $script:Gate14Phase = "failed"
-                    Write-Gate14Response -RequestId $requestId -Operation $operation -Result "failed" -Payload $null -FailureCode "action-handler-unavailable"
-                    continue
+                if ($TransportSelfTest) {
+                    $payload = [ordered]@{
+                        helpers_loaded = $true
+                        host_process_id = [int]$PID
+                        state_nonce = $script:Gate14StateNonce
+                    }
+                }
+                else {
+                    try {
+                        $payload = Invoke-Gate14WindowsProductPrepare
+                    }
+                    catch {
+                        $script:Gate14Phase = "failed"
+                        Write-Gate14Response -RequestId $requestId -Operation $operation -Result "failed" -Payload $null -FailureCode "product-prepare-failed"
+                        continue
+                    }
                 }
                 $script:Gate14Phase = "prepared"
-                Write-Gate14Response -RequestId $requestId -Operation $operation -Result "passed" -FailureCode $null -Payload ([ordered]@{
-                    helpers_loaded = $true
-                    host_process_id = [int]$PID
-                    state_nonce = $script:Gate14StateNonce
-                })
+                Write-Gate14Response -RequestId $requestId -Operation $operation -Result "passed" -FailureCode $null -Payload $payload
                 continue
             }
 
@@ -282,41 +326,42 @@ try {
                 ) {
                     throw "RPC calibration binding is invalid"
                 }
-                if (-not $TransportSelfTest) {
-                    $script:Gate14Phase = "failed"
-                    Write-Gate14Response -RequestId $requestId -Operation $operation -Result "failed" -Payload $null -FailureCode "action-handler-unavailable"
-                    continue
+                if ($TransportSelfTest) {
+                    $payload = [ordered]@{
+                        challenge_sha256 = [string]$frame.payload.challenge_sha256
+                        host_process_id = [int]$PID
+                        state_nonce = $script:Gate14StateNonce
+                    }
+                }
+                else {
+                    try {
+                        $payload = [ordered]@{
+                            suspensions = @(Invoke-Gate14WindowsProductCalibrate -Challenge $frame.payload)
+                        }
+                    }
+                    catch {
+                        $script:Gate14Phase = "failed"
+                        Write-Gate14Response -RequestId $requestId -Operation $operation -Result "failed" -Payload $null -FailureCode "product-calibration-failed"
+                        continue
+                    }
                 }
                 $script:Gate14Phase = "calibrated"
-                Write-Gate14Response -RequestId $requestId -Operation $operation -Result "passed" -FailureCode $null -Payload ([ordered]@{
-                    challenge_sha256 = [string]$frame.payload.challenge_sha256
-                    host_process_id = [int]$PID
-                    state_nonce = $script:Gate14StateNonce
-                })
+                Write-Gate14Response -RequestId $requestId -Operation $operation -Result "passed" -FailureCode $null -Payload $payload
                 continue
             }
 
             if ($operation -ceq "cleanup") {
                 Assert-Gate14ExactProperties -Value $frame.payload -Names @()
-                Invoke-Gate14Cleanup
+                $payload = Invoke-Gate14Cleanup
                 $script:Gate14Phase = "cleaned"
-                $binding = $frame.binding
-                Write-Gate14Response -RequestId $requestId -Operation $operation -Result "passed" -FailureCode $null -Payload ([ordered]@{
-                    action_temporaries_removed = $true
-                    attempt_ordinal = [int]$binding.attempt_ordinal
-                    credentials_removed = $true
-                    platform = "windows"
-                    processes_absent = $true
-                    run_id = [string]$binding.run_id
-                    schema_version = 1
-                    scope = "gate14-host-lifecycle-cleanup"
-                })
+                Write-Gate14Response -RequestId $requestId -Operation $operation -Result "passed" -FailureCode $null -Payload $payload
                 continue
             }
         }
         catch {
             try {
-                Invoke-Gate14Cleanup
+                $discardedCleanup = Invoke-Gate14Cleanup
+                $discardedCleanup = $null
             }
             catch {
             }
@@ -330,5 +375,6 @@ try {
     }
 }
 finally {
-    Invoke-Gate14Cleanup
+    $discardedCleanup = Invoke-Gate14Cleanup
+    $discardedCleanup = $null
 }

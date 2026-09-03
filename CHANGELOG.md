@@ -92,14 +92,16 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   acceptance evidence. The cross-platform action/entrypoint focus passes 64 tests. No physical
   Gate 9 cache survives the cleaned historical hosts, so the paid run still requires fresh direct
   host materialization. This is software and preflight evidence only: no Gate 14 hardware or
-  cloud-run pass is claimed yet. A restart-safe Linux product-action checkpoint now source-binds
-  concrete package, warm-cache, policy, automatic-placement, recovery, calibration, and cleanup
-  operations through the persistent host. Its 18-test transport suite and three-test isolated
-  product-action suite now prove controlled prepare/calibrate/cleanup plus failure cleanup both
-  before and after credential creation; the complete Gate 14 matrix passes 201 tests. Real packaged
-  execution, the equivalent Windows
-  handler, fresh cache materialization, and physical Windows/Linux L4 qualification remain open.
-  The checkpoint created no reservation or cloud resource and spent USD 0.
+  cloud-run pass is claimed yet. Restart-safe Linux and Windows product-action checkpoints now
+  source-bind concrete package, warm-cache, policy, automatic-placement, recovery, calibration,
+  and cleanup operations through their persistent hosts. The Windows implementation adds native
+  Job Object membership cleanup, no-follow locked cache identity, action-specific persistent
+  launch paths, release/config/source binding, and phased retryable teardown that retains failed
+  process, burn, and credential cleanup state. The Windows product/transport focus passes 50 tests,
+  its Gate 13 lifecycle regression passes 16, and the complete Gate 14 matrix passes 211 tests.
+  Real packaged execution, fresh official-source cache materialization, and physical Windows/Linux
+  L4 qualification remain open. Neither checkpoint created a reservation or cloud resource; this
+  Windows slice spent USD 0.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,

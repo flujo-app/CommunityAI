@@ -3,9 +3,8 @@
 The production action handlers live in one Windows PowerShell process so its
 kill-on-close Job Object, control credential, and packaged process state survive
 the controller-owned challenge wait. This module only owns source verification,
-framing, sequencing, and fail-closed process cleanup. The PowerShell host
-intentionally rejects prepare/calibrate in production until controller-bound
-release-audit and warm-cache inputs are available.
+framing, sequencing, and fail-closed process cleanup. The source-bound
+PowerShell product module implements concrete package/cache/control operations.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ import stat
 import subprocess
 import threading
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, BinaryIO, Callable, Mapping, Sequence
 
 import gate14_calibration_challenge as challenge_contract
 
@@ -36,9 +35,10 @@ DEFAULT_OPERATION_TIMEOUT_SECONDS = {
 }
 DEFAULT_CLOSE_TIMEOUT_SECONDS = 30.0
 
-_GATE13_LIFECYCLE_SHA256 = "a85c51eb0231bcef991a77c57b622fad575049f000c8b95bbeec7f78eaec7a1e"
+_GATE13_LIFECYCLE_SHA256 = "aa549335b63f43ef2e68f40881635ab077e916878bc472b8674424aa087a6dda"
 _GATE13_INFERENCE_SHA256 = "2d53424c886ff4a70367a3a0844e33a234bc6c290828a21b70a134b5bf115611"
-_ACTION_HOST_SHA256 = "e597f02099b44d63caa0b9dfe8993bb046e79a21d38f83d0467cbda353e71e14"
+_PRODUCT_ACTIONS_SHA256 = "3a29f13ecd855fbdb21d42b21ffd3e793e8a3c1086f816a28d20f9e8cfbb2e23"
+_ACTION_HOST_SHA256 = "4ebf68d5fbeb3afad9cd52a7e062162de61da4f6ecee0cd113585a20c84fdab5"
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
@@ -137,7 +137,59 @@ def _strict_json(payload: bytes) -> Mapping[str, Any]:
     return value
 
 
-def _normalized_source(path: Path, expected_sha256: str) -> Path:
+def _open_locked_source(candidate: Path) -> BinaryIO:
+    if os.name != "nt":
+        return candidate.open("rb")
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    create_file = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+    create_file.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    create_file.restype = wintypes.HANDLE
+    close_handle = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+
+    generic_read = 0x80000000
+    share_read_only = 0x00000001
+    open_existing = 3
+    open_reparse_point = 0x00200000
+    sequential_scan = 0x08000000
+    raw_handle = create_file(
+        str(candidate),
+        generic_read,
+        share_read_only,
+        None,
+        open_existing,
+        open_reparse_point | sequential_scan,
+        None,
+    )
+    invalid_handle = ctypes.c_void_p(-1).value
+    if raw_handle == invalid_handle:
+        error = ctypes.get_last_error()
+        raise OSError(error, "could not lock action source", str(candidate))
+    try:
+        descriptor = msvcrt.open_osfhandle(int(raw_handle), os.O_RDONLY)
+    except BaseException:
+        close_handle(raw_handle)
+        raise
+    return os.fdopen(descriptor, "rb", closefd=True)
+
+
+def _open_verified_source(
+    path: Path,
+    expected_sha256: str,
+) -> tuple[Path, BinaryIO]:
     candidate = Path(path)
     try:
         metadata = candidate.lstat()
@@ -151,14 +203,44 @@ def _normalized_source(path: Path, expected_sha256: str) -> Path:
         or not 1 <= metadata.st_size <= MAX_SOURCE_BYTES
     ):
         raise Gate14ActionTransportError("action source is unsafe")
+
+    handle: BinaryIO | None = None
     try:
-        payload = candidate.read_bytes()
+        handle = _open_locked_source(candidate)
+        opened = os.fstat(handle.fileno())
+        if not stat.S_ISREG(opened.st_mode) or (metadata.st_dev, metadata.st_ino, metadata.st_size,) != (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+        ):
+            raise Gate14ActionTransportError("action source changed while opening")
+        payload = handle.read(MAX_SOURCE_BYTES + 1)
+        after = os.fstat(handle.fileno())
+        if len(payload) != opened.st_size or (opened.st_dev, opened.st_ino, opened.st_size,) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+        ):
+            raise Gate14ActionTransportError("action source changed while reading")
+        normalized = payload.replace(b"\r\n", b"\n")
+        if b"\r" in normalized or hashlib.sha256(normalized).hexdigest() != expected_sha256:
+            raise Gate14ActionTransportError("action source digest changed")
+        handle.seek(0)
+        return candidate.resolve(), handle
+    except Gate14ActionTransportError:
+        if handle is not None:
+            handle.close()
+        raise
     except OSError as exc:
+        if handle is not None:
+            handle.close()
         raise Gate14ActionTransportError("action source is unreadable") from exc
-    normalized = payload.replace(b"\r\n", b"\n")
-    if b"\r" in normalized or hashlib.sha256(normalized).hexdigest() != expected_sha256:
-        raise Gate14ActionTransportError("action source digest changed")
-    return candidate.resolve()
+
+
+def _normalized_source(path: Path, expected_sha256: str) -> Path:
+    verified, handle = _open_verified_source(path, expected_sha256)
+    handle.close()
+    return verified
 
 
 def _assert_safe_payload(value: Any) -> None:
@@ -226,7 +308,11 @@ def _challenge_payload(challenge: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _file_digest(path: Path, maximum: int) -> str:
+def _open_verified_config(
+    path: Path,
+    expected_sha256: str,
+    maximum: int,
+) -> tuple[Path, BinaryIO]:
     candidate = Path(path)
     try:
         metadata = candidate.lstat()
@@ -235,9 +321,36 @@ def _file_digest(path: Path, maximum: int) -> str:
     reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
     if reparse or candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 1 <= metadata.st_size <= maximum:
         raise Gate14ActionTransportError("lifecycle configuration is unsafe")
+
+    handle: BinaryIO | None = None
     try:
-        return "sha256:" + hashlib.sha256(candidate.read_bytes()).hexdigest()
+        handle = _open_locked_source(candidate)
+        opened = os.fstat(handle.fileno())
+        if not stat.S_ISREG(opened.st_mode) or (metadata.st_dev, metadata.st_ino, metadata.st_size,) != (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+        ):
+            raise Gate14ActionTransportError("lifecycle configuration changed while opening")
+        payload = handle.read(maximum + 1)
+        after = os.fstat(handle.fileno())
+        if len(payload) != opened.st_size or (opened.st_dev, opened.st_ino, opened.st_size,) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+        ):
+            raise Gate14ActionTransportError("lifecycle configuration changed while reading")
+        if "sha256:" + hashlib.sha256(payload).hexdigest() != expected_sha256:
+            raise Gate14ActionTransportError("lifecycle configuration binding changed")
+        handle.seek(0)
+        return candidate.resolve(), handle
+    except Gate14ActionTransportError:
+        if handle is not None:
+            handle.close()
+        raise
     except OSError as exc:
+        if handle is not None:
+            handle.close()
         raise Gate14ActionTransportError("lifecycle configuration is unreadable") from exc
 
 
@@ -260,31 +373,52 @@ class WindowsActionTransport:
         self._operation_timeouts = _operation_timeouts(operation_timeouts)
         self._binding = _binding(config)
         config_path = Path(config.config_path)
-        if config_path.name != "gate14-lifecycle.json" or _file_digest(config_path, 65_536) != config.config_sha256:
-            raise Gate14ActionTransportError("lifecycle configuration binding changed")
-
         directory = Path(__file__).resolve().parent
-        self._host_path = _normalized_source(
-            directory / "gate14_windows_lifecycle_actions.ps1",
-            _ACTION_HOST_SHA256,
-        )
-        self._gate13_lifecycle_path = _normalized_source(
-            directory / "gate13_windows_packaged_lifecycle.ps1",
-            _GATE13_LIFECYCLE_SHA256,
-        )
-        self._gate13_inference_path = _normalized_source(
-            directory / "gate13_windows_localhost_inference.ps1",
-            _GATE13_INFERENCE_SHA256,
-        )
-        if not (
-            self._gate13_lifecycle_path.parent == self._gate13_inference_path.parent
-            and self._host_path.parent == self._gate13_lifecycle_path.parent
-        ):
-            raise Gate14ActionTransportError("action sources are not colocated")
+        self._source_handles: list[BinaryIO] = []
+        try:
+            if config_path.name != "gate14-lifecycle.json":
+                raise Gate14ActionTransportError("lifecycle configuration binding changed")
+            self._config_path, handle = _open_verified_config(
+                config_path,
+                config.config_sha256,
+                65_536,
+            )
+            self._source_handles.append(handle)
+            self._host_path, handle = _open_verified_source(
+                directory / "gate14_windows_lifecycle_actions.ps1",
+                _ACTION_HOST_SHA256,
+            )
+            self._source_handles.append(handle)
+            self._gate13_lifecycle_path, handle = _open_verified_source(
+                directory / "gate13_windows_packaged_lifecycle.ps1",
+                _GATE13_LIFECYCLE_SHA256,
+            )
+            self._source_handles.append(handle)
+            self._gate13_inference_path, handle = _open_verified_source(
+                directory / "gate13_windows_localhost_inference.ps1",
+                _GATE13_INFERENCE_SHA256,
+            )
+            self._source_handles.append(handle)
+            self._product_actions_path, handle = _open_verified_source(
+                directory / "gate14_windows_product_actions.ps1",
+                _PRODUCT_ACTIONS_SHA256,
+            )
+            self._source_handles.append(handle)
+            if not (
+                self._gate13_lifecycle_path.parent == self._gate13_inference_path.parent
+                and self._host_path.parent == self._gate13_lifecycle_path.parent
+                and self._product_actions_path.parent == self._gate13_lifecycle_path.parent
+            ):
+                raise Gate14ActionTransportError("action sources are not colocated")
 
-        executable = powershell or shutil.which("powershell.exe")
-        if not executable:
-            raise Gate14ActionTransportError("Windows PowerShell 5.1 is unavailable")
+            executable = powershell or shutil.which("powershell.exe")
+            if not executable:
+                raise Gate14ActionTransportError("Windows PowerShell 5.1 is unavailable")
+        except BaseException:
+            for source_handle in self._source_handles:
+                source_handle.close()
+            self._source_handles.clear()
+            raise
         self._session_id = secrets.token_hex(32)
         arguments = [
             executable,
@@ -313,8 +447,12 @@ class WindowsActionTransport:
             _GATE13_LIFECYCLE_SHA256,
             "-Gate13InferenceSha256",
             _GATE13_INFERENCE_SHA256,
+            "-ProductActions",
+            os.fspath(self._product_actions_path),
+            "-ProductActionsSha256",
+            _PRODUCT_ACTIONS_SHA256,
             "-LifecycleConfig",
-            os.fspath(config_path),
+            os.fspath(self._config_path),
             "-LifecycleConfigSha256",
             config.config_sha256,
         ]
@@ -334,6 +472,7 @@ class WindowsActionTransport:
                 creationflags=creation_flags,
             )
         except (OSError, ValueError) as exc:
+            self._release_source_locks()
             raise Gate14ActionTransportError("action host could not start") from exc
         if self._process.stdin is None or self._process.stdout is None or self._process.stderr is None:
             self._terminate()
@@ -385,9 +524,19 @@ class WindowsActionTransport:
         except BaseException:
             self._stderr_overflow = True
 
+    def _release_source_locks(self) -> None:
+        handles = getattr(self, "_source_handles", [])
+        for handle in handles:
+            try:
+                handle.close()
+            except OSError:
+                pass
+        handles.clear()
+
     def _terminate(self) -> None:
         process = getattr(self, "_process", None)
         if process is None:
+            self._release_source_locks()
             return
         try:
             if process.stdin is not None:
@@ -395,7 +544,13 @@ class WindowsActionTransport:
         except OSError:
             pass
         try:
-            process.wait(timeout=getattr(self, "_close_timeout", DEFAULT_CLOSE_TIMEOUT_SECONDS))
+            process.wait(
+                timeout=getattr(
+                    self,
+                    "_close_timeout",
+                    DEFAULT_CLOSE_TIMEOUT_SECONDS,
+                )
+            )
         except (subprocess.TimeoutExpired, OSError):
             try:
                 process.kill()
@@ -405,6 +560,12 @@ class WindowsActionTransport:
                 process.wait(timeout=DEFAULT_CLOSE_TIMEOUT_SECONDS)
             except (subprocess.TimeoutExpired, OSError):
                 pass
+        try:
+            ended = process.poll() is not None
+        except OSError:
+            ended = False
+        if ended:
+            self._release_source_locks()
 
     def _fail(self, message: str) -> None:
         self._closed = True

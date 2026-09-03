@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -184,6 +185,45 @@ def test_normalized_helper_binding_accepts_crlf_and_rejects_mutation(tmp_path):
     crlf.write_bytes(crlf.read_bytes() + b"# mutation\r\n")
     with pytest.raises(transport.Gate14ActionTransportError, match="digest changed"):
         transport._normalized_source(crlf, expected)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows file sharing is required")
+def test_verified_source_lock_denies_write_and_replace_until_release(tmp_path):
+    source = tmp_path / "source.ps1"
+    replacement = tmp_path / "replacement.ps1"
+    payload = b"Write-Output 'bound'\n"
+    source.write_bytes(payload)
+    expected = hashlib.sha256(payload).hexdigest()
+
+    verified, handle = transport._open_verified_source(source, expected)
+    assert verified == source.resolve()
+    try:
+        with pytest.raises(OSError):
+            source.write_bytes(b"changed\n")
+        replacement.write_bytes(b"replacement\n")
+        with pytest.raises(OSError):
+            replacement.replace(source)
+    finally:
+        handle.close()
+
+    source.write_bytes(b"released\n")
+    assert source.read_bytes() == b"released\n"
+
+    config = tmp_path / "gate14-lifecycle.json"
+    config_payload = b'{"bound":true}\n'
+    config.write_bytes(config_payload)
+    config_digest = "sha256:" + hashlib.sha256(config_payload).hexdigest()
+    verified_config, config_handle = transport._open_verified_config(
+        config,
+        config_digest,
+        65_536,
+    )
+    assert verified_config == config.resolve()
+    try:
+        with pytest.raises(OSError):
+            config.write_bytes(b'{"bound":false}\n')
+    finally:
+        config_handle.close()
 
 
 @pytest.mark.skipif(
@@ -555,7 +595,7 @@ def test_native_host_rejects_replayed_request_id_and_cleans(tmp_path):
     shutil.which("powershell.exe") is None,
     reason="native Windows PowerShell is unavailable",
 )
-def test_production_prepare_is_fail_closed_until_handlers_are_bound(tmp_path):
+def test_production_rejects_incomplete_lifecycle_config_before_dispatch(tmp_path):
     config = config_fixture(tmp_path)
     action_host = transport.WindowsActionTransport(
         config,
@@ -564,11 +604,11 @@ def test_production_prepare_is_fail_closed_until_handlers_are_bound(tmp_path):
     try:
         with pytest.raises(
             transport.Gate14ActionTransportError,
-            match="action-handler-unavailable",
+            match="action host ended before response",
         ):
             action_host.prepare(config)
 
-        assert action_host.cleanup(config)["processes_absent"] is True
+        assert action_host._process.poll() not in (None, 0)
     finally:
         action_host.close()
 
