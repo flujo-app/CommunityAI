@@ -1723,3 +1723,447 @@ def test_cleanup_tombstone_survives_interrupted_deletion_and_blocks_prepare(
     assert not host._runtime_destination(plan, paths).exists()
     assert not paths.prepared_record.exists()
     assert not paths.status_envelope.exists()
+
+
+def _prepare_status_fixture(
+    paths: host.HostPaths,
+    plan: route.RoutePlan,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    host.prepare(
+        paths,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+        identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+        protector=lambda *_args: None,
+        preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
+    )
+
+
+def test_publish_status_sends_exact_protected_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    _prepare_status_fixture(paths, plan, monkeypatch)
+    sent: list[bytes] = []
+
+    receipt = host.publish_status(
+        paths,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+        sender=sent.append,
+    )
+
+    assert sent == [paths.status_envelope.read_bytes()]
+    envelope = transport.decode_status_envelope(sent[0])
+    assert receipt == {
+        "schema_version": host.SCHEMA_VERSION,
+        "scope": host.PUBLICATION_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "resource_name": _transport_kwargs(plan)["expected_resource_name"],
+        "instance_generation_digest": _transport_kwargs(plan)["expected_generation_digest"],
+        "context_digest": _transport_context(plan)["context_digest"],
+        "boot_id": BOOT_ID,
+        "revision": envelope["revision"],
+        "prepared_record_digest": envelope["prepared_record_digest"],
+        "envelope_sha256": _digest(sent[0]),
+        "envelope_bytes": len(sent[0]),
+    }
+    assert KEY not in json.dumps(receipt, sort_keys=True).encode()
+
+
+@pytest.mark.parametrize("target", ["key", "context", "boot", "prepared", "status"])
+def test_publish_status_revalidates_every_protected_input_before_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    _prepare_status_fixture(paths, plan, monkeypatch)
+    if target == "key":
+        paths.transport_key.write_bytes(b"x" * transport.KEY_BYTES)
+    elif target == "context":
+        value = _transport_context(plan)
+        value["instance_id"] = "999"
+        paths.instance_context.write_bytes(transport.encode_instance_context(value))
+    elif target == "boot":
+        paths.boot_id.write_text("11234567-89ab-4cde-8fab-0123456789ab\n", encoding="ascii")
+    elif target == "prepared":
+        value = json.loads(paths.prepared_record.read_text(encoding="utf-8"))
+        value["preflight_stdout_bytes"] += 1
+        _write_json(paths.prepared_record, value)
+    else:
+        value = transport.decode_status_envelope(paths.status_envelope.read_bytes())
+        value["revision"] += 1
+        paths.status_envelope.write_bytes(transport.encode_status_envelope(value))
+    sent: list[bytes] = []
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError):
+        host.publish_status(
+            paths,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+            sender=sent.append,
+        )
+
+    assert sent == []
+
+
+def test_publish_status_requires_prepared_state_before_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    _prepare_status_fixture(paths, plan, monkeypatch)
+    paths.prepared_record.unlink()
+    sent: list[bytes] = []
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="prepared record"):
+        host.publish_status(
+            paths,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+            sender=sent.append,
+        )
+
+    assert sent == []
+
+
+def test_publish_status_holds_lifecycle_lock_against_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    _prepare_status_fixture(paths, plan, monkeypatch)
+    operation_lock = threading.Lock()
+    sender_entered = threading.Event()
+    release_sender = threading.Event()
+    cleanup_done = threading.Event()
+    errors: list[BaseException] = []
+
+    @contextmanager
+    def exclusive(_parent: Path):
+        with operation_lock:
+            yield
+
+    def sender(_payload: bytes) -> None:
+        sender_entered.set()
+        assert release_sender.wait(5)
+
+    def run_publish() -> None:
+        try:
+            host.publish_status(
+                paths,
+                **_transport_kwargs(plan),
+                now_unix=NOW,
+                sender=sender,
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    def run_cleanup() -> None:
+        try:
+            host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            cleanup_done.set()
+
+    monkeypatch.setattr(host, "_prepared_state_lock", exclusive)
+    publish_thread = threading.Thread(target=run_publish)
+    cleanup_thread = threading.Thread(target=run_cleanup)
+    publish_thread.start()
+    assert sender_entered.wait(5)
+    cleanup_thread.start()
+    assert not cleanup_done.wait(0.2)
+    release_sender.set()
+    publish_thread.join(5)
+    cleanup_thread.join(5)
+
+    assert errors == []
+    assert not publish_thread.is_alive()
+    assert not cleanup_thread.is_alive()
+    assert not paths.status_envelope.exists()
+    assert not paths.prepared_record.exists()
+
+
+def test_publish_status_rejects_terminal_cleanup_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    _prepare_status_fixture(paths, plan, monkeypatch)
+    native_remove = host._remove_exact_tree
+    interrupted = False
+
+    def interrupt_after_first_delete(path: Path, parent: Path) -> None:
+        nonlocal interrupted
+        native_remove(path, parent)
+        if not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt("simulated cleanup interruption")
+
+    monkeypatch.setattr(host, "_remove_exact_tree", interrupt_after_first_delete)
+    with pytest.raises(KeyboardInterrupt, match="cleanup interruption"):
+        host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
+    sent: list[bytes] = []
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="cleanup is terminal"):
+        host.publish_status(
+            paths,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+            sender=sent.append,
+        )
+
+    assert sent == []
+
+
+class _MetadataResponse:
+    def __init__(
+        self,
+        *,
+        status: int = 200,
+        flavor: str | None = "Google",
+        body: bytes = b"OK",
+        content_length: str | None = None,
+    ) -> None:
+        self.status = status
+        self._flavor = flavor
+        self._body = body
+        self._content_length = content_length
+
+    def getheader(self, name: str) -> str | None:
+        if name == "Metadata-Flavor":
+            return self._flavor
+        if name == "Content-Length":
+            return self._content_length
+        return None
+
+    def read(self, maximum: int) -> bytes:
+        return self._body[:maximum]
+
+
+class _MetadataConnection:
+    def __init__(self, response: _MetadataResponse) -> None:
+        self.response = response
+        self.request_value: tuple[str, str, bytes, dict[str, str]] | None = None
+        self.closed = False
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: bytes,
+        headers: dict[str, str],
+    ) -> None:
+        self.request_value = (method, path, body, headers)
+
+    def getresponse(self) -> _MetadataResponse:
+        return self.response
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_guest_attribute_publication_uses_fixed_bounded_metadata_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b'{"status":"starting"}\n'
+    connection = _MetadataConnection(_MetadataResponse())
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setenv("HTTP_PROXY", "http://attacker.invalid:8080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://attacker.invalid:8080")
+
+    def factory(*args, **kwargs):
+        calls.append((*args, kwargs))
+        return connection
+
+    host._publish_guest_attribute(payload, connection_factory=factory)
+
+    assert calls == [
+        (
+            host.METADATA_HOST,
+            host.METADATA_PORT,
+            {"timeout": host.METADATA_TIMEOUT_SECONDS},
+        )
+    ]
+    assert connection.request_value == (
+        "PUT",
+        host.GUEST_ATTRIBUTE_PATH,
+        payload,
+        {
+            "Metadata-Flavor": "Google",
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(len(payload)),
+            "Connection": "close",
+        },
+    )
+    assert connection.closed is True
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (_MetadataResponse(status=301), "not acknowledged"),
+        (_MetadataResponse(flavor=None), "not acknowledged"),
+        (
+            _MetadataResponse(body=b"x" * (host.MAX_METADATA_RESPONSE_BYTES + 1)),
+            "size bound",
+        ),
+        (
+            _MetadataResponse(content_length=str(host.MAX_METADATA_RESPONSE_BYTES + 1)),
+            "size bound",
+        ),
+        (_MetadataResponse(content_length="invalid"), "length is invalid"),
+    ],
+)
+def test_guest_attribute_publication_rejects_unsafe_responses(
+    response: _MetadataResponse,
+    error: str,
+) -> None:
+    connection = _MetadataConnection(response)
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match=error):
+        host._publish_guest_attribute(
+            b"status\n",
+            connection_factory=lambda *_args, **_kwargs: connection,
+        )
+
+    assert connection.closed is True
+
+
+def test_guest_attribute_publication_closes_failed_connection() -> None:
+    class FailingConnection(_MetadataConnection):
+        def request(self, *_args, **_kwargs) -> None:
+            raise OSError("network failure")
+
+    connection = FailingConnection(_MetadataResponse())
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="publication failed"):
+        host._publish_guest_attribute(
+            b"status\n",
+            connection_factory=lambda *_args, **_kwargs: connection,
+        )
+
+    assert connection.closed is True
+
+
+def test_host_runtime_parser_includes_fixed_publish_operation() -> None:
+    args = host.build_parser().parse_args(
+        [
+            "publish-status",
+            "--resource-name",
+            "q38-worker-a",
+            "--instance-generation-digest",
+            "sha256:" + "a" * 64,
+        ]
+    )
+    assert args.operation == "publish-status"
+
+
+def test_publish_status_resamples_time_after_acquiring_lifecycle_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    _prepare_status_fixture(paths, plan, monkeypatch)
+    order: list[str] = []
+    sent: list[bytes] = []
+
+    @contextmanager
+    def ordered_lock(_parent: Path):
+        order.append("lock")
+        yield
+
+    def current_time() -> float:
+        order.append("time")
+        return float(NOW + transport.MAX_STATUS_AGE_SECONDS + 1)
+
+    monkeypatch.setattr(host, "_prepared_state_lock", ordered_lock)
+    monkeypatch.setattr(host.time, "time", current_time)
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="status publication is stale"):
+        host.publish_status(
+            paths,
+            **_transport_kwargs(plan),
+            sender=sent.append,
+        )
+
+    assert order == ["lock", "time"]
+    assert sent == []
+
+
+def test_publish_status_failure_preserves_protected_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    _prepare_status_fixture(paths, plan, monkeypatch)
+    prepared = paths.prepared_record.read_bytes()
+    status = paths.status_envelope.read_bytes()
+
+    with pytest.raises(RuntimeError, match="carrier failure"):
+        host.publish_status(
+            paths,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+            sender=lambda _payload: (_ for _ in ()).throw(RuntimeError("carrier failure")),
+        )
+
+    assert paths.prepared_record.read_bytes() == prepared
+    assert paths.status_envelope.read_bytes() == status
+    assert host._runtime_destination(plan, paths).exists()
+
+
+@pytest.mark.parametrize("declared_length", ["", "+1", "-0", " 1 ", "1_0", "١", 1, b"1"])
+def test_guest_attribute_publication_rejects_noncanonical_content_length(
+    declared_length: object,
+) -> None:
+    connection = _MetadataConnection(_MetadataResponse(content_length=declared_length))  # type: ignore[arg-type]
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="length is invalid"):
+        host._publish_guest_attribute(
+            b"status\n",
+            connection_factory=lambda *_args, **_kwargs: connection,
+        )
+
+    assert connection.closed is True
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _MetadataResponse(body=b"X", content_length="2"),
+        _MetadataResponse(body=b"XX", content_length="1"),
+    ],
+)
+def test_guest_attribute_publication_rejects_declared_body_length_mismatch(
+    response: _MetadataResponse,
+) -> None:
+    connection = _MetadataConnection(response)
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="response length changed"):
+        host._publish_guest_attribute(
+            b"status\n",
+            connection_factory=lambda *_args, **_kwargs: connection,
+        )
+
+    assert connection.closed is True
+
+
+def test_guest_attribute_publication_rejects_noninteger_success_status() -> None:
+    connection = _MetadataConnection(_MetadataResponse(status=200.0))  # type: ignore[arg-type]
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="not acknowledged"):
+        host._publish_guest_attribute(
+            b"status\n",
+            connection_factory=lambda *_args, **_kwargs: connection,
+        )
+
+    assert connection.closed is True

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -31,6 +32,7 @@ from scripts import gateq38_linux_host_transport as transport, gateq38_route_con
 SCHEMA_VERSION = 1
 PREPARED_SCOPE = "qwen3.8-linux-host-runtime-prepared"
 CLEANUP_SCOPE = "qwen3.8-linux-host-runtime-cleanup-terminal"
+PUBLICATION_SCOPE = "qwen3.8-linux-host-status-publication"
 QUALIFICATION_USER = "communityai-q38"
 MAX_JSON_BYTES = controller.MAX_JSON_BYTES
 MAX_PROVENANCE_BYTES = controller.MAX_RELEASE_PROVENANCE_BYTES
@@ -47,6 +49,11 @@ INPUT_BASE = Path("/var/lib/communityai-q38/input")
 WORK_BASE = Path("/var/lib/communityai-q38/work")
 STATE_BASE = Path("/var/lib/communityai-q38/state")
 BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+METADATA_HOST = "169.254.169.254"
+METADATA_PORT = 80
+GUEST_ATTRIBUTE_PATH = "/computeMetadata/v1/instance/guest-attributes/communityai-q38/status-v1"
+METADATA_TIMEOUT_SECONDS = 5.0
+MAX_METADATA_RESPONSE_BYTES = 4_096
 _HEX_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _PREPARED_FIELDS = {
     "schema_version",
@@ -1955,6 +1962,150 @@ def prepare(
             raise
 
 
+def _publish_guest_attribute(
+    payload: bytes,
+    *,
+    connection_factory: Callable[..., Any] = http.client.HTTPConnection,
+) -> None:
+    if not isinstance(payload, bytes) or not 1 <= len(payload) <= transport.MAX_ENVELOPE_BYTES:
+        raise Q38LinuxHostRuntimeError("host status publication payload is invalid")
+    connection: Any | None = None
+    try:
+        connection = connection_factory(
+            METADATA_HOST,
+            METADATA_PORT,
+            timeout=METADATA_TIMEOUT_SECONDS,
+        )
+        connection.request(
+            "PUT",
+            GUEST_ATTRIBUTE_PATH,
+            body=payload,
+            headers={
+                "Metadata-Flavor": "Google",
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(payload)),
+                "Connection": "close",
+            },
+        )
+        response = connection.getresponse()
+        declared_length = response.getheader("Content-Length")
+        declared: int | None = None
+        if declared_length is not None:
+            if not isinstance(declared_length, str) or re.fullmatch(r"[0-9]+", declared_length) is None:
+                raise Q38LinuxHostRuntimeError("metadata publication response length is invalid")
+            if len(declared_length) > len(str(MAX_METADATA_RESPONSE_BYTES)):
+                raise Q38LinuxHostRuntimeError("metadata publication response exceeded its size bound")
+            declared = int(declared_length, 10)
+            if declared > MAX_METADATA_RESPONSE_BYTES:
+                raise Q38LinuxHostRuntimeError("metadata publication response exceeded its size bound")
+        response_payload = response.read(MAX_METADATA_RESPONSE_BYTES + 1)
+        if not isinstance(response_payload, bytes) or len(response_payload) > MAX_METADATA_RESPONSE_BYTES:
+            raise Q38LinuxHostRuntimeError("metadata publication response exceeded its size bound")
+        if declared is not None and len(response_payload) != declared:
+            raise Q38LinuxHostRuntimeError("metadata publication response length changed")
+        response_flavor = response.getheader("Metadata-Flavor")
+        if (
+            type(response.status) is not int
+            or response.status != 200
+            or not isinstance(response_flavor, str)
+            or response_flavor != "Google"
+        ):
+            raise Q38LinuxHostRuntimeError("metadata publication was not acknowledged")
+    except Q38LinuxHostRuntimeError:
+        raise
+    except (OSError, http.client.HTTPException) as exc:
+        raise Q38LinuxHostRuntimeError("metadata publication failed") from exc
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except OSError:
+                pass
+
+
+def publish_status(
+    paths: HostPaths,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int | None = None,
+    sender: Callable[[bytes], None] = _publish_guest_attribute,
+) -> dict[str, Any]:
+    if paths.status_envelope.parent != paths.prepared_record.parent:
+        raise Q38LinuxHostRuntimeError("host status is outside the protected state boundary")
+    state_parent = paths.prepared_record.parent
+    if state_parent.is_symlink() or not state_parent.is_dir():
+        raise Q38LinuxHostRuntimeError("protected host state is unavailable")
+    _assert_root_managed(state_parent, directory=True)
+    with _prepared_state_lock(state_parent):
+        verification_time = int(time.time()) if now_unix is None else now_unix
+        plan, _action = _load_plan_and_action(
+            paths.plan,
+            paths.start_action,
+            paths.source_root,
+            expected_action="start_route",
+            now_unix=verification_time,
+        )
+        inputs = _load_transport_inputs(
+            plan,
+            paths,
+            expected_resource_name=expected_resource_name,
+            expected_generation_digest=expected_generation_digest,
+            now_unix=verification_time,
+        )
+        cleanup_marker = _cleanup_marker_path(paths, inputs.context)
+        _reject_cleaned_generation_locked(
+            cleanup_marker,
+            _cleanup_marker_value(plan, inputs.context),
+        )
+        if not paths.prepared_record.exists() or paths.prepared_record.is_symlink():
+            raise Q38LinuxHostRuntimeError("protected prepared record is unavailable")
+        prepared = _load_prepared_record(
+            paths.prepared_record,
+            plan,
+            instance_context=inputs.context,
+            boot_id=inputs.boot_id,
+        )
+        _assert_root_private_file(paths.status_envelope)
+        raw_envelope = _regular_bytes(
+            paths.status_envelope,
+            maximum=transport.MAX_ENVELOPE_BYTES,
+        )
+        try:
+            envelope = transport.validate_status_envelope(
+                transport.decode_status_envelope(raw_envelope),
+                plan,
+                key=inputs.key,
+                now_unix=verification_time,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                expected_boot_id=inputs.boot_id,
+            )
+        except transport.Q38LinuxHostTransportError as exc:
+            raise Q38LinuxHostRuntimeError(str(exc)) from exc
+        if (
+            envelope["prepared_record_digest"] != prepared["prepared_record_digest"]
+            or transport.encode_status_envelope(envelope) != raw_envelope
+        ):
+            raise Q38LinuxHostRuntimeError("host status does not bind the protected prepared record")
+        sender(raw_envelope)
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "scope": PUBLICATION_SCOPE,
+            "run_id": plan.run_id,
+            "source_commit": plan.source_commit,
+            "plan_digest": plan.plan_digest,
+            "resource_name": expected_resource_name,
+            "instance_generation_digest": expected_generation_digest,
+            "context_digest": inputs.context["context_digest"],
+            "boot_id": inputs.boot_id,
+            "revision": envelope["revision"],
+            "prepared_record_digest": prepared["prepared_record_digest"],
+            "envelope_sha256": "sha256:" + hashlib.sha256(raw_envelope).hexdigest(),
+            "envelope_bytes": len(raw_envelope),
+        }
+
+
 def cleanup(
     paths: HostPaths,
     *,
@@ -2048,8 +2199,8 @@ def _require_linux_root() -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Prepare or clean the protected Qwen3.8 Linux runtime")
-    parser.add_argument("operation", choices=("prepare", "cleanup"))
+    parser = argparse.ArgumentParser(description="Prepare, publish, or clean the protected Qwen3.8 Linux runtime")
+    parser.add_argument("operation", choices=("prepare", "publish-status", "cleanup"))
     parser.add_argument("--resource-name", required=True)
     parser.add_argument("--instance-generation-digest", required=True)
     return parser
@@ -2067,6 +2218,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.operation == "prepare":
             record = prepare(paths, **arguments)
             print(json.dumps(record, allow_nan=False, sort_keys=True, separators=(",", ":")))
+        elif args.operation == "publish-status":
+            receipt = publish_status(paths, **arguments)
+            print(json.dumps(receipt, allow_nan=False, sort_keys=True, separators=(",", ":")))
         else:
             cleanup(paths, **arguments)
     except (
