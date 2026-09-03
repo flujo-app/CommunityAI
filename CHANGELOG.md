@@ -40,6 +40,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   exited cleanly, and retained an exact PID/listener/tagged-process cleanup
   audit. Complete-route parity, recovery, packaging, and RTX 30/40/50
   qualification remain open.
+- Qwen3.8 complete-route attempts now have a durable, provider-neutral
+  controller that rederives the exact four-span artifact plan from the official
+  layer index, emits canonical GCP resource specifications, binds protected
+  authorization to the stable plan and exact sources, journals start issuance
+  before the action, and recovers or cleans up without replaying paid work.
+  Independent bypass review, 102 focused, 423 adjacent, and 1,651 offline unit
+  tests pass. This is a USD 0 controller checkpoint: the ledger contains no
+  Q3.8 reservation, so no cloud create or complete-route result is claimed.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
