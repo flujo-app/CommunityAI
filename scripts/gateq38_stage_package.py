@@ -27,6 +27,9 @@ SCHEMA_VERSION = controller.RUNTIME_PACKAGE_SCHEMA_VERSION
 SCOPE = controller.RUNTIME_PACKAGE_SCOPE
 SOURCE_CONTEXT_SCOPE = "qwen3.8-runtime-package-source-context"
 MAX_RECORD_BYTES = 262_144
+MAX_PROVENANCE_BYTES = controller.MAX_RELEASE_PROVENANCE_BYTES
+MAX_CHECKSUMS_BYTES = controller.MAX_RELEASE_CHECKSUMS_BYTES
+MAX_METRICS_BYTES = controller.MAX_RELEASE_METRICS_BYTES
 HASH_CHUNK_BYTES = 1_048_576
 NODE_ROOT = controller.RUNTIME_PACKAGE_NODE_ROOT
 NODE_EXECUTABLE = controller.RUNTIME_PACKAGE_NODE_EXECUTABLE
@@ -297,9 +300,9 @@ def validate_release_root(
     provenance_path = release_root / build_desktop.PROVENANCE_NAME
     checksums_path = release_root / build_desktop.CHECKSUMS_NAME
     metrics_path = release_root / build_desktop.DESKTOP_METRICS_NAME
-    provenance_payload = _regular_bytes(provenance_path, MAX_RECORD_BYTES)
-    checksums_payload = _regular_bytes(checksums_path, MAX_RECORD_BYTES)
-    metrics_payload = _regular_bytes(metrics_path, MAX_RECORD_BYTES)
+    provenance_payload = _regular_bytes(provenance_path, MAX_PROVENANCE_BYTES)
+    checksums_payload = _regular_bytes(checksums_path, MAX_CHECKSUMS_BYTES)
+    metrics_payload = _regular_bytes(metrics_path, MAX_METRICS_BYTES)
     try:
         provenance = json.loads(provenance_payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -317,9 +320,9 @@ def validate_release_root(
     except RuntimeError as exc:
         raise Q38StagePackageError("production release attestations are invalid") from exc
     if (
-        _regular_bytes(provenance_path, MAX_RECORD_BYTES) != provenance_payload
-        or _regular_bytes(checksums_path, MAX_RECORD_BYTES) != checksums_payload
-        or _regular_bytes(metrics_path, MAX_RECORD_BYTES) != metrics_payload
+        _regular_bytes(provenance_path, MAX_PROVENANCE_BYTES) != provenance_payload
+        or _regular_bytes(checksums_path, MAX_CHECKSUMS_BYTES) != checksums_payload
+        or _regular_bytes(metrics_path, MAX_METRICS_BYTES) != metrics_payload
     ):
         raise Q38StagePackageError("release attestations changed while validated")
 
@@ -380,9 +383,9 @@ def validate_release_root(
     if _protected_tree_snapshot(release_root, protection_verifier) != before:
         raise Q38StagePackageError("runtime package tree changed while validated")
     if (
-        _regular_bytes(provenance_path, MAX_RECORD_BYTES) != provenance_payload
-        or _regular_bytes(checksums_path, MAX_RECORD_BYTES) != checksums_payload
-        or _regular_bytes(metrics_path, MAX_RECORD_BYTES) != metrics_payload
+        _regular_bytes(provenance_path, MAX_PROVENANCE_BYTES) != provenance_payload
+        or _regular_bytes(checksums_path, MAX_CHECKSUMS_BYTES) != checksums_payload
+        or _regular_bytes(metrics_path, MAX_METRICS_BYTES) != metrics_payload
         or _regular_bytes(manifest_path, controller.MAX_JSON_BYTES) != manifest_payload
     ):
         raise Q38StagePackageError("runtime package inputs changed while validated")

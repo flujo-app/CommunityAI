@@ -87,8 +87,8 @@ def _runtime_metrics(
         },
         "console_window": install_platform != "Windows",
         "signed": False,
-        "catalog_bootstrap_bundled": False,
-        "catalog_publication_bundle": None,
+        "catalog_bootstrap_bundled": provenance["catalog_publication_bundle"] is not None,
+        "catalog_publication_bundle": provenance["catalog_publication_bundle"],
         "release_artifacts": summary,
     }
 
@@ -101,6 +101,7 @@ def _release_root(
     install_platform: str = "Linux",
     outside_node_symlink: bool = False,
     node_mode: int = 0o755,
+    publication_evidence: dict[str, object] | None = None,
 ) -> Path:
     build_platform = "Windows-test" if install_platform == "Windows" else "Linux-test"
     monkeypatch.setattr(build_desktop.platform, "platform", lambda: build_platform)
@@ -147,7 +148,7 @@ def _release_root(
         source_tree=SOURCE_TREE,
         build_workflow="desktop.yaml@refs/heads/test",
         build_pyinstaller="6.11.1",
-        publication_evidence=None,
+        publication_evidence=publication_evidence,
         install_platform=install_platform,
     )
     build_desktop._write_desktop_metrics(
@@ -234,6 +235,32 @@ def test_binds_complete_linux_node_runtime(
         )
         == record
     )
+
+
+def test_accepts_production_sized_release_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication_evidence = {
+        "schema_version": 1,
+        "catalog_sequence": 1,
+        "member_count": 7_000,
+        "member_digests": {f"catalog/member-{index:05d}-{'x' * 100}.json": "a" * 64 for index in range(7_000)},
+        "complete_release_qualification": False,
+    }
+    root = _release_root(
+        tmp_path,
+        monkeypatch,
+        publication_evidence=publication_evidence,
+    )
+    provenance = root / build_desktop.PROVENANCE_NAME
+    assert provenance.stat().st_size > 1_241_883
+    assert provenance.stat().st_size < stage.MAX_PROVENANCE_BYTES
+
+    record = _validate(root)
+
+    assert record["provenance_bytes"] == provenance.stat().st_size
+    assert record["node_runtime_entry_count"] == 3
 
 
 def test_archive_hashing_uses_bounded_streaming(

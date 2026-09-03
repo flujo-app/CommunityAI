@@ -52,6 +52,10 @@ PROTECTION_SOURCE_PATH = "scripts/gate14_packaged_lifecycle.py"
 GCP_ADAPTER_SOURCE_PATH = "scripts/gateq38_gcp_adapter.py"
 DESKTOP_RELEASE_VERIFIER_SOURCE_PATH = "desktop/build_desktop.py"
 STAGE_PACKAGE_SOURCE_PATH = "scripts/gateq38_stage_package.py"
+LINUX_HOST_RUNTIME_SOURCE_PATH = "scripts/gateq38_linux_host_runtime.py"
+MAX_RELEASE_PROVENANCE_BYTES = 16 * 1024 * 1024
+MAX_RELEASE_CHECKSUMS_BYTES = 16 * 1024 * 1024
+MAX_RELEASE_METRICS_BYTES = 16 * 1024 * 1024
 RUNTIME_PACKAGE_SCHEMA_VERSION = 1
 RUNTIME_PACKAGE_SCOPE = "qwen3.8-linux-runtime-package"
 RUNTIME_PACKAGE_PLATFORM = "linux"
@@ -63,6 +67,7 @@ REQUIRED_SOURCE_PATHS = {
     "docs/RELEASE_READINESS.md",
     "scripts/gate14_packaged_lifecycle.py",
     "scripts/gateq38_gcp_adapter.py",
+    "scripts/gateq38_linux_host_runtime.py",
     "scripts/gateq38_route_controller.py",
     "scripts/gateq38_stage_package.py",
     "scripts/qualify_model_multimachine.py",
