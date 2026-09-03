@@ -68,6 +68,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   execution inventory, action IDs, reservation, and preflight evidence. This
   USD 0 checkpoint passes 156 focused, 184 Gate Q3.8, 205 adjacent, and 1,733
   offline unit tests; native Linux host staging and execution remain open.
+- Qwen3.8 Linux hosts now have a privileged, source-bound runtime preparation
+  and cleanup contract. It validates the exact archive and release inventory,
+  safely extracts a protected root-owned runtime, runs an offline nonroot
+  packaged preflight, proves process-group cleanup on every failure path, and
+  publishes durable no-replace digest-only prepared state. The final local
+  candidate passes 55 host-runtime, 240 Gate Q3.8, 206 adjacent, and 1,789
+  offline tests; native Linux execution, bootstrap/status integration, and any
+  paid route remain open.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
