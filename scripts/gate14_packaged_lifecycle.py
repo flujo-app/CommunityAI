@@ -308,6 +308,9 @@ class CacheArtifactBinding:
 class WarmCacheBinding:
     gate9_acquisition_record_sha256: str
     gate9_resource_envelope_sha256: str
+    source_commit: str
+    materialization_plan_sha256: str
+    materializer_sources_sha256: str
     materialization_record_sha256: str
     materialization_record_bytes: int
     materialization_record_path: Path
@@ -551,7 +554,12 @@ def _assert_windows_access_denied(
             raise Gate14LifecycleError("controller staging write access could not be disproved")
 
 
-def _windows_controller_owned(path: Path, *, directory: bool) -> None:
+def _windows_controller_owned(
+    path: Path,
+    *,
+    directory: bool,
+    require_qualification_denied: bool = True,
+) -> None:
     import ctypes
     from ctypes import wintypes
 
@@ -618,6 +626,9 @@ def _windows_controller_owned(path: Path, *, directory: bool) -> None:
     finally:
         local_free(descriptor)
 
+    if not require_qualification_denied:
+        return
+
     create_file = kernel32.CreateFileW
     create_file.argtypes = (
         wintypes.LPWSTR,
@@ -651,7 +662,8 @@ def _windows_controller_owned(path: Path, *, directory: bool) -> None:
     )
 
 
-def _assert_controller_owned(path: Path, *, directory: bool) -> None:
+def _assert_controller_managed(path: Path, *, directory: bool) -> None:
+    """Prove structural controller ownership without constraining the caller token."""
     path = Path(path)
     try:
         metadata = path.lstat()
@@ -662,14 +674,22 @@ def _assert_controller_owned(path: Path, *, directory: bool) -> None:
     if reparse or path.is_symlink() or not expected_type:
         raise Gate14LifecycleError("controller staging type is unsafe")
     if os.name == "nt":
+        _windows_controller_owned(
+            path,
+            directory=directory,
+            require_qualification_denied=False,
+        )
+        return
+    if metadata.st_uid != 0 or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise Gate14LifecycleError("controller staging ownership is unsafe")
+
+
+def _assert_controller_owned(path: Path, *, directory: bool) -> None:
+    _assert_controller_managed(path, directory=directory)
+    if os.name == "nt":
         _windows_controller_owned(path, directory=directory)
         return
-    if (
-        metadata.st_uid != 0
-        or os.geteuid() == 0
-        or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-        or os.access(path, os.W_OK, effective_ids=True)
-    ):
+    if os.geteuid() == 0 or os.access(path, os.W_OK, effective_ids=True):
         raise Gate14LifecycleError("controller staging ownership is unsafe")
 
 
@@ -731,8 +751,14 @@ def _digest_field(value: Any, label: str) -> str:
     return value
 
 
-def _audit_member_payloads(binding: ReleaseAuditBinding) -> dict[str, bytes]:
-    _assert_controller_owned(binding.archive_path, directory=False)
+def _audit_member_payloads(
+    binding: ReleaseAuditBinding,
+    *,
+    ownership_verifier: Callable[..., None] | None = None,
+) -> dict[str, bytes]:
+    if ownership_verifier is None:
+        ownership_verifier = _assert_controller_owned
+    ownership_verifier(binding.archive_path, directory=False)
     archive = _regular_bytes(binding.archive_path, MAX_RELEASE_AUDIT_BYTES)
     if len(archive) != binding.artifact_bytes or _digest(archive) != binding.artifact_sha256:
         raise Gate14LifecycleError("release audit artifact binding changed")
@@ -762,7 +788,7 @@ def _audit_member_payloads(binding: ReleaseAuditBinding) -> dict[str, bytes]:
         raise Gate14LifecycleError("release audit archive is unreadable") from exc
 
     for member in binding.members:
-        _assert_controller_owned(member.path, directory=False)
+        ownership_verifier(member.path, directory=False)
         staged = _regular_bytes(
             member.path,
             {
@@ -979,6 +1005,7 @@ def _load_release_audit(
     value: Any,
     *,
     staging_root: Path,
+    ownership_verifier: Callable[..., None],
     release_metadata_path: Path,
     release_metadata_sha256: str,
     platform: str,
@@ -1021,7 +1048,7 @@ def _load_release_audit(
         "release audit directory",
         directory=True,
     )
-    _assert_controller_owned(audit_directory, directory=True)
+    ownership_verifier(audit_directory, directory=True)
     members: list[AuditMemberBinding] = []
     for index, raw in enumerate(raw_members):
         if not isinstance(raw, dict) or set(raw) != {"name", "sha256", "size_bytes"}:
@@ -1068,7 +1095,10 @@ def _load_release_audit(
         members=tuple(members),
         binding_sha256=_digest(_canonical(value)),
     )
-    payloads = _audit_member_payloads(binding)
+    payloads = _audit_member_payloads(
+        binding,
+        ownership_verifier=ownership_verifier,
+    )
     _validate_release_semantics(
         payloads,
         platform=platform,
@@ -1107,6 +1137,7 @@ def _validate_cache_artifact(value: Any) -> CacheArtifactBinding:
 def _validate_materialization_record(
     payload: bytes,
     *,
+    platform: str,
     model_id: str,
     manifest_digest: str,
     warm_cache: WarmCacheBinding,
@@ -1145,6 +1176,10 @@ def _validate_materialization_record(
         or any(
             not isinstance(item, str) or not item or len(item) > 256 or any(ord(character) < 32 for character in item)
             for item in runtime_values
+        )
+        or not (
+            runtime.get("platform", "").casefold() == platform
+            or runtime.get("platform", "").casefold().startswith(platform + "-")
         )
         or set(model) != {"id", "manifest_digest", "repository", "revision", "dtype"}
         or set(selection)
@@ -1278,11 +1313,87 @@ def _validate_materialization_record(
         raise Gate14LifecycleError("cache materialization proof is invalid")
 
 
+def build_warm_cache_binding(
+    payload: bytes,
+    *,
+    platform: str,
+    source_commit: str,
+    materialization_plan_sha256: str,
+    materializer_sources_sha256: str,
+    model_id: str,
+    manifest_digest: str,
+) -> dict[str, Any]:
+    """Build the exact lifecycle fragment for one verified fresh materialization."""
+    expected_model = acceptance.EXPECTED_PLATFORM_MODELS.get(platform)
+    profile = acceptance.MODEL_PROFILES.get(model_id)
+    expected = _GATE9_WARM_CACHE.get(platform)
+    if (
+        expected_model != model_id
+        or profile is None
+        or expected is None
+        or profile["manifest_digest"] != manifest_digest
+        or not isinstance(source_commit, str)
+        or _COMMIT_RE.fullmatch(source_commit) is None
+        or not isinstance(materialization_plan_sha256, str)
+        or _DIGEST_RE.fullmatch(materialization_plan_sha256) is None
+        or not isinstance(materializer_sources_sha256, str)
+        or _DIGEST_RE.fullmatch(materializer_sources_sha256) is None
+    ):
+        raise Gate14LifecycleError("cache materialization profile is invalid")
+    artifacts = tuple(CacheArtifactBinding(*item) for item in expected["artifacts"])
+    value = {
+        "schema_version": 1,
+        "layout": "manifest-artifacts-v1",
+        "gate9_acquisition_record_sha256": expected["gate9_acquisition_record_sha256"],
+        "gate9_resource_envelope_sha256": expected["gate9_resource_envelope_sha256"],
+        "source_commit": source_commit,
+        "materialization_plan_sha256": materialization_plan_sha256,
+        "materializer_sources_sha256": materializer_sources_sha256,
+        "materialization_record_sha256": _digest(payload),
+        "materialization_record_bytes": len(payload),
+        "artifact_count": len(artifacts),
+        "artifact_bytes": sum(item.size_bytes for item in artifacts),
+        "artifacts": [
+            {
+                "path": item.path,
+                "role": item.role,
+                "sha256": item.sha256,
+                "size_bytes": item.size_bytes,
+            }
+            for item in artifacts
+        ],
+    }
+    binding = WarmCacheBinding(
+        gate9_acquisition_record_sha256=value["gate9_acquisition_record_sha256"],
+        gate9_resource_envelope_sha256=value["gate9_resource_envelope_sha256"],
+        source_commit=value["source_commit"],
+        materialization_plan_sha256=value["materialization_plan_sha256"],
+        materializer_sources_sha256=value["materializer_sources_sha256"],
+        materialization_record_sha256=value["materialization_record_sha256"],
+        materialization_record_bytes=value["materialization_record_bytes"],
+        materialization_record_path=Path(_MATERIALIZATION_RECORD_NAME),
+        artifact_count=value["artifact_count"],
+        artifact_bytes=value["artifact_bytes"],
+        artifacts=artifacts,
+        binding_sha256=_digest(_canonical(value)),
+    )
+    _validate_materialization_record(
+        payload,
+        platform=platform,
+        model_id=model_id,
+        manifest_digest=manifest_digest,
+        warm_cache=binding,
+    )
+    return value
+
+
 def _load_warm_cache(
     value: Any,
     *,
     staging_root: Path,
+    ownership_verifier: Callable[..., None],
     platform: str,
+    source_commit: str,
     model_id: str,
     manifest_digest: str,
 ) -> WarmCacheBinding:
@@ -1291,6 +1402,9 @@ def _load_warm_cache(
         "layout",
         "gate9_acquisition_record_sha256",
         "gate9_resource_envelope_sha256",
+        "source_commit",
+        "materialization_plan_sha256",
+        "materializer_sources_sha256",
         "materialization_record_sha256",
         "materialization_record_bytes",
         "artifact_count",
@@ -1345,6 +1459,15 @@ def _load_warm_cache(
     binding = WarmCacheBinding(
         gate9_acquisition_record_sha256=expected["gate9_acquisition_record_sha256"],
         gate9_resource_envelope_sha256=expected["gate9_resource_envelope_sha256"],
+        source_commit=value.get("source_commit"),
+        materialization_plan_sha256=_digest_field(
+            value.get("materialization_plan_sha256"),
+            "cache materialization plan digest",
+        ),
+        materializer_sources_sha256=_digest_field(
+            value.get("materializer_sources_sha256"),
+            "cache materializer sources digest",
+        ),
         materialization_record_sha256=_digest_field(
             value.get("materialization_record_sha256"),
             "cache materialization record digest",
@@ -1361,12 +1484,15 @@ def _load_warm_cache(
         artifacts=artifacts,
         binding_sha256=_digest(_canonical(value)),
     )
-    _assert_controller_owned(record_path, directory=False)
+    if binding.source_commit != source_commit:
+        raise Gate14LifecycleError("cache materialization source binding changed")
+    ownership_verifier(record_path, directory=False)
     record = _regular_bytes(record_path, MAX_MATERIALIZATION_RECORD_BYTES)
     if len(record) != binding.materialization_record_bytes or _digest(record) != binding.materialization_record_sha256:
         raise Gate14LifecycleError("cache materialization record identity changed")
     _validate_materialization_record(
         record,
+        platform=platform,
         model_id=model_id,
         manifest_digest=manifest_digest,
         warm_cache=binding,
@@ -1374,7 +1500,13 @@ def _load_warm_cache(
     return binding
 
 
-def load_config(path: Path) -> LifecycleConfig:
+def load_config(
+    path: Path,
+    *,
+    ownership_verifier: Callable[..., None] | None = None,
+) -> LifecycleConfig:
+    if ownership_verifier is None:
+        ownership_verifier = _assert_controller_owned
     payload = _regular_bytes(Path(path), MAX_CONFIG_BYTES)
     raw = _strict_json(payload, MAX_CONFIG_BYTES)
     if (
@@ -1465,6 +1597,7 @@ def load_config(path: Path) -> LifecycleConfig:
     release_audit = _load_release_audit(
         raw["release_audit"],
         staging_root=staging_root,
+        ownership_verifier=ownership_verifier,
         release_metadata_path=release_metadata_path,
         release_metadata_sha256=release_metadata_sha256,
         platform=platform,
@@ -1475,7 +1608,9 @@ def load_config(path: Path) -> LifecycleConfig:
     warm_cache = _load_warm_cache(
         raw["warm_cache"],
         staging_root=staging_root,
+        ownership_verifier=ownership_verifier,
         platform=platform,
+        source_commit=source_commit,
         model_id=model_id,
         manifest_digest=manifest_digest,
     )
@@ -1486,12 +1621,12 @@ def load_config(path: Path) -> LifecycleConfig:
         _CHALLENGE_NAME,
         "controller challenge",
     )
-    _assert_controller_owned(staging_root.parent, directory=True)
-    _assert_controller_owned(staging_root, directory=True)
+    ownership_verifier(staging_root.parent, directory=True)
+    ownership_verifier(staging_root, directory=True)
     for staged_path in (config_path, package_path, release_metadata_path):
-        _assert_controller_owned(staged_path, directory=False)
+        ownership_verifier(staged_path, directory=False)
     if challenge_path.exists():
-        _assert_controller_owned(challenge_path, directory=False)
+        ownership_verifier(challenge_path, directory=False)
     private = {field: _private_path(raw, field, root) for field in _OUTPUT_NAMES}
     if len(set(private.values())) != len(private):
         raise Gate14LifecycleError("private lifecycle paths overlap")
@@ -1644,6 +1779,7 @@ def _verify_staged_inputs(config: LifecycleConfig) -> None:
         raise Gate14LifecycleError("cache materialization record identity changed")
     _validate_materialization_record(
         materialization,
+        platform=config.platform,
         model_id=config.model_id,
         manifest_digest=config.manifest_digest,
         warm_cache=config.warm_cache,

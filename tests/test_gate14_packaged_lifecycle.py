@@ -376,6 +376,9 @@ def _warm_cache(staging, platform):
         "layout": "manifest-artifacts-v1",
         "gate9_acquisition_record_sha256": expected["gate9_acquisition_record_sha256"],
         "gate9_resource_envelope_sha256": expected["gate9_resource_envelope_sha256"],
+        "source_commit": SOURCE,
+        "materialization_plan_sha256": "sha256:" + "3" * 64,
+        "materializer_sources_sha256": "sha256:" + "4" * 64,
         "materialization_record_sha256": lifecycle._digest(payload),
         "materialization_record_bytes": len(payload),
         "artifact_count": profile["selected_artifact_count"],
@@ -522,6 +525,33 @@ def test_config_has_no_claim_fields_and_binds_exact_inputs(config_factory):
         match="configuration schema",
     ):
         lifecycle.load_config(path)
+
+
+def test_load_config_threads_selected_controller_ownership_policy(
+    config_factory,
+):
+    path, raw = config_factory()
+    observed = set()
+
+    def verify(candidate, *, directory):
+        observed.add((Path(candidate), directory))
+
+    lifecycle.load_config(path, ownership_verifier=verify)
+
+    staging = path.parent
+    audit = staging / lifecycle._RELEASE_AUDIT_DIRECTORY_NAME
+    expected = {
+        (staging.parent, True),
+        (staging, True),
+        (path, False),
+        (Path(raw["package_path"]), False),
+        (Path(raw["release_metadata_path"]), False),
+        (staging / lifecycle._MATERIALIZATION_RECORD_NAME, False),
+        (audit, True),
+        (staging / lifecycle._RELEASE_AUDIT_ARCHIVE_NAME, False),
+    }
+    expected.update((audit / name, False) for name in lifecycle._RELEASE_AUDIT_MEMBERS)
+    assert expected <= observed
 
 
 @pytest.mark.parametrize(

@@ -99,9 +99,18 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   launch paths, release/config/source binding, and phased retryable teardown that retains failed
   process, burn, and credential cleanup state. The Windows product/transport focus passes 50 tests,
   its Gate 13 lifecycle regression passes 16, and the complete Gate 14 matrix passes 211 tests.
-  Real packaged execution, fresh official-source cache materialization, and physical Windows/Linux
-  L4 qualification remain open. Neither checkpoint created a reservation or cloud resource; this
-  Windows slice spent USD 0.
+  Gate 14 now also has a source-bound two-phase official-cache boundary. The ordinary process
+  verifies a controller-owned canonical plan and lifecycle template before transfer, writes only
+  the exact manifest cache and canonical handoff below its work root, and cannot mutate protected
+  staging. A privileged promoter revalidates source, plan, record, binding, handoff, and physical
+  cache identity before creating the lifecycle inputs. Structural controller ownership is separate
+  from the qualification token's write-denial proof; Windows promoted files receive an explicit
+  protected SYSTEM/Administrators DACL, while POSIX files remain root-owned mode 0600. Promotion has
+  a retryable commit point, and invalid templates fail before any acquisition. The cache/lifecycle
+  focus passes 96 tests and the complete Gate 14 matrix passes 253 under independent adversarial
+  review. No production model bytes, reservation, or cloud resource were used (USD 0). Real fresh
+  native materialization, bootstrap integration, packaged execution, and physical Windows/Linux L4
+  qualification remain open.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,
