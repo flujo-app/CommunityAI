@@ -34,7 +34,7 @@ staging, budget-revalidation, hardware-run, and cleanup checklist.
   physical inputs (`product-prepare-failed`) from the removed
   `action-handler-unavailable` placeholder.
 
-Normalized source SHA-256 values at checkpoint creation:
+Normalized source SHA-256 values:
 
 - product actions:
   `7a904b1c4653eb2a392bb64b1f97404beaee3fff9a2102f3c9c7949f0a2aa973`
@@ -44,6 +44,8 @@ Normalized source SHA-256 values at checkpoint creation:
   `e7247c57dd01498dfbdfe695079e595e5755ab99c4f9dd01c17ad200cd3c8730`
 - transport test:
   `1e1f50ffc9f7fe017fbb6d5662bc4f499ab649a93afcaac27ecf64486fb2f612`
+- isolated product-action test after restart:
+  `93f16dee2d7652bc74dd5c8f80daa1c63c4197d7c40f7b187b44dd00dde4ebcb`
 
 ## Verification completed before restart
 
@@ -65,10 +67,16 @@ tests. Black 22.3.0 reports the three implementation files and the focused test
 unchanged. An independent helper also AST-parsed the partial Linux implementation
 and identified successful product-action coverage as the main missing local proof.
 
+After restart, `tests/test_gate14_linux_product_actions.py` added controlled
+Gate 13 and control-API boundaries for the complete prepare/calibrate/cleanup
+success path plus failure cleanup both before and after credential creation. The
+product-action and transport focus passes `21` tests, the full
+`tests/test_gate14_*.py` matrix passes `201`, Black/isort checks pass in the
+repository formatter environment, and Python
+compilation passes. This remains no-spend software evidence, not a physical pass.
+
 ## Deliberately incomplete
 
-- No focused success-path/failure-injection tests yet exist for
-  `gate14_linux_product_actions.py`.
 - The Linux handler has not run against a real packaged archive, fresh Gate 9
   warm cache, systemd desktop session, L4 device, or physical resource crossing.
 - The equivalent concrete Windows `prepare`/`calibrate` handler is not
@@ -85,17 +93,14 @@ and identified successful product-action coverage as the main missing local proo
 
 1. Rebuild/restart the harness, then re-check the branch, pinned hashes, and
    unrelated dirty worktree entries before editing.
-2. Add isolated Linux product-action tests covering successful
-   prepare/calibrate/cleanup and failure cleanup with controlled Gate 13/API
-   fakes; rerun the focused and full Gate 14 matrices.
-3. Implement the equivalent source-bound Windows product actions and matching
+2. Implement the equivalent source-bound Windows product actions and matching
    contract tests.
-4. Connect fresh official-source warm-cache materialization and protected
+3. Connect fresh official-source warm-cache materialization and protected
    staging for both platforms.
-5. Only after both platform halves are locally runnable, revalidate
+4. Only after both platform halves are locally runnable, revalidate
    authentication, inventory, quota, current pricing, and the combined USD 100
    ledger. Record a new bounded reservation before any create.
-6. Run Windows then Linux sequentially on fresh no-public-IP L4 hosts, verify
+5. Run Windows then Linux sequentially on fresh no-public-IP L4 hosts, verify
    exact cleanup, and only then evaluate Gate 14 acceptance.
 
 Do not work on credits or macOS.

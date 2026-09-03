@@ -94,11 +94,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   host materialization. This is software and preflight evidence only: no Gate 14 hardware or
   cloud-run pass is claimed yet. A restart-safe Linux product-action checkpoint now source-binds
   concrete package, warm-cache, policy, automatic-placement, recovery, calibration, and cleanup
-  operations through the persistent host; its focused and expanded boundary suites pass 18 and 118
-  tests. Successful packaged execution, dedicated product-action failure injection, the equivalent
-  Windows handler, fresh
-  cache materialization, and physical Windows/Linux L4 qualification remain open. The checkpoint
-  created no reservation or cloud resource and spent USD 0.
+  operations through the persistent host. Its 18-test transport suite and three-test isolated
+  product-action suite now prove controlled prepare/calibrate/cleanup plus failure cleanup both
+  before and after credential creation; the complete Gate 14 matrix passes 201 tests. Real packaged
+  execution, the equivalent Windows
+  handler, fresh cache materialization, and physical Windows/Linux L4 qualification remain open.
+  The checkpoint created no reservation or cloud resource and spent USD 0.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
   localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,
