@@ -49,11 +49,15 @@ VERIFIER_SOURCE_PATH = "src/drift/model_manifest.py"
 READINESS_LEDGER_PATH = "docs/RELEASE_READINESS.md"
 PROTECTION_SOURCE_PATH = "scripts/gate14_packaged_lifecycle.py"
 GCP_ADAPTER_SOURCE_PATH = "scripts/gateq38_gcp_adapter.py"
+DESKTOP_RELEASE_VERIFIER_SOURCE_PATH = "desktop/build_desktop.py"
+STAGE_PACKAGE_SOURCE_PATH = "scripts/gateq38_stage_package.py"
 REQUIRED_SOURCE_PATHS = {
+    "desktop/build_desktop.py",
     "docs/RELEASE_READINESS.md",
     "scripts/gate14_packaged_lifecycle.py",
     "scripts/gateq38_gcp_adapter.py",
     "scripts/gateq38_route_controller.py",
+    "scripts/gateq38_stage_package.py",
     "scripts/qualify_model_multimachine.py",
     "src/drift/model_manifest.py",
     "src/drift/server/server.py",
