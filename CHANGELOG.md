@@ -91,6 +91,14 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   and 305 complete Gate Q3.8 tests with four native-platform skips; protected key and
   context installation, prepared-record equality, adapter consumption, and native
   Linux bootstrap remain open.
+- Qwen3.8 Linux runtime preparation now loads protected controller context and
+  per-instance key inputs, binds provider generation and boot identity into
+  prepared state, and derives the authenticated status envelope from the
+  reopened record. Preparation and cleanup share one lifecycle lock, and
+  cleanup publishes a durable terminal marker before deleting state. This USD 0
+  checkpoint passes 119 focused, 328 complete Gate Q3.8, and 1,877 offline
+  tests; key/context delivery, external publication, adapter consumption, and
+  native Linux execution remain open.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
