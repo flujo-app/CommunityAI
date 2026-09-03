@@ -563,7 +563,8 @@ def test_promoter_defaults_are_controller_writable_and_structurally_verified(
 ):
     assert materializer.promote.__kwdefaults__["ownership_verifier"] is lifecycle._assert_controller_managed
     assert materializer.promote.__kwdefaults__["output_protector"] is materializer._protect_promoted_output
-    assert materializer._WINDOWS_CONTROLLER_SDDL == ("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)")
+    assert materializer._WINDOWS_CONTROLLER_SDDL == ("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GR;;;AU)")
+    assert materializer._POSIX_CONTROLLER_FILE_MODE == 0o644
     observed = []
 
     def load(_path, *, ownership_verifier):
@@ -573,6 +574,30 @@ def test_promoter_defaults_are_controller_writable_and_structurally_verified(
     monkeypatch.setattr(lifecycle, "load_config", load)
     materializer._load_promoted_config(tmp_path / "gate14-lifecycle.json")
     assert observed == [lifecycle._assert_controller_managed]
+
+
+def test_posix_promoted_output_is_qualification_readable_but_not_writable(monkeypatch):
+    events = []
+
+    class Output:
+        def chmod(self, mode):
+            events.append(("chmod", mode))
+
+    output = Output()
+    monkeypatch.setattr(
+        lifecycle,
+        "_assert_controller_managed",
+        lambda candidate, *, directory: events.append(("validated", candidate, directory)),
+    )
+
+    materializer._protect_promoted_output(output, os_name="posix")
+
+    assert materializer._POSIX_CONTROLLER_FILE_MODE & 0o444 == 0o444
+    assert materializer._POSIX_CONTROLLER_FILE_MODE & 0o022 == 0
+    assert events == [
+        ("chmod", 0o644),
+        ("validated", output, False),
+    ]
 
 
 def test_windows_promoted_output_installs_descriptor_before_validation(

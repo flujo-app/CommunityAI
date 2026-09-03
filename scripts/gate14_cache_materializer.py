@@ -730,7 +730,8 @@ def _write_new(path: Path, payload: bytes) -> None:
         raise
 
 
-_WINDOWS_CONTROLLER_SDDL = "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)"
+_WINDOWS_CONTROLLER_SDDL = "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GR;;;AU)"
+_POSIX_CONTROLLER_FILE_MODE = 0o644
 
 
 def _windows_protect_controller_output(path: Path) -> None:
@@ -844,7 +845,9 @@ def _protect_promoted_output(
         _windows_protect_controller_output(path)
     else:
         try:
-            path.chmod(0o600)
+            # The ordinary qualification identity must read promoted inputs,
+            # while only the controller may replace or modify them.
+            path.chmod(_POSIX_CONTROLLER_FILE_MODE)
         except OSError as exc:
             raise Gate14CacheMaterializationError("controller output permissions could not be installed") from exc
     try:

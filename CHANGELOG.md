@@ -104,12 +104,15 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   the exact manifest cache and canonical handoff below its work root, and cannot mutate protected
   staging. A privileged promoter revalidates source, plan, record, binding, handoff, and physical
   cache identity before creating the lifecycle inputs. Structural controller ownership is separate
-  from the qualification token's write-denial proof; Windows promoted files receive an explicit
-  protected SYSTEM/Administrators DACL, while POSIX files remain root-owned mode 0600. Promotion has
-  a retryable commit point, and invalid templates fail before any acquisition. The cache/lifecycle
-  focus passes 96 tests and the complete Gate 14 matrix passes 253 under independent adversarial
-  review. No production model bytes, reservation, or cloud resource were used (USD 0). Real fresh
-  native materialization, bootstrap integration, packaged execution, and physical Windows/Linux L4
+  from the qualification token's write-denial proof. A bootstrap-boundary review then caught that
+  the first promoted-file policy also denied the ordinary host job its required read path. Promoted
+  Windows files now use a protected DACL with SYSTEM/Administrators full control and Authenticated
+  Users generic read; POSIX files remain root-owned mode 0644. The ordinary identity can read but
+  receives no write, delete, owner-change, or DACL-change grant. Promotion has a retryable commit
+  point, and invalid templates fail before any acquisition. The cache/lifecycle focus passes 97
+  tests and the complete Gate 14 matrix passes 254 under independent adversarial review. No
+  production model bytes, reservation, or cloud resource were used (USD 0). Real fresh native
+  materialization, bootstrap integration, packaged execution, and physical Windows/Linux L4
   qualification remain open.
 - Gate 13's successful manual desktop flow now has a bounded automated replay. The
   production package can open its real Qt window in a hidden qualification mode, perform
