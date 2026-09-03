@@ -2176,3 +2176,574 @@ def test_instance_generation_fields_fail_closed(
 
     with pytest.raises(route.RouteControllerError, match="instance generation|provider instance"):
         route.validate_observation(observation, plan)
+
+
+def _instance_key_identity(plan: route.RoutePlan) -> tuple[route.ResourcePlan, str, str]:
+    resource = next(item for item in plan.resources if item.kind == "bootstrap_instance")
+    return resource, "1234567890123456789", "2026-09-03T17:00:00+00:00"
+
+
+def test_instance_generation_key_is_private_digest_bound_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    calls: list[int] = []
+
+    material = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: calls.append(size) or b"a" * size,
+    )
+    reattached = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_001,
+        key_factory=lambda _size: pytest.fail("idempotent reattachment generated a key"),
+    )
+
+    assert calls == [route.INSTANCE_KEY_BYTES]
+    assert material.key == b"a" * route.INSTANCE_KEY_BYTES
+    assert reattached.key == material.key
+    assert dict(reattached.record) == dict(material.record)
+    assert material.record["key_epoch"] == 1
+    assert material.record["key_sha256"] == "sha256:" + hashlib.sha256(material.key).hexdigest()
+    assert material.record["instance_generation_digest"] == route.instance_generation_digest(
+        resource.name,
+        instance_id,
+        created,
+    )
+    assert set(material.record) == route._INSTANCE_KEY_RECORD_FIELDS
+    serialized = json.dumps(dict(material.record), sort_keys=True)
+    assert material.key.hex() not in serialized
+    assert repr(material.key) not in repr(material)
+    assert len(list(vault.rglob("*.key"))) == 1
+
+
+def test_instance_generation_key_creation_recovers_before_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            route,
+            "_replace_instance_key_json",
+            lambda _path, _value: (_ for _ in ()).throw(
+                route.RouteControllerError("simulated activation interruption")
+            ),
+        )
+        with pytest.raises(route.RouteControllerError, match="activation interruption"):
+            route.ensure_instance_generation_key(
+                plan,
+                resource.name,
+                instance_id,
+                created,
+                vault,
+                now_unix=1_900_000_000,
+                key_factory=lambda size: b"a" * size,
+            )
+
+    assert len(list(vault.rglob("*.key"))) == 1
+    assert len(list(vault.rglob("record-*.json"))) == 1
+    assert not list(vault.rglob("active.json"))
+    recovered = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_001,
+        key_factory=lambda size: b"b" * size,
+    )
+
+    assert recovered.record["key_epoch"] == 1
+    assert recovered.key == b"b" * route.INSTANCE_KEY_BYTES
+    assert [path.read_bytes() for path in vault.rglob("*.key")] == [recovered.key]
+    assert len(list(vault.rglob("record-*.json"))) == 1
+    assert len(list(vault.rglob("active.json"))) == 1
+
+
+def test_instance_generation_key_rejects_recreated_resource_without_reuse(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    first = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+
+    with pytest.raises(route.RouteControllerError, match="generation changed"):
+        route.ensure_instance_generation_key(
+            plan,
+            resource.name,
+            str(int(instance_id) + 1),
+            created,
+            vault,
+            now_unix=1_900_000_001,
+            key_factory=lambda _size: pytest.fail("recreated resource reused a key"),
+        )
+
+    loaded = route.load_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_001,
+    )
+    assert loaded.key == first.key
+
+
+def test_instance_generation_key_rotation_switches_epoch_and_removes_old_bytes(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    first = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+    rotated = route.rotate_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_010,
+        expected_record_digest=first.record["record_digest"],
+        key_factory=lambda size: b"b" * size,
+    )
+
+    assert first.record["key_epoch"] == 1
+    assert rotated.record["key_epoch"] == 2
+    assert rotated.record["previous_record_digest"] == first.record["record_digest"]
+    assert rotated.key == b"b" * route.INSTANCE_KEY_BYTES
+    key_files = list(vault.rglob("*.key"))
+    assert len(key_files) == 1
+    assert key_files[0].read_bytes() == rotated.key
+    loaded = route.load_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_011,
+    )
+    assert loaded.key == rotated.key
+    assert loaded.record["record_digest"] == rotated.record["record_digest"]
+
+    retried = route.rotate_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_012,
+        expected_record_digest=first.record["record_digest"],
+        key_factory=lambda _size: pytest.fail("rotation retry advanced the epoch"),
+    )
+    assert retried.key == rotated.key
+    assert dict(retried.record) == dict(rotated.record)
+
+
+def test_instance_generation_key_rotation_recovers_before_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    first = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+    real_replace = route._replace_instance_key_json
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            route,
+            "_replace_instance_key_json",
+            lambda _path, _value: (_ for _ in ()).throw(
+                route.RouteControllerError("simulated activation interruption")
+            ),
+        )
+        with pytest.raises(route.RouteControllerError, match="activation interruption"):
+            route.rotate_instance_generation_key(
+                plan,
+                resource.name,
+                instance_id,
+                created,
+                vault,
+                now_unix=1_900_000_010,
+                expected_record_digest=first.record["record_digest"],
+                key_factory=lambda size: b"b" * size,
+            )
+
+    assert len(list(vault.rglob("*.key"))) == 2
+    monkeypatch.setattr(route, "_replace_instance_key_json", real_replace)
+    recovered = route.rotate_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_011,
+        expected_record_digest=first.record["record_digest"],
+        key_factory=lambda size: b"c" * size,
+    )
+
+    assert recovered.record["key_epoch"] == 2
+    assert recovered.key == b"c" * route.INSTANCE_KEY_BYTES
+    assert [path.read_bytes() for path in vault.rglob("*.key")] == [recovered.key]
+
+
+def test_instance_generation_key_rotation_recovers_after_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    first = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+    old_key_path = next(vault.rglob("*.key"))
+    real_unlink = route._unlink_instance_key_file
+
+    def interrupt_old_key_cleanup(path: Path) -> None:
+        if path == old_key_path:
+            raise route.RouteControllerError("simulated old-key cleanup interruption")
+        real_unlink(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(route, "_unlink_instance_key_file", interrupt_old_key_cleanup)
+        with pytest.raises(route.RouteControllerError, match="cleanup interruption"):
+            route.rotate_instance_generation_key(
+                plan,
+                resource.name,
+                instance_id,
+                created,
+                vault,
+                now_unix=1_900_000_010,
+                expected_record_digest=first.record["record_digest"],
+                key_factory=lambda size: b"b" * size,
+            )
+
+    assert len(list(vault.rglob("*.key"))) == 2
+    recovered = route.rotate_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_011,
+        expected_record_digest=first.record["record_digest"],
+        key_factory=lambda _size: pytest.fail("rotation retry generated another key"),
+    )
+
+    assert recovered.record["key_epoch"] == 2
+    assert recovered.key == b"b" * route.INSTANCE_KEY_BYTES
+    assert [path.read_bytes() for path in vault.rglob("*.key")] == [recovered.key]
+
+
+def test_instance_generation_key_revocation_is_idempotent_and_missing_key_safe(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    material = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+    key_file = next(vault.rglob("*.key"))
+    key_file.unlink()
+
+    tombstone = route.cleanup_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_020,
+    )
+    repeated = route.cleanup_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_021,
+    )
+
+    assert tombstone == repeated
+    assert tombstone["last_key_epoch"] == material.record["key_epoch"]
+    assert tombstone["last_record_digest"] == material.record["record_digest"]
+    assert not list(vault.rglob("*.key"))
+    assert not list(vault.rglob("active.json"))
+    assert len(list(vault.rglob("revoked-*.json"))) == 1
+    with pytest.raises(route.RouteControllerError, match="revoked"):
+        route.load_instance_generation_key(
+            plan,
+            resource.name,
+            instance_id,
+            created,
+            vault,
+            now_unix=1_900_000_022,
+        )
+    with pytest.raises(route.RouteControllerError, match="revoked"):
+        route.ensure_instance_generation_key(
+            plan,
+            resource.name,
+            instance_id,
+            created,
+            vault,
+            now_unix=1_900_000_022,
+            key_factory=lambda _size: pytest.fail("revoked generation produced a key"),
+        )
+
+
+def test_revoked_instance_generation_does_not_block_a_fresh_provider_generation(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+    route.revoke_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_010,
+    )
+
+    replacement = route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        str(int(instance_id) + 1),
+        "2026-09-03T17:01:00+00:00",
+        vault,
+        now_unix=1_900_000_020,
+        key_factory=lambda size: b"b" * size,
+    )
+
+    assert replacement.key == b"b" * route.INSTANCE_KEY_BYTES
+    assert replacement.record["instance_generation_digest"] != route.instance_generation_digest(
+        resource.name,
+        instance_id,
+        created,
+    )
+
+
+def test_instance_generation_key_rejects_tampered_record_and_key(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+    record_path = next(vault.rglob("record-*.json"))
+    original = json.loads(record_path.read_text(encoding="utf-8"))
+    original["key_epoch"] = 2
+    record_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(route.RouteControllerError):
+        route.load_instance_generation_key(
+            plan,
+            resource.name,
+            instance_id,
+            created,
+            vault,
+            now_unix=1_900_000_001,
+        )
+
+
+@pytest.mark.parametrize("bad_key", [b"", b"x" * 31, b"x" * 33, "x" * 32])
+def test_instance_generation_key_rejects_invalid_generator_material(
+    tmp_path: Path,
+    bad_key: object,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+
+    with pytest.raises(route.RouteControllerError, match="invalid material"):
+        route.ensure_instance_generation_key(
+            plan,
+            resource.name,
+            instance_id,
+            created,
+            vault,
+            now_unix=1_900_000_000,
+            key_factory=lambda _size: bad_key,
+        )
+    assert not list(vault.rglob("active.json"))
+    assert not list(vault.rglob("*.key"))
+
+
+def test_instance_generation_key_rejects_non_instance_and_expired_plan(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    disk = next(item for item in plan.resources if item.kind == "bootstrap_disk")
+    resource, instance_id, created = _instance_key_identity(plan)
+
+    with pytest.raises(route.RouteControllerError, match="not planned"):
+        route.ensure_instance_generation_key(
+            plan,
+            disk.name,
+            instance_id,
+            created,
+            tmp_path / "vault-a",
+            now_unix=1_900_000_000,
+        )
+    with pytest.raises(route.RouteControllerError, match="outside the route deadline"):
+        route.ensure_instance_generation_key(
+            plan,
+            resource.name,
+            instance_id,
+            created,
+            tmp_path / "vault-b",
+            now_unix=plan.deadline_unix,
+        )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows DACL contract")
+def test_instance_generation_key_vault_rejects_inheritable_windows_acl(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+    resource_root = vault / plan.run_id / resource.name
+    executable = route.shutil.which("powershell.exe") or route.shutil.which("powershell")
+    assert executable is not None
+    completed = route.subprocess.run(
+        [
+            executable,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            (
+                "& { param([string]$path); "
+                "$acl=[System.IO.Directory]::GetAccessControl($path); "
+                "$acl.SetAccessRuleProtection($false,$true); "
+                "[System.IO.Directory]::SetAccessControl($path,$acl) }"
+            ),
+            os.fspath(resource_root),
+        ],
+        check=False,
+        shell=False,
+        stdin=route.subprocess.DEVNULL,
+        stdout=route.subprocess.DEVNULL,
+        stderr=route.subprocess.DEVNULL,
+        timeout=30,
+    )
+    assert completed.returncode == 0
+
+    with pytest.raises(
+        route.RouteControllerError,
+        match="DACL is not protected|ACL is not private",
+    ):
+        route.load_instance_generation_key(
+            plan,
+            resource.name,
+            instance_id,
+            created,
+            vault,
+            now_unix=1_900_000_001,
+        )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_instance_generation_key_vault_is_owner_private_on_posix(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path / "plan")
+    resource, instance_id, created = _instance_key_identity(plan)
+    vault = tmp_path / "vault"
+    route.ensure_instance_generation_key(
+        plan,
+        resource.name,
+        instance_id,
+        created,
+        vault,
+        now_unix=1_900_000_000,
+        key_factory=lambda size: b"a" * size,
+    )
+
+    for directory in (vault, vault / plan.run_id, vault / plan.run_id / resource.name):
+        assert directory.stat().st_mode & 0o777 == 0o700
+    for file in (vault / plan.run_id / resource.name).iterdir():
+        assert file.stat().st_mode & 0o777 == 0o600

@@ -12,11 +12,14 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import shutil
 import stat
+import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
@@ -25,6 +28,88 @@ from typing import Any, Iterator, Mapping, Sequence
 
 SCHEMA_VERSION = 1
 STATE_SCHEMA_VERSION = 1
+INSTANCE_KEY_SCHEMA_VERSION = 1
+INSTANCE_KEY_SCOPE = "qwen3.8-instance-generation-key"
+INSTANCE_KEY_ACTIVE_SCOPE = "qwen3.8-active-instance-generation-key"
+INSTANCE_KEY_TOMBSTONE_SCOPE = "qwen3.8-revoked-instance-generation-key"
+INSTANCE_KEY_BYTES = 32
+MAX_INSTANCE_KEY_RECORD_BYTES = 16_384
+_WINDOWS_INSTANCE_KEY_DIRECTORY_ACL = r"""param(
+    [Parameter(Mandatory = $true)][string]$path,
+    [Parameter(Mandatory = $true)][bool]$apply
+)
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($apply) {
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $sid,
+        'FullControl',
+        'ContainerInherit,ObjectInherit',
+        'None',
+        'Allow'
+    )
+    $security.SetAccessRule($rule)
+    [System.IO.Directory]::SetAccessControl($path, $security)
+}
+$verified = [System.IO.Directory]::GetAccessControl(
+    $path,
+    [System.Security.AccessControl.AccessControlSections]::Access
+)
+$rules = @($verified.GetAccessRules(
+    $true,
+    $true,
+    [System.Security.Principal.SecurityIdentifier]
+))
+if (
+    -not $verified.AreAccessRulesProtected -or
+    $rules.Count -ne 1 -or
+    $rules[0].IdentityReference.Value -ne $sid.Value -or
+    $rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+    $rules[0].IsInherited -or
+    $rules[0].FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl
+) {
+    throw 'private directory ACL verification failed'
+}
+"""
+_WINDOWS_INSTANCE_KEY_FILE_ACL = r"""param(
+    [Parameter(Mandatory = $true)][string]$path,
+    [Parameter(Mandatory = $true)][bool]$apply
+)
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($apply) {
+    $security = New-Object System.Security.AccessControl.FileSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $sid,
+        'FullControl',
+        'Allow'
+    )
+    $security.SetAccessRule($rule)
+    [System.IO.File]::SetAccessControl($path, $security)
+}
+$verified = [System.IO.File]::GetAccessControl(
+    $path,
+    [System.Security.AccessControl.AccessControlSections]::Access
+)
+$rules = @($verified.GetAccessRules(
+    $true,
+    $true,
+    [System.Security.Principal.SecurityIdentifier]
+))
+if (
+    -not $verified.AreAccessRulesProtected -or
+    $rules.Count -ne 1 -or
+    $rules[0].IdentityReference.Value -ne $sid.Value -or
+    $rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+    $rules[0].IsInherited -or
+    $rules[0].FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl
+) {
+    throw 'private file ACL verification failed'
+}
+"""
 GATE = "qwen3.8-complete-route"
 MAX_JSON_BYTES = 262_144
 PROTECTED_INSTANCE = "communityai-bootstrap-1"
@@ -229,6 +314,53 @@ _STATE_FIELDS = {
     "cleanup_verified",
     "next_action",
 }
+_INSTANCE_KEY_RECORD_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "source_commit",
+    "plan_digest",
+    "execution_inventory_digest",
+    "start_action_id",
+    "resource_name",
+    "resource_kind",
+    "instance_id",
+    "creation_timestamp",
+    "instance_generation_digest",
+    "key_epoch",
+    "issued_at_unix",
+    "expires_at_unix",
+    "key_sha256",
+    "key_bytes",
+    "previous_record_digest",
+    "record_digest",
+}
+_INSTANCE_KEY_ACTIVE_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "plan_digest",
+    "resource_name",
+    "instance_generation_digest",
+    "key_epoch",
+    "record_digest",
+    "active_digest",
+}
+_INSTANCE_KEY_TOMBSTONE_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "source_commit",
+    "plan_digest",
+    "execution_inventory_digest",
+    "start_action_id",
+    "resource_name",
+    "instance_generation_digest",
+    "revoked_at_unix",
+    "last_key_epoch",
+    "last_record_digest",
+    "tombstone_digest",
+}
 _OBSERVATION_FIELDS = {
     "schema_version",
     "run_id",
@@ -425,6 +557,14 @@ _PREFLIGHT_FIELDS = {
 
 class RouteControllerError(ValueError):
     """The route plan, observation, state, or transition failed closed."""
+
+
+@dataclass(frozen=True)
+class InstanceGenerationKey:
+    """Controller-private key material with a digest-only public record."""
+
+    record: Mapping[str, Any]
+    key: bytes = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -1409,6 +1549,1171 @@ def instance_generation_digest(
             "instance_id": instance_id,
             "creation_timestamp": creation_timestamp,
         }
+    )
+
+
+def _instance_key_resource(plan: RoutePlan, resource_name: str) -> ResourcePlan:
+    resource = plan.resource_by_name.get(resource_name)
+    if resource is None or resource.kind not in {"bootstrap_instance", "worker_instance"}:
+        raise RouteControllerError("instance key resource is not planned")
+    return resource
+
+
+def _instance_key_record_digest(value: Mapping[str, Any]) -> str:
+    unsigned = dict(value)
+    unsigned.pop("record_digest", None)
+    return _canonical_digest(unsigned)
+
+
+def _instance_key_active_digest(value: Mapping[str, Any]) -> str:
+    unsigned = dict(value)
+    unsigned.pop("active_digest", None)
+    return _canonical_digest(unsigned)
+
+
+def _instance_key_tombstone_digest(value: Mapping[str, Any]) -> str:
+    unsigned = dict(value)
+    unsigned.pop("tombstone_digest", None)
+    return _canonical_digest(unsigned)
+
+
+def validate_instance_generation_key_record(
+    value: Any,
+    plan: RoutePlan,
+    *,
+    expected_resource_name: str | None = None,
+    expected_generation_digest: str | None = None,
+) -> dict[str, Any]:
+    record = dict(_mapping(value, _INSTANCE_KEY_RECORD_FIELDS, "instance key record"))
+    resource = _instance_key_resource(plan, record.get("resource_name"))
+    try:
+        generation = instance_generation_digest(
+            resource.name,
+            record["instance_id"],
+            record["creation_timestamp"],
+        )
+    except (KeyError, TypeError, RouteControllerError) as exc:
+        raise RouteControllerError("instance key generation is invalid") from exc
+    fixed = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "resource_name": resource.name,
+        "resource_kind": resource.kind,
+        "instance_generation_digest": generation,
+        "key_bytes": INSTANCE_KEY_BYTES,
+    }
+    if any(record[field] != expected for field, expected in fixed.items()):
+        raise RouteControllerError("instance key record binding is invalid")
+    if expected_resource_name is not None and resource.name != expected_resource_name:
+        raise RouteControllerError("instance key resource changed")
+    if expected_generation_digest is not None and generation != expected_generation_digest:
+        raise RouteControllerError("instance key provider generation changed")
+    epoch = _integer(record["key_epoch"], "instance key epoch", 1)
+    if epoch > 99_999_999:
+        raise RouteControllerError("instance key epoch is invalid")
+    issued = _integer(record["issued_at_unix"], "instance key issue time", 1)
+    expires = _integer(record["expires_at_unix"], "instance key expiry", 1)
+    if expires <= issued or expires > plan.deadline_unix:
+        raise RouteControllerError("instance key time window is invalid")
+    _string(record["key_sha256"], _DIGEST_RE, "instance key digest")
+    if record["previous_record_digest"] is not None:
+        _string(
+            record["previous_record_digest"],
+            _DIGEST_RE,
+            "previous instance key record digest",
+        )
+    _string(record["record_digest"], _DIGEST_RE, "instance key record digest")
+    if record["record_digest"] != _instance_key_record_digest(record):
+        raise RouteControllerError("instance key record digest changed")
+    return record
+
+
+def _instance_key_record(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    instance_id: str,
+    creation_timestamp: str,
+    *,
+    key: bytes,
+    key_epoch: int,
+    issued_at_unix: int,
+    previous_record_digest: str | None,
+) -> dict[str, Any]:
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    value: dict[str, Any] = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "resource_name": resource.name,
+        "resource_kind": resource.kind,
+        "instance_id": instance_id,
+        "creation_timestamp": creation_timestamp,
+        "instance_generation_digest": generation,
+        "key_epoch": key_epoch,
+        "issued_at_unix": issued_at_unix,
+        "expires_at_unix": plan.deadline_unix,
+        "key_sha256": "sha256:" + hashlib.sha256(key).hexdigest(),
+        "key_bytes": INSTANCE_KEY_BYTES,
+        "previous_record_digest": previous_record_digest,
+        "record_digest": "",
+    }
+    value["record_digest"] = _instance_key_record_digest(value)
+    return validate_instance_generation_key_record(
+        value,
+        plan,
+        expected_resource_name=resource.name,
+        expected_generation_digest=generation,
+    )
+
+
+def _instance_key_active(
+    plan: RoutePlan,
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_ACTIVE_SCOPE,
+        "run_id": plan.run_id,
+        "plan_digest": plan.plan_digest,
+        "resource_name": record["resource_name"],
+        "instance_generation_digest": record["instance_generation_digest"],
+        "key_epoch": record["key_epoch"],
+        "record_digest": record["record_digest"],
+        "active_digest": "",
+    }
+    value["active_digest"] = _instance_key_active_digest(value)
+    return _validate_instance_key_active(value, plan)
+
+
+def _validate_instance_key_active(
+    value: Any,
+    plan: RoutePlan,
+    *,
+    expected_resource_name: str | None = None,
+    expected_generation_digest: str | None = None,
+) -> dict[str, Any]:
+    active = dict(_mapping(value, _INSTANCE_KEY_ACTIVE_FIELDS, "active instance key"))
+    resource = _instance_key_resource(plan, active.get("resource_name"))
+    fixed = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_ACTIVE_SCOPE,
+        "run_id": plan.run_id,
+        "plan_digest": plan.plan_digest,
+        "resource_name": resource.name,
+    }
+    if any(active[field] != expected for field, expected in fixed.items()):
+        raise RouteControllerError("active instance key binding is invalid")
+    _string(active["instance_generation_digest"], _DIGEST_RE, "active instance key generation")
+    epoch = _integer(active["key_epoch"], "active instance key epoch", 1)
+    if epoch > 99_999_999:
+        raise RouteControllerError("active instance key epoch is invalid")
+    _string(active["record_digest"], _DIGEST_RE, "active instance key record digest")
+    _string(active["active_digest"], _DIGEST_RE, "active instance key digest")
+    if active["active_digest"] != _instance_key_active_digest(active):
+        raise RouteControllerError("active instance key digest changed")
+    if expected_resource_name is not None and resource.name != expected_resource_name:
+        raise RouteControllerError("active instance key resource changed")
+    if expected_generation_digest is not None and active["instance_generation_digest"] != expected_generation_digest:
+        raise RouteControllerError("active instance key provider generation changed")
+    return active
+
+
+def _instance_key_tombstone(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    generation: str,
+    *,
+    revoked_at_unix: int,
+    last_key_epoch: int,
+    last_record_digest: str | None,
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_TOMBSTONE_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "resource_name": resource.name,
+        "instance_generation_digest": generation,
+        "revoked_at_unix": revoked_at_unix,
+        "last_key_epoch": last_key_epoch,
+        "last_record_digest": last_record_digest,
+        "tombstone_digest": "",
+    }
+    value["tombstone_digest"] = _instance_key_tombstone_digest(value)
+    return _validate_instance_key_tombstone(
+        value,
+        plan,
+        expected_resource_name=resource.name,
+        expected_generation_digest=generation,
+    )
+
+
+def _validate_instance_key_tombstone(
+    value: Any,
+    plan: RoutePlan,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+) -> dict[str, Any]:
+    tombstone = dict(_mapping(value, _INSTANCE_KEY_TOMBSTONE_FIELDS, "instance key tombstone"))
+    resource = _instance_key_resource(plan, tombstone.get("resource_name"))
+    fixed = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_TOMBSTONE_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "resource_name": resource.name,
+        "instance_generation_digest": expected_generation_digest,
+    }
+    if resource.name != expected_resource_name or any(
+        tombstone[field] != expected for field, expected in fixed.items()
+    ):
+        raise RouteControllerError("instance key tombstone binding is invalid")
+    _integer(tombstone["revoked_at_unix"], "instance key revocation time", 1)
+    _integer(tombstone["last_key_epoch"], "instance key tombstone epoch")
+    if tombstone["last_record_digest"] is not None:
+        _string(
+            tombstone["last_record_digest"],
+            _DIGEST_RE,
+            "instance key tombstone record digest",
+        )
+    _string(tombstone["tombstone_digest"], _DIGEST_RE, "instance key tombstone digest")
+    if tombstone["tombstone_digest"] != _instance_key_tombstone_digest(tombstone):
+        raise RouteControllerError("instance key tombstone digest changed")
+    return tombstone
+
+
+def _instance_key_reparse(path: Path, metadata: os.stat_result) -> bool:
+    return (
+        bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+        or path.is_symlink()
+    )
+
+
+def _assert_windows_instance_key_acl(path: Path, *, directory: bool) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    class SidAndAttributes(ctypes.Structure):
+        _fields_ = [("sid", ctypes.c_void_p), ("attributes", wintypes.DWORD)]
+
+    class TokenUser(ctypes.Structure):
+        _fields_ = [("user", SidAndAttributes)]
+
+    class AclSizeInformation(ctypes.Structure):
+        _fields_ = [
+            ("ace_count", wintypes.DWORD),
+            ("acl_bytes_in_use", wintypes.DWORD),
+            ("acl_bytes_free", wintypes.DWORD),
+        ]
+
+    class AceHeader(ctypes.Structure):
+        _fields_ = [
+            ("ace_type", wintypes.BYTE),
+            ("ace_flags", wintypes.BYTE),
+            ("ace_size", wintypes.WORD),
+        ]
+
+    class AccessAllowedAce(ctypes.Structure):
+        _fields_ = [
+            ("header", AceHeader),
+            ("mask", wintypes.DWORD),
+            ("sid_start", wintypes.DWORD),
+        ]
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+    token = wintypes.HANDLE()
+    open_process_token = advapi32.OpenProcessToken
+    open_process_token.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    )
+    open_process_token.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    if not open_process_token(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+        raise RouteControllerError("instance key vault owner is unavailable")
+    try:
+        get_token_information = advapi32.GetTokenInformation
+        get_token_information.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        get_token_information.restype = wintypes.BOOL
+        required = wintypes.DWORD()
+        get_token_information(token, 1, None, 0, ctypes.byref(required))
+        if required.value == 0:
+            raise RouteControllerError("instance key vault owner is unavailable")
+        token_buffer = ctypes.create_string_buffer(required.value)
+        if not get_token_information(
+            token,
+            1,
+            token_buffer,
+            required,
+            ctypes.byref(required),
+        ):
+            raise RouteControllerError("instance key vault owner is unavailable")
+        current_sid = ctypes.cast(
+            token_buffer,
+            ctypes.POINTER(TokenUser),
+        ).contents.user.sid
+
+        owner = ctypes.c_void_p()
+        dacl = ctypes.c_void_p()
+        descriptor = ctypes.c_void_p()
+        get_security = advapi32.GetNamedSecurityInfoW
+        get_security.argtypes = (
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        get_security.restype = wintypes.DWORD
+        if (
+            get_security(
+                os.fspath(path),
+                1,
+                0x1 | 0x4,
+                ctypes.byref(owner),
+                None,
+                ctypes.byref(dacl),
+                None,
+                ctypes.byref(descriptor),
+            )
+            != 0
+        ):
+            raise RouteControllerError("instance key vault ACL is unavailable")
+        try:
+            if not owner.value or not dacl.value:
+                raise RouteControllerError("instance key vault ACL is unsafe")
+            equal_sid = advapi32.EqualSid
+            equal_sid.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+            equal_sid.restype = wintypes.BOOL
+            if not equal_sid(owner, current_sid):
+                raise RouteControllerError("instance key vault owner is unsafe")
+
+            control = wintypes.WORD()
+            revision = wintypes.DWORD()
+            get_control = advapi32.GetSecurityDescriptorControl
+            get_control.argtypes = (
+                ctypes.c_void_p,
+                ctypes.POINTER(wintypes.WORD),
+                ctypes.POINTER(wintypes.DWORD),
+            )
+            get_control.restype = wintypes.BOOL
+            if (
+                not get_control(
+                    descriptor,
+                    ctypes.byref(control),
+                    ctypes.byref(revision),
+                )
+                or not control.value & 0x1000
+            ):
+                raise RouteControllerError("instance key vault DACL is not protected")
+
+            information = AclSizeInformation()
+            get_acl_information = advapi32.GetAclInformation
+            get_acl_information.argtypes = (
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+                wintypes.DWORD,
+            )
+            get_acl_information.restype = wintypes.BOOL
+            if (
+                not get_acl_information(
+                    dacl,
+                    ctypes.byref(information),
+                    ctypes.sizeof(information),
+                    2,
+                )
+                or information.ace_count != 1
+            ):
+                raise RouteControllerError("instance key vault DACL is not private")
+
+            ace_pointer = ctypes.c_void_p()
+            get_ace = advapi32.GetAce
+            get_ace.argtypes = (
+                ctypes.c_void_p,
+                wintypes.DWORD,
+                ctypes.POINTER(ctypes.c_void_p),
+            )
+            get_ace.restype = wintypes.BOOL
+            if not get_ace(dacl, 0, ctypes.byref(ace_pointer)):
+                raise RouteControllerError("instance key vault DACL is unavailable")
+            ace = ctypes.cast(
+                ace_pointer,
+                ctypes.POINTER(AccessAllowedAce),
+            ).contents
+            expected_flags = 0x1 | 0x2 if directory else 0
+            if (
+                ace.header.ace_type != 0
+                or ace.header.ace_flags != expected_flags
+                or ace.header.ace_size < ctypes.sizeof(AccessAllowedAce)
+                or ace.mask != 0x001F01FF
+            ):
+                raise RouteControllerError("instance key vault DACL is not private")
+            ace_sid = ctypes.c_void_p(ace_pointer.value + AccessAllowedAce.sid_start.offset)
+            is_valid_sid = advapi32.IsValidSid
+            is_valid_sid.argtypes = (ctypes.c_void_p,)
+            is_valid_sid.restype = wintypes.BOOL
+            if not is_valid_sid(ace_sid) or not equal_sid(ace_sid, current_sid):
+                raise RouteControllerError("instance key vault DACL is not private")
+        finally:
+            local_free = kernel32.LocalFree
+            local_free.argtypes = (ctypes.c_void_p,)
+            local_free.restype = ctypes.c_void_p
+            local_free(descriptor)
+    finally:
+        close_handle(token)
+
+
+def _windows_instance_key_acl(
+    path: Path,
+    *,
+    directory: bool,
+    apply: bool,
+) -> None:
+    if os.name != "nt":
+        return
+    if apply:
+        executable = shutil.which("powershell.exe") or shutil.which("powershell")
+        if executable is None:
+            raise RouteControllerError("instance key vault ACL setter is unavailable")
+        script = _WINDOWS_INSTANCE_KEY_DIRECTORY_ACL if directory else _WINDOWS_INSTANCE_KEY_FILE_ACL
+        try:
+            completed = subprocess.run(
+                [
+                    executable,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    f"& {{\n{script}\n}}",
+                    os.fspath(path),
+                    "$true",
+                ],
+                check=False,
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RouteControllerError("instance key vault ACL update failed") from exc
+        if completed.returncode != 0:
+            raise RouteControllerError("instance key vault ACL is not private")
+    _assert_windows_instance_key_acl(path, directory=directory)
+
+
+def _assert_instance_key_directory(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise RouteControllerError("instance key vault directory is unavailable") from exc
+    if _instance_key_reparse(path, metadata) or not stat.S_ISDIR(metadata.st_mode):
+        raise RouteControllerError("instance key vault directory is unsafe")
+    if os.name == "posix" and (metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700):
+        raise RouteControllerError("instance key vault directory is not private")
+    _windows_instance_key_acl(path, directory=True, apply=False)
+
+
+def _ensure_instance_key_directory(path: Path) -> None:
+    if path.exists() or path.is_symlink():
+        _assert_instance_key_directory(path)
+        return
+    try:
+        path.mkdir(mode=0o700)
+    except OSError as exc:
+        raise RouteControllerError("instance key vault directory could not be created") from exc
+    if os.name == "posix":
+        os.chmod(path, 0o700)
+    _windows_instance_key_acl(path, directory=True, apply=True)
+    _assert_instance_key_directory(path)
+
+
+def _instance_key_directory(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    vault_root: Path,
+) -> Path:
+    root = Path(vault_root)
+    if not root.is_absolute() or root == Path(root.anchor) or root == Path.home() or root.name in {"", ".", ".."}:
+        raise RouteControllerError("instance key vault root is invalid")
+    if not root.exists() and not root.is_symlink():
+        try:
+            root.mkdir(mode=0o700, parents=True)
+        except OSError as exc:
+            raise RouteControllerError("instance key vault root could not be created") from exc
+        if os.name == "posix":
+            os.chmod(root, 0o700)
+        _windows_instance_key_acl(root, directory=True, apply=True)
+    _assert_instance_key_directory(root)
+    run_root = root / plan.run_id
+    _ensure_instance_key_directory(run_root)
+    resource_root = run_root / resource.name
+    _ensure_instance_key_directory(resource_root)
+    if resource_root.parent != run_root or run_root.parent != root:
+        raise RouteControllerError("instance key vault layout is invalid")
+    return resource_root
+
+
+def _assert_instance_key_file(path: Path, *, expected_size: int | None = None) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise RouteControllerError("instance key vault file is unavailable") from exc
+    if (
+        _instance_key_reparse(path, metadata)
+        or not stat.S_ISREG(metadata.st_mode)
+        or expected_size is not None
+        and metadata.st_size != expected_size
+    ):
+        raise RouteControllerError("instance key vault file is unsafe")
+    if os.name == "posix" and (metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o600):
+        raise RouteControllerError("instance key vault file is not private")
+    _windows_instance_key_acl(path, directory=False, apply=False)
+
+
+def _read_instance_key_file(
+    path: Path,
+    *,
+    maximum: int,
+    expected_size: int | None = None,
+) -> bytes:
+    _assert_instance_key_file(path, expected_size=expected_size)
+    payload = _regular_bytes(path, maximum=maximum)
+    _assert_instance_key_file(path, expected_size=expected_size)
+    return payload
+
+
+def _instance_key_json(value: Mapping[str, Any]) -> bytes:
+    try:
+        payload = (
+            json.dumps(
+                value,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("ascii")
+    except (TypeError, ValueError) as exc:
+        raise RouteControllerError("instance key metadata is invalid") from exc
+    if not 1 <= len(payload) <= MAX_INSTANCE_KEY_RECORD_BYTES:
+        raise RouteControllerError("instance key metadata exceeded its bound")
+    return payload
+
+
+def _write_instance_key_exclusive(path: Path, payload: bytes) -> None:
+    _assert_instance_key_directory(path.parent)
+    descriptor: int | None = None
+    created = False
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        created = True
+        if os.name == "posix":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _windows_instance_key_acl(path, directory=False, apply=True)
+        _assert_instance_key_file(path, expected_size=len(payload))
+    except RouteControllerError:
+        raise
+    except OSError as exc:
+        raise RouteControllerError("instance key vault commit failed") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if created and (not path.exists() or path.is_symlink()):
+            raise RouteControllerError("instance key vault commit was lost")
+
+
+def _replace_instance_key_json(path: Path, value: Mapping[str, Any]) -> None:
+    payload = _instance_key_json(value)
+    _assert_instance_key_directory(path.parent)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        if os.name == "posix":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _windows_instance_key_acl(temporary, directory=False, apply=True)
+        os.replace(temporary, path)
+        _assert_instance_key_file(path, expected_size=len(payload))
+        _fsync_instance_key_directory(path.parent)
+    except RouteControllerError:
+        raise
+    except OSError as exc:
+        raise RouteControllerError("instance key metadata commit failed") from exc
+    finally:
+        if descriptor not in (None, -1):
+            os.close(descriptor)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _fsync_instance_key_directory(path: Path) -> None:
+    if os.name != "posix":
+        return
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise RouteControllerError("instance key vault could not be synchronized") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+@contextmanager
+def _instance_key_lock(directory: Path) -> Iterator[None]:
+    _assert_instance_key_directory(directory)
+    path = directory / ".instance-key.lock"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        if os.name == "posix":
+            os.fchmod(descriptor, 0o600)
+        opened = os.fstat(descriptor)
+        _windows_instance_key_acl(path, directory=False, apply=True)
+        _assert_instance_key_file(path)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RouteControllerError("instance key vault lock is unsafe")
+        if os.name == "nt":
+            import msvcrt
+
+            if opened.st_size == 0:
+                os.write(descriptor, b"\0")
+                os.fsync(descriptor)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    except RouteControllerError:
+        raise
+    except OSError as exc:
+        raise RouteControllerError("instance key vault is locked or unsafe") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(descriptor)
+
+
+def _instance_key_record_path(directory: Path, generation: str, epoch: int) -> Path:
+    return directory / f"record-v1-{generation.removeprefix('sha256:')}-{epoch:08d}.json"
+
+
+def _instance_key_bytes_path(directory: Path, generation: str, epoch: int) -> Path:
+    return directory / f"key-v1-{generation.removeprefix('sha256:')}-{epoch:08d}.key"
+
+
+def _instance_key_tombstone_path(directory: Path, generation: str) -> Path:
+    return directory / f"revoked-v1-{generation.removeprefix('sha256:')}.json"
+
+
+def _instance_key_epoch_from_name(
+    name: str,
+    *,
+    prefix: str,
+    suffix: str,
+) -> int | None:
+    if not name.startswith(prefix):
+        return None
+    if not name.endswith(suffix):
+        raise RouteControllerError("instance key vault contains an unsafe epoch entry")
+    encoded = name[len(prefix) : -len(suffix)]
+    if len(encoded) != 8 or not encoded.isascii() or not encoded.isdigit():
+        raise RouteControllerError("instance key vault contains an unsafe epoch entry")
+    epoch = int(encoded)
+    if not 1 <= epoch <= 99_999_999:
+        raise RouteControllerError("instance key vault contains an invalid epoch")
+    return epoch
+
+
+def _reconcile_instance_key_epochs(
+    directory: Path,
+    generation: str,
+    active_epoch: int,
+) -> None:
+    """Remove unreferenced key bytes and incomplete future rotation records."""
+
+    generation_value = generation.removeprefix("sha256:")
+    key_prefix = f"key-v1-{generation_value}-"
+    record_prefix = f"record-v1-{generation_value}-"
+    changed = False
+    try:
+        candidates = tuple(directory.iterdir())
+    except OSError as exc:
+        raise RouteControllerError("instance key vault inventory failed") from exc
+    for candidate in candidates:
+        key_epoch = _instance_key_epoch_from_name(
+            candidate.name,
+            prefix=key_prefix,
+            suffix=".key",
+        )
+        if key_epoch is not None:
+            if key_epoch != active_epoch:
+                _unlink_instance_key_file(candidate)
+                changed = True
+            continue
+        record_epoch = _instance_key_epoch_from_name(
+            candidate.name,
+            prefix=record_prefix,
+            suffix=".json",
+        )
+        if record_epoch is not None and record_epoch > active_epoch:
+            _unlink_instance_key_file(candidate)
+            changed = True
+    if changed:
+        _fsync_instance_key_directory(directory)
+
+
+def _load_instance_key_json(path: Path) -> dict[str, Any]:
+    return dict(
+        _strict_json(
+            _read_instance_key_file(
+                path,
+                maximum=MAX_INSTANCE_KEY_RECORD_BYTES,
+            )
+        )
+    )
+
+
+def _load_instance_key_material(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    directory: Path,
+    active: Mapping[str, Any],
+    *,
+    now_unix: int,
+    expected_generation_digest: str,
+) -> InstanceGenerationKey:
+    validated_active = _validate_instance_key_active(
+        active,
+        plan,
+        expected_resource_name=resource.name,
+        expected_generation_digest=expected_generation_digest,
+    )
+    epoch = validated_active["key_epoch"]
+    record = validate_instance_generation_key_record(
+        _load_instance_key_json(_instance_key_record_path(directory, expected_generation_digest, epoch)),
+        plan,
+        expected_resource_name=resource.name,
+        expected_generation_digest=expected_generation_digest,
+    )
+    if record["record_digest"] != validated_active["record_digest"]:
+        raise RouteControllerError("active instance key record changed")
+    if now_unix >= record["expires_at_unix"]:
+        raise RouteControllerError("active instance key expired")
+    key = _read_instance_key_file(
+        _instance_key_bytes_path(directory, expected_generation_digest, epoch),
+        maximum=INSTANCE_KEY_BYTES,
+        expected_size=INSTANCE_KEY_BYTES,
+    )
+    if "sha256:" + hashlib.sha256(key).hexdigest() != record["key_sha256"]:
+        raise RouteControllerError("active instance key digest changed")
+    return InstanceGenerationKey(MappingProxyType(record), key)
+
+
+def _new_instance_key(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    directory: Path,
+    instance_id: str,
+    creation_timestamp: str,
+    *,
+    key_epoch: int,
+    now_unix: int,
+    previous_record_digest: str | None,
+    key_factory: Any,
+) -> InstanceGenerationKey:
+    try:
+        generated = key_factory(INSTANCE_KEY_BYTES)
+    except Exception as exc:
+        raise RouteControllerError("instance key generation failed") from exc
+    if not isinstance(generated, (bytes, bytearray)) or len(generated) != INSTANCE_KEY_BYTES:
+        raise RouteControllerError("instance key generator returned invalid material")
+    key = bytes(generated)
+    record = _instance_key_record(
+        plan,
+        resource,
+        instance_id,
+        creation_timestamp,
+        key=key,
+        key_epoch=key_epoch,
+        issued_at_unix=now_unix,
+        previous_record_digest=previous_record_digest,
+    )
+    generation = record["instance_generation_digest"]
+    key_path = _instance_key_bytes_path(directory, generation, key_epoch)
+    record_path = _instance_key_record_path(directory, generation, key_epoch)
+    if key_path.exists() or key_path.is_symlink() or record_path.exists() or record_path.is_symlink():
+        raise RouteControllerError("instance key epoch already exists")
+    _write_instance_key_exclusive(key_path, key)
+    try:
+        _write_instance_key_exclusive(record_path, _instance_key_json(record))
+    except BaseException:
+        try:
+            _unlink_instance_key_file(key_path)
+        except RouteControllerError:
+            pass
+        raise
+    _fsync_instance_key_directory(directory)
+    return InstanceGenerationKey(MappingProxyType(record), key)
+
+
+def _unlink_instance_key_file(path: Path) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    _assert_instance_key_file(path)
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise RouteControllerError("instance key vault cleanup failed") from exc
+
+
+def ensure_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+    key_factory: Any = secrets.token_bytes,
+) -> InstanceGenerationKey:
+    resource = _instance_key_resource(plan, resource_name)
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    now = _integer(now_unix, "instance key generation time", 1)
+    if now >= plan.deadline_unix:
+        raise RouteControllerError("instance key generation is outside the route deadline")
+    directory = _instance_key_directory(plan, resource, vault_root)
+    active_path = directory / "active.json"
+    tombstone_path = _instance_key_tombstone_path(directory, generation)
+    with _instance_key_lock(directory):
+        if tombstone_path.exists() or tombstone_path.is_symlink():
+            _validate_instance_key_tombstone(
+                _load_instance_key_json(tombstone_path),
+                plan,
+                expected_resource_name=resource.name,
+                expected_generation_digest=generation,
+            )
+            raise RouteControllerError("instance key generation was revoked")
+        if active_path.exists() or active_path.is_symlink():
+            material = _load_instance_key_material(
+                plan,
+                resource,
+                directory,
+                _load_instance_key_json(active_path),
+                now_unix=now,
+                expected_generation_digest=generation,
+            )
+            _reconcile_instance_key_epochs(
+                directory,
+                generation,
+                material.record["key_epoch"],
+            )
+            return material
+        _reconcile_instance_key_epochs(directory, generation, 0)
+        material = _new_instance_key(
+            plan,
+            resource,
+            directory,
+            instance_id,
+            creation_timestamp,
+            key_epoch=1,
+            now_unix=now,
+            previous_record_digest=None,
+            key_factory=key_factory,
+        )
+        _replace_instance_key_json(active_path, _instance_key_active(plan, material.record))
+        return material
+
+
+def load_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+) -> InstanceGenerationKey:
+    resource = _instance_key_resource(plan, resource_name)
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    now = _integer(now_unix, "instance key load time", 1)
+    directory = _instance_key_directory(plan, resource, vault_root)
+    tombstone_path = _instance_key_tombstone_path(directory, generation)
+    active_path = directory / "active.json"
+    with _instance_key_lock(directory):
+        if tombstone_path.exists() or tombstone_path.is_symlink():
+            _validate_instance_key_tombstone(
+                _load_instance_key_json(tombstone_path),
+                plan,
+                expected_resource_name=resource.name,
+                expected_generation_digest=generation,
+            )
+            raise RouteControllerError("instance key generation was revoked")
+        if not active_path.exists() and not active_path.is_symlink():
+            raise RouteControllerError("active instance key is unavailable")
+        material = _load_instance_key_material(
+            plan,
+            resource,
+            directory,
+            _load_instance_key_json(active_path),
+            now_unix=now,
+            expected_generation_digest=generation,
+        )
+        _reconcile_instance_key_epochs(
+            directory,
+            generation,
+            material.record["key_epoch"],
+        )
+        return material
+
+
+def rotate_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+    expected_record_digest: str,
+    key_factory: Any = secrets.token_bytes,
+) -> InstanceGenerationKey:
+    resource = _instance_key_resource(plan, resource_name)
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    now = _integer(now_unix, "instance key rotation time", 1)
+    _string(
+        expected_record_digest,
+        _DIGEST_RE,
+        "expected instance key record digest",
+    )
+    if now >= plan.deadline_unix:
+        raise RouteControllerError("instance key rotation is outside the route deadline")
+    directory = _instance_key_directory(plan, resource, vault_root)
+    active_path = directory / "active.json"
+    tombstone_path = _instance_key_tombstone_path(directory, generation)
+    with _instance_key_lock(directory):
+        if tombstone_path.exists() or tombstone_path.is_symlink():
+            _validate_instance_key_tombstone(
+                _load_instance_key_json(tombstone_path),
+                plan,
+                expected_resource_name=resource.name,
+                expected_generation_digest=generation,
+            )
+            raise RouteControllerError("instance key generation was revoked")
+        if not active_path.exists() and not active_path.is_symlink():
+            raise RouteControllerError("active instance key is unavailable")
+        current = _load_instance_key_material(
+            plan,
+            resource,
+            directory,
+            _load_instance_key_json(active_path),
+            now_unix=now,
+            expected_generation_digest=generation,
+        )
+        _reconcile_instance_key_epochs(
+            directory,
+            generation,
+            current.record["key_epoch"],
+        )
+        if current.record["record_digest"] != expected_record_digest:
+            if current.record["previous_record_digest"] == expected_record_digest:
+                return current
+            raise RouteControllerError("active instance key changed before rotation")
+        epoch = current.record["key_epoch"] + 1
+        if epoch > 99_999_999:
+            raise RouteControllerError("instance key epoch is exhausted")
+        replacement = _new_instance_key(
+            plan,
+            resource,
+            directory,
+            instance_id,
+            creation_timestamp,
+            key_epoch=epoch,
+            now_unix=now,
+            previous_record_digest=current.record["record_digest"],
+            key_factory=key_factory,
+        )
+        _replace_instance_key_json(
+            active_path,
+            _instance_key_active(plan, replacement.record),
+        )
+        _unlink_instance_key_file(
+            _instance_key_bytes_path(
+                directory,
+                generation,
+                current.record["key_epoch"],
+            )
+        )
+        _fsync_instance_key_directory(directory)
+        return replacement
+
+
+def revoke_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+) -> dict[str, Any]:
+    resource = _instance_key_resource(plan, resource_name)
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    now = _integer(now_unix, "instance key revocation time", 1)
+    directory = _instance_key_directory(plan, resource, vault_root)
+    active_path = directory / "active.json"
+    tombstone_path = _instance_key_tombstone_path(directory, generation)
+    prefix = f"key-v1-{generation.removeprefix('sha256:')}-"
+    with _instance_key_lock(directory):
+        if tombstone_path.exists() or tombstone_path.is_symlink():
+            tombstone = _validate_instance_key_tombstone(
+                _load_instance_key_json(tombstone_path),
+                plan,
+                expected_resource_name=resource.name,
+                expected_generation_digest=generation,
+            )
+        else:
+            epoch = 0
+            record_digest: str | None = None
+            if active_path.exists() or active_path.is_symlink():
+                active = _validate_instance_key_active(
+                    _load_instance_key_json(active_path),
+                    plan,
+                    expected_resource_name=resource.name,
+                )
+                if active["instance_generation_digest"] != generation:
+                    raise RouteControllerError("cannot revoke a different active instance generation")
+                epoch = active["key_epoch"]
+                record_digest = active["record_digest"]
+            tombstone = _instance_key_tombstone(
+                plan,
+                resource,
+                generation,
+                revoked_at_unix=now,
+                last_key_epoch=epoch,
+                last_record_digest=record_digest,
+            )
+            _write_instance_key_exclusive(
+                tombstone_path,
+                _instance_key_json(tombstone),
+            )
+            _fsync_instance_key_directory(directory)
+        for candidate in directory.iterdir():
+            if candidate.name.startswith(prefix) and candidate.name.endswith(".key"):
+                _unlink_instance_key_file(candidate)
+        if active_path.exists() or active_path.is_symlink():
+            active = _validate_instance_key_active(
+                _load_instance_key_json(active_path),
+                plan,
+                expected_resource_name=resource.name,
+            )
+            if active["instance_generation_digest"] == generation:
+                _unlink_instance_key_file(active_path)
+        _fsync_instance_key_directory(directory)
+        return tombstone
+
+
+def cleanup_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+) -> dict[str, Any]:
+    """Revoke key bytes idempotently after provider absence is independently proved."""
+
+    return revoke_instance_generation_key(
+        plan,
+        resource_name,
+        instance_id,
+        creation_timestamp,
+        vault_root,
+        now_unix=now_unix,
     )
 
 
