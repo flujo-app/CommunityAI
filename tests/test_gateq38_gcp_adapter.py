@@ -89,6 +89,8 @@ class FakeGcloud:
         )
         value: dict[str, object] = {
             "name": resource.name,
+            "id": str(20_000_000 + list(self.plan.resource_by_name).index(resource.name)),
+            "creationTimestamp": "2026-09-03T01:20:00+00:00",
             "status": "RUNNING",
             "labels": adapter._labels(self.plan),
             "machineType": f"zones/{route.EXPECTED_ZONE}/machineTypes/{spec['machine_type']}",
@@ -272,8 +274,19 @@ def _cleanup_state(plan: route.RoutePlan) -> dict[str, object]:
 
 
 def _collect_state(plan: route.RoutePlan) -> dict[str, object]:
+    observation = route_test._observation(
+        plan,
+        resource_state="present",
+        worker_state="ready",
+        observed_at=NOW,
+    )
     state = route.initial_state(plan)
-    state.update(revision=3, phase="COLLECTING", next_action="collect_route")
+    state.update(
+        revision=3,
+        phase="COLLECTING",
+        next_action="collect_route",
+        instance_generations_digest=observation["instance_generations_digest"],
+    )
     return state
 
 
@@ -709,3 +722,67 @@ def test_adapter_never_targets_protected_bootstrap(tmp_path: Path) -> None:
     mutation_calls = [call for call in fake.calls if any(action in call for action in ("create", "delete", "ssh"))]
     assert mutation_calls
     assert all(route.PROTECTED_INSTANCE not in call for call in mutation_calls)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", None),
+        ("id", True),
+        ("id", "0"),
+        ("id", "wrong"),
+        ("id", "18446744073709551616"),
+        ("creationTimestamp", None),
+        ("creationTimestamp", True),
+        ("creationTimestamp", "2026-09-03T01:20:00Z"),
+        ("creationTimestamp", "2026-13-03T01:20:00+00:00"),
+        ("creationTimestamp", "2026-09-03T01:20:00+24:00"),
+    ],
+)
+def test_provider_instance_generation_is_required(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    plan, fake, provider = _make(tmp_path)
+    fake.populate_all()
+    instance = next(item for item in plan.resources if item.kind.endswith("instance"))
+    fake.resources[instance.name][field] = value
+
+    with pytest.raises(adapter.Q38GcpAdapterError, match="instance generation"):
+        provider.inventory(
+            adapter.blank_host_status(plan),
+            manifest_path=tmp_path / "manifest.json",
+            artifact_root=tmp_path / "artifacts",
+        )
+
+
+def test_provider_observation_carries_exact_instance_generation_inventory(
+    tmp_path: Path,
+) -> None:
+    plan, fake, provider = _make(tmp_path)
+    fake.populate_all()
+
+    observation = provider.inventory(
+        adapter.blank_host_status(plan),
+        manifest_path=tmp_path / "manifest.json",
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert observation["instance_generations_digest"] == route.observation_instance_generations_digest(
+        observation["resources"],
+        plan,
+    )
+    for resource in plan.resources:
+        observed = observation["resources"][resource.name]
+        if resource.kind.endswith("instance"):
+            provider_value = fake.resources[resource.name]
+            assert observed["instance_generation_digest"] == route.instance_generation_digest(
+                resource.name,
+                provider_value["id"],
+                provider_value["creationTimestamp"],
+            )
+        else:
+            assert observed["instance_id"] is None
+            assert observed["creation_timestamp"] is None
+            assert observed["instance_generation_digest"] is None

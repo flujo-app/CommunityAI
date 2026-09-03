@@ -17,6 +17,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
@@ -121,6 +122,10 @@ _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 _REVISION_RE = re.compile(r"[0-9a-f]{40}")
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 _PEER_RE = re.compile(r"[A-Za-z0-9]{20,128}")
+_INSTANCE_ID_RE = re.compile(r"[1-9][0-9]{0,19}")
+_CREATION_TIMESTAMP_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?[+-][0-9]{2}:[0-9]{2}"
+)
 
 _PLAN_FIELDS = {
     "schema_version",
@@ -217,6 +222,7 @@ _STATE_FIELDS = {
     "phase",
     "failure_code",
     "evidence_digest",
+    "instance_generations_digest",
     "cleanup_verified",
     "next_action",
 }
@@ -226,6 +232,7 @@ _OBSERVATION_FIELDS = {
     "observed_at_unix",
     "protected_bootstrap_running",
     "artifact_plan_revalidation",
+    "instance_generations_digest",
     "resources",
     "workers",
     "route_job",
@@ -251,6 +258,9 @@ _OBS_RESOURCE_FIELDS = {
     "plan_digest",
     "start_action_id",
     "worker_id",
+    "instance_id",
+    "creation_timestamp",
+    "instance_generation_digest",
 }
 _OBS_WORKER_FIELDS = {
     "state",
@@ -1368,6 +1378,59 @@ def revalidate_production_artifact_plan(
     }
 
 
+def instance_generation_digest(
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+) -> str:
+    _string(resource_name, _GCP_RESOURCE_RE, "instance generation resource_name")
+    _string(instance_id, _INSTANCE_ID_RE, "instance generation id")
+    if int(instance_id) > 2**64 - 1:
+        raise RouteControllerError("instance generation id is outside uint64")
+    _string(
+        creation_timestamp,
+        _CREATION_TIMESTAMP_RE,
+        "instance generation creation_timestamp",
+    )
+    try:
+        parsed_timestamp = datetime.fromisoformat(creation_timestamp)
+    except ValueError as exc:
+        raise RouteControllerError("instance generation creation_timestamp is invalid") from exc
+    if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
+        raise RouteControllerError("instance generation creation_timestamp lacks an offset")
+    return _canonical_digest(
+        {
+            "project": EXPECTED_PROJECT,
+            "zone": EXPECTED_ZONE,
+            "resource_name": resource_name,
+            "instance_id": instance_id,
+            "creation_timestamp": creation_timestamp,
+        }
+    )
+
+
+def observation_instance_generations_digest(
+    resources: Mapping[str, Any],
+    plan: RoutePlan,
+) -> str | None:
+    generations: list[dict[str, str]] = []
+    for resource in plan.resources:
+        if not resource.kind.endswith("instance"):
+            continue
+        observed = resources.get(resource.name)
+        if not isinstance(observed, Mapping) or observed.get("present") is not True:
+            return None
+        digest = observed.get("instance_generation_digest")
+        _string(digest, _DIGEST_RE, "instance generation digest")
+        generations.append(
+            {
+                "resource_name": resource.name,
+                "instance_generation_digest": digest,
+            }
+        )
+    return _canonical_digest({"instances": generations})
+
+
 def initial_state(plan: RoutePlan) -> dict[str, Any]:
     return {
         "schema_version": STATE_SCHEMA_VERSION,
@@ -1377,6 +1440,7 @@ def initial_state(plan: RoutePlan) -> dict[str, Any]:
         "phase": "ABSENT",
         "failure_code": None,
         "evidence_digest": None,
+        "instance_generations_digest": None,
         "cleanup_verified": False,
         "next_action": "none",
     }
@@ -1397,6 +1461,14 @@ def validate_state(value: Mapping[str, Any], plan: RoutePlan) -> dict[str, Any]:
         _string(state["failure_code"], _LABEL_RE, "failure_code")
     if state["evidence_digest"] is not None:
         _string(state["evidence_digest"], _DIGEST_RE, "evidence_digest")
+    if state["instance_generations_digest"] is not None:
+        _string(
+            state["instance_generations_digest"],
+            _DIGEST_RE,
+            "instance_generations_digest",
+        )
+    if state["phase"] in {"READY", "COLLECTING"} and state["instance_generations_digest"] is None:
+        raise RouteControllerError("active state lacks an instance generation latch")
     _boolean(state["cleanup_verified"], "cleanup_verified")
     if state["cleanup_verified"] is not (state["phase"] in TERMINAL_PHASES):
         raise RouteControllerError("cleanup state is inconsistent")
@@ -1668,6 +1740,32 @@ def validate_observation(
                 or resource["worker_id"] != resource_plan.worker_id
             ):
                 raise RouteControllerError("provider resource binding is invalid")
+            if resource_plan.kind.endswith("instance"):
+                instance_id = _string(
+                    resource["instance_id"],
+                    _INSTANCE_ID_RE,
+                    "provider instance id",
+                )
+                creation_timestamp = _string(
+                    resource["creation_timestamp"],
+                    _CREATION_TIMESTAMP_RE,
+                    "provider instance creation timestamp",
+                )
+                if resource["instance_generation_digest"] != instance_generation_digest(
+                    resource_plan.name,
+                    instance_id,
+                    creation_timestamp,
+                ):
+                    raise RouteControllerError("provider instance generation binding is invalid")
+            elif any(
+                resource[field] is not None
+                for field in (
+                    "instance_id",
+                    "creation_timestamp",
+                    "instance_generation_digest",
+                )
+            ):
+                raise RouteControllerError("non-instance resource exposed generation metadata")
         elif any(
             resource[field] is not None
             for field in (
@@ -1677,9 +1775,16 @@ def validate_observation(
                 "plan_digest",
                 "start_action_id",
                 "worker_id",
+                "instance_id",
+                "creation_timestamp",
+                "instance_generation_digest",
             )
         ):
             raise RouteControllerError("absent resource metadata is invalid")
+
+    expected_generations_digest = observation_instance_generations_digest(resources, plan)
+    if observation["instance_generations_digest"] != expected_generations_digest:
+        raise RouteControllerError("provider instance generation inventory is invalid")
 
     workers = observation["workers"]
     if not isinstance(workers, dict) or set(workers) != set(plan.worker_by_id):
@@ -1853,6 +1958,26 @@ def reconcile(
     workers_ready = _all_workers_ready(observation)
     worker_states = {worker["state"] for worker in observation["workers"].values()}
     job_state = observation["route_job"]["state"]
+    observed_generations_digest = observation["instance_generations_digest"]
+    latched_generations_digest = state["instance_generations_digest"]
+    if (
+        phase not in TERMINAL_PHASES
+        and not cleanup_only
+        and latched_generations_digest is not None
+        and observed_generations_digest != latched_generations_digest
+    ):
+        return _cleanup_state(state, "instance-generation-changed")
+
+    def advance_with_generations(**changes: Any) -> dict[str, Any]:
+        if not cleanup_only and resources_present and latched_generations_digest is None:
+            if observed_generations_digest is None:
+                raise RouteControllerError("complete resources lack instance generations")
+            changes.setdefault(
+                "instance_generations_digest",
+                observed_generations_digest,
+            )
+        return _next(state, **changes)
+
     if not cleanup_only and job_state == "passed" and not route_evidence_validated:
         raise RouteControllerError("passed route evidence was not revalidated from protected records")
 
@@ -1945,8 +2070,7 @@ def reconcile(
         )
 
     if phase == "ABSENT" and resources_present and workers_ready and job_state == "passed":
-        return _next(
-            state,
+        return advance_with_generations(
             phase="CLEANING",
             evidence_digest=observation["route_job"]["evidence_digest"],
             next_action="cleanup_route",
@@ -1961,9 +2085,9 @@ def reconcile(
             if resources_present and job_state == "failed":
                 return _cleanup_state(state, "qualification-failed")
             if resources_present and workers_ready and job_state in {"absent", "running"}:
-                return _next(state, phase="READY", next_action="none")
+                return advance_with_generations(phase="READY", next_action="none")
             if resources_present and worker_states <= {"starting", "ready"} and job_state == "absent":
-                return _next(state, phase="STARTING", next_action="none")
+                return advance_with_generations(phase="STARTING", next_action="none")
             return _cleanup_state(state, "partial-reattach")
 
     if phase == "ABSENT":
@@ -1981,9 +2105,9 @@ def reconcile(
 
     if phase == "STARTING":
         if workers_ready:
-            return _next(state, phase="READY", next_action="none")
+            return advance_with_generations(phase="READY", next_action="none")
         if worker_states <= {"starting", "ready"} and job_state == "absent":
-            return _next(state, next_action="none")
+            return advance_with_generations(next_action="none")
         return _cleanup_state(state, "route-start-failed")
 
     if phase == "READY":
@@ -2051,6 +2175,13 @@ def action_record(state: Mapping[str, Any], plan: RoutePlan) -> dict[str, Any]:
     action_id = None
     if action != "none":
         action_id = _action_id(plan, action)
+    instance_generations_digest = state.get("instance_generations_digest")
+    if instance_generations_digest is not None:
+        _string(
+            instance_generations_digest,
+            _DIGEST_RE,
+            "instance_generations_digest",
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "gate": GATE,
@@ -2063,6 +2194,7 @@ def action_record(state: Mapping[str, Any], plan: RoutePlan) -> dict[str, Any]:
         "worker_plan_digest": plan.worker_plan_digest,
         "deadline_unix": plan.deadline_unix,
         "revision": state["revision"],
+        "instance_generations_digest": instance_generations_digest,
         "action": action,
         "action_id": action_id,
         "authorization": dict(plan.authorization),

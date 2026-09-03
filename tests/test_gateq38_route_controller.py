@@ -277,6 +277,18 @@ def _observation(
     resources: dict[str, object] = {}
     for resource in plan.resources:
         present = resource_state == "present"
+        is_instance = present and resource.kind.endswith("instance")
+        instance_id = str(10_000_000 + len(resources)) if is_instance else None
+        creation_timestamp = "2026-09-03T01:20:00+00:00" if is_instance else None
+        generation_digest = (
+            route.instance_generation_digest(
+                resource.name,
+                instance_id,
+                creation_timestamp,
+            )
+            if is_instance
+            else None
+        )
         resources[resource.name] = {
             "present": present,
             "kind": resource.kind,
@@ -288,6 +300,9 @@ def _observation(
             "plan_digest": plan.plan_digest if present else None,
             "start_action_id": route._action_id(plan, "start_route") if present else None,
             "worker_id": resource.worker_id if present else None,
+            "instance_id": instance_id,
+            "creation_timestamp": creation_timestamp,
+            "instance_generation_digest": generation_digest,
         }
     workers: dict[str, object] = {}
     for index, worker in enumerate(plan.workers):
@@ -324,6 +339,10 @@ def _observation(
             "worker_plan_digest": plan.worker_plan_digest,
             "verifier_source_sha256": verifier_digest,
         },
+        "instance_generations_digest": route.observation_instance_generations_digest(
+            resources,
+            plan,
+        ),
         "resources": resources,
         "workers": workers,
         "route_job": _job(plan, job_state, workers),
@@ -800,8 +819,12 @@ def test_route_job_rejects_wrong_binding(tmp_path: Path, field: str) -> None:
 def test_failed_job_forces_cleanup(tmp_path: Path) -> None:
     plan = _load_plan(tmp_path)
     state = route.initial_state(plan)
-    state.update(phase="COLLECTING", revision=2)
     observation = _observation(plan, resource_state="present", worker_state="ready", job_state="failed")
+    state.update(
+        phase="COLLECTING",
+        revision=2,
+        instance_generations_digest=observation["instance_generations_digest"],
+    )
 
     cleaning = _advance("status", state, observation, plan)
 
@@ -871,6 +894,21 @@ def test_deadline_forces_cleanup_then_terminal_failure(tmp_path: Path) -> None:
     assert cleaning["failure_code"] == "run-expired"
     assert terminal["phase"] == "CLEANED_FAILURE"
     assert terminal["cleanup_verified"] is True
+
+
+def test_terminal_state_retains_latched_generation_after_cleanup(tmp_path: Path) -> None:
+    plan = _load_plan(tmp_path)
+    present = _observation(plan, resource_state="present", worker_state="starting")
+    state = route.initial_state(plan)
+    state.update(
+        phase="CLEANED_FAILURE",
+        failure_code="route-failed",
+        cleanup_verified=True,
+        instance_generations_digest=present["instance_generations_digest"],
+        revision=5,
+    )
+
+    assert _advance("status", state, _observation(plan), plan) == state
 
 
 def test_terminal_state_rejects_resource_reappearance(tmp_path: Path) -> None:
@@ -2043,3 +2081,82 @@ def test_completed_journal_recovers_pass_after_state_loss(
     assert recovered["evidence_digest"] == "sha256:" + "e" * 64
     assert recovered["cleanup_verified"] is True
     assert decision["action"] == "none"
+
+
+def test_complete_instance_generations_are_latched_and_recreation_forces_cleanup(
+    tmp_path: Path,
+) -> None:
+    plan = _load_plan(tmp_path)
+    starting = _advance(
+        "start",
+        route.initial_state(plan),
+        _observation(plan),
+        plan,
+    )
+    observation = _observation(
+        plan,
+        resource_state="present",
+        worker_state="starting",
+    )
+
+    latched = _advance("status", starting, observation, plan)
+
+    assert latched["phase"] == "STARTING"
+    assert latched["instance_generations_digest"] == observation["instance_generations_digest"]
+    assert (
+        route.action_record(latched, plan)["instance_generations_digest"] == observation["instance_generations_digest"]
+    )
+
+    recreated = copy.deepcopy(observation)
+    instance = next(item for item in plan.resources if item.kind.endswith("instance"))
+    resource = recreated["resources"][instance.name]
+    resource["instance_id"] = str(int(resource["instance_id"]) + 1)
+    resource["instance_generation_digest"] = route.instance_generation_digest(
+        instance.name,
+        resource["instance_id"],
+        resource["creation_timestamp"],
+    )
+    recreated["instance_generations_digest"] = route.observation_instance_generations_digest(
+        recreated["resources"],
+        plan,
+    )
+
+    cleaning = _advance("status", latched, recreated, plan)
+
+    assert cleaning["phase"] == "CLEANING"
+    assert cleaning["failure_code"] == "instance-generation-changed"
+    assert cleaning["instance_generations_digest"] == latched["instance_generations_digest"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("instance_id", None),
+        ("instance_id", True),
+        ("instance_id", "0"),
+        ("instance_id", "not-numeric"),
+        ("instance_id", "18446744073709551616"),
+        ("creation_timestamp", None),
+        ("creation_timestamp", True),
+        ("creation_timestamp", "2026-09-03"),
+        ("creation_timestamp", "2026-09-03T01:20:00Z"),
+        ("creation_timestamp", "2026-13-03T01:20:00+00:00"),
+        ("creation_timestamp", "2026-09-03T01:20:00+24:00"),
+    ],
+)
+def test_instance_generation_fields_fail_closed(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    plan = _load_plan(tmp_path)
+    observation = _observation(
+        plan,
+        resource_state="present",
+        worker_state="starting",
+    )
+    instance = next(item for item in plan.resources if item.kind.endswith("instance"))
+    observation["resources"][instance.name][field] = value
+
+    with pytest.raises(route.RouteControllerError, match="instance generation|provider instance"):
+        route.validate_observation(observation, plan)

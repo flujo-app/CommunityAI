@@ -386,6 +386,14 @@ class GcpAdapter:
     ) -> None:
         if value.get("name") != resource.name:
             raise Q38GcpAdapterError("planned instance identity is invalid")
+        try:
+            controller.instance_generation_digest(
+                resource.name,
+                value.get("id"),
+                value.get("creationTimestamp"),
+            )
+        except controller.RouteControllerError as exc:
+            raise Q38GcpAdapterError("planned instance generation is invalid") from exc
         if not cleanup and value.get("status") not in {
             "PROVISIONING",
             "STAGING",
@@ -583,23 +591,36 @@ class GcpAdapter:
                 self.source_root,
                 verified_at_unix=now,
             )
-        resources = {
-            resource.name: {
-                "present": provider[resource.name] is not None,
+        resources: dict[str, dict[str, Any]] = {}
+        for resource in self.plan.resources:
+            value = provider[resource.name]
+            present = value is not None
+            instance_id: str | None = None
+            creation_timestamp: str | None = None
+            instance_generation_digest: str | None = None
+            if present and resource.kind.endswith("instance"):
+                instance_id = value["id"]
+                creation_timestamp = value["creationTimestamp"]
+                instance_generation_digest = controller.instance_generation_digest(
+                    resource.name,
+                    instance_id,
+                    creation_timestamp,
+                )
+            resources[resource.name] = {
+                "present": present,
                 "kind": resource.kind,
                 "provider": resource.provider,
                 "region": resource.region,
-                "run_id": self.plan.run_id if provider[resource.name] is not None else None,
-                "source_commit": self.plan.source_commit if provider[resource.name] is not None else None,
-                "deadline_unix": self.plan.deadline_unix if provider[resource.name] is not None else None,
-                "plan_digest": self.plan.plan_digest if provider[resource.name] is not None else None,
-                "start_action_id": (
-                    controller._action_id(self.plan, "start_route") if provider[resource.name] is not None else None
-                ),
-                "worker_id": resource.worker_id if provider[resource.name] is not None else None,
+                "run_id": self.plan.run_id if present else None,
+                "source_commit": self.plan.source_commit if present else None,
+                "deadline_unix": self.plan.deadline_unix if present else None,
+                "plan_digest": self.plan.plan_digest if present else None,
+                "start_action_id": controller._action_id(self.plan, "start_route") if present else None,
+                "worker_id": resource.worker_id if present else None,
+                "instance_id": instance_id,
+                "creation_timestamp": creation_timestamp,
+                "instance_generation_digest": instance_generation_digest,
             }
-            for resource in self.plan.resources
-        }
         workers: dict[str, Any] = {}
         for worker in self.plan.workers:
             instance_value = provider[worker.instance]
@@ -642,6 +663,10 @@ class GcpAdapter:
             "observed_at_unix": now,
             "protected_bootstrap_running": protected,
             "artifact_plan_revalidation": revalidation,
+            "instance_generations_digest": controller.observation_instance_generations_digest(
+                resources,
+                self.plan,
+            ),
             "resources": resources,
             "workers": workers,
             "route_job": route_job,
