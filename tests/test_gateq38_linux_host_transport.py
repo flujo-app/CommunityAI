@@ -486,3 +486,212 @@ def test_unfinished_worker_cannot_expose_peer(tmp_path: Path, state: str) -> Non
             published_at_unix=NOW,
             prepared_record_digest=PREPARED_DIGEST,
         )
+
+
+def _delivery_material(
+    plan: route.RoutePlan,
+    *,
+    key: bytes = KEY,
+    epoch: int = 1,
+    previous_record_digest: str | None = None,
+) -> route.InstanceGenerationKey:
+    resource = _worker_resource(plan)
+    record = route._instance_key_record(
+        plan,
+        resource,
+        INSTANCE_ID,
+        CREATED,
+        key=key,
+        key_epoch=epoch,
+        issued_at_unix=NOW - 10,
+        previous_record_digest=previous_record_digest,
+    )
+    return route.InstanceGenerationKey(record, key)
+
+
+def test_instance_delivery_round_trip_is_secret_free_outside_payload(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    material = _delivery_material(plan)
+
+    delivery = transport.build_instance_delivery(plan, material, now_unix=NOW)
+    record, context, key = transport.validate_instance_delivery(
+        delivery,
+        plan,
+        now_unix=NOW,
+    )
+
+    assert record == dict(delivery.record)
+    assert context["resource_name"] == _worker_resource(plan).name
+    assert key == KEY
+    public = json.dumps(dict(delivery.record), sort_keys=True).encode()
+    assert KEY not in public
+    assert KEY.hex().encode() not in public
+    assert "payload=" not in repr(delivery)
+
+
+def test_instance_delivery_rejects_mutation_and_wrong_generation(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    delivery = transport.build_instance_delivery(
+        plan,
+        _delivery_material(plan),
+        now_unix=NOW,
+    )
+    mutated = bytearray(delivery.payload)
+    mutated[-1] ^= 1
+    forged = transport.InstanceDelivery(delivery.record, bytes(mutated))
+
+    with pytest.raises(transport.Q38LinuxHostTransportError):
+        transport.validate_instance_delivery(forged, plan, now_unix=NOW)
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="generation"):
+        transport.validate_instance_delivery(
+            delivery,
+            plan,
+            now_unix=NOW,
+            expected_generation_digest="sha256:" + "0" * 64,
+        )
+
+
+def test_instance_delivery_rotation_binds_predecessor(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    first = _delivery_material(plan)
+    rotated = _delivery_material(
+        plan,
+        key=OTHER_KEY,
+        epoch=2,
+        previous_record_digest=first.record["record_digest"],
+    )
+
+    delivery = transport.build_instance_delivery(plan, rotated, now_unix=NOW)
+    record, _context_value, key = transport.validate_instance_delivery(
+        delivery,
+        plan,
+        now_unix=NOW,
+    )
+
+    assert record["key_epoch"] == 2
+    assert record["previous_key_record_digest"] == first.record["record_digest"]
+    assert key == OTHER_KEY
+
+
+def test_instance_delivery_rejects_noncanonical_or_trailing_framing(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    delivery = transport.build_instance_delivery(
+        plan,
+        _delivery_material(plan),
+        now_unix=NOW,
+    )
+    magic_size = len(transport.DELIVERY_MAGIC)
+    header_end = delivery.payload.find(b"\n", magic_size)
+    header = json.loads(delivery.payload[magic_size:header_end])
+    noncanonical = (
+        transport.DELIVERY_MAGIC
+        + json.dumps(header, indent=2).encode("ascii")
+        + b"\n"
+        + delivery.payload[header_end + 1 :]
+    )
+
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="header"):
+        transport.decode_instance_delivery(noncanonical, plan, now_unix=NOW)
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="framing"):
+        transport.decode_instance_delivery(delivery.payload + b"x", plan, now_unix=NOW)
+
+
+def test_instance_delivery_receipt_is_authenticated_and_secret_free(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    delivery = transport.build_instance_delivery(
+        plan,
+        _delivery_material(plan),
+        now_unix=NOW,
+    )
+    receipt = transport.build_instance_delivery_receipt(
+        delivery,
+        plan,
+        installed_at_unix=NOW,
+    )
+
+    assert (
+        transport.validate_instance_delivery_receipt(
+            receipt,
+            delivery,
+            plan,
+            now_unix=NOW,
+        )
+        == receipt
+    )
+    public = json.dumps(receipt, sort_keys=True).encode()
+    assert KEY not in public
+    assert KEY.hex().encode() not in public
+
+    changed = copy.deepcopy(receipt)
+    changed["key_epoch"] += 1
+    with pytest.raises(transport.Q38LinuxHostTransportError):
+        transport.validate_instance_delivery_receipt(
+            changed,
+            delivery,
+            plan,
+            now_unix=NOW,
+        )
+
+
+def test_instance_delivery_receipt_rejects_authenticated_stale_replay(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    delivery = transport.build_instance_delivery(
+        plan,
+        _delivery_material(plan),
+        now_unix=NOW,
+    )
+    receipt = transport.build_instance_delivery_receipt(
+        delivery,
+        plan,
+        installed_at_unix=NOW,
+    )
+
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="receipt is stale"):
+        transport.validate_instance_delivery_receipt(
+            receipt,
+            delivery,
+            plan,
+            now_unix=NOW + 900,
+        )
+
+
+@pytest.mark.parametrize(
+    "installed_at_unix",
+    [
+        NOW - transport.MAX_DELIVERY_RECEIPT_AGE_SECONDS - 1,
+        NOW + transport.MAX_FUTURE_SKEW_SECONDS + 1,
+    ],
+)
+def test_instance_delivery_receipt_authenticates_before_time_semantics(
+    tmp_path: Path,
+    installed_at_unix: int,
+) -> None:
+    plan = _plan(tmp_path)
+    delivery = transport.build_instance_delivery(
+        plan,
+        _delivery_material(plan),
+        now_unix=NOW,
+    )
+    receipt = transport.build_instance_delivery_receipt(
+        delivery,
+        plan,
+        installed_at_unix=NOW,
+    )
+    receipt["installed_at_unix"] = installed_at_unix
+
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="receipt digest changed"):
+        transport.validate_instance_delivery_receipt(
+            receipt,
+            delivery,
+            plan,
+            now_unix=NOW,
+        )
+
+    receipt["receipt_digest"] = transport._receipt_digest_value(receipt)
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="receipt authentication failed"):
+        transport.validate_instance_delivery_receipt(
+            receipt,
+            delivery,
+            plan,
+            now_unix=NOW,
+        )

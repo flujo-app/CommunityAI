@@ -33,6 +33,7 @@ SCHEMA_VERSION = 1
 PREPARED_SCOPE = "qwen3.8-linux-host-runtime-prepared"
 CLEANUP_SCOPE = "qwen3.8-linux-host-runtime-cleanup-terminal"
 PUBLICATION_SCOPE = "qwen3.8-linux-host-status-publication"
+DELIVERY_INSTALL_SCOPE = "qwen3.8-linux-instance-delivery-install"
 QUALIFICATION_USER = "communityai-q38"
 MAX_JSON_BYTES = controller.MAX_JSON_BYTES
 MAX_PROVENANCE_BYTES = controller.MAX_RELEASE_PROVENANCE_BYTES
@@ -106,6 +107,7 @@ class HostPaths:
     transport_key: Path
     status_envelope: Path
     boot_id: Path
+    transport_bundle: Path | None = None
 
     @classmethod
     def production(cls) -> "HostPaths":
@@ -123,6 +125,7 @@ class HostPaths:
             transport_key=INPUT_BASE / "host-status.key",
             status_envelope=STATE_BASE / "host-status.json",
             boot_id=BOOT_ID_PATH,
+            transport_bundle=INPUT_BASE / "instance-delivery.bin",
         )
 
 
@@ -379,6 +382,28 @@ def _load_authenticated_context(
     now_unix: int,
     allow_expired_for_cleanup: bool,
 ) -> tuple[dict[str, Any], bytes]:
+    bundle_path = paths.transport_bundle
+    if bundle_path is not None:
+        if bundle_path.parent != paths.plan.parent:
+            raise Q38LinuxHostRuntimeError("transport bundle is outside the protected input boundary")
+        _assert_root_managed(bundle_path.parent, directory=True)
+        _assert_root_private_file(bundle_path)
+        try:
+            payload = _regular_bytes(
+                bundle_path,
+                maximum=transport.MAX_DELIVERY_BYTES,
+            )
+            _record, context, key = transport.decode_instance_delivery(
+                payload,
+                plan,
+                now_unix=now_unix,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                allow_expired_for_cleanup=allow_expired_for_cleanup,
+            )
+        except transport.Q38LinuxHostTransportError as exc:
+            raise Q38LinuxHostRuntimeError(str(exc)) from exc
+        return context, key
     if (
         paths.instance_context.parent != paths.transport_key.parent
         or paths.instance_context.parent != paths.plan.parent
@@ -388,10 +413,10 @@ def _load_authenticated_context(
     _assert_root_private_file(paths.instance_context)
     _assert_root_private_file(paths.transport_key)
     try:
-        with _verified_file(paths.instance_context, maximum=transport.MAX_ENVELOPE_BYTES) as (
+        with _verified_file(paths.instance_context, maximum=transport.MAX_ENVELOPE_BYTES,) as (
             _context_stream,
             context_payload,
-        ), _verified_file(paths.transport_key, expected_size=transport.KEY_BYTES) as (key_stream, _key_payload):
+        ), _verified_file(paths.transport_key, expected_size=transport.KEY_BYTES,) as (key_stream, _key_payload):
             if context_payload is None:
                 raise AssertionError("instance context payload was not read")
             key = key_stream.read(transport.KEY_BYTES + 1)
@@ -1768,11 +1793,56 @@ def _cleanup_marker_value(
     }
 
 
-def _cleanup_marker_path(paths: HostPaths, context: Mapping[str, Any]) -> Path:
-    digest = str(context["instance_generation_digest"])
-    if controller._DIGEST_RE.fullmatch(digest) is None:
+def _cleanup_marker_path_for_generation(
+    paths: HostPaths,
+    generation_digest: str,
+) -> Path:
+    if not isinstance(generation_digest, str) or controller._DIGEST_RE.fullmatch(generation_digest) is None:
         raise Q38LinuxHostRuntimeError("cleanup generation digest is invalid")
-    return paths.prepared_record.parent / f"cleaned-{digest.removeprefix('sha256:')}.json"
+    return paths.prepared_record.parent / f"cleaned-{generation_digest.removeprefix('sha256:')}.json"
+
+
+def _cleanup_marker_path(paths: HostPaths, context: Mapping[str, Any]) -> Path:
+    return _cleanup_marker_path_for_generation(
+        paths,
+        str(context["instance_generation_digest"]),
+    )
+
+
+def _validate_cleanup_marker_generation(
+    path: Path,
+    plan: controller.RoutePlan,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+) -> dict[str, Any]:
+    resource = plan.resource_by_name.get(expected_resource_name)
+    if resource is None or not resource.kind.endswith("instance"):
+        raise Q38LinuxHostRuntimeError("cleanup marker resource is invalid")
+    _assert_root_private_file(path)
+    value = _strict_json(_regular_bytes(path))
+    fixed = {
+        "schema_version": SCHEMA_VERSION,
+        "scope": CLEANUP_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "cleanup_action_id": controller._action_id(plan, "cleanup_route"),
+        "resource_name": resource.name,
+        "resource_kind": resource.kind,
+        "worker_id": resource.worker_id,
+        "instance_generation_digest": expected_generation_digest,
+        "runtime_key": _runtime_key(plan),
+    }
+    if set(value) != {*fixed, "instance_context_digest"} or any(
+        value[field] != expected for field, expected in fixed.items()
+    ):
+        raise Q38LinuxHostRuntimeError("cleanup marker binds another host generation")
+    context_digest = value["instance_context_digest"]
+    if not isinstance(context_digest, str) or controller._DIGEST_RE.fullmatch(context_digest) is None:
+        raise Q38LinuxHostRuntimeError("cleanup marker context is invalid")
+    return value
 
 
 def _remove_stale_cleanup_temporaries(parent: Path) -> None:
@@ -1847,6 +1917,151 @@ def _remove_exact_tree(path: Path, parent: Path) -> None:
     shutil.rmtree(path)
     if path.exists() or path.is_symlink():
         raise Q38LinuxHostRuntimeError("runtime cleanup is incomplete")
+
+
+def _remove_stale_delivery_temporaries(parent: Path) -> None:
+    for candidate in parent.iterdir():
+        if not candidate.name.startswith(".delivery.") or not candidate.name.endswith(".tmp"):
+            continue
+        _assert_root_private_file(candidate)
+        candidate.unlink()
+    if any(
+        candidate.name.startswith(".delivery.") and candidate.name.endswith(".tmp") for candidate in parent.iterdir()
+    ):
+        raise Q38LinuxHostRuntimeError("stale delivery cleanup is incomplete")
+
+
+def _delivery_path(paths: HostPaths) -> Path:
+    path = paths.transport_bundle
+    if path is None or path.parent != paths.plan.parent or path.name != "instance-delivery.bin":
+        raise Q38LinuxHostRuntimeError("transport delivery target is invalid")
+    _assert_root_managed(path.parent, directory=True)
+    return path
+
+
+def _decode_delivery(
+    payload: bytes,
+    plan: controller.RoutePlan,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int,
+) -> tuple[dict[str, Any], dict[str, Any], bytes]:
+    try:
+        return transport.decode_instance_delivery(
+            payload,
+            plan,
+            now_unix=now_unix,
+            expected_resource_name=expected_resource_name,
+            expected_generation_digest=expected_generation_digest,
+        )
+    except transport.Q38LinuxHostTransportError as exc:
+        raise Q38LinuxHostRuntimeError(str(exc)) from exc
+
+
+def install_instance_delivery(
+    paths: HostPaths,
+    payload: bytes,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int | None = None,
+) -> dict[str, Any]:
+    """Atomically install one authenticated context/key bundle under the lifecycle lock."""
+
+    installation_time = int(time.time()) if now_unix is None else now_unix
+    plan, _action = _load_plan_and_action(
+        paths.plan,
+        paths.start_action,
+        paths.source_root,
+        expected_action="start_route",
+        now_unix=installation_time,
+    )
+    record, context, _key = _decode_delivery(
+        payload,
+        plan,
+        expected_resource_name=expected_resource_name,
+        expected_generation_digest=expected_generation_digest,
+        now_unix=installation_time,
+    )
+    delivery = transport.InstanceDelivery(record, payload)
+    target = _delivery_path(paths)
+    state_parent = _state_parent(paths)
+    cleanup_marker = _cleanup_marker_path(paths, context)
+    cleanup_value = _cleanup_marker_value(plan, context)
+    with _prepared_state_lock(state_parent):
+        _reject_cleaned_generation_locked(cleanup_marker, cleanup_value)
+        _remove_stale_delivery_temporaries(target.parent)
+        if target.exists() or target.is_symlink():
+            _assert_root_private_file(target)
+            current_payload = _regular_bytes(
+                target,
+                maximum=transport.MAX_DELIVERY_BYTES,
+            )
+            current_record, _current_context, _current_key = _decode_delivery(
+                current_payload,
+                plan,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                now_unix=installation_time,
+            )
+            if current_payload == payload:
+                return transport.build_instance_delivery_receipt(
+                    delivery,
+                    plan,
+                    installed_at_unix=installation_time,
+                )
+            if (
+                record["key_epoch"] != current_record["key_epoch"] + 1
+                or record["previous_key_record_digest"] != current_record["key_record_digest"]
+            ):
+                raise Q38LinuxHostRuntimeError("instance delivery rotation is stale or discontinuous")
+        elif record["key_epoch"] != 1 or record["previous_key_record_digest"] is not None:
+            raise Q38LinuxHostRuntimeError("initial instance delivery does not begin at key epoch one")
+        descriptor, raw = tempfile.mkstemp(
+            prefix=".delivery.",
+            suffix=".tmp",
+            dir=target.parent,
+        )
+        temporary = Path(raw)
+        replaced = False
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(payload)
+                output.flush()
+                os.fsync(output.fileno())
+            os.chown(temporary, 0, 0)
+            os.chmod(temporary, 0o600)
+            _assert_root_private_file(temporary)
+            os.replace(temporary, target)
+            replaced = True
+            _assert_root_private_file(target)
+            installed_payload = _regular_bytes(
+                target,
+                maximum=transport.MAX_DELIVERY_BYTES,
+            )
+            installed_record, _installed_context, _installed_key = _decode_delivery(
+                installed_payload,
+                plan,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                now_unix=installation_time,
+            )
+            if installed_payload != payload or installed_record != record:
+                raise Q38LinuxHostRuntimeError("installed instance delivery changed")
+            _fsync_directory(target.parent)
+        except Q38LinuxHostRuntimeError:
+            raise
+        except OSError as exc:
+            raise Q38LinuxHostRuntimeError("instance delivery could not be installed") from exc
+        finally:
+            if not replaced:
+                temporary.unlink(missing_ok=True)
+        return transport.build_instance_delivery_receipt(
+            delivery,
+            plan,
+            installed_at_unix=installation_time,
+        )
 
 
 def prepare(
@@ -2121,76 +2336,130 @@ def cleanup(
         expected_action="cleanup_route",
         now_unix=verification_time,
     )
-    context, _key = _load_authenticated_context(
-        plan,
-        paths,
-        expected_resource_name=expected_resource_name,
-        expected_generation_digest=expected_generation_digest,
-        now_unix=verification_time,
-        allow_expired_for_cleanup=True,
-    )
     destination = _runtime_destination(plan, paths)
     work = paths.work_base / _runtime_key(plan)
     state_parent = _state_parent(paths)
-    cleanup_marker = _cleanup_marker_path(paths, context)
-    cleanup_value = _cleanup_marker_value(plan, context)
+    cleanup_marker = _cleanup_marker_path_for_generation(
+        paths,
+        expected_generation_digest,
+    )
+    bundle_path = paths.transport_bundle
     with _prepared_state_lock(state_parent):
         _remove_stale_prepared_temporaries(state_parent)
         _remove_stale_status_temporaries(state_parent)
         _remove_stale_cleanup_temporaries(state_parent)
-        if cleanup_marker.exists() or cleanup_marker.is_symlink():
-            _accept_existing_cleanup_marker(cleanup_marker, cleanup_value)
-        prepared: dict[str, Any] | None = None
-        if paths.prepared_record.exists() or paths.prepared_record.is_symlink():
-            _assert_root_private_file(paths.prepared_record)
-            prepared = validate_prepared_record(
-                _strict_json(_regular_bytes(paths.prepared_record)),
+        if bundle_path is not None:
+            _delivery_path(paths)
+            _remove_stale_delivery_temporaries(bundle_path.parent)
+        if bundle_path is not None and not bundle_path.exists() and not bundle_path.is_symlink():
+            if not cleanup_marker.exists() and not cleanup_marker.is_symlink():
+                raise Q38LinuxHostRuntimeError("transport delivery is unavailable before terminal cleanup")
+            _validate_cleanup_marker_generation(
+                cleanup_marker,
                 plan,
-                instance_context=context,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
             )
-        if paths.status_envelope.exists() or paths.status_envelope.is_symlink():
-            if prepared is None:
-                raise Q38LinuxHostRuntimeError("host status has no protected prepared record")
-            _assert_root_private_file(paths.status_envelope)
-            try:
-                status = transport.decode_status_envelope(
-                    _regular_bytes(paths.status_envelope, maximum=transport.MAX_ENVELOPE_BYTES)
+            _remove_exact_tree(destination, paths.runtime_base)
+            _remove_exact_tree(work, paths.work_base)
+            for target in (paths.status_envelope, paths.prepared_record):
+                if target.exists() or target.is_symlink():
+                    _assert_root_private_file(target)
+                    target.unlink()
+            _fsync_directory(state_parent)
+        else:
+            context, _key = _load_authenticated_context(
+                plan,
+                paths,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                now_unix=verification_time,
+                allow_expired_for_cleanup=True,
+            )
+            cleanup_value = _cleanup_marker_value(plan, context)
+            if cleanup_marker.exists() or cleanup_marker.is_symlink():
+                _accept_existing_cleanup_marker(cleanup_marker, cleanup_value)
+            prepared: dict[str, Any] | None = None
+            if paths.prepared_record.exists() or paths.prepared_record.is_symlink():
+                _assert_root_private_file(paths.prepared_record)
+                prepared = validate_prepared_record(
+                    _strict_json(_regular_bytes(paths.prepared_record)),
+                    plan,
+                    instance_context=context,
                 )
-            except transport.Q38LinuxHostTransportError as exc:
-                raise Q38LinuxHostRuntimeError(str(exc)) from exc
-            status_context = status.get("context")
-            if (
-                not isinstance(status_context, dict)
-                or status_context.get("context_digest") != context["context_digest"]
-                or status_context.get("resource_name") != expected_resource_name
-                or status_context.get("instance_generation_digest") != expected_generation_digest
-                or status.get("boot_id") != prepared["boot_id"]
-                or status.get("prepared_record_digest") != prepared["prepared_record_digest"]
-            ):
-                raise Q38LinuxHostRuntimeError("host status cleanup generation changed")
-        _atomic_cleanup_marker_locked(cleanup_marker, cleanup_value)
-        _fsync_directory(state_parent)
-        _remove_exact_tree(destination, paths.runtime_base)
-        _remove_exact_tree(work, paths.work_base)
-        if paths.status_envelope.exists():
-            paths.status_envelope.unlink()
-        if prepared is not None:
-            paths.prepared_record.unlink()
-        _fsync_directory(state_parent)
+            if paths.status_envelope.exists() or paths.status_envelope.is_symlink():
+                if prepared is None:
+                    raise Q38LinuxHostRuntimeError("host status has no protected prepared record")
+                _assert_root_private_file(paths.status_envelope)
+                try:
+                    status = transport.decode_status_envelope(
+                        _regular_bytes(
+                            paths.status_envelope,
+                            maximum=transport.MAX_ENVELOPE_BYTES,
+                        )
+                    )
+                except transport.Q38LinuxHostTransportError as exc:
+                    raise Q38LinuxHostRuntimeError(str(exc)) from exc
+                status_context = status.get("context")
+                if (
+                    not isinstance(status_context, dict)
+                    or status_context.get("context_digest") != context["context_digest"]
+                    or status_context.get("resource_name") != expected_resource_name
+                    or status_context.get("instance_generation_digest") != expected_generation_digest
+                    or status.get("boot_id") != prepared["boot_id"]
+                    or status.get("prepared_record_digest") != prepared["prepared_record_digest"]
+                ):
+                    raise Q38LinuxHostRuntimeError("host status cleanup generation changed")
+            _atomic_cleanup_marker_locked(cleanup_marker, cleanup_value)
+            _fsync_directory(state_parent)
+            _remove_exact_tree(destination, paths.runtime_base)
+            _remove_exact_tree(work, paths.work_base)
+            if paths.status_envelope.exists():
+                paths.status_envelope.unlink()
+            if prepared is not None:
+                paths.prepared_record.unlink()
+            if bundle_path is not None:
+                _assert_root_private_file(bundle_path)
+                installed = _regular_bytes(
+                    bundle_path,
+                    maximum=transport.MAX_DELIVERY_BYTES,
+                )
+                _record, installed_context, _installed_key = transport.decode_instance_delivery(
+                    installed,
+                    plan,
+                    now_unix=verification_time,
+                    expected_resource_name=expected_resource_name,
+                    expected_generation_digest=expected_generation_digest,
+                    allow_expired_for_cleanup=True,
+                )
+                if installed_context["context_digest"] != context["context_digest"]:
+                    raise Q38LinuxHostRuntimeError("transport delivery cleanup generation changed")
+                bundle_path.unlink()
+                _fsync_directory(bundle_path.parent)
+            _fsync_directory(state_parent)
     stale = [
         *state_parent.glob(".prepared.*.tmp"),
         *state_parent.glob(".status.*.tmp"),
         *state_parent.glob(".cleanup.*.tmp"),
     ]
+    if bundle_path is not None:
+        stale.extend(bundle_path.parent.glob(".delivery.*.tmp"))
     if (
         destination.exists()
         or work.exists()
         or paths.prepared_record.exists()
         or paths.status_envelope.exists()
+        or bundle_path is not None
+        and (bundle_path.exists() or bundle_path.is_symlink())
         or stale
     ):
         raise Q38LinuxHostRuntimeError("host runtime cleanup is incomplete")
-    _accept_existing_cleanup_marker(cleanup_marker, cleanup_value)
+    _validate_cleanup_marker_generation(
+        cleanup_marker,
+        plan,
+        expected_resource_name=expected_resource_name,
+        expected_generation_digest=expected_generation_digest,
+    )
 
 
 def _require_linux_root() -> None:
@@ -2199,8 +2468,13 @@ def _require_linux_root() -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Prepare, publish, or clean the protected Qwen3.8 Linux runtime")
-    parser.add_argument("operation", choices=("prepare", "publish-status", "cleanup"))
+    parser = argparse.ArgumentParser(
+        description="Install, prepare, publish, or clean the protected Qwen3.8 Linux runtime"
+    )
+    parser.add_argument(
+        "operation",
+        choices=("install-delivery", "prepare", "publish-status", "cleanup"),
+    )
     parser.add_argument("--resource-name", required=True)
     parser.add_argument("--instance-generation-digest", required=True)
     return parser
@@ -2215,7 +2489,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             "expected_resource_name": args.resource_name,
             "expected_generation_digest": args.instance_generation_digest,
         }
-        if args.operation == "prepare":
+        if args.operation == "install-delivery":
+            payload = sys.stdin.buffer.read(transport.MAX_DELIVERY_BYTES + 1)
+            receipt = install_instance_delivery(paths, payload, **arguments)
+            print(
+                json.dumps(
+                    receipt,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+        elif args.operation == "prepare":
             record = prepare(paths, **arguments)
             print(json.dumps(record, allow_nan=False, sort_keys=True, separators=(",", ":")))
         elif args.operation == "publish-status":

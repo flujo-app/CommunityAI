@@ -377,11 +377,7 @@ def _publish_authenticated_status(
             expires_at_unix=min(plan.deadline_unix, NOW + 600),
             key=key,
         )
-        payload = (
-            status["workers"][resource.worker_id]
-            if resource.kind == "worker_instance"
-            else status["route_job"]
-        )
+        payload = status["workers"][resource.worker_id] if resource.kind == "worker_instance" else status["route_job"]
         envelope = transport.build_status_envelope(
             context,
             payload,
@@ -392,9 +388,7 @@ def _publish_authenticated_status(
             published_at_unix=NOW,
             prepared_record_digest=PREPARED_RECORD_DIGEST,
         )
-        fake.guest_attributes[resource.name] = transport.encode_status_envelope(
-            envelope
-        )
+        fake.guest_attributes[resource.name] = transport.encode_status_envelope(envelope)
 
 
 def _authenticated_provider(
@@ -987,16 +981,9 @@ def test_authenticated_guest_status_is_consumed_between_stable_inventories(
         artifact_root=tmp_path / "artifacts",
     )
 
-    assert {item["state"] for item in observation["workers"].values()} == {
-        "ready"
-    }
+    assert {item["state"] for item in observation["workers"].values()} == {"ready"}
     assert observation["route_job"]["state"] == "absent"
-    guest_calls = [
-        call
-        for call in fake.calls
-        if call[1:4]
-        == ("compute", "instances", "get-guest-attributes")
-    ]
+    guest_calls = [call for call in fake.calls if call[1:4] == ("compute", "instances", "get-guest-attributes")]
     assert len(guest_calls) == 5
     assert all(
         f"--query-path={adapter.GUEST_ATTRIBUTE_QUERY_PATH}" in call
@@ -1005,15 +992,8 @@ def test_authenticated_guest_status_is_consumed_between_stable_inventories(
         and "--format=json" in call
         for call in guest_calls
     )
-    worker = next(
-        item for item in plan.resources if item.kind == "worker_instance"
-    )
-    worker_describes = [
-        call
-        for call in fake.calls
-        if call[1:5]
-        == ("compute", "instances", "describe", worker.name)
-    ]
+    worker = next(item for item in plan.resources if item.kind == "worker_instance")
+    worker_describes = [call for call in fake.calls if call[1:5] == ("compute", "instances", "describe", worker.name)]
     assert len(worker_describes) == 2
 
 
@@ -1028,9 +1008,7 @@ def test_absent_guest_attributes_do_not_resolve_keys_or_promote_workers(
         tmp_path / "source",
         runner=fake,
         clock=lambda: NOW,
-        status_key_resolver=lambda resource, generation: (
-            resolutions.append((resource, generation)) or STATUS_KEY
-        ),
+        status_key_resolver=lambda resource, generation: (resolutions.append((resource, generation)) or STATUS_KEY),
         status_checkpoint_resolver=lambda _resource, _generation: (None, 0),
     )
 
@@ -1041,9 +1019,7 @@ def test_absent_guest_attributes_do_not_resolve_keys_or_promote_workers(
     )
 
     assert resolutions == []
-    assert {item["state"] for item in observation["workers"].values()} == {
-        "starting"
-    }
+    assert {item["state"] for item in observation["workers"].values()} == {"starting"}
     assert observation["route_job"]["state"] == "absent"
 
 
@@ -1100,9 +1076,7 @@ def test_guest_attribute_response_rejects_ambiguous_items(
 ) -> None:
     plan, fake, _provider = _make(tmp_path)
     fake.populate_all()
-    resource = next(
-        item for item in plan.resources if item.kind.endswith("instance")
-    )
+    resource = next(item for item in plan.resources if item.kind.endswith("instance"))
     item = {
         "namespace": adapter.GUEST_ATTRIBUTE_NAMESPACE,
         "key": adapter.GUEST_ATTRIBUTE_KEY,
@@ -1132,9 +1106,7 @@ def test_authenticated_guest_status_rejects_generation_drift_during_read(
     plan, fake, _provider = _make(tmp_path)
     fake.populate_all()
     _publish_authenticated_status(plan, fake)
-    resource = next(
-        item for item in plan.resources if item.kind.endswith("instance")
-    )
+    resource = next(item for item in plan.resources if item.kind.endswith("instance"))
     fake.recreate_after_guest_read = resource.name
     provider = _authenticated_provider(plan, fake, tmp_path)
 
@@ -1165,7 +1137,204 @@ def test_cleanup_never_reads_authenticated_guest_attributes(
         tmp_path,
     )
 
-    assert not any(
-        call[1:4] == ("compute", "instances", "get-guest-attributes")
-        for call in fake.calls
+    assert not any(call[1:4] == ("compute", "instances", "get-guest-attributes") for call in fake.calls)
+
+
+DELIVERY_KEY = b"d" * transport.KEY_BYTES
+
+
+def _delivery(
+    plan: route.RoutePlan,
+    fake: FakeGcloud,
+) -> transport.InstanceDelivery:
+    resource = next(item for item in plan.resources if item.kind == "worker_instance")
+    provider_value = fake.resources[resource.name]
+    record = route._instance_key_record(
+        plan,
+        resource,
+        provider_value["id"],
+        provider_value["creationTimestamp"],
+        key=DELIVERY_KEY,
+        key_epoch=1,
+        issued_at_unix=NOW - 10,
+        previous_record_digest=None,
     )
+    return transport.build_instance_delivery(
+        plan,
+        route.InstanceGenerationKey(record, DELIVERY_KEY),
+        now_unix=NOW,
+    )
+
+
+def test_compiled_delivery_uses_fixed_iap_stdin_command_without_secret(
+    tmp_path: Path,
+) -> None:
+    plan, fake, provider = _make(tmp_path)
+    fake.populate_all()
+    delivery = _delivery(plan, fake)
+
+    command = provider.compiled_instance_delivery_command(
+        delivery,
+        now_unix=NOW,
+    )
+
+    assert command[:3] == ("gcloud", "compute", "ssh")
+    assert command[3] == delivery.record["resource_name"]
+    assert f"--project={route.EXPECTED_PROJECT}" in command
+    assert f"--zone={route.EXPECTED_ZONE}" in command
+    assert "--tunnel-through-iap" in command
+    assert "--ssh-flag=-T" in command
+    assert "--ssh-flag=-oBatchMode=yes" in command
+    assert command[-1] == "--quiet"
+    joined = "\0".join(command).encode()
+    assert DELIVERY_KEY not in joined
+    assert DELIVERY_KEY.hex().encode() not in joined
+    assert "install-delivery" in joined.decode()
+    assert delivery.record["instance_generation_digest"] in joined.decode()
+
+
+def test_delivery_runs_between_two_stable_exact_provider_inventories(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    delivery = _delivery(plan, fake)
+    calls: list[tuple[tuple[str, ...], bytes, int]] = []
+
+    def deliver(argv, payload, timeout):
+        calls.append((tuple(argv), payload, timeout))
+        receipt = transport.build_instance_delivery_receipt(
+            delivery,
+            plan,
+            installed_at_unix=NOW,
+        )
+        return adapter.CommandResult(
+            0,
+            json.dumps(receipt, sort_keys=True).encode(),
+            b"",
+        )
+
+    provider = adapter.GcpAdapter(
+        plan,
+        tmp_path / "source",
+        runner=fake,
+        delivery_runner=deliver,
+        clock=lambda: NOW,
+    )
+    receipt = provider.deliver_instance(delivery, now_unix=NOW)
+
+    assert len(calls) == 1
+    assert calls[0][1] == delivery.payload
+    assert calls[0][2] == adapter.DELIVERY_TIMEOUT_SECONDS
+    assert receipt["delivery_digest"] == delivery.record["delivery_digest"]
+    assert sum(call[1:3] == ("auth", "list") for call in fake.calls) == 2
+    assert DELIVERY_KEY not in json.dumps(receipt, sort_keys=True).encode()
+
+
+def test_delivery_rejects_generation_drift_after_remote_install(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    delivery = _delivery(plan, fake)
+
+    def deliver(_argv, _payload, _timeout):
+        resource = delivery.record["resource_name"]
+        fake.resources[resource]["id"] = str(int(fake.resources[resource]["id"]) + 1)
+        receipt = transport.build_instance_delivery_receipt(
+            delivery,
+            plan,
+            installed_at_unix=NOW,
+        )
+        return adapter.CommandResult(0, json.dumps(receipt).encode(), b"")
+
+    provider = adapter.GcpAdapter(
+        plan,
+        tmp_path / "source",
+        runner=fake,
+        delivery_runner=deliver,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(
+        adapter.Q38GcpAdapterError,
+        match="provider generation changed during instance delivery",
+    ):
+        provider.deliver_instance(delivery, now_unix=NOW)
+
+
+def test_invalid_delivery_is_blocked_before_provider_or_delivery_runner(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    delivery = _delivery(plan, fake)
+    changed = bytearray(delivery.payload)
+    changed[-1] ^= 1
+    forged = transport.InstanceDelivery(delivery.record, bytes(changed))
+    delivery_calls: list[object] = []
+    provider = adapter.GcpAdapter(
+        plan,
+        tmp_path / "source",
+        runner=fake,
+        delivery_runner=lambda *args: delivery_calls.append(args),
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(adapter.Q38GcpAdapterError, match="delivery is invalid"):
+        provider.deliver_instance(forged, now_unix=NOW)
+
+    assert fake.calls == []
+    assert delivery_calls == []
+
+
+def test_delivery_requires_exact_iap_firewall_before_secret_crosses_boundary(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    delivery = _delivery(plan, fake)
+    iap = next(item for item in plan.resources if item.kind == "iap_firewall")
+    fake.resources.pop(iap.name)
+    delivered: list[bytes] = []
+    provider = adapter.GcpAdapter(
+        plan,
+        tmp_path / "source",
+        runner=fake,
+        delivery_runner=lambda _argv, payload, _timeout: delivered.append(payload),
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(
+        adapter.Q38GcpAdapterError,
+        match="provider inventory is not ready",
+    ):
+        provider.deliver_instance(delivery, now_unix=NOW)
+
+    assert delivered == []
+
+
+def test_delivery_failure_does_not_expose_key_or_provider_output(
+    tmp_path: Path,
+) -> None:
+    plan, fake, _provider = _make(tmp_path)
+    fake.populate_all()
+    delivery = _delivery(plan, fake)
+    provider = adapter.GcpAdapter(
+        plan,
+        tmp_path / "source",
+        runner=fake,
+        delivery_runner=lambda _argv, _payload, _timeout: adapter.CommandResult(
+            1,
+            b"",
+            DELIVERY_KEY,
+        ),
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(adapter.Q38GcpAdapterError) as captured:
+        provider.deliver_instance(delivery, now_unix=NOW)
+
+    message = str(captured.value).encode()
+    assert DELIVERY_KEY not in message
+    assert DELIVERY_KEY.hex().encode() not in message

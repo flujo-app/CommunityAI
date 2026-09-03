@@ -13,6 +13,7 @@ import tarfile
 import tempfile
 import threading
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -2167,3 +2168,230 @@ def test_guest_attribute_publication_rejects_noninteger_success_status() -> None
         )
 
     assert connection.closed is True
+
+
+def _delivery_paths(paths: host.HostPaths) -> host.HostPaths:
+    return replace(
+        paths,
+        transport_bundle=paths.plan.parent / "instance-delivery.bin",
+    )
+
+
+def _instance_delivery(
+    plan: route.RoutePlan,
+    *,
+    key: bytes = KEY,
+    epoch: int = 1,
+    previous_record_digest: str | None = None,
+) -> transport.InstanceDelivery:
+    resource = _worker_resource(plan)
+    record = route._instance_key_record(
+        plan,
+        resource,
+        INSTANCE_ID,
+        CREATED,
+        key=key,
+        key_epoch=epoch,
+        issued_at_unix=NOW - 10,
+        previous_record_digest=previous_record_digest,
+    )
+    return transport.build_instance_delivery(
+        plan,
+        route.InstanceGenerationKey(record, key),
+        now_unix=NOW,
+    )
+
+
+def test_instance_delivery_installs_one_atomic_bundle_and_returns_receipt(
+    tmp_path: Path,
+) -> None:
+    raw_paths, plan, _ = _release_and_plan(tmp_path)
+    paths = _delivery_paths(raw_paths)
+    delivery = _instance_delivery(plan)
+
+    receipt = host.install_instance_delivery(
+        paths,
+        delivery.payload,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+
+    assert paths.transport_bundle is not None
+    assert paths.transport_bundle.read_bytes() == delivery.payload
+    assert (
+        transport.validate_instance_delivery_receipt(
+            receipt,
+            delivery,
+            plan,
+            now_unix=NOW,
+        )
+        == receipt
+    )
+    paths.instance_context.unlink()
+    paths.transport_key.unlink()
+    context, key = host._load_authenticated_context(
+        plan,
+        paths,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+        allow_expired_for_cleanup=False,
+    )
+    assert context["context_digest"] == delivery.record["context_digest"]
+    assert key == KEY
+    assert KEY not in json.dumps(receipt, sort_keys=True).encode()
+
+
+def test_instance_delivery_retry_is_idempotent(tmp_path: Path) -> None:
+    raw_paths, plan, _ = _release_and_plan(tmp_path)
+    paths = _delivery_paths(raw_paths)
+    delivery = _instance_delivery(plan)
+
+    first = host.install_instance_delivery(
+        paths,
+        delivery.payload,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+    second = host.install_instance_delivery(
+        paths,
+        delivery.payload,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+
+    assert second == first
+    assert paths.transport_bundle is not None
+    assert paths.transport_bundle.read_bytes() == delivery.payload
+
+
+def test_instance_delivery_failed_rotation_preserves_installed_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_paths, plan, _ = _release_and_plan(tmp_path)
+    paths = _delivery_paths(raw_paths)
+    first_material = _instance_delivery(plan)
+    host.install_instance_delivery(
+        paths,
+        first_material.payload,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+    second_material = _instance_delivery(
+        plan,
+        key=b"x" * transport.KEY_BYTES,
+        epoch=2,
+        previous_record_digest=first_material.record["key_record_digest"],
+    )
+    native_replace = os.replace
+
+    def fail_replace(_source: Path, _target: Path) -> None:
+        raise OSError("simulated interruption")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="could not be installed"):
+        host.install_instance_delivery(
+            paths,
+            second_material.payload,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+        )
+    monkeypatch.setattr(os, "replace", native_replace)
+
+    assert paths.transport_bundle is not None
+    assert paths.transport_bundle.read_bytes() == first_material.payload
+    assert not list(paths.transport_bundle.parent.glob(".delivery.*.tmp"))
+
+
+def test_instance_delivery_rotation_is_contiguous_and_replay_safe(
+    tmp_path: Path,
+) -> None:
+    raw_paths, plan, _ = _release_and_plan(tmp_path)
+    paths = _delivery_paths(raw_paths)
+    first = _instance_delivery(plan)
+    second = _instance_delivery(
+        plan,
+        key=b"x" * transport.KEY_BYTES,
+        epoch=2,
+        previous_record_digest=first.record["key_record_digest"],
+    )
+
+    host.install_instance_delivery(
+        paths,
+        first.payload,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+    host.install_instance_delivery(
+        paths,
+        second.payload,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+
+    assert paths.transport_bundle is not None
+    assert paths.transport_bundle.read_bytes() == second.payload
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="stale or discontinuous"):
+        host.install_instance_delivery(
+            paths,
+            first.payload,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+        )
+
+
+def test_instance_delivery_rejects_partial_or_mutated_bundle_without_replacement(
+    tmp_path: Path,
+) -> None:
+    raw_paths, plan, _ = _release_and_plan(tmp_path)
+    paths = _delivery_paths(raw_paths)
+    delivery = _instance_delivery(plan)
+
+    for payload in (delivery.payload[:-1], delivery.payload + b"x"):
+        with pytest.raises(host.Q38LinuxHostRuntimeError):
+            host.install_instance_delivery(
+                paths,
+                payload,
+                **_transport_kwargs(plan),
+                now_unix=NOW,
+            )
+        assert paths.transport_bundle is not None
+        assert not paths.transport_bundle.exists()
+
+
+def test_cleanup_tombstone_blocks_late_instance_delivery(tmp_path: Path) -> None:
+    raw_paths, plan, _ = _release_and_plan(tmp_path)
+    paths = _delivery_paths(raw_paths)
+    delivery = _instance_delivery(plan)
+    host.install_instance_delivery(
+        paths,
+        delivery.payload,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+    host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
+    assert paths.transport_bundle is not None
+    assert not paths.transport_bundle.exists()
+    host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
+
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="cleanup is terminal"):
+        host.install_instance_delivery(
+            paths,
+            delivery.payload,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+        )
+
+
+def test_install_delivery_is_a_bounded_cli_operation() -> None:
+    args = host.build_parser().parse_args(
+        [
+            "install-delivery",
+            "--resource-name",
+            "worker-instance",
+            "--instance-generation-digest",
+            "sha256:" + "1" * 64,
+        ]
+    )
+
+    assert args.operation == "install-delivery"

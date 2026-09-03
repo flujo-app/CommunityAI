@@ -12,6 +12,8 @@ import hashlib
 import hmac
 import json
 import re
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from scripts import gateq38_route_controller as controller
@@ -19,11 +21,17 @@ from scripts import gateq38_route_controller as controller
 SCHEMA_VERSION = 1
 CONTEXT_SCOPE = "qwen3.8-linux-instance-context"
 ENVELOPE_SCOPE = "qwen3.8-linux-host-status"
+DELIVERY_SCOPE = "qwen3.8-linux-instance-delivery"
+DELIVERY_RECEIPT_SCOPE = "qwen3.8-linux-instance-delivery-receipt"
+DELIVERY_MAGIC = b"Q38DELIVERY1\n"
 KEY_BYTES = 32
 MAX_CONTEXT_SECONDS = controller.EXPECTED_MAX_LIFETIME_SECONDS
 MAX_STATUS_AGE_SECONDS = 300
+MAX_DELIVERY_RECEIPT_AGE_SECONDS = 300
 MAX_FUTURE_SKEW_SECONDS = 30
 MAX_ENVELOPE_BYTES = 65_536
+MAX_DELIVERY_HEADER_BYTES = 16_384
+MAX_DELIVERY_BYTES = MAX_ENVELOPE_BYTES + MAX_DELIVERY_HEADER_BYTES + KEY_BYTES + len(DELIVERY_MAGIC)
 MAX_REVISION = 2**63 - 1
 
 _CONTEXT_FIELDS = {
@@ -62,12 +70,65 @@ _ENVELOPE_FIELDS = {
     "payload_digest",
     "envelope_hmac",
 }
+_DELIVERY_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "source_commit",
+    "plan_digest",
+    "execution_inventory_digest",
+    "start_action_id",
+    "resource_name",
+    "resource_kind",
+    "instance_id",
+    "creation_timestamp",
+    "instance_generation_digest",
+    "key_epoch",
+    "key_record_digest",
+    "previous_key_record_digest",
+    "key_sha256",
+    "key_bytes",
+    "context_digest",
+    "context_sha256",
+    "context_bytes",
+    "delivery_digest",
+    "delivery_hmac",
+}
+_DELIVERY_RECEIPT_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "source_commit",
+    "plan_digest",
+    "execution_inventory_digest",
+    "start_action_id",
+    "resource_name",
+    "instance_generation_digest",
+    "key_epoch",
+    "key_record_digest",
+    "key_sha256",
+    "context_digest",
+    "delivery_digest",
+    "delivery_payload_sha256",
+    "delivery_bytes",
+    "installed_at_unix",
+    "receipt_digest",
+    "receipt_hmac",
+}
 _HMAC_RE = re.compile(r"hmac-sha256:[0-9a-f]{64}")
 _BOOT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 
 
 class Q38LinuxHostTransportError(RuntimeError):
-    """An instance context or authenticated host status failed closed."""
+    """An instance context, delivery, or authenticated host status failed closed."""
+
+
+@dataclass(frozen=True)
+class InstanceDelivery:
+    """A secret-free delivery record plus its protected wire payload."""
+
+    record: Mapping[str, Any]
+    payload: bytes = field(repr=False)
 
 
 def _unique_object(pairs: Sequence[tuple[str, Any]]) -> dict[str, Any]:
@@ -291,6 +352,343 @@ def decode_instance_context(payload: bytes) -> dict[str, Any]:
     if not isinstance(value, dict) or payload != _canonical(value) + b"\n":
         raise Q38LinuxHostTransportError("instance context transport is not canonical")
     return value
+
+
+def _delivery_unsigned(value: Mapping[str, Any]) -> dict[str, Any]:
+    unsigned = dict(value)
+    unsigned.pop("delivery_hmac", None)
+    return unsigned
+
+
+def _delivery_digest_value(value: Mapping[str, Any]) -> str:
+    unsigned = _delivery_unsigned(value)
+    unsigned.pop("delivery_digest", None)
+    return _sha256(unsigned)
+
+
+def build_instance_delivery(
+    plan: controller.RoutePlan,
+    material: controller.InstanceGenerationKey,
+    *,
+    now_unix: int,
+) -> InstanceDelivery:
+    """Build one exact-generation bundle for protected stdin delivery."""
+
+    if not isinstance(material, controller.InstanceGenerationKey):
+        raise Q38LinuxHostTransportError("instance delivery key material is invalid")
+    try:
+        record = controller.validate_instance_generation_key_record(material.record, plan)
+    except controller.RouteControllerError as exc:
+        raise Q38LinuxHostTransportError("instance delivery key record is invalid") from exc
+    key = _key(material.key)
+    if record["key_sha256"] != "sha256:" + hashlib.sha256(key).hexdigest():
+        raise Q38LinuxHostTransportError("instance delivery key digest changed")
+    now = _integer(now_unix, "instance delivery time")
+    issued = record["issued_at_unix"]
+    expires = min(record["expires_at_unix"], issued + MAX_CONTEXT_SECONDS)
+    if issued > now + MAX_FUTURE_SKEW_SECONDS or now >= expires:
+        raise Q38LinuxHostTransportError("instance delivery key is stale")
+    context = build_instance_context(
+        plan,
+        record["resource_name"],
+        record["instance_id"],
+        record["creation_timestamp"],
+        issued_at_unix=issued,
+        expires_at_unix=expires,
+        key=key,
+    )
+    context_payload = encode_instance_context(context)
+    value: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "scope": DELIVERY_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": controller._action_id(plan, "start_route"),
+        "resource_name": record["resource_name"],
+        "resource_kind": record["resource_kind"],
+        "instance_id": record["instance_id"],
+        "creation_timestamp": record["creation_timestamp"],
+        "instance_generation_digest": record["instance_generation_digest"],
+        "key_epoch": record["key_epoch"],
+        "key_record_digest": record["record_digest"],
+        "previous_key_record_digest": record["previous_record_digest"],
+        "key_sha256": record["key_sha256"],
+        "key_bytes": KEY_BYTES,
+        "context_digest": context["context_digest"],
+        "context_sha256": "sha256:" + hashlib.sha256(context_payload).hexdigest(),
+        "context_bytes": len(context_payload),
+        "delivery_digest": "",
+        "delivery_hmac": "",
+    }
+    value["delivery_digest"] = _delivery_digest_value(value)
+    value["delivery_hmac"] = _mac(
+        b"gateq38-instance-delivery-v1",
+        _delivery_unsigned(value),
+        key,
+    )
+    payload = DELIVERY_MAGIC + _canonical(value) + b"\n" + context_payload + key
+    if not 1 <= len(payload) <= MAX_DELIVERY_BYTES:
+        raise Q38LinuxHostTransportError("instance delivery exceeded its size bound")
+    validated, _context, _key_value = decode_instance_delivery(
+        payload,
+        plan,
+        now_unix=now,
+        expected_resource_name=record["resource_name"],
+        expected_generation_digest=record["instance_generation_digest"],
+    )
+    return InstanceDelivery(MappingProxyType(validated), payload)
+
+
+def _validate_delivery_record(
+    value: Any,
+    context: Mapping[str, Any],
+    context_payload: bytes,
+    key: bytes,
+    plan: controller.RoutePlan,
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _DELIVERY_FIELDS:
+        raise Q38LinuxHostTransportError("instance delivery schema is invalid")
+    resource = _resource(plan, value.get("resource_name"))
+    fixed = {
+        "schema_version": SCHEMA_VERSION,
+        "scope": DELIVERY_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": controller._action_id(plan, "start_route"),
+        "resource_name": context["resource_name"],
+        "resource_kind": resource.kind,
+        "instance_id": context["instance_id"],
+        "creation_timestamp": context["creation_timestamp"],
+        "instance_generation_digest": context["instance_generation_digest"],
+        "key_sha256": "sha256:" + hashlib.sha256(key).hexdigest(),
+        "key_bytes": KEY_BYTES,
+        "context_digest": context["context_digest"],
+        "context_sha256": "sha256:" + hashlib.sha256(context_payload).hexdigest(),
+        "context_bytes": len(context_payload),
+    }
+    if any(value[field] != expected for field, expected in fixed.items()):
+        raise Q38LinuxHostTransportError("instance delivery binding is invalid")
+    epoch = _integer(value["key_epoch"], "instance delivery key epoch", minimum=1)
+    if epoch > 99_999_999:
+        raise Q38LinuxHostTransportError("instance delivery key epoch is invalid")
+    _digest(value["key_record_digest"], "instance delivery key record digest")
+    previous = value["previous_key_record_digest"]
+    if previous is not None:
+        _digest(previous, "previous instance delivery key record digest")
+    if epoch == 1 and previous is not None or epoch > 1 and previous is None:
+        raise Q38LinuxHostTransportError("instance delivery key chain is invalid")
+    _digest(value["delivery_digest"], "instance delivery digest")
+    if value["delivery_digest"] != _delivery_digest_value(value):
+        raise Q38LinuxHostTransportError("instance delivery digest changed")
+    supplied_hmac = value["delivery_hmac"]
+    if not isinstance(supplied_hmac, str) or _HMAC_RE.fullmatch(supplied_hmac) is None:
+        raise Q38LinuxHostTransportError("instance delivery authentication is invalid")
+    expected_hmac = _mac(
+        b"gateq38-instance-delivery-v1",
+        _delivery_unsigned(value),
+        key,
+    )
+    if not hmac.compare_digest(supplied_hmac, expected_hmac):
+        raise Q38LinuxHostTransportError("instance delivery authentication failed")
+    return dict(value)
+
+
+def decode_instance_delivery(
+    payload: bytes,
+    plan: controller.RoutePlan,
+    *,
+    now_unix: int,
+    expected_resource_name: str | None = None,
+    expected_generation_digest: str | None = None,
+    allow_expired_for_cleanup: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any], bytes]:
+    if not isinstance(payload, bytes) or not 1 <= len(payload) <= MAX_DELIVERY_BYTES:
+        raise Q38LinuxHostTransportError("instance delivery transport bytes are invalid")
+    if not payload.startswith(DELIVERY_MAGIC):
+        raise Q38LinuxHostTransportError("instance delivery framing is invalid")
+    header_start = len(DELIVERY_MAGIC)
+    header_end = payload.find(b"\n", header_start)
+    if header_end < header_start or header_end - header_start > MAX_DELIVERY_HEADER_BYTES:
+        raise Q38LinuxHostTransportError("instance delivery header is invalid")
+    header_payload = payload[header_start:header_end]
+    try:
+        value = json.loads(
+            header_payload.decode("ascii"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_constant,
+        )
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise Q38LinuxHostTransportError("instance delivery header JSON is invalid") from exc
+    if not isinstance(value, dict) or header_payload != _canonical(value):
+        raise Q38LinuxHostTransportError("instance delivery header is not canonical")
+    if set(value) != _DELIVERY_FIELDS:
+        raise Q38LinuxHostTransportError("instance delivery schema is invalid")
+    context_size = _integer(
+        value["context_bytes"],
+        "instance delivery context size",
+        minimum=1,
+        maximum=MAX_ENVELOPE_BYTES,
+    )
+    key_size = _integer(
+        value["key_bytes"],
+        "instance delivery key size",
+        minimum=KEY_BYTES,
+        maximum=KEY_BYTES,
+    )
+    body = payload[header_end + 1 :]
+    if len(body) != context_size + key_size:
+        raise Q38LinuxHostTransportError("instance delivery framing is invalid")
+    context_payload = body[:context_size]
+    key = _key(body[context_size:])
+    context = decode_instance_context(context_payload)
+    validated_context = validate_instance_context(
+        context,
+        plan,
+        key=key,
+        now_unix=now_unix,
+        expected_resource_name=expected_resource_name,
+        expected_generation_digest=expected_generation_digest,
+        _allow_expired_for_cleanup=allow_expired_for_cleanup,
+    )
+    record = _validate_delivery_record(value, validated_context, context_payload, key, plan)
+    if expected_resource_name is not None and record["resource_name"] != expected_resource_name:
+        raise Q38LinuxHostTransportError("instance delivery resource changed")
+    if expected_generation_digest is not None and record["instance_generation_digest"] != expected_generation_digest:
+        raise Q38LinuxHostTransportError("instance delivery provider generation changed")
+    return record, validated_context, key
+
+
+def validate_instance_delivery(
+    delivery: InstanceDelivery,
+    plan: controller.RoutePlan,
+    *,
+    now_unix: int,
+    expected_resource_name: str | None = None,
+    expected_generation_digest: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], bytes]:
+    if not isinstance(delivery, InstanceDelivery):
+        raise Q38LinuxHostTransportError("instance delivery is invalid")
+    record, context, key = decode_instance_delivery(
+        delivery.payload,
+        plan,
+        now_unix=now_unix,
+        expected_resource_name=expected_resource_name,
+        expected_generation_digest=expected_generation_digest,
+    )
+    if dict(delivery.record) != record:
+        raise Q38LinuxHostTransportError("instance delivery record changed")
+    return record, context, key
+
+
+def _receipt_unsigned(value: Mapping[str, Any]) -> dict[str, Any]:
+    unsigned = dict(value)
+    unsigned.pop("receipt_hmac", None)
+    return unsigned
+
+
+def _receipt_digest_value(value: Mapping[str, Any]) -> str:
+    unsigned = _receipt_unsigned(value)
+    unsigned.pop("receipt_digest", None)
+    return _sha256(unsigned)
+
+
+def build_instance_delivery_receipt(
+    delivery: InstanceDelivery,
+    plan: controller.RoutePlan,
+    *,
+    installed_at_unix: int,
+) -> dict[str, Any]:
+    installed = _integer(installed_at_unix, "instance delivery installation time")
+    record, _context, key = validate_instance_delivery(
+        delivery,
+        plan,
+        now_unix=installed,
+    )
+    value: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "scope": DELIVERY_RECEIPT_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": controller._action_id(plan, "start_route"),
+        "resource_name": record["resource_name"],
+        "instance_generation_digest": record["instance_generation_digest"],
+        "key_epoch": record["key_epoch"],
+        "key_record_digest": record["key_record_digest"],
+        "key_sha256": record["key_sha256"],
+        "context_digest": record["context_digest"],
+        "delivery_digest": record["delivery_digest"],
+        "delivery_payload_sha256": "sha256:" + hashlib.sha256(delivery.payload).hexdigest(),
+        "delivery_bytes": len(delivery.payload),
+        "installed_at_unix": installed,
+        "receipt_digest": "",
+        "receipt_hmac": "",
+    }
+    value["receipt_digest"] = _receipt_digest_value(value)
+    value["receipt_hmac"] = _mac(
+        b"gateq38-instance-delivery-receipt-v1",
+        _receipt_unsigned(value),
+        key,
+    )
+    return value
+
+
+def validate_instance_delivery_receipt(
+    value: Any,
+    delivery: InstanceDelivery,
+    plan: controller.RoutePlan,
+    *,
+    now_unix: int,
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _DELIVERY_RECEIPT_FIELDS:
+        raise Q38LinuxHostTransportError("instance delivery receipt schema is invalid")
+    now = _integer(now_unix, "instance delivery receipt verification time")
+    record, _context, key = validate_instance_delivery(delivery, plan, now_unix=now)
+    _digest(value["receipt_digest"], "instance delivery receipt digest")
+    if value["receipt_digest"] != _receipt_digest_value(value):
+        raise Q38LinuxHostTransportError("instance delivery receipt digest changed")
+    supplied_hmac = value["receipt_hmac"]
+    if not isinstance(supplied_hmac, str) or _HMAC_RE.fullmatch(supplied_hmac) is None:
+        raise Q38LinuxHostTransportError("instance delivery receipt authentication is invalid")
+    expected_hmac = _mac(
+        b"gateq38-instance-delivery-receipt-v1",
+        _receipt_unsigned(value),
+        key,
+    )
+    if not hmac.compare_digest(supplied_hmac, expected_hmac):
+        raise Q38LinuxHostTransportError("instance delivery receipt authentication failed")
+    installed = _integer(value["installed_at_unix"], "instance delivery installation time")
+    fixed = {
+        "schema_version": SCHEMA_VERSION,
+        "scope": DELIVERY_RECEIPT_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": controller._action_id(plan, "start_route"),
+        "resource_name": record["resource_name"],
+        "instance_generation_digest": record["instance_generation_digest"],
+        "key_epoch": record["key_epoch"],
+        "key_record_digest": record["key_record_digest"],
+        "key_sha256": record["key_sha256"],
+        "context_digest": record["context_digest"],
+        "delivery_digest": record["delivery_digest"],
+        "delivery_payload_sha256": "sha256:" + hashlib.sha256(delivery.payload).hexdigest(),
+        "delivery_bytes": len(delivery.payload),
+        "installed_at_unix": installed,
+    }
+    if any(value[field] != expected for field, expected in fixed.items()):
+        raise Q38LinuxHostTransportError("instance delivery receipt binding is invalid")
+    if installed > now + MAX_FUTURE_SKEW_SECONDS:
+        raise Q38LinuxHostTransportError("instance delivery receipt is future-dated")
+    if now - installed > MAX_DELIVERY_RECEIPT_AGE_SECONDS:
+        raise Q38LinuxHostTransportError("instance delivery receipt is stale")
+    return dict(value)
 
 
 def _worker_payload(value: Any, plan: controller.RoutePlan, worker_id: str) -> dict[str, Any]:

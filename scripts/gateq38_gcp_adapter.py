@@ -19,8 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Sequence
 
-from scripts import gateq38_linux_host_transport as transport
-from scripts import gateq38_route_controller as controller
+from scripts import gateq38_linux_host_transport as transport, gateq38_route_controller as controller
 
 MAX_OUTPUT_BYTES = 1_048_576
 MAX_JSON_BYTES = controller.MAX_JSON_BYTES
@@ -33,6 +32,8 @@ GUEST_ATTRIBUTE_NAMESPACE = "communityai-q38"
 GUEST_ATTRIBUTE_KEY = "status-v1"
 GUEST_ATTRIBUTE_QUERY_PATH = f"{GUEST_ATTRIBUTE_NAMESPACE}/{GUEST_ATTRIBUTE_KEY}"
 MAX_GUEST_ATTRIBUTE_OUTPUT_BYTES = transport.MAX_ENVELOPE_BYTES * 2 + 4_096
+REMOTE_HOST_RUNTIME = "/var/lib/communityai-q38/input/source/scripts/gateq38_linux_host_runtime.py"
+DELIVERY_TIMEOUT_SECONDS = 300
 RUNTIME_ACTIONS_BLOCKED = "source-bound Qwen3.8 host runtime is not plan-bound"
 
 
@@ -48,8 +49,37 @@ class CommandResult:
 
 
 Runner = Callable[[Sequence[str], int], CommandResult]
+DeliveryRunner = Callable[[Sequence[str], bytes, int], CommandResult]
 StatusKeyResolver = Callable[[str, str], bytes]
 StatusCheckpointResolver = Callable[[str, str], tuple[str | None, int]]
+
+
+def _default_delivery_runner(
+    argv: Sequence[str],
+    payload: bytes,
+    timeout: int,
+) -> CommandResult:
+    if (
+        not argv
+        or any(not isinstance(item, str) or not item for item in argv)
+        or not isinstance(payload, bytes)
+        or not 1 <= len(payload) <= transport.MAX_DELIVERY_BYTES
+    ):
+        raise Q38GcpAdapterError("instance delivery command is invalid")
+    try:
+        result = subprocess.run(
+            list(argv),
+            input=payload,
+            check=False,
+            capture_output=True,
+            timeout=timeout,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise Q38GcpAdapterError("instance delivery command failed") from exc
+    if len(result.stdout) > MAX_OUTPUT_BYTES or len(result.stderr) > MAX_OUTPUT_BYTES:
+        raise Q38GcpAdapterError("instance delivery output exceeded its bound")
+    return CommandResult(result.returncode, result.stdout, result.stderr)
 
 
 def _default_runner(argv: Sequence[str], timeout: int) -> CommandResult:
@@ -273,17 +303,17 @@ class GcpAdapter:
         source_root: Path,
         *,
         runner: Runner = _default_runner,
+        delivery_runner: DeliveryRunner = _default_delivery_runner,
         clock: Callable[[], float] = time.time,
         status_key_resolver: StatusKeyResolver | None = None,
         status_checkpoint_resolver: StatusCheckpointResolver | None = None,
     ) -> None:
         if (status_key_resolver is None) != (status_checkpoint_resolver is None):
-            raise Q38GcpAdapterError(
-                "authenticated host status requires key and checkpoint resolvers"
-            )
+            raise Q38GcpAdapterError("authenticated host status requires key and checkpoint resolvers")
         self.plan = plan
         self.source_root = source_root.resolve()
         self.runner = runner
+        self.delivery_runner = delivery_runner
         self.clock = clock
         self.status_key_resolver = status_key_resolver
         self.status_checkpoint_resolver = status_checkpoint_resolver
@@ -633,9 +663,7 @@ class GcpAdapter:
                 "source_commit": self.plan.source_commit if present else None,
                 "deadline_unix": self.plan.deadline_unix if present else None,
                 "plan_digest": self.plan.plan_digest if present else None,
-                "start_action_id": (
-                    controller._action_id(self.plan, "start_route") if present else None
-                ),
+                "start_action_id": (controller._action_id(self.plan, "start_route") if present else None),
                 "worker_id": resource.worker_id if present else None,
                 "instance_id": instance_id,
                 "creation_timestamp": creation_timestamp,
@@ -670,8 +698,7 @@ class GcpAdapter:
             not isinstance(value, dict)
             or not set(value).issubset(allowed_fields)
             or value.get("queryPath") != GUEST_ATTRIBUTE_QUERY_PATH
-            or value.get("kind", "compute#guestAttributes")
-            != "compute#guestAttributes"
+            or value.get("kind", "compute#guestAttributes") != "compute#guestAttributes"
         ):
             raise Q38GcpAdapterError("guest attribute response is invalid")
         query_value = value.get("queryValue")
@@ -705,11 +732,7 @@ class GcpAdapter:
         pre_protected: bool,
         *,
         now_unix: int,
-    ) -> tuple[
-        dict[str, Any],
-        dict[str, Mapping[str, Any] | None],
-        bool,
-    ]:
+    ) -> tuple[dict[str, Any], dict[str, Mapping[str, Any] | None], bool,]:
         key_resolver = self.status_key_resolver
         checkpoint_resolver = self.status_checkpoint_resolver
         if key_resolver is None or checkpoint_resolver is None:
@@ -734,9 +757,7 @@ class GcpAdapter:
                 key = key_resolver(resource.name, generation)
                 checkpoint = checkpoint_resolver(resource.name, generation)
             except Exception as exc:
-                raise Q38GcpAdapterError(
-                    "protected host status material is unavailable"
-                ) from exc
+                raise Q38GcpAdapterError("protected host status material is unavailable") from exc
             if (
                 not isinstance(checkpoint, tuple)
                 or len(checkpoint) != 2
@@ -761,17 +782,13 @@ class GcpAdapter:
                     minimum_revision=checkpoint[1],
                 )
             except transport.Q38LinuxHostTransportError as exc:
-                raise Q38GcpAdapterError(
-                    "authenticated guest attribute is invalid"
-                ) from exc
+                raise Q38GcpAdapterError("authenticated guest attribute is invalid") from exc
             context = envelope["context"]
             if (
                 context["instance_id"] != observed["instance_id"]
                 or context["creation_timestamp"] != observed["creation_timestamp"]
             ):
-                raise Q38GcpAdapterError(
-                    "authenticated guest attribute generation changed"
-                )
+                raise Q38GcpAdapterError("authenticated guest attribute generation changed")
             if resource.kind == "worker_instance":
                 host["workers"][resource.worker_id] = envelope["payload"]
             else:
@@ -782,15 +799,8 @@ class GcpAdapter:
             post_resources,
             self.plan,
         )
-        if (
-            pre_digest != post_digest
-            or not pre_protected
-            or not post_protected
-            or pre_protected != post_protected
-        ):
-            raise Q38GcpAdapterError(
-                "provider generation changed during authenticated host-status read"
-            )
+        if pre_digest != post_digest or not pre_protected or not post_protected or pre_protected != post_protected:
+            raise Q38GcpAdapterError("provider generation changed during authenticated host-status read")
         return validate_host_status(host, self.plan), post_provider, post_protected
 
     def inventory(
@@ -992,6 +1002,122 @@ class GcpAdapter:
             if resource.kind.endswith("instance")
         )
         return (*disks, *firewalls, *instances)
+
+    def compiled_instance_delivery_command(
+        self,
+        delivery: transport.InstanceDelivery,
+        *,
+        now_unix: int | None = None,
+    ) -> tuple[str, ...]:
+        verification_time = int(self.clock()) if now_unix is None else now_unix
+        try:
+            record, _context, _key = transport.validate_instance_delivery(
+                delivery,
+                self.plan,
+                now_unix=verification_time,
+            )
+        except transport.Q38LinuxHostTransportError as exc:
+            raise Q38GcpAdapterError("instance delivery is invalid") from exc
+        resource = self.plan.resource_by_name.get(record["resource_name"])
+        if resource is None or not resource.kind.endswith("instance"):
+            raise Q38GcpAdapterError("instance delivery target is not planned")
+        if not any(item.kind == "iap_firewall" for item in self.plan.resources):
+            raise Q38GcpAdapterError("instance delivery lacks an IAP firewall")
+        remote_command = (
+            f"/usr/bin/sudo --non-interactive /usr/bin/python3 {REMOTE_HOST_RUNTIME} "
+            f"install-delivery --resource-name {resource.name} "
+            f"--instance-generation-digest {record['instance_generation_digest']}"
+        )
+        return (
+            "gcloud",
+            "compute",
+            "ssh",
+            resource.name,
+            f"--project={controller.EXPECTED_PROJECT}",
+            f"--zone={controller.EXPECTED_ZONE}",
+            "--tunnel-through-iap",
+            "--ssh-flag=-T",
+            "--ssh-flag=-oBatchMode=yes",
+            f"--command={remote_command}",
+            "--quiet",
+        )
+
+    def deliver_instance(
+        self,
+        delivery: transport.InstanceDelivery,
+        *,
+        now_unix: int | None = None,
+    ) -> dict[str, Any]:
+        """Deliver one bundle only across generation-stable exact provider reads."""
+
+        verification_time = int(self.clock()) if now_unix is None else now_unix
+        try:
+            record, _context, _key = transport.validate_instance_delivery(
+                delivery,
+                self.plan,
+                now_unix=verification_time,
+            )
+        except transport.Q38LinuxHostTransportError as exc:
+            raise Q38GcpAdapterError("instance delivery is invalid") from exc
+        pre_provider, pre_protected = self._provider_inventory()
+        pre_resources = self._resource_observations(pre_provider)
+        pre_digest = controller.observation_instance_generations_digest(
+            pre_resources,
+            self.plan,
+        )
+        resource_name = record["resource_name"]
+        observed = pre_resources[resource_name]
+        iap_firewall = next(item for item in self.plan.resources if item.kind == "iap_firewall")
+        provider_instance = pre_provider[resource_name]
+        if (
+            not pre_protected
+            or pre_digest is None
+            or observed["instance_generation_digest"] != record["instance_generation_digest"]
+            or provider_instance is None
+            or provider_instance.get("status") != "RUNNING"
+            or pre_provider[iap_firewall.name] is None
+        ):
+            raise Q38GcpAdapterError("instance delivery provider inventory is not ready")
+        command = self.compiled_instance_delivery_command(
+            delivery,
+            now_unix=verification_time,
+        )
+        result = self.delivery_runner(
+            command,
+            delivery.payload,
+            DELIVERY_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0:
+            raise Q38GcpAdapterError("instance delivery failed")
+        receipt_value = _json_bytes(
+            result.stdout,
+            "instance delivery receipt",
+            maximum=transport.MAX_DELIVERY_HEADER_BYTES,
+        )
+        try:
+            receipt = transport.validate_instance_delivery_receipt(
+                receipt_value,
+                delivery,
+                self.plan,
+                now_unix=verification_time,
+            )
+        except transport.Q38LinuxHostTransportError as exc:
+            raise Q38GcpAdapterError("instance delivery receipt is invalid") from exc
+        post_provider, post_protected = self._provider_inventory()
+        post_resources = self._resource_observations(post_provider)
+        post_digest = controller.observation_instance_generations_digest(
+            post_resources,
+            self.plan,
+        )
+        if (
+            not post_protected
+            or pre_protected != post_protected
+            or pre_digest != post_digest
+            or post_resources[resource_name]["instance_generation_digest"] != record["instance_generation_digest"]
+            or post_provider[iap_firewall.name] is None
+        ):
+            raise Q38GcpAdapterError("provider generation changed during instance delivery")
+        return receipt
 
     def _delete_resource(self, resource: controller.ResourcePlan) -> None:
         value = self._describe(resource)
