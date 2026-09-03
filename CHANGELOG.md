@@ -76,6 +76,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   candidate passes 55 host-runtime, 240 Gate Q3.8, 206 adjacent, and 1,789
   offline tests; native Linux execution, bootstrap/status integration, and any
   paid route remain open.
+- Qwen3.8 route observation now latches the exact GCP instance generation set
+  before entering active phases. Provider ID and creation-time substitutions,
+  same-name instance recreation, or partial generation loss force cleanup, while
+  disks and firewalls cannot carry instance-generation metadata. Paid start and
+  collection remain fail-closed until the protected host bootstrap/status bridge
+  is complete. This USD 0 checkpoint passes 170 focused and 264 complete Gate
+  Q3.8 tests with four native-platform skips.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
