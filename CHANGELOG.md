@@ -62,6 +62,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   verifier mutation, and archive pathname replacement. This USD 0 checkpoint
   passes 26 focused, 184 adjacent, and 1,712 offline unit tests; native Linux
   validator execution and privileged host staging remain open.
+- Qwen3.8 runtime-package validation now feeds the final route contract through
+  a strict protected source context instead of circularly consuming that plan.
+  The complete immutable package record is bound into the stable plan,
+  execution inventory, action IDs, reservation, and preflight evidence. This
+  USD 0 checkpoint passes 156 focused, 184 Gate Q3.8, 205 adjacent, and 1,733
+  offline unit tests; native Linux host staging and execution remain open.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
