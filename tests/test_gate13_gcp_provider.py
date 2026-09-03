@@ -1,0 +1,267 @@
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from gate13_cloud_orchestrator import PackageArtifact
+from gate13_gcp_provider import GcpConfig, GcpProvider, LoggedRunner
+
+
+RUN_ID = "g13-20260902-000000-abcd"
+
+
+def artifact(platform):
+    return PackageArtifact(
+        platform=platform,
+        source_commit="a" * 40,
+        workflow_run_id=1,
+        artifact_id=2,
+        artifact_name=f"communityai-desktop-install-{platform}",
+        wrapper_sha256="c" * 64,
+        wrapper_bytes=130,
+        archive_name=(
+            "communityai-desktop-windows.zip"
+            if platform == "windows"
+            else "communityai-desktop-linux.tar.gz"
+        ),
+        archive_sha256="b" * 64,
+        archive_bytes=123,
+    )
+
+
+def provider(tmp_path, runner, signed_url=lambda package: "https://productionresults.example.invalid/artifact"):
+    return GcpProvider(
+        run_id=RUN_ID,
+        repository_root=ROOT,
+        output_root=tmp_path,
+        config=GcpConfig.load(ROOT / "config" / "gate13_gcp.json"),
+        runner=runner,
+        signed_url=signed_url,
+    )
+
+
+def test_logged_runner_does_not_retain_argv_or_output(tmp_path):
+    secret = "never-retain-this-secret"
+    runner = LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None)
+    result = runner.run(
+        [sys.executable, "-c", f"print('{secret}')"],
+        action="Safe public action",
+        sensitive_output=True,
+    )
+
+    assert secret in result.stdout
+    journal = (tmp_path / "journal.jsonl").read_text()
+    assert secret not in journal
+    assert "-c" not in journal
+    assert json.loads(journal)["output_retained"] is False
+
+
+class CreateRunner:
+    def __init__(self):
+        self.calls = []
+
+    def run(self, argv, **kwargs):
+        command = [str(item) for item in argv]
+        self.calls.append((command, kwargs))
+        if "describe" in command and "instances" in command:
+            name = command[command.index("describe") + 1]
+            value = {
+                "name": name,
+                "labels": {"communityai_run": RUN_ID},
+                "deletionProtection": False,
+                "disks": [{
+                    "autoDelete": True,
+                    "source": f"https://example.invalid/disks/{name}",
+                }],
+            }
+            return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+
+def test_client_creation_uses_the_proven_private_route_relay(tmp_path, monkeypatch):
+    fake = CreateRunner()
+    public_key = tmp_path / "test.pub"
+    public_key.write_text("ssh-rsa test\n", encoding="ascii")
+    relay_calls = []
+    item = provider(tmp_path, fake)
+    monkeypatch.setattr(item, "_ensure_ssh_key", lambda: public_key)
+    monkeypatch.setattr(
+        item,
+        "_prepare_route_relay",
+        lambda platform, package: relay_calls.append((platform, package.artifact_id))
+        or "http://10.42.0.26:38081/artifact-wrapper.zip",
+    )
+
+    item.create_client("windows", artifact("windows"))
+
+    flattened = "\n".join(" ".join(command) for command, _kwargs in fake.calls)
+    assert relay_calls == [("windows", 2)]
+    assert "package-url=http://10.42.0.26:38081/artifact-wrapper.zip" in flattened
+    assert "package-sha256=" + "b" * 64 in flattened
+    assert "package-bytes=123" in flattened
+    create = next(
+        command
+        for command, _kwargs in fake.calls
+        if "instances" in command and "create" in command
+    )
+    assert "--enable-display-device" in create
+    assert "--no-service-account" in create
+    assert "no-address" not in flattened
+
+
+def test_route_creation_preserves_the_successful_private_relay_firewall(tmp_path):
+    fake = CreateRunner()
+    item = provider(tmp_path, fake)
+
+    item.create_route()
+
+    relay = next(
+        command
+        for command, _kwargs in fake.calls
+        if "firewall-rules" in command and item.relay_firewall in command
+    )
+    assert relay[relay.index("--rules") + 1] == "tcp:38081"
+    assert relay[relay.index("--source-tags") + 1] == item.client_tag
+    assert relay[relay.index("--target-tags") + 1] == item.route
+    route = next(
+        command
+        for command, _kwargs in fake.calls
+        if "instances" in command and "create" in command
+    )
+    assert route[route.index("--machine-type") + 1] == "g2-standard-8"
+    assert route[route.index("--boot-disk-size") + 1] == "200GB"
+    assert route[route.index("--max-run-duration") + 1] == "57600s"
+
+
+def test_route_relay_script_is_bound_to_both_wrapper_and_inner_archive(tmp_path):
+    item = provider(
+        tmp_path,
+        LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
+    )
+
+    source = item._relay_download_script("linux", artifact("linux")).read_text()
+
+    assert "artifact-probe-url" in source
+    assert 'curl -fL --retry 4 --retry-delay 3 --silent --show-error "$url" -o "$wrapper"' in source
+    assert 'test "$(stat -c %s "$wrapper")" = 130' in source
+    assert "c" * 64 in source
+    assert "expected = 'communityai-desktop-linux.tar.gz'" in source
+    assert 'test "$(stat -c %s "$archive")" = 123' in source
+    assert "b" * 64 in source
+
+
+def test_route_bundle_reuses_the_exact_successful_inputs(tmp_path):
+    item = provider(
+        tmp_path,
+        LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
+    )
+
+    bundle = item._build_route_bundle()
+
+    expected = {
+        "drift-2.3.0.dev2-py3-none-any.whl": (
+            389107,
+            "7a42803811289e14f69835331e0fbab69dd353c70c835131c10bdfa96ca5f111",
+        ),
+        "gate13_route_setup.sh": (
+            3371,
+            "045372ea0be9c4a8f31756a502b2a9ec799087eeaac294ebad2b34eccfe0affc",
+        ),
+        "catalog-v1.tar": (
+            20480,
+            "2ecf7ecbe8159d6a6328eed9b59e2a3ae4543b6ee6b82d904de42676150b1452",
+        ),
+    }
+    for name, (byte_count, digest) in expected.items():
+        payload = (bundle / name).read_bytes()
+        assert len(payload) == byte_count
+        assert hashlib.sha256(payload).hexdigest() == digest
+def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
+    item = provider(
+        tmp_path,
+        LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
+    )
+
+    expected = {
+        "windows": (
+            8779,
+            "3f8600c42a3c0765e100963c2e28cdef7c6b248992924ff3406941aefce7cf47",
+        ),
+        "linux": (
+            2138,
+            "72ac32fb78946ac09b60bbef571a944a018d790871fafbb818ec7006bee292c6",
+        ),
+    }
+    for platform, (byte_count, digest) in expected.items():
+        payload = item._client_startup_script(platform).read_bytes()
+        assert len(payload) == byte_count
+        assert hashlib.sha256(payload).hexdigest() == digest
+
+
+def test_client_readiness_cleans_the_route_relay_before_job_staging(
+    tmp_path, monkeypatch
+):
+    item = provider(
+        tmp_path,
+        LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
+    )
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    stage_script = stage / "stage.sh"
+    stage_script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    events = []
+    monkeypatch.setattr(
+        item,
+        "_wait_ssh",
+        lambda _name, command, **_kwargs: events.append(("ready", command)),
+    )
+    monkeypatch.setattr(
+        item,
+        "_cleanup_route_relay",
+        lambda platform: events.append(("relay-cleaned", platform)),
+    )
+    monkeypatch.setattr(
+        item,
+        "_build_client_stage",
+        lambda _platform, _package: (stage, stage_script),
+    )
+    monkeypatch.setattr(
+        item,
+        "_scp",
+        lambda *_args, **_kwargs: events.append(("stage-copied", "linux")),
+    )
+    monkeypatch.setattr(
+        item,
+        "_ssh",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, '{"result":"passed","ready":true}\n', ""
+        ),
+    )
+
+    result = item.prepare_client("linux", artifact("linux"))
+
+    assert "gate13-bootstrap-ready" in events[0][1]
+    assert [event[0] for event in events] == ["ready", "relay-cleaned", "stage-copied"]
+    assert result["package_relay_verified"] is True
+
+
+def test_generated_client_jobs_are_exactly_source_and_package_bound(tmp_path):
+    item = provider(
+        tmp_path,
+        LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
+    )
+    for platform in ("windows", "linux"):
+        stage, stage_script = item._build_client_stage(platform, artifact(platform))
+        lifecycle = json.loads((stage / f"gate13-{platform}-run.json").read_text())
+        host = json.loads((stage / "host-job.json").read_text())
+        assert lifecycle["source_commit"] == "a" * 40
+        assert lifecycle["package_sha256"] == "sha256:" + "b" * 64
+        assert lifecycle["package_bytes"] == 123
+        assert host["source_commit"] == lifecycle["source_commit"]
+        assert host["lifecycle_run_id"] == f"{RUN_ID}-{platform}"
+        assert host["attempt_ordinal"] == 1
+        assert stage_script.is_file()
