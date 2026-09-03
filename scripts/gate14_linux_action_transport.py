@@ -31,7 +31,8 @@ DEFAULT_CLOSE_TIMEOUT_SECONDS = 30.0
 
 _GATE13_LIFECYCLE_SHA256 = "90f3af65bb4f77317f707a6b52e329e1d5f81cdeddcb9615a210ec9a5a4cf535"
 _GATE13_INFERENCE_SHA256 = "ccf10f9b19f505afb4efde4a86a49e73e3e7c88e9d51ead4991dec68f0c15209"
-_ACTION_HOST_SHA256 = "11ba1e4a081b86d404152e3f4f27bfd06190432a8aeb859339fd5386e2ca6b80"
+_PRODUCT_ACTIONS_SHA256 = "7a904b1c4653eb2a392bb64b1f97404beaee3fff9a2102f3c9c7949f0a2aa973"
+_ACTION_HOST_SHA256 = "495028ae72a6a1c37a8c718356ed7e7bbae437156b0cc8b7328ddb4fce8e1a36"
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
@@ -260,9 +261,14 @@ class LinuxActionTransport:
             directory / "gate13_linux_localhost_inference.py",
             _GATE13_INFERENCE_SHA256,
         )
+        self._product_actions_path = _normalized_source(
+            directory / "gate14_linux_product_actions.py",
+            _PRODUCT_ACTIONS_SHA256,
+        )
         if not (
             self._host_path.parent == self._gate13_lifecycle_path.parent
             and self._gate13_lifecycle_path.parent == self._gate13_inference_path.parent
+            and self._gate13_inference_path.parent == self._product_actions_path.parent
         ):
             raise Gate14ActionTransportError("action sources are not colocated")
 
@@ -290,6 +296,10 @@ class LinuxActionTransport:
             _GATE13_LIFECYCLE_SHA256,
             "--gate13-inference-sha256",
             _GATE13_INFERENCE_SHA256,
+            "--product-actions",
+            os.fspath(self._product_actions_path),
+            "--product-actions-sha256",
+            _PRODUCT_ACTIONS_SHA256,
             "--lifecycle-config",
             os.fspath(config_path),
             "--lifecycle-config-sha256",

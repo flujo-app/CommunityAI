@@ -150,12 +150,12 @@ def test_native_host_rejects_out_of_order_operation_and_cleans(tmp_path):
     assert marker.read_text(encoding="utf-8") == "cleaned"
 
 
-def test_production_prepare_fails_closed_until_the_real_handler_exists(tmp_path):
+def test_production_prepare_fails_closed_when_required_inputs_are_absent(tmp_path):
     config = config_fixture(tmp_path)
     with transport.LinuxActionTransport(config, python=sys.executable) as action_host:
         with pytest.raises(
             transport.Gate14ActionTransportError,
-            match="action-handler-unavailable",
+            match="product-prepare-failed",
         ):
             action_host.prepare(config)
 

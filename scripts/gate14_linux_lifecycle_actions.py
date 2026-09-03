@@ -1,10 +1,9 @@
 """Persistent Gate 14 Linux lifecycle action host.
 
-This process is intentionally long-lived so the future production handler can
-retain its systemd-owned product tree, Secret Service credential, and verified
-cache across the controller-owned calibration challenge. Until those concrete
-handlers are installed, production prepare/calibrate fail closed. The bounded
-self-test path exercises only transport lifetime and cleanup.
+This process is intentionally long-lived so the production handler retains its
+systemd-owned product tree, Secret Service credential, and verified cache across
+the controller-owned calibration challenge. The bounded self-test path exercises
+only transport lifetime and cleanup.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ import os
 import re
 import stat
 import sys
+import types
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -93,7 +93,7 @@ def _strict_json(payload: bytes) -> Mapping[str, Any]:
     return value
 
 
-def _normalized_source(path: Path, expected_sha256: str) -> Path:
+def _verified_source(path: Path, expected_sha256: str) -> tuple[Path, bytes]:
     candidate = Path(path)
     try:
         metadata = candidate.lstat()
@@ -113,7 +113,11 @@ def _normalized_source(path: Path, expected_sha256: str) -> Path:
     normalized = payload.replace(b"\r\n", b"\n")
     if b"\r" in normalized or hashlib.sha256(normalized).hexdigest() != expected_sha256:
         raise Gate14LinuxActionError("action helper binding changed")
-    return candidate.resolve()
+    return candidate.resolve(), normalized
+
+
+def _normalized_source(path: Path, expected_sha256: str) -> Path:
+    return _verified_source(path, expected_sha256)[0]
 
 
 def _file_digest(path: Path, maximum: int) -> str:
@@ -146,6 +150,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--gate13-inference", required=True)
     parser.add_argument("--gate13-lifecycle-sha256", required=True)
     parser.add_argument("--gate13-inference-sha256", required=True)
+    parser.add_argument("--product-actions", required=True)
+    parser.add_argument("--product-actions-sha256", required=True)
     parser.add_argument("--lifecycle-config", required=True)
     parser.add_argument("--lifecycle-config-sha256", required=True)
     parser.add_argument("--transport-self-test", action="store_true")
@@ -165,6 +171,7 @@ def _arguments(argv: Sequence[str] | None) -> argparse.Namespace:
         or _DIGEST_RE.fullmatch(value.lifecycle_config_sha256) is None
         or not re.fullmatch(r"[0-9a-f]{64}", value.gate13_lifecycle_sha256)
         or not re.fullmatch(r"[0-9a-f]{64}", value.gate13_inference_sha256)
+        or not re.fullmatch(r"[0-9a-f]{64}", value.product_actions_sha256)
     ):
         raise Gate14LinuxActionError("action-host binding is invalid")
     return value
@@ -218,10 +225,19 @@ def _response(
     sys.stdout.buffer.flush()
 
 
-def _cleanup(arguments: argparse.Namespace, cleaned: list[bool]) -> None:
+def _cleanup(
+    arguments: argparse.Namespace,
+    cleaned: list[bool],
+    product: Any | None = None,
+) -> Mapping[str, Any] | None:
     if cleaned[0]:
-        return
+        return None
     cleaned[0] = True
+    if product is not None:
+        result = product.cleanup()
+        if not isinstance(result, dict):
+            raise Gate14LinuxActionError("product cleanup result is invalid")
+        return result
     if arguments.transport_self_test and arguments.self_test_cleanup_marker:
         marker = Path(arguments.self_test_cleanup_marker)
         if marker.exists() or marker.is_symlink() or not marker.parent.is_dir():
@@ -229,23 +245,43 @@ def _cleanup(arguments: argparse.Namespace, cleaned: list[bool]) -> None:
         descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write("cleaned")
+    return None
+
+
+def _load_verified_module(name: str, path: Path, source: bytes) -> types.ModuleType:
+    module = types.ModuleType(name)
+    module.__file__ = os.fspath(path)
+    module.__package__ = ""
+    sys.modules[name] = module
+    try:
+        exec(compile(source, os.fspath(path), "exec"), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module
 
 
 def serve(argv: Sequence[str] | None = None) -> int:
     os.umask(0o077)
     arguments = _arguments(argv)
-    lifecycle_path = _normalized_source(
+    lifecycle_path, lifecycle_source = _verified_source(
         Path(arguments.gate13_lifecycle),
         arguments.gate13_lifecycle_sha256,
     )
-    inference_path = _normalized_source(
+    inference_path, inference_source = _verified_source(
         Path(arguments.gate13_inference),
         arguments.gate13_inference_sha256,
+    )
+    product_path, product_source = _verified_source(
+        Path(arguments.product_actions),
+        arguments.product_actions_sha256,
     )
     if (
         lifecycle_path.name != "gate13_linux_packaged_lifecycle.py"
         or inference_path.name != "gate13_linux_localhost_inference.py"
+        or product_path.name != "gate14_linux_product_actions.py"
         or lifecycle_path.parent != inference_path.parent
+        or lifecycle_path.parent != product_path.parent
     ):
         raise Gate14LinuxActionError("action helper identity is invalid")
     config_path = Path(arguments.lifecycle_config)
@@ -254,6 +290,15 @@ def serve(argv: Sequence[str] | None = None) -> int:
         or _file_digest(config_path, 65_536) != arguments.lifecycle_config_sha256
     ):
         raise Gate14LinuxActionError("lifecycle configuration binding changed")
+
+    product = None
+    actions = None
+    if not arguments.transport_self_test:
+        sys.modules["gate13_packaged_lifecycle"] = types.ModuleType("gate13_packaged_lifecycle")
+        _load_verified_module("gate13_linux_localhost_inference", inference_path, inference_source)
+        gate13 = _load_verified_module("gate13_linux_packaged_lifecycle", lifecycle_path, lifecycle_source)
+        actions = _load_verified_module("gate14_linux_product_actions", product_path, product_source)
+        actions.bind_gate13(gate13)
 
     phase = "new"
     expected_request_id = 1
@@ -287,17 +332,33 @@ def serve(argv: Sequence[str] | None = None) -> int:
             if operation == "prepare":
                 if phase != "new" or frame["payload"]:
                     raise Gate14LinuxActionError("RPC operation order is invalid")
-                if not arguments.transport_self_test:
-                    phase = "failed"
-                    _response(
-                        arguments,
-                        request_id,
-                        operation,
-                        result="failed",
-                        payload=None,
-                        failure_code="action-handler-unavailable",
-                    )
-                    continue
+                if arguments.transport_self_test:
+                    payload = {
+                        "helpers_verified": True,
+                        "host_process_id": os.getpid(),
+                        "state_nonce": state_nonce,
+                    }
+                else:
+                    try:
+                        product = actions.LinuxProductActions(
+                            config_path=config_path,
+                            run_id=arguments.run_id,
+                            attempt_ordinal=arguments.attempt_ordinal,
+                            source_commit=arguments.source_commit,
+                            package_sha256=arguments.package_sha256,
+                        )
+                        payload = product.prepare()
+                    except Exception:
+                        phase = "failed"
+                        _response(
+                            arguments,
+                            request_id,
+                            operation,
+                            result="failed",
+                            payload=None,
+                            failure_code="product-prepare-failed",
+                        )
+                        continue
                 phase = "prepared"
                 _response(
                     arguments,
@@ -305,11 +366,7 @@ def serve(argv: Sequence[str] | None = None) -> int:
                     operation,
                     result="passed",
                     failure_code=None,
-                    payload={
-                        "helpers_verified": True,
-                        "host_process_id": os.getpid(),
-                        "state_nonce": state_nonce,
-                    },
+                    payload=payload,
                 )
                 continue
 
@@ -335,17 +392,26 @@ def serve(argv: Sequence[str] | None = None) -> int:
                     or not 60 <= expires - issued <= 900
                 ):
                     raise Gate14LinuxActionError("RPC calibration binding is invalid")
-                if not arguments.transport_self_test:
-                    phase = "failed"
-                    _response(
-                        arguments,
-                        request_id,
-                        operation,
-                        result="failed",
-                        payload=None,
-                        failure_code="action-handler-unavailable",
-                    )
-                    continue
+                if arguments.transport_self_test:
+                    payload = {
+                        "challenge_sha256": challenge_sha256,
+                        "host_process_id": os.getpid(),
+                        "state_nonce": state_nonce,
+                    }
+                else:
+                    try:
+                        payload = {"suspensions": list(product.calibrate(frame["payload"]))}
+                    except Exception:
+                        phase = "failed"
+                        _response(
+                            arguments,
+                            request_id,
+                            operation,
+                            result="failed",
+                            payload=None,
+                            failure_code="product-calibration-failed",
+                        )
+                        continue
                 phase = "calibrated"
                 _response(
                     arguments,
@@ -353,25 +419,15 @@ def serve(argv: Sequence[str] | None = None) -> int:
                     operation,
                     result="passed",
                     failure_code=None,
-                    payload={
-                        "challenge_sha256": challenge_sha256,
-                        "host_process_id": os.getpid(),
-                        "state_nonce": state_nonce,
-                    },
+                    payload=payload,
                 )
                 continue
 
             if frame["payload"]:
                 raise Gate14LinuxActionError("RPC cleanup payload is invalid")
-            _cleanup(arguments, cleaned)
-            phase = "cleaned"
-            _response(
-                arguments,
-                request_id,
-                operation,
-                result="passed",
-                failure_code=None,
-                payload={
+            cleanup_payload = _cleanup(arguments, cleaned, product)
+            if cleanup_payload is None:
+                cleanup_payload = {
                     "action_temporaries_removed": True,
                     "attempt_ordinal": arguments.attempt_ordinal,
                     "credentials_removed": True,
@@ -380,10 +436,18 @@ def serve(argv: Sequence[str] | None = None) -> int:
                     "run_id": arguments.run_id,
                     "schema_version": SCHEMA_VERSION,
                     "scope": "gate14-host-lifecycle-cleanup",
-                },
+                }
+            phase = "cleaned"
+            _response(
+                arguments,
+                request_id,
+                operation,
+                result="passed",
+                failure_code=None,
+                payload=cleanup_payload,
             )
     except Gate14LinuxActionError:
-        _cleanup(arguments, cleaned)
+        _cleanup(arguments, cleaned, product)
         _response(
             arguments,
             expected_request_id,
@@ -394,7 +458,7 @@ def serve(argv: Sequence[str] | None = None) -> int:
         )
         return 2
     finally:
-        _cleanup(arguments, cleaned)
+        _cleanup(arguments, cleaned, product)
     return 0
 
 
