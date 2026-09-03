@@ -11,12 +11,17 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
-from scripts import gateq38_linux_host_runtime as host, gateq38_route_controller as route
+from scripts import (
+    gateq38_linux_host_runtime as host,
+    gateq38_linux_host_transport as transport,
+    gateq38_route_controller as route,
+)
 
 from tests.test_gateq38_route_controller import _plan_value, _source_root, _write_json
 
@@ -24,10 +29,56 @@ EXECUTABLE_BYTES = b"#!/bin/sh\nexit 0\n"
 SIDECAR_BYTES = b"runtime-sidecar\n"
 _NATIVE_CHOWN = getattr(os, "chown", None)
 _NATIVE_STATE_LOCK = host._prepared_state_lock
+NOW = 1_900_000_000
+KEY = bytes(range(transport.KEY_BYTES))
+BOOT_ID = "01234567-89ab-4cde-8fab-0123456789ab"
+INSTANCE_ID = "123456789"
+CREATED = "2026-09-03T01:20:00+00:00"
 
 
 def _digest(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _worker_resource(plan: route.RoutePlan) -> route.ResourcePlan:
+    return next(item for item in plan.resources if item.kind == "worker_instance")
+
+
+def _transport_context(plan: route.RoutePlan) -> dict[str, object]:
+    resource = _worker_resource(plan)
+    return transport.build_instance_context(
+        plan,
+        resource.name,
+        INSTANCE_ID,
+        CREATED,
+        issued_at_unix=NOW - 10,
+        expires_at_unix=NOW + 600,
+        key=KEY,
+    )
+
+
+def _transport_kwargs(plan: route.RoutePlan) -> dict[str, str]:
+    context = _transport_context(plan)
+    return {
+        "expected_resource_name": str(context["resource_name"]),
+        "expected_generation_digest": str(context["instance_generation_digest"]),
+    }
+
+
+def _prepared_record(
+    plan: route.RoutePlan,
+    action: dict[str, object],
+    identity: host.QualificationIdentity,
+    result: host.PreflightResult,
+) -> dict[str, object]:
+    return host._prepared_record(
+        plan,
+        action,
+        identity,
+        result,
+        _transport_context(plan),
+        BOOT_ID,
+    )
 
 
 def _artifact(path: str, payload: bytes, mode: int) -> dict[str, object]:
@@ -165,6 +216,12 @@ def _release_and_plan(
     cleanup_path = tmp_path / "cleanup-action.json"
     _write_json(start_path, start_action)
     _write_json(cleanup_path, cleanup_action)
+    context_path = tmp_path / "instance-context.json"
+    key_path = tmp_path / "host-status.key"
+    boot_id_path = tmp_path / "boot_id"
+    context_path.write_bytes(transport.encode_instance_context(_transport_context(plan)))
+    key_path.write_bytes(KEY)
+    boot_id_path.write_text(BOOT_ID + "\n", encoding="ascii")
     paths = host.HostPaths(
         plan=plan_path,
         start_action=start_path,
@@ -175,6 +232,10 @@ def _release_and_plan(
         runtime_base=tmp_path / "runtime",
         work_base=tmp_path / "work",
         prepared_record=tmp_path / "state" / "prepared.json",
+        instance_context=context_path,
+        transport_key=key_path,
+        status_envelope=tmp_path / "state" / "host-status.json",
+        boot_id=boot_id_path,
     )
     return paths, plan, plan_value
 
@@ -187,6 +248,7 @@ def _unlocked_state(_parent: Path):
 @pytest.fixture(autouse=True)
 def _structural_protection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(host, "_assert_root_managed", lambda *args, **kwargs: None)
+    monkeypatch.setattr(host, "_assert_root_private_file", lambda *args, **kwargs: None)
     monkeypatch.setattr(host, "_assert_qualification_traversal", lambda *args, **kwargs: None)
     monkeypatch.setattr(host, "_assert_source_bound", lambda *args, **kwargs: None)
     monkeypatch.setattr(host, "_prepared_state_lock", _unlocked_state)
@@ -434,7 +496,8 @@ def test_prepare_writes_digest_only_record(
     )
     result = host.prepare(
         paths,
-        now_unix=1_900_000_000,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
         identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
         protector=lambda *_args: None,
         preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
@@ -443,6 +506,24 @@ def test_prepare_writes_digest_only_record(
     encoded = json.dumps(result, sort_keys=True)
     assert not any(value in encoded for value in ("http://", "https://", str(tmp_path), "token"))
     assert paths.prepared_record.exists()
+    assert paths.status_envelope.exists()
+    envelope = transport.decode_status_envelope(paths.status_envelope.read_bytes())
+    context = _transport_context(plan)
+    assert envelope["prepared_record_digest"] == result["prepared_record_digest"]
+    assert envelope["boot_id"] == BOOT_ID
+    assert envelope["payload"]["state"] == "starting"
+    assert (
+        transport.validate_status_envelope(
+            envelope,
+            plan,
+            key=KEY,
+            now_unix=NOW,
+            expected_resource_name=str(context["resource_name"]),
+            expected_generation_digest=str(context["instance_generation_digest"]),
+            expected_boot_id=BOOT_ID,
+        )
+        == envelope
+    )
 
 
 def test_prepare_failure_removes_new_runtime(
@@ -454,7 +535,8 @@ def test_prepare_failure_removes_new_runtime(
     with pytest.raises(RuntimeError, match="preflight"):
         host.prepare(
             paths,
-            now_unix=1_900_000_000,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
             identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
             protector=lambda *_args: None,
             preflight=lambda *_args: (_ for _ in ()).throw(RuntimeError("preflight")),
@@ -476,7 +558,8 @@ def test_prepare_identity_failure_removes_new_runtime(
     with pytest.raises(RuntimeError, match="identity"):
         host.prepare(
             paths,
-            now_unix=1_900_000_000,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
             protector=lambda *_args: None,
         )
     assert not host._runtime_destination(plan, paths).exists()
@@ -486,12 +569,13 @@ def test_prepare_protection_failure_removes_staging_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    paths, _plan, _ = _release_and_plan(tmp_path)
+    paths, plan, _ = _release_and_plan(tmp_path)
     monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
     with pytest.raises(RuntimeError, match="protect"):
         host.prepare(
             paths,
-            now_unix=1_900_000_000,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
             identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
             protector=lambda *_args: (_ for _ in ()).throw(RuntimeError("protect")),
         )
@@ -503,7 +587,7 @@ def test_prepare_reuses_exact_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    paths, _plan, _ = _release_and_plan(tmp_path)
+    paths, plan, _ = _release_and_plan(tmp_path)
     monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
     monkeypatch.setattr(
         host,
@@ -514,7 +598,8 @@ def test_prepare_reuses_exact_runtime(
     for _ in range(2):
         host.prepare(
             paths,
-            now_unix=1_900_000_000,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
             identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
             protector=lambda *_args: calls.append("protect"),
             preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
@@ -849,7 +934,7 @@ def test_native_prepared_state_lock_is_root_owned_and_private(
 def test_prepared_record_rejects_bool_integer(tmp_path: Path) -> None:
     _paths, plan, _ = _release_and_plan(tmp_path)
     action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
-    value = host._prepared_record(
+    value = _prepared_record(
         plan,
         action,
         host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
@@ -872,7 +957,7 @@ def test_cleanup_is_exact_and_idempotent(
     work = paths.work_base / host._runtime_key(plan)
     work.mkdir(parents=True)
     action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
-    prepared = host._prepared_record(
+    prepared = _prepared_record(
         plan,
         action,
         host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
@@ -883,8 +968,8 @@ def test_cleanup_is_exact_and_idempotent(
     stale = paths.prepared_record.parent / ".prepared.interrupted.tmp"
     stale.write_bytes(host._canonical_bytes(prepared))
     stale.chmod(0o600)
-    host.cleanup(paths, now_unix=plan.deadline_unix + 1)
-    host.cleanup(paths, now_unix=plan.deadline_unix + 2)
+    host.cleanup(paths, **_transport_kwargs(plan), now_unix=plan.deadline_unix + 1)
+    host.cleanup(paths, **_transport_kwargs(plan), now_unix=plan.deadline_unix + 2)
     assert not destination.exists()
     assert not work.exists()
     assert not paths.prepared_record.exists()
@@ -904,7 +989,7 @@ def test_cleanup_rejects_linked_runtime(
     except OSError:
         pytest.skip("directory symlink creation is unavailable")
     with pytest.raises(host.Q38LinuxHostRuntimeError, match="unsafe"):
-        host.cleanup(paths, now_unix=1_900_000_000)
+        host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
     assert foreign.exists()
 
 
@@ -939,7 +1024,7 @@ def test_atomic_prepared_refuses_a_different_existing_result(
     _paths, plan, _ = _release_and_plan(tmp_path)
     action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
     identity = host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001)
-    first = host._prepared_record(
+    first = _prepared_record(
         plan,
         action,
         identity,
@@ -947,7 +1032,7 @@ def test_atomic_prepared_refuses_a_different_existing_result(
     )
     path = tmp_path / "state" / "prepared.json"
     host._atomic_prepared(path, first, plan)
-    changed = host._prepared_record(
+    changed = _prepared_record(
         plan,
         action,
         identity,
@@ -965,13 +1050,13 @@ def test_atomic_prepared_never_replaces_concurrent_result(
     _paths, plan, _ = _release_and_plan(tmp_path)
     action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
     identity = host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001)
-    intended = host._prepared_record(
+    intended = _prepared_record(
         plan,
         action,
         identity,
         host.PreflightResult(0, b"edge-acquire help\n", b""),
     )
-    concurrent = host._prepared_record(
+    concurrent = _prepared_record(
         plan,
         action,
         identity,
@@ -996,7 +1081,7 @@ def test_atomic_prepared_recovers_interrupted_temporary(
     _paths, plan, _ = _release_and_plan(tmp_path)
     action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
     identity = host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001)
-    intended = host._prepared_record(
+    intended = _prepared_record(
         plan,
         action,
         identity,
@@ -1023,7 +1108,7 @@ def test_stale_cleanup_cannot_delete_newer_prepared_state(
         {"revision": 3, "next_action": "start_route"},
         old_plan,
     )
-    prepared = host._prepared_record(
+    prepared = _prepared_record(
         old_plan,
         old_action,
         host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
@@ -1044,8 +1129,8 @@ def test_stale_cleanup_cannot_delete_newer_prepared_state(
             new_plan,
         ),
     )
-    with pytest.raises(host.Q38LinuxHostRuntimeError, match="prepared record identity"):
-        host.cleanup(paths, now_unix=new_plan.deadline_unix + 1)
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="plan binding|prepared record identity"):
+        host.cleanup(paths, **_transport_kwargs(new_plan), now_unix=new_plan.deadline_unix + 1)
     assert old_destination.exists()
     assert paths.prepared_record.exists()
 
@@ -1146,3 +1231,495 @@ def test_preflight_work_cleanup_must_be_proved(
     monkeypatch.setattr(shutil, "rmtree", lambda *_args, **_kwargs: None)
     with pytest.raises(host.Q38LinuxHostRuntimeError, match="cleanup is incomplete"):
         host._remove_preflight_work(work)
+
+
+def test_transport_source_is_required() -> None:
+    assert route.LINUX_HOST_TRANSPORT_SOURCE_PATH == "scripts/gateq38_linux_host_transport.py"
+    assert route.LINUX_HOST_TRANSPORT_SOURCE_PATH in route.REQUIRED_SOURCE_PATHS
+
+
+@pytest.mark.parametrize("kind", ["wrong-key", "wrong-generation", "noncanonical-context", "invalid-boot"])
+def test_prepare_rejects_unbound_transport_inputs_before_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    arguments = _transport_kwargs(plan)
+    if kind == "wrong-key":
+        paths.transport_key.write_bytes(b"x" * transport.KEY_BYTES)
+        match = "authentication"
+    elif kind == "wrong-generation":
+        arguments["expected_generation_digest"] = "sha256:" + "0" * 64
+        match = "generation"
+    elif kind == "noncanonical-context":
+        context = _transport_context(plan)
+        paths.instance_context.write_text(json.dumps(context, indent=2) + "\n", encoding="ascii")
+        match = "transport"
+    else:
+        paths.boot_id.write_text("not-a-boot-id\n", encoding="ascii")
+        match = "boot"
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match=match):
+        host.prepare(
+            paths,
+            **arguments,
+            now_unix=NOW,
+            identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+            protector=lambda *_args: None,
+        )
+    assert not paths.runtime_base.exists()
+    assert not paths.prepared_record.exists()
+    assert not paths.status_envelope.exists()
+
+
+def test_prepared_identity_changes_with_generation_and_boot(tmp_path: Path) -> None:
+    _paths, plan, _ = _release_and_plan(tmp_path)
+    action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
+    identity = host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001)
+    result = host.PreflightResult(0, b"edge-acquire help\n", b"")
+    first = _prepared_record(plan, action, identity, result)
+    resource = _worker_resource(plan)
+    rebound_context = transport.build_instance_context(
+        plan,
+        resource.name,
+        "987654321",
+        "2026-09-03T01:21:00+00:00",
+        issued_at_unix=NOW - 10,
+        expires_at_unix=NOW + 600,
+        key=KEY,
+    )
+    rebound = host._prepared_record(plan, action, identity, result, rebound_context, BOOT_ID)
+    rebooted = host._prepared_record(
+        plan,
+        action,
+        identity,
+        result,
+        _transport_context(plan),
+        "fedcba98-7654-4321-8abc-fedcba987654",
+    )
+    assert (
+        len(
+            {
+                first["prepared_record_digest"],
+                rebound["prepared_record_digest"],
+                rebooted["prepared_record_digest"],
+            }
+        )
+        == 3
+    )
+
+
+def test_status_builder_rejects_caller_substituted_prepared_digest(tmp_path: Path) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
+    prepared = _prepared_record(
+        plan,
+        action,
+        host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+        host.PreflightResult(0, b"edge-acquire help\n", b""),
+    )
+    prepared["prepared_record_digest"] = "sha256:" + "0" * 64
+    inputs = host._load_transport_inputs(
+        plan,
+        paths,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="digest changed"):
+        host.build_prepared_status_envelope(
+            prepared,
+            inputs,
+            plan,
+            **_transport_kwargs(plan),
+            revision=1,
+            published_at_unix=NOW,
+        )
+
+
+def test_prepare_status_failure_rolls_back_state_and_new_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    monkeypatch.setattr(
+        host,
+        "_atomic_status_locked",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("status publish")),
+    )
+    with pytest.raises(RuntimeError, match="status publish"):
+        host.prepare(
+            paths,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+            identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+            protector=lambda *_args: None,
+            preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
+        )
+    assert not host._runtime_destination(plan, paths).exists()
+    assert not paths.prepared_record.exists()
+    assert not paths.status_envelope.exists()
+    assert not list(paths.prepared_record.parent.glob(".*.tmp"))
+
+
+def test_atomic_prepared_removes_new_link_after_validation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _paths, plan, _ = _release_and_plan(tmp_path)
+    action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
+    intended = _prepared_record(
+        plan,
+        action,
+        host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+        host.PreflightResult(0, b"edge-acquire help\n", b""),
+    )
+    path = tmp_path / "state" / "prepared.json"
+    monkeypatch.setattr(
+        host,
+        "_accept_existing_prepared",
+        lambda *_args: (_ for _ in ()).throw(host.Q38LinuxHostRuntimeError("post-link")),
+    )
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="post-link"):
+        host._atomic_prepared(path, intended, plan)
+    assert not path.exists()
+    assert not list(path.parent.glob(".prepared.*.tmp"))
+
+
+def test_wrong_generation_cleanup_preserves_runtime_and_state(tmp_path: Path) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    destination = host._runtime_destination(plan, paths)
+    destination.mkdir(parents=True)
+    (destination / "owned").write_bytes(b"x")
+    action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
+    prepared = _prepared_record(
+        plan,
+        action,
+        host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+        host.PreflightResult(0, b"edge-acquire help\n", b""),
+    )
+    paths.prepared_record.parent.mkdir(parents=True)
+    _write_json(paths.prepared_record, prepared)
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="generation"):
+        host.cleanup(
+            paths,
+            expected_resource_name=str(prepared["resource_name"]),
+            expected_generation_digest="sha256:" + "0" * 64,
+            now_unix=NOW,
+        )
+    assert destination.exists()
+    assert paths.prepared_record.exists()
+
+
+def test_atomic_status_removes_new_link_after_validation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    action = route.action_record({"revision": 3, "next_action": "start_route"}, plan)
+    prepared = _prepared_record(
+        plan,
+        action,
+        host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+        host.PreflightResult(0, b"edge-acquire help\n", b""),
+    )
+    inputs = host._load_transport_inputs(
+        plan,
+        paths,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+    )
+    envelope = host.build_prepared_status_envelope(
+        prepared,
+        inputs,
+        plan,
+        **_transport_kwargs(plan),
+        revision=1,
+        published_at_unix=NOW,
+    )
+    monkeypatch.setattr(
+        host,
+        "_accept_existing_status",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(host.Q38LinuxHostRuntimeError("post-link")),
+    )
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="post-link"):
+        host._atomic_status(
+            paths.status_envelope,
+            envelope,
+            plan,
+            inputs,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+        )
+    assert not paths.status_envelope.exists()
+    assert not list(paths.status_envelope.parent.glob(".status.*.tmp"))
+
+
+def test_prepare_then_cleanup_removes_bound_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    host.prepare(
+        paths,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+        identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+        protector=lambda *_args: None,
+        preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
+    )
+    host.cleanup(paths, **_transport_kwargs(plan), now_unix=plan.deadline_unix + 1)
+    assert not host._runtime_destination(plan, paths).exists()
+    assert not paths.prepared_record.exists()
+    assert not paths.status_envelope.exists()
+
+
+def test_cleanup_rejects_wrong_generation_without_prepared_state(tmp_path: Path) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    destination = host._runtime_destination(plan, paths)
+    destination.mkdir(parents=True)
+    (destination / "owned").write_bytes(b"x")
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="generation"):
+        host.cleanup(
+            paths,
+            expected_resource_name=str(_transport_context(plan)["resource_name"]),
+            expected_generation_digest="sha256:" + "0" * 64,
+            now_unix=NOW,
+        )
+    assert destination.exists()
+    assert not paths.prepared_record.exists()
+
+
+@pytest.mark.parametrize("publication_offset", [301, 599])
+def test_prepare_resamples_publication_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    publication_offset: int,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    samples = iter((NOW, NOW + publication_offset))
+    monkeypatch.setattr(host.time, "time", lambda: next(samples))
+    host.prepare(
+        paths,
+        **_transport_kwargs(plan),
+        identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+        protector=lambda *_args: None,
+        preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
+    )
+    envelope = transport.decode_status_envelope(paths.status_envelope.read_bytes())
+    assert envelope["published_at_unix"] == NOW + publication_offset
+    transport.validate_status_envelope(
+        envelope,
+        plan,
+        key=KEY,
+        now_unix=NOW + publication_offset,
+        **_transport_kwargs(plan),
+        expected_boot_id=BOOT_ID,
+    )
+
+
+def test_prepare_rejects_context_that_expires_during_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    samples = iter((NOW, NOW + 600))
+    monkeypatch.setattr(host.time, "time", lambda: next(samples))
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="stale"):
+        host.prepare(
+            paths,
+            **_transport_kwargs(plan),
+            identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+            protector=lambda *_args: None,
+            preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
+        )
+    assert not host._runtime_destination(plan, paths).exists()
+    assert not paths.prepared_record.exists()
+    assert not paths.status_envelope.exists()
+
+
+def test_prepare_and_cleanup_are_serialized_when_prepare_wins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    operation_lock = threading.Lock()
+    preflight_entered = threading.Event()
+    release_preflight = threading.Event()
+    cleanup_done = threading.Event()
+    errors: list[BaseException] = []
+
+    @contextmanager
+    def exclusive(_parent: Path):
+        with operation_lock:
+            yield
+
+    def preflight(*_args):
+        preflight_entered.set()
+        assert release_preflight.wait(5)
+        return host.PreflightResult(0, b"edge-acquire help\n", b"")
+
+    def run_prepare() -> None:
+        try:
+            host.prepare(
+                paths,
+                **_transport_kwargs(plan),
+                now_unix=NOW,
+                identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+                protector=lambda *_args: None,
+                preflight=preflight,
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    def run_cleanup() -> None:
+        try:
+            host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            cleanup_done.set()
+
+    monkeypatch.setattr(host, "_prepared_state_lock", exclusive)
+    prepare_thread = threading.Thread(target=run_prepare)
+    cleanup_thread = threading.Thread(target=run_cleanup)
+    prepare_thread.start()
+    assert preflight_entered.wait(5)
+    cleanup_thread.start()
+    assert not cleanup_done.wait(0.2)
+    release_preflight.set()
+    prepare_thread.join(5)
+    cleanup_thread.join(5)
+    assert not prepare_thread.is_alive()
+    assert not cleanup_thread.is_alive()
+    assert errors == []
+    assert not host._runtime_destination(plan, paths).exists()
+    assert not paths.prepared_record.exists()
+    assert not paths.status_envelope.exists()
+    marker = host._cleanup_marker_path(paths, _transport_context(plan))
+    assert marker.exists()
+
+
+def test_cleanup_marker_blocks_late_prepare_when_cleanup_wins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    operation_lock = threading.Lock()
+    cleanup_entered = threading.Event()
+    release_cleanup = threading.Event()
+    prepare_done = threading.Event()
+    cleanup_errors: list[BaseException] = []
+    prepare_errors: list[BaseException] = []
+    native_remove = host._remove_exact_tree
+    first_remove = True
+
+    @contextmanager
+    def exclusive(_parent: Path):
+        with operation_lock:
+            yield
+
+    def blocking_remove(path: Path, parent: Path) -> None:
+        nonlocal first_remove
+        if first_remove:
+            first_remove = False
+            cleanup_entered.set()
+            assert release_cleanup.wait(5)
+        native_remove(path, parent)
+
+    def run_cleanup() -> None:
+        try:
+            host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+
+    def run_prepare() -> None:
+        try:
+            host.prepare(
+                paths,
+                **_transport_kwargs(plan),
+                now_unix=NOW,
+                identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+                protector=lambda *_args: None,
+                preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
+            )
+        except BaseException as exc:
+            prepare_errors.append(exc)
+        finally:
+            prepare_done.set()
+
+    monkeypatch.setattr(host, "_prepared_state_lock", exclusive)
+    monkeypatch.setattr(host, "_remove_exact_tree", blocking_remove)
+    cleanup_thread = threading.Thread(target=run_cleanup)
+    prepare_thread = threading.Thread(target=run_prepare)
+    cleanup_thread.start()
+    assert cleanup_entered.wait(5)
+    prepare_thread.start()
+    assert not prepare_done.wait(0.2)
+    release_cleanup.set()
+    cleanup_thread.join(5)
+    prepare_thread.join(5)
+    assert not cleanup_thread.is_alive()
+    assert not prepare_thread.is_alive()
+    assert cleanup_errors == []
+    assert len(prepare_errors) == 1
+    assert isinstance(prepare_errors[0], host.Q38LinuxHostRuntimeError)
+    assert "cleanup is terminal" in str(prepare_errors[0])
+    assert not host._runtime_destination(plan, paths).exists()
+    assert not paths.prepared_record.exists()
+    assert not paths.status_envelope.exists()
+
+
+def test_cleanup_tombstone_survives_interrupted_deletion_and_blocks_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, plan, _ = _release_and_plan(tmp_path)
+    monkeypatch.setattr(host, "_verify_runtime_tree", _unprotected_verifier)
+    host.prepare(
+        paths,
+        **_transport_kwargs(plan),
+        now_unix=NOW,
+        identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+        protector=lambda *_args: None,
+        preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
+    )
+    native_remove = host._remove_exact_tree
+    interrupted = False
+
+    def interrupt_after_delete(path: Path, parent: Path) -> None:
+        nonlocal interrupted
+        native_remove(path, parent)
+        if not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt("cleanup interrupted")
+
+    monkeypatch.setattr(host, "_remove_exact_tree", interrupt_after_delete)
+    with pytest.raises(KeyboardInterrupt, match="cleanup interrupted"):
+        host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
+    marker = host._cleanup_marker_path(paths, _transport_context(plan))
+    assert marker.exists()
+    assert paths.prepared_record.exists()
+    assert paths.status_envelope.exists()
+    with pytest.raises(host.Q38LinuxHostRuntimeError, match="cleanup is terminal"):
+        host.prepare(
+            paths,
+            **_transport_kwargs(plan),
+            now_unix=NOW,
+            identity=host.QualificationIdentity(host.QUALIFICATION_USER, 1001, 1001),
+            protector=lambda *_args: None,
+            preflight=lambda *_args: host.PreflightResult(0, b"edge-acquire help\n", b""),
+        )
+
+    monkeypatch.setattr(host, "_remove_exact_tree", native_remove)
+    host.cleanup(paths, **_transport_kwargs(plan), now_unix=NOW)
+    assert marker.exists()
+    assert not host._runtime_destination(plan, paths).exists()
+    assert not paths.prepared_record.exists()
+    assert not paths.status_envelope.exists()

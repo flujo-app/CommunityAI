@@ -26,10 +26,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Callable, Iterator, Mapping, Sequence
 
-from scripts import gateq38_route_controller as controller
+from scripts import gateq38_linux_host_transport as transport, gateq38_route_controller as controller
 
 SCHEMA_VERSION = 1
 PREPARED_SCOPE = "qwen3.8-linux-host-runtime-prepared"
+CLEANUP_SCOPE = "qwen3.8-linux-host-runtime-cleanup-terminal"
 QUALIFICATION_USER = "communityai-q38"
 MAX_JSON_BYTES = controller.MAX_JSON_BYTES
 MAX_PROVENANCE_BYTES = controller.MAX_RELEASE_PROVENANCE_BYTES
@@ -45,6 +46,7 @@ RUNTIME_BASE = Path("/opt/communityai-q38")
 INPUT_BASE = Path("/var/lib/communityai-q38/input")
 WORK_BASE = Path("/var/lib/communityai-q38/work")
 STATE_BASE = Path("/var/lib/communityai-q38/state")
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 _HEX_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _PREPARED_FIELDS = {
     "schema_version",
@@ -54,6 +56,12 @@ _PREPARED_FIELDS = {
     "plan_digest",
     "execution_inventory_digest",
     "start_action_id",
+    "instance_context_digest",
+    "resource_name",
+    "resource_kind",
+    "worker_id",
+    "instance_generation_digest",
+    "boot_id",
     "runtime_package_digest",
     "release_archive_sha256",
     "node_executable_sha256",
@@ -87,6 +95,10 @@ class HostPaths:
     runtime_base: Path
     work_base: Path
     prepared_record: Path
+    instance_context: Path
+    transport_key: Path
+    status_envelope: Path
+    boot_id: Path
 
     @classmethod
     def production(cls) -> "HostPaths":
@@ -100,6 +112,10 @@ class HostPaths:
             runtime_base=RUNTIME_BASE,
             work_base=WORK_BASE,
             prepared_record=STATE_BASE / "prepared.json",
+            instance_context=INPUT_BASE / "instance-context.json",
+            transport_key=INPUT_BASE / "host-status.key",
+            status_envelope=STATE_BASE / "host-status.json",
+            boot_id=BOOT_ID_PATH,
         )
 
 
@@ -125,6 +141,13 @@ class PreflightResult:
     returncode: int
     stdout: bytes
     stderr: bytes
+
+
+@dataclass(frozen=True)
+class TransportInputs:
+    context: dict[str, Any]
+    key: bytes
+    boot_id: str
 
 
 def _reject_constant(_value: str) -> None:
@@ -287,6 +310,120 @@ def _regular_bytes(path: Path, *, maximum: int = MAX_JSON_BYTES) -> bytes:
         return payload
 
 
+def _assert_root_private_file(path: Path) -> None:
+    _assert_root_managed(path, directory=False)
+    if os.name != "posix":
+        return
+    metadata = path.lstat()
+    if (
+        _is_reparse(path, metadata)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise Q38LinuxHostRuntimeError(f"private host input is unsafe: {path.name}")
+
+
+def _read_boot_id(path: Path) -> str:
+    descriptor: int | None = None
+    try:
+        before = path.lstat()
+        if _is_reparse(path, before) or not stat.S_ISREG(before.st_mode):
+            raise Q38LinuxHostRuntimeError("Linux boot identity source is unsafe")
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or _file_identity(opened) != _file_identity(before):
+            raise Q38LinuxHostRuntimeError("Linux boot identity changed while opened")
+        payload = os.read(descriptor, 129)
+        after = os.fstat(descriptor)
+        final = path.lstat()
+        if (
+            _is_reparse(path, final)
+            or _file_identity(after) != _file_identity(opened)
+            or _file_identity(final) != _file_identity(opened)
+        ):
+            raise Q38LinuxHostRuntimeError("Linux boot identity changed while read")
+        try:
+            value = payload.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise Q38LinuxHostRuntimeError("Linux boot identity is invalid") from exc
+        if len(payload) != 37 or not value.endswith("\n") or transport._BOOT_ID_RE.fullmatch(value[:-1]) is None:
+            raise Q38LinuxHostRuntimeError("Linux boot identity is invalid")
+        return value[:-1]
+    except Q38LinuxHostRuntimeError:
+        raise
+    except OSError as exc:
+        raise Q38LinuxHostRuntimeError("Linux boot identity is unreadable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _load_authenticated_context(
+    plan: controller.RoutePlan,
+    paths: HostPaths,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int,
+    allow_expired_for_cleanup: bool,
+) -> tuple[dict[str, Any], bytes]:
+    if (
+        paths.instance_context.parent != paths.transport_key.parent
+        or paths.instance_context.parent != paths.plan.parent
+    ):
+        raise Q38LinuxHostRuntimeError("transport inputs are outside the protected input boundary")
+    _assert_root_managed(paths.instance_context.parent, directory=True)
+    _assert_root_private_file(paths.instance_context)
+    _assert_root_private_file(paths.transport_key)
+    try:
+        with _verified_file(paths.instance_context, maximum=transport.MAX_ENVELOPE_BYTES) as (
+            _context_stream,
+            context_payload,
+        ), _verified_file(paths.transport_key, expected_size=transport.KEY_BYTES) as (key_stream, _key_payload):
+            if context_payload is None:
+                raise AssertionError("instance context payload was not read")
+            key = key_stream.read(transport.KEY_BYTES + 1)
+            if len(key) != transport.KEY_BYTES:
+                raise Q38LinuxHostRuntimeError("transport key is invalid")
+            context = transport.decode_instance_context(context_payload)
+            validated = transport.validate_instance_context(
+                context,
+                plan,
+                key=key,
+                now_unix=now_unix,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                _allow_expired_for_cleanup=allow_expired_for_cleanup,
+            )
+    except transport.Q38LinuxHostTransportError as exc:
+        raise Q38LinuxHostRuntimeError(str(exc)) from exc
+    return validated, key
+
+
+def _load_transport_inputs(
+    plan: controller.RoutePlan,
+    paths: HostPaths,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int,
+) -> TransportInputs:
+    context, key = _load_authenticated_context(
+        plan,
+        paths,
+        expected_resource_name=expected_resource_name,
+        expected_generation_digest=expected_generation_digest,
+        now_unix=now_unix,
+        allow_expired_for_cleanup=False,
+    )
+    return TransportInputs(context=context, key=key, boot_id=_read_boot_id(paths.boot_id))
+
+
 def _safe_member_path(raw: Any, *, allow_root: bool = False) -> str:
     if not isinstance(raw, str) or not raw or "\\" in raw or any(ord(character) < 32 for character in raw):
         raise Q38LinuxHostRuntimeError("package path is unsafe")
@@ -411,6 +548,7 @@ def _assert_source_bound(plan: controller.RoutePlan, source_root: Path) -> None:
     bindings = {item["relative_path"]: item for item in plan.source_bindings}
     imported = {
         controller.LINUX_HOST_RUNTIME_SOURCE_PATH: Path(__file__).resolve(),
+        controller.LINUX_HOST_TRANSPORT_SOURCE_PATH: Path(transport.__file__).resolve(),
         "scripts/gateq38_route_controller.py": Path(controller.__file__).resolve(),
     }
     _assert_root_managed(root, directory=True)
@@ -1049,6 +1187,8 @@ def _prepared_record(
     action: Mapping[str, Any],
     identity: QualificationIdentity,
     result: PreflightResult,
+    context: Mapping[str, Any],
+    boot_id: str,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -1058,6 +1198,12 @@ def _prepared_record(
         "plan_digest": plan.plan_digest,
         "execution_inventory_digest": plan.execution_inventory_digest,
         "start_action_id": action["action_id"],
+        "instance_context_digest": context["context_digest"],
+        "resource_name": context["resource_name"],
+        "resource_kind": context["resource_kind"],
+        "worker_id": context["worker_id"],
+        "instance_generation_digest": context["instance_generation_digest"],
+        "boot_id": boot_id,
         "runtime_package_digest": plan.runtime_package["runtime_package_digest"],
         "release_archive_sha256": plan.runtime_package["release_archive_sha256"],
         "node_executable_sha256": plan.runtime_package["node_executable_sha256"],
@@ -1084,9 +1230,16 @@ def _prepared_digest(record: Mapping[str, Any]) -> str:
     return _sha256(_canonical_bytes(unsigned))
 
 
-def validate_prepared_record(value: Any, plan: controller.RoutePlan) -> dict[str, Any]:
+def validate_prepared_record(
+    value: Any,
+    plan: controller.RoutePlan,
+    *,
+    instance_context: Mapping[str, Any] | None = None,
+    boot_id: str | None = None,
+) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != _PREPARED_FIELDS:
         raise Q38LinuxHostRuntimeError("prepared record schema is invalid")
+    resource = plan.resource_by_name.get(value.get("resource_name"))
     if (
         type(value["schema_version"]) is not int
         or value["schema_version"] != SCHEMA_VERSION
@@ -1096,6 +1249,12 @@ def validate_prepared_record(value: Any, plan: controller.RoutePlan) -> dict[str
         or value["plan_digest"] != plan.plan_digest
         or value["execution_inventory_digest"] != plan.execution_inventory_digest
         or value["start_action_id"] != controller._action_id(plan, "start_route")
+        or resource is None
+        or not resource.kind.endswith("instance")
+        or value["resource_kind"] != resource.kind
+        or value["worker_id"] != resource.worker_id
+        or not isinstance(value["boot_id"], str)
+        or transport._BOOT_ID_RE.fullmatch(value["boot_id"]) is None
         or value["runtime_package_digest"] != plan.runtime_package["runtime_package_digest"]
         or value["release_archive_sha256"] != plan.runtime_package["release_archive_sha256"]
         or value["node_executable_sha256"] != plan.runtime_package["node_executable_sha256"]
@@ -1116,14 +1275,87 @@ def validate_prepared_record(value: Any, plan: controller.RoutePlan) -> dict[str
     ):
         raise Q38LinuxHostRuntimeError("prepared record identity is invalid")
     for field in (
+        "instance_context_digest",
+        "instance_generation_digest",
         "preflight_stdout_sha256",
         "preflight_stderr_sha256",
         "prepared_record_digest",
     ):
         _digest_field(value[field], field)
+    if instance_context is not None:
+        expected_context = {
+            "instance_context_digest": instance_context.get("context_digest"),
+            "resource_name": instance_context.get("resource_name"),
+            "resource_kind": instance_context.get("resource_kind"),
+            "worker_id": instance_context.get("worker_id"),
+            "instance_generation_digest": instance_context.get("instance_generation_digest"),
+        }
+        if any(value[field] != expected for field, expected in expected_context.items()):
+            raise Q38LinuxHostRuntimeError("prepared record instance binding changed")
+    if boot_id is not None and value["boot_id"] != boot_id:
+        raise Q38LinuxHostRuntimeError("prepared record boot identity changed")
     if value["prepared_record_digest"] != _prepared_digest(value):
         raise Q38LinuxHostRuntimeError("prepared record digest changed")
     return dict(value)
+
+
+def _load_prepared_record(
+    path: Path,
+    plan: controller.RoutePlan,
+    *,
+    instance_context: Mapping[str, Any],
+    boot_id: str,
+) -> dict[str, Any]:
+    _assert_root_private_file(path)
+    value = _strict_json(_regular_bytes(path))
+    return validate_prepared_record(
+        value,
+        plan,
+        instance_context=instance_context,
+        boot_id=boot_id,
+    )
+
+
+def build_prepared_status_envelope(
+    prepared_record: Mapping[str, Any],
+    inputs: TransportInputs,
+    plan: controller.RoutePlan,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    revision: int,
+    published_at_unix: int,
+) -> dict[str, Any]:
+    try:
+        context = transport.validate_instance_context(
+            inputs.context,
+            plan,
+            key=inputs.key,
+            now_unix=published_at_unix,
+            expected_resource_name=expected_resource_name,
+            expected_generation_digest=expected_generation_digest,
+        )
+        prepared = validate_prepared_record(
+            dict(prepared_record),
+            plan,
+            instance_context=context,
+            boot_id=inputs.boot_id,
+        )
+        envelope = transport.build_status_envelope(
+            context,
+            transport.initial_status_payload(context, plan),
+            plan,
+            key=inputs.key,
+            boot_id=inputs.boot_id,
+            revision=revision,
+            published_at_unix=published_at_unix,
+            prepared_record_digest=prepared["prepared_record_digest"],
+        )
+    except transport.Q38LinuxHostTransportError as exc:
+        raise Q38LinuxHostRuntimeError(str(exc)) from exc
+    if envelope["prepared_record_digest"] != prepared["prepared_record_digest"]:
+        raise Q38LinuxHostRuntimeError("host status does not bind the protected prepared record")
+    return envelope
 
 
 @contextmanager
@@ -1220,44 +1452,381 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _atomic_prepared_locked(
+    path: Path,
+    value: Mapping[str, Any],
+    plan: controller.RoutePlan,
+) -> bool:
+    payload = _canonical_bytes(value)
+    _remove_stale_prepared_temporaries(path.parent)
+    if path.exists() or path.is_symlink():
+        _accept_existing_prepared(path, value, plan)
+        return False
+    descriptor, raw = tempfile.mkstemp(prefix=".prepared.", suffix=".tmp", dir=path.parent)
+    temporary = Path(raw)
+    linked = False
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chown(temporary, 0, 0)
+        os.chmod(temporary, 0o600)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            _accept_existing_prepared(path, value, plan)
+            return False
+        linked = True
+        _accept_existing_prepared(path, value, plan)
+        temporary.unlink()
+        linked = False
+        return True
+    except Q38LinuxHostRuntimeError:
+        raise
+    except OSError as exc:
+        raise Q38LinuxHostRuntimeError("prepared record could not be committed") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+        if linked:
+            _remove_exact_published_file(path, payload, "prepared record")
+
+
 def _atomic_prepared(
     path: Path,
     value: Mapping[str, Any],
     plan: controller.RoutePlan,
 ) -> None:
-    payload = _canonical_bytes(value)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     _assert_root_managed(path.parent, directory=True)
     with _prepared_state_lock(path.parent):
-        _remove_stale_prepared_temporaries(path.parent)
-        if path.exists() or path.is_symlink():
-            _accept_existing_prepared(path, value, plan)
-            _fsync_directory(path.parent)
-            return
-        descriptor, raw = tempfile.mkstemp(prefix=".prepared.", suffix=".tmp", dir=path.parent)
-        temporary = Path(raw)
+        _atomic_prepared_locked(path, value, plan)
+        _fsync_directory(path.parent)
+
+
+def _remove_stale_status_temporaries(parent: Path) -> None:
+    for candidate in parent.iterdir():
+        if not candidate.name.startswith(".status.") or not candidate.name.endswith(".tmp"):
+            continue
+        metadata = candidate.lstat()
+        if (
+            candidate.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or os.name == "posix"
+            and (metadata.st_uid != 0 or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o600)
+        ):
+            raise Q38LinuxHostRuntimeError("stale status temporary is unsafe")
+        candidate.unlink()
+    if any(candidate.name.startswith(".status.") and candidate.name.endswith(".tmp") for candidate in parent.iterdir()):
+        raise Q38LinuxHostRuntimeError("stale status cleanup is incomplete")
+
+
+def _accept_existing_status(
+    path: Path,
+    intended: Mapping[str, Any],
+    plan: controller.RoutePlan,
+    inputs: TransportInputs,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int,
+) -> dict[str, Any]:
+    _assert_root_private_file(path)
+    try:
+        existing = transport.decode_status_envelope(_regular_bytes(path, maximum=transport.MAX_ENVELOPE_BYTES))
+        validated = transport.validate_status_envelope(
+            existing,
+            plan,
+            key=inputs.key,
+            now_unix=now_unix,
+            expected_resource_name=expected_resource_name,
+            expected_generation_digest=expected_generation_digest,
+            expected_boot_id=inputs.boot_id,
+        )
+    except transport.Q38LinuxHostTransportError as exc:
+        raise Q38LinuxHostRuntimeError(str(exc)) from exc
+    stable_fields = (
+        "context",
+        "boot_id",
+        "revision",
+        "prepared_record_digest",
+        "payload",
+        "payload_digest",
+    )
+    if any(not _same_json_value(validated[field], intended[field]) for field in stable_fields):
+        raise Q38LinuxHostRuntimeError("host status already binds another result")
+    return validated
+
+
+def _atomic_status_locked(
+    path: Path,
+    value: Mapping[str, Any],
+    plan: controller.RoutePlan,
+    inputs: TransportInputs,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int,
+) -> tuple[dict[str, Any], bool]:
+    payload = transport.encode_status_envelope(value)
+    _remove_stale_status_temporaries(path.parent)
+    if path.exists() or path.is_symlink():
+        return (
+            _accept_existing_status(
+                path,
+                value,
+                plan,
+                inputs,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                now_unix=now_unix,
+            ),
+            False,
+        )
+    descriptor, raw = tempfile.mkstemp(prefix=".status.", suffix=".tmp", dir=path.parent)
+    temporary = Path(raw)
+    linked = False
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chown(temporary, 0, 0)
+        os.chmod(temporary, 0o600)
         try:
-            with os.fdopen(descriptor, "wb") as output:
-                output.write(payload)
-                output.flush()
-                os.fsync(output.fileno())
-            os.chown(temporary, 0, 0)
-            os.chmod(temporary, 0o600)
-            try:
-                os.link(temporary, path)
-            except FileExistsError:
-                _accept_existing_prepared(path, value, plan)
-                _fsync_directory(path.parent)
-                return
-            _accept_existing_prepared(path, value, plan)
-            temporary.unlink()
-            _fsync_directory(path.parent)
-        except Q38LinuxHostRuntimeError:
-            raise
-        except OSError as exc:
-            raise Q38LinuxHostRuntimeError("prepared record could not be committed") from exc
-        finally:
-            temporary.unlink(missing_ok=True)
+            os.link(temporary, path)
+        except FileExistsError:
+            return (
+                _accept_existing_status(
+                    path,
+                    value,
+                    plan,
+                    inputs,
+                    expected_resource_name=expected_resource_name,
+                    expected_generation_digest=expected_generation_digest,
+                    now_unix=now_unix,
+                ),
+                False,
+            )
+        linked = True
+        result = _accept_existing_status(
+            path,
+            value,
+            plan,
+            inputs,
+            expected_resource_name=expected_resource_name,
+            expected_generation_digest=expected_generation_digest,
+            now_unix=now_unix,
+        )
+        temporary.unlink()
+        linked = False
+        return result, True
+    except Q38LinuxHostRuntimeError:
+        raise
+    except OSError as exc:
+        raise Q38LinuxHostRuntimeError("host status could not be committed") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+        if linked:
+            _remove_exact_published_file(path, payload, "host status")
+
+
+def _atomic_status(
+    path: Path,
+    value: Mapping[str, Any],
+    plan: controller.RoutePlan,
+    inputs: TransportInputs,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int,
+) -> dict[str, Any]:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _assert_root_managed(path.parent, directory=True)
+    with _prepared_state_lock(path.parent):
+        result, _created = _atomic_status_locked(
+            path,
+            value,
+            plan,
+            inputs,
+            expected_resource_name=expected_resource_name,
+            expected_generation_digest=expected_generation_digest,
+            now_unix=now_unix,
+        )
+        _fsync_directory(path.parent)
+        return result
+
+
+def _remove_exact_published_file(path: Path, expected: bytes, label: str) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    _assert_root_private_file(path)
+    if _regular_bytes(path, maximum=max(len(expected), 1)) != expected:
+        raise Q38LinuxHostRuntimeError(f"{label} rollback target changed")
+    path.unlink()
+
+
+def _publish_prepared_status_locked(
+    paths: HostPaths,
+    record: Mapping[str, Any],
+    plan: controller.RoutePlan,
+    inputs: TransportInputs,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+    now_unix: int,
+) -> dict[str, Any]:
+    parent = paths.prepared_record.parent
+    prepared_payload = _canonical_bytes(record)
+    prepared_created = False
+    status_created = False
+    status_payload: bytes | None = None
+    try:
+        prepared_created = _atomic_prepared_locked(paths.prepared_record, record, plan)
+        persisted = _load_prepared_record(
+            paths.prepared_record,
+            plan,
+            instance_context=inputs.context,
+            boot_id=inputs.boot_id,
+        )
+        envelope = build_prepared_status_envelope(
+            persisted,
+            inputs,
+            plan,
+            expected_resource_name=expected_resource_name,
+            expected_generation_digest=expected_generation_digest,
+            revision=1,
+            published_at_unix=now_unix,
+        )
+        status_payload = transport.encode_status_envelope(envelope)
+        _status, status_created = _atomic_status_locked(
+            paths.status_envelope,
+            envelope,
+            plan,
+            inputs,
+            expected_resource_name=expected_resource_name,
+            expected_generation_digest=expected_generation_digest,
+            now_unix=now_unix,
+        )
+        _fsync_directory(parent)
+        return persisted
+    except BaseException:
+        if status_created and status_payload is not None:
+            _remove_exact_published_file(paths.status_envelope, status_payload, "host status")
+        if prepared_created:
+            _remove_exact_published_file(paths.prepared_record, prepared_payload, "prepared record")
+        _remove_stale_status_temporaries(parent)
+        _remove_stale_prepared_temporaries(parent)
+        _fsync_directory(parent)
+        raise
+
+
+def _state_parent(paths: HostPaths) -> Path:
+    if paths.status_envelope.parent != paths.prepared_record.parent:
+        raise Q38LinuxHostRuntimeError("host status is outside the protected state boundary")
+    parent = paths.prepared_record.parent
+    created = False
+    try:
+        parent.mkdir(mode=0o700, parents=True, exist_ok=False)
+        created = True
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise Q38LinuxHostRuntimeError("protected host state is unavailable") from exc
+    if created:
+        os.chown(parent, 0, 0)
+        os.chmod(parent, 0o700)
+    _assert_root_managed(parent, directory=True)
+    return parent
+
+
+def _cleanup_marker_value(
+    plan: controller.RoutePlan,
+    context: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "scope": CLEANUP_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "cleanup_action_id": controller._action_id(plan, "cleanup_route"),
+        "instance_context_digest": context["context_digest"],
+        "resource_name": context["resource_name"],
+        "resource_kind": context["resource_kind"],
+        "worker_id": context["worker_id"],
+        "instance_generation_digest": context["instance_generation_digest"],
+        "runtime_key": _runtime_key(plan),
+    }
+
+
+def _cleanup_marker_path(paths: HostPaths, context: Mapping[str, Any]) -> Path:
+    digest = str(context["instance_generation_digest"])
+    if controller._DIGEST_RE.fullmatch(digest) is None:
+        raise Q38LinuxHostRuntimeError("cleanup generation digest is invalid")
+    return paths.prepared_record.parent / f"cleaned-{digest.removeprefix('sha256:')}.json"
+
+
+def _remove_stale_cleanup_temporaries(parent: Path) -> None:
+    for candidate in parent.iterdir():
+        if not candidate.name.startswith(".cleanup.") or not candidate.name.endswith(".tmp"):
+            continue
+        _assert_root_private_file(candidate)
+        candidate.unlink()
+    if any(
+        candidate.name.startswith(".cleanup.") and candidate.name.endswith(".tmp") for candidate in parent.iterdir()
+    ):
+        raise Q38LinuxHostRuntimeError("stale cleanup marker cleanup is incomplete")
+
+
+def _accept_existing_cleanup_marker(path: Path, value: Mapping[str, Any]) -> None:
+    _assert_root_private_file(path)
+    if not _same_json_value(_strict_json(_regular_bytes(path)), dict(value)):
+        raise Q38LinuxHostRuntimeError("cleanup marker binds another host generation")
+
+
+def _atomic_cleanup_marker_locked(path: Path, value: Mapping[str, Any]) -> None:
+    payload = _canonical_bytes(value)
+    _remove_stale_cleanup_temporaries(path.parent)
+    if path.exists() or path.is_symlink():
+        _accept_existing_cleanup_marker(path, value)
+        return
+    descriptor, raw = tempfile.mkstemp(prefix=".cleanup.", suffix=".tmp", dir=path.parent)
+    temporary = Path(raw)
+    linked = False
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chown(temporary, 0, 0)
+        os.chmod(temporary, 0o600)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            _accept_existing_cleanup_marker(path, value)
+            return
+        linked = True
+        _accept_existing_cleanup_marker(path, value)
+        temporary.unlink()
+        linked = False
+    except Q38LinuxHostRuntimeError:
+        raise
+    except OSError as exc:
+        raise Q38LinuxHostRuntimeError("cleanup marker could not be committed") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+        if linked:
+            _remove_exact_published_file(path, payload, "cleanup marker")
+
+
+def _reject_cleaned_generation_locked(path: Path, value: Mapping[str, Any]) -> None:
+    _remove_stale_cleanup_temporaries(path.parent)
+    if not path.exists() and not path.is_symlink():
+        return
+    _accept_existing_cleanup_marker(path, value)
+    raise Q38LinuxHostRuntimeError("host generation cleanup is terminal")
 
 
 def _remove_exact_tree(path: Path, parent: Path) -> None:
@@ -1276,6 +1845,8 @@ def _remove_exact_tree(path: Path, parent: Path) -> None:
 def prepare(
     paths: HostPaths,
     *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
     now_unix: int | None = None,
     identity: QualificationIdentity | None = None,
     protector: Callable[[Path, Sequence[Artifact]], None] = _protect_runtime,
@@ -1284,97 +1855,191 @@ def prepare(
         PreflightResult,
     ] = _run_packaged_preflight,
 ) -> dict[str, Any]:
+    entry_time = int(time.time()) if now_unix is None else now_unix
     plan, action = _load_plan_and_action(
         paths.plan,
         paths.start_action,
         paths.source_root,
         expected_action="start_route",
-        now_unix=int(time.time()) if now_unix is None else now_unix,
+        now_unix=entry_time,
+    )
+    inputs = _load_transport_inputs(
+        plan,
+        paths,
+        expected_resource_name=expected_resource_name,
+        expected_generation_digest=expected_generation_digest,
+        now_unix=entry_time,
     )
     artifacts, node = _load_release_inventory(plan, paths)
-    paths.runtime_base.mkdir(mode=0o755, parents=True, exist_ok=True)
-    paths.work_base.mkdir(mode=0o711, parents=True, exist_ok=True)
-    _assert_root_managed(paths.runtime_base, directory=True)
-    _assert_root_managed(paths.work_base, directory=True)
-    os.chown(paths.runtime_base, 0, 0)
-    os.chmod(paths.runtime_base, 0o755)
-    _assert_qualification_traversal(paths.runtime_base)
-    os.chown(paths.work_base, 0, 0)
-    os.chmod(paths.work_base, 0o711)
-    destination = _runtime_destination(plan, paths)
-    created = False
-    if destination.exists() or destination.is_symlink():
-        if destination.is_symlink() or not destination.is_dir():
-            raise Q38LinuxHostRuntimeError("runtime destination is foreign")
-        _verify_runtime_tree(destination, node, protected=True)
-    else:
-        temporary = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=paths.runtime_base))
-        shutil.rmtree(temporary)
+    state_parent = _state_parent(paths)
+    cleanup_marker = _cleanup_marker_path(paths, inputs.context)
+    cleanup_value = _cleanup_marker_value(plan, inputs.context)
+    with _prepared_state_lock(state_parent):
+        _reject_cleaned_generation_locked(cleanup_marker, cleanup_value)
+        paths.runtime_base.mkdir(mode=0o755, parents=True, exist_ok=True)
+        paths.work_base.mkdir(mode=0o711, parents=True, exist_ok=True)
+        _assert_root_managed(paths.runtime_base, directory=True)
+        _assert_root_managed(paths.work_base, directory=True)
+        os.chown(paths.runtime_base, 0, 0)
+        os.chmod(paths.runtime_base, 0o755)
+        _assert_qualification_traversal(paths.runtime_base)
+        os.chown(paths.work_base, 0, 0)
+        os.chmod(paths.work_base, 0o711)
+        destination = _runtime_destination(plan, paths)
+        created = False
+        if destination.exists() or destination.is_symlink():
+            if destination.is_symlink() or not destination.is_dir():
+                raise Q38LinuxHostRuntimeError("runtime destination is foreign")
+            _verify_runtime_tree(destination, node, protected=True)
+        else:
+            temporary = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=paths.runtime_base))
+            shutil.rmtree(temporary)
+            try:
+                _extract_verified_archive(
+                    paths.release_root / plan.runtime_package["release_archive_name"],
+                    plan.runtime_package,
+                    artifacts,
+                    node,
+                    temporary,
+                )
+                protector(temporary, node)
+                _verify_runtime_tree(temporary, node, protected=True)
+                os.replace(temporary, destination)
+                created = True
+            finally:
+                if temporary.exists() or temporary.is_symlink():
+                    _remove_tree_strict(temporary, "runtime staging cleanup is incomplete")
         try:
-            _extract_verified_archive(
-                paths.release_root / plan.runtime_package["release_archive_name"],
-                plan.runtime_package,
-                artifacts,
-                node,
-                temporary,
+            resolved_identity = _qualification_identity() if identity is None else identity
+            result = preflight(plan, destination, node, paths, resolved_identity)
+            publication_time = int(time.time()) if now_unix is None else now_unix
+            refreshed = _load_transport_inputs(
+                plan,
+                paths,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                now_unix=publication_time,
             )
-            protector(temporary, node)
-            _verify_runtime_tree(temporary, node, protected=True)
-            os.replace(temporary, destination)
-            created = True
-        finally:
-            if temporary.exists() or temporary.is_symlink():
-                _remove_tree_strict(temporary, "runtime staging cleanup is incomplete")
-    try:
-        resolved_identity = _qualification_identity() if identity is None else identity
-        result = preflight(plan, destination, node, paths, resolved_identity)
-        record = _prepared_record(plan, action, resolved_identity, result)
-        validate_prepared_record(record, plan)
-        _atomic_prepared(paths.prepared_record, record, plan)
-        return record
-    except BaseException:
-        if created:
-            _remove_exact_tree(destination, paths.runtime_base)
-        raise
+            if (
+                not _same_json_value(refreshed.context, inputs.context)
+                or refreshed.key != inputs.key
+                or refreshed.boot_id != inputs.boot_id
+            ):
+                raise Q38LinuxHostRuntimeError("transport inputs changed during host preparation")
+            record = _prepared_record(
+                plan,
+                action,
+                resolved_identity,
+                result,
+                refreshed.context,
+                refreshed.boot_id,
+            )
+            validate_prepared_record(
+                record,
+                plan,
+                instance_context=refreshed.context,
+                boot_id=refreshed.boot_id,
+            )
+            return _publish_prepared_status_locked(
+                paths,
+                record,
+                plan,
+                refreshed,
+                expected_resource_name=expected_resource_name,
+                expected_generation_digest=expected_generation_digest,
+                now_unix=publication_time,
+            )
+        except BaseException:
+            if created:
+                _remove_exact_tree(destination, paths.runtime_base)
+            raise
 
 
 def cleanup(
     paths: HostPaths,
     *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
     now_unix: int | None = None,
 ) -> None:
+    verification_time = int(time.time()) if now_unix is None else now_unix
     plan, _action = _load_plan_and_action(
         paths.plan,
         paths.cleanup_action,
         paths.source_root,
         expected_action="cleanup_route",
-        now_unix=int(time.time()) if now_unix is None else now_unix,
+        now_unix=verification_time,
+    )
+    context, _key = _load_authenticated_context(
+        plan,
+        paths,
+        expected_resource_name=expected_resource_name,
+        expected_generation_digest=expected_generation_digest,
+        now_unix=verification_time,
+        allow_expired_for_cleanup=True,
     )
     destination = _runtime_destination(plan, paths)
-    _remove_exact_tree(destination, paths.runtime_base)
     work = paths.work_base / _runtime_key(plan)
-    _remove_exact_tree(work, paths.work_base)
-    state_parent = paths.prepared_record.parent
-    if state_parent.exists() or state_parent.is_symlink():
-        _assert_root_managed(state_parent, directory=True)
-        with _prepared_state_lock(state_parent):
-            _remove_stale_prepared_temporaries(state_parent)
-            if paths.prepared_record.exists() or paths.prepared_record.is_symlink():
-                metadata = paths.prepared_record.lstat()
-                if paths.prepared_record.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-                    raise Q38LinuxHostRuntimeError("prepared cleanup target is unsafe")
-                _assert_root_managed(paths.prepared_record, directory=False)
-                validate_prepared_record(
-                    _strict_json(_regular_bytes(paths.prepared_record)),
-                    plan,
+    state_parent = _state_parent(paths)
+    cleanup_marker = _cleanup_marker_path(paths, context)
+    cleanup_value = _cleanup_marker_value(plan, context)
+    with _prepared_state_lock(state_parent):
+        _remove_stale_prepared_temporaries(state_parent)
+        _remove_stale_status_temporaries(state_parent)
+        _remove_stale_cleanup_temporaries(state_parent)
+        if cleanup_marker.exists() or cleanup_marker.is_symlink():
+            _accept_existing_cleanup_marker(cleanup_marker, cleanup_value)
+        prepared: dict[str, Any] | None = None
+        if paths.prepared_record.exists() or paths.prepared_record.is_symlink():
+            _assert_root_private_file(paths.prepared_record)
+            prepared = validate_prepared_record(
+                _strict_json(_regular_bytes(paths.prepared_record)),
+                plan,
+                instance_context=context,
+            )
+        if paths.status_envelope.exists() or paths.status_envelope.is_symlink():
+            if prepared is None:
+                raise Q38LinuxHostRuntimeError("host status has no protected prepared record")
+            _assert_root_private_file(paths.status_envelope)
+            try:
+                status = transport.decode_status_envelope(
+                    _regular_bytes(paths.status_envelope, maximum=transport.MAX_ENVELOPE_BYTES)
                 )
-                paths.prepared_record.unlink()
-            _fsync_directory(state_parent)
-    stale = (
-        list(state_parent.glob(".prepared.*.tmp")) if state_parent.exists() and not state_parent.is_symlink() else []
-    )
-    if destination.exists() or work.exists() or paths.prepared_record.exists() or stale:
+            except transport.Q38LinuxHostTransportError as exc:
+                raise Q38LinuxHostRuntimeError(str(exc)) from exc
+            status_context = status.get("context")
+            if (
+                not isinstance(status_context, dict)
+                or status_context.get("context_digest") != context["context_digest"]
+                or status_context.get("resource_name") != expected_resource_name
+                or status_context.get("instance_generation_digest") != expected_generation_digest
+                or status.get("boot_id") != prepared["boot_id"]
+                or status.get("prepared_record_digest") != prepared["prepared_record_digest"]
+            ):
+                raise Q38LinuxHostRuntimeError("host status cleanup generation changed")
+        _atomic_cleanup_marker_locked(cleanup_marker, cleanup_value)
+        _fsync_directory(state_parent)
+        _remove_exact_tree(destination, paths.runtime_base)
+        _remove_exact_tree(work, paths.work_base)
+        if paths.status_envelope.exists():
+            paths.status_envelope.unlink()
+        if prepared is not None:
+            paths.prepared_record.unlink()
+        _fsync_directory(state_parent)
+    stale = [
+        *state_parent.glob(".prepared.*.tmp"),
+        *state_parent.glob(".status.*.tmp"),
+        *state_parent.glob(".cleanup.*.tmp"),
+    ]
+    if (
+        destination.exists()
+        or work.exists()
+        or paths.prepared_record.exists()
+        or paths.status_envelope.exists()
+        or stale
+    ):
         raise Q38LinuxHostRuntimeError("host runtime cleanup is incomplete")
+    _accept_existing_cleanup_marker(cleanup_marker, cleanup_value)
 
 
 def _require_linux_root() -> None:
@@ -1385,6 +2050,8 @@ def _require_linux_root() -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Prepare or clean the protected Qwen3.8 Linux runtime")
     parser.add_argument("operation", choices=("prepare", "cleanup"))
+    parser.add_argument("--resource-name", required=True)
+    parser.add_argument("--instance-generation-digest", required=True)
     return parser
 
 
@@ -1393,12 +2060,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         _require_linux_root()
         paths = HostPaths.production()
+        arguments = {
+            "expected_resource_name": args.resource_name,
+            "expected_generation_digest": args.instance_generation_digest,
+        }
         if args.operation == "prepare":
-            record = prepare(paths)
+            record = prepare(paths, **arguments)
             print(json.dumps(record, allow_nan=False, sort_keys=True, separators=(",", ":")))
         else:
-            cleanup(paths)
-    except (Q38LinuxHostRuntimeError, controller.RouteControllerError) as exc:
+            cleanup(paths, **arguments)
+    except (
+        Q38LinuxHostRuntimeError,
+        controller.RouteControllerError,
+        transport.Q38LinuxHostTransportError,
+    ) as exc:
         raise SystemExit(f"Qwen3.8 Linux host runtime failed: {exc}") from exc
     return 0
 

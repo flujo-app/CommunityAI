@@ -429,3 +429,60 @@ def test_transport_key_is_exactly_32_bytes(tmp_path: Path, key: object) -> None:
 
     with pytest.raises(transport.Q38LinuxHostTransportError, match="key"):
         _context(plan, resource, key=key)
+
+
+def test_instance_context_transport_is_canonical_and_bounded(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    context = _context(plan, _worker_resource(plan))
+
+    encoded = transport.encode_instance_context(context)
+    assert transport.decode_instance_context(encoded) == context
+
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="canonical"):
+        transport.decode_instance_context(b" " + encoded)
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="framing"):
+        transport.decode_instance_context(encoded + b"\n")
+
+
+def test_initial_status_payload_matches_controller_absence_rules(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    worker = _worker_resource(plan)
+    bootstrap = _bootstrap_resource(plan)
+
+    worker_payload = transport.initial_status_payload(_context(plan, worker), plan)
+    assert worker_payload["state"] == "starting"
+    assert worker_payload["peer_id"] is None
+
+    bootstrap_payload = transport.initial_status_payload(_context(plan, bootstrap), plan)
+    assert bootstrap_payload == {field: ("absent" if field == "state" else None) for field in route._ROUTE_JOB_FIELDS}
+    envelope = transport.build_status_envelope(
+        _context(plan, bootstrap),
+        bootstrap_payload,
+        plan,
+        key=KEY,
+        boot_id=BOOT_ID,
+        revision=1,
+        published_at_unix=NOW,
+        prepared_record_digest=PREPARED_DIGEST,
+    )
+    assert _validate(envelope, plan, bootstrap)["payload"] == bootstrap_payload
+
+
+@pytest.mark.parametrize("state", ["starting", "failed"])
+def test_unfinished_worker_cannot_expose_peer(tmp_path: Path, state: str) -> None:
+    plan = _plan(tmp_path)
+    worker = _worker_resource(plan)
+    payload = _worker_payload(plan, worker, state)
+    payload["peer_id"] = "Qm" + "a" * 44
+
+    with pytest.raises(transport.Q38LinuxHostTransportError, match="unfinished worker"):
+        transport.build_status_envelope(
+            _context(plan, worker),
+            payload,
+            plan,
+            key=KEY,
+            boot_id=BOOT_ID,
+            revision=1,
+            published_at_unix=NOW,
+            prepared_record_digest=PREPARED_DIGEST,
+        )

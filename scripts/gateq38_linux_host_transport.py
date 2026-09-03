@@ -206,6 +206,7 @@ def validate_instance_context(
     now_unix: int,
     expected_resource_name: str | None = None,
     expected_generation_digest: str | None = None,
+    _allow_expired_for_cleanup: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != _CONTEXT_FIELDS:
         raise Q38LinuxHostTransportError("instance context schema is invalid")
@@ -240,7 +241,8 @@ def validate_instance_context(
         or expires - issued > MAX_CONTEXT_SECONDS
         or expires > plan.deadline_unix
         or issued > now + MAX_FUTURE_SKEW_SECONDS
-        or now >= expires
+        or not _allow_expired_for_cleanup
+        and now >= expires
     ):
         raise Q38LinuxHostTransportError("instance context is stale")
     try:
@@ -264,6 +266,31 @@ def validate_instance_context(
     if not hmac.compare_digest(supplied_hmac, expected_hmac):
         raise Q38LinuxHostTransportError("instance context authentication failed")
     return dict(value)
+
+
+def encode_instance_context(value: Mapping[str, Any]) -> bytes:
+    payload = _canonical(value) + b"\n"
+    if not 1 <= len(payload) <= MAX_ENVELOPE_BYTES:
+        raise Q38LinuxHostTransportError("instance context exceeded its size bound")
+    return payload
+
+
+def decode_instance_context(payload: bytes) -> dict[str, Any]:
+    if not isinstance(payload, bytes) or not 1 <= len(payload) <= MAX_ENVELOPE_BYTES:
+        raise Q38LinuxHostTransportError("instance context transport bytes are invalid")
+    if not payload.endswith(b"\n") or payload.count(b"\n") != 1:
+        raise Q38LinuxHostTransportError("instance context transport framing is invalid")
+    try:
+        value = json.loads(
+            payload[:-1].decode("ascii"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_constant,
+        )
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise Q38LinuxHostTransportError("instance context transport JSON is invalid") from exc
+    if not isinstance(value, dict) or payload != _canonical(value) + b"\n":
+        raise Q38LinuxHostTransportError("instance context transport is not canonical")
+    return value
 
 
 def _worker_payload(value: Any, plan: controller.RoutePlan, worker_id: str) -> dict[str, Any]:
@@ -292,8 +319,8 @@ def _worker_payload(value: Any, plan: controller.RoutePlan, worker_id: str) -> d
     if value["state"] == "ready":
         if not isinstance(peer_id, str) or controller._PEER_RE.fullmatch(peer_id) is None:
             raise Q38LinuxHostTransportError("ready worker status lacks an exact peer")
-    elif peer_id is not None and (not isinstance(peer_id, str) or controller._PEER_RE.fullmatch(peer_id) is None):
-        raise Q38LinuxHostTransportError("worker status peer is invalid")
+    elif peer_id is not None:
+        raise Q38LinuxHostTransportError("unfinished worker exposed a peer identity")
     return dict(value)
 
 
@@ -301,8 +328,12 @@ def _bootstrap_payload(value: Any, plan: controller.RoutePlan) -> dict[str, Any]
     if not isinstance(value, dict) or set(value) != controller._ROUTE_JOB_FIELDS:
         raise Q38LinuxHostTransportError("route-job status payload schema is invalid")
     state = value["state"]
-    if state not in {"running", "passed", "failed"}:
+    if state not in {"absent", "running", "passed", "failed"}:
         raise Q38LinuxHostTransportError("route-job status state is invalid")
+    if state == "absent":
+        if any(item is not None for field, item in value.items() if field != "state"):
+            raise Q38LinuxHostTransportError("absent route-job status exposed metadata")
+        return dict(value)
     expected = {
         "job_id": plan.route_job_id,
         "collect_action_id": controller._action_id(plan, "collect_route"),
@@ -322,6 +353,31 @@ def _bootstrap_payload(value: Any, plan: controller.RoutePlan) -> dict[str, Any]
     elif value["route_record"] is not None or value["evidence_digest"] is not None:
         raise Q38LinuxHostTransportError("non-passed route-job status exposed evidence")
     return dict(value)
+
+
+def initial_status_payload(context: Mapping[str, Any], plan: controller.RoutePlan) -> dict[str, Any]:
+    resource = _resource(plan, context.get("resource_name"))
+    if context.get("resource_kind") != resource.kind or context.get("worker_id") != resource.worker_id:
+        raise Q38LinuxHostTransportError("instance context resource binding is invalid")
+    if resource.kind == "bootstrap_instance":
+        return {field: ("absent" if field == "state" else None) for field in controller._ROUTE_JOB_FIELDS}
+    if resource.worker_id is None:
+        raise Q38LinuxHostTransportError("worker context lacks a worker identity")
+    worker = plan.worker_by_id[resource.worker_id]
+    return {
+        "state": "starting",
+        "machine_id": worker.machine_id,
+        "peer_id": None,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "worker_plan_digest": plan.worker_plan_digest,
+        "start_action_id": controller._action_id(plan, "start_route"),
+        "span": worker.span,
+        "manifest_digest": plan.manifest_digest,
+        "artifact_bytes": worker.artifact_bytes,
+        "artifact_set_digest": worker.artifact_set_digest,
+        "cache_root": worker.cache_root,
+    }
 
 
 def _payload(value: Any, context: Mapping[str, Any], plan: controller.RoutePlan) -> dict[str, Any]:
