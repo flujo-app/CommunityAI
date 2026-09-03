@@ -193,6 +193,49 @@ def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
         assert hashlib.sha256(payload).hexdigest() == digest
 
 
+def test_route_preparation_waits_five_minutes_and_for_ubuntu_installer(
+    tmp_path, monkeypatch
+):
+    item = provider(
+        tmp_path,
+        LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
+    )
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "catalog-v1.tar").write_bytes(b"catalog")
+    waits = []
+    ssh_commands = []
+    monkeypatch.setattr(
+        item,
+        "_describe_instance",
+        lambda _name: {
+            "networkInterfaces": [{"accessConfigs": [{"natIP": "198.51.100.1"}]}]
+        },
+    )
+    monkeypatch.setattr(item, "_build_route_bundle", lambda: bundle)
+    monkeypatch.setattr(
+        item,
+        "_wait_ssh",
+        lambda _name, command, **_kwargs: waits.append(command),
+    )
+    monkeypatch.setattr(item, "_scp", lambda *_args, **_kwargs: None)
+
+    def ssh(_name, command, **_kwargs):
+        ssh_commands.append(command)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(item, "_ssh", ssh)
+
+    result = item.prepare_route()
+
+    assert len(waits) == 1
+    assert "/proc/uptime" in waits[0]
+    assert "-ge 300" in waits[0]
+    assert "/var/lib/dpkg/lock-frontend" in waits[0]
+    assert any("gate13_route_setup.sh" in command for command in ssh_commands)
+    assert result["result"] == "passed"
+
+
 def test_client_readiness_cleans_the_route_relay_before_job_staging(tmp_path, monkeypatch):
     item = provider(
         tmp_path,

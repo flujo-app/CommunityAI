@@ -1082,8 +1082,13 @@ class GcpProvider:
         bundle = self._build_route_bundle()
         self._wait_ssh(
             self.route,
-            "test -f /etc/os-release",
-            action="Waiting for route SSH",
+            "test -f /etc/os-release && "
+            "test \"$(cut -d. -f1 /proc/uptime)\" -ge 300 && "
+            "(! command -v fuser >/dev/null || "
+            "(! sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && "
+            "! sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 && "
+            "! sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1))",
+            action="Waiting for the new route machine to finish starting",
             timeout_seconds=1_800,
         )
         files = [path for path in bundle.iterdir() if path.is_file()]
@@ -1098,14 +1103,25 @@ class GcpProvider:
             action="Staging the immutable route bundle",
             timeout=1_800,
         )
-        self._ssh(
+        setup = self._ssh(
             self.route,
             "install -d -m 0700 /tmp/gate13-route/catalog-v1 && "
             "tar -xf /tmp/gate13-route/catalog-v1.tar -C /tmp/gate13-route/catalog-v1 "
             "--strip-components=2 && sudo bash /tmp/gate13-route/gate13_route_setup.sh",
             action="Installing and starting the route services",
             timeout=7_200,
+            check=False,
         )
+        if setup.returncode != 0:
+            combined = "\n".join(part for part in (setup.stdout, setup.stderr) if part)
+            tail = "\n".join(combined.splitlines()[-30:])[-4_000:]
+            tail = re.sub(r"https?://\S+", "<redacted-url>", tail)
+            if tail:
+                self.progress("Route setup failed; bounded redacted tail:\n" + tail)
+            raise CommandError(
+                "Installing and starting the route services failed with exit code "
+                f"{setup.returncode}"
+            )
         fence = self.repository_root / "scripts" / "gate13_route_fence.py"
         self._scp(
             [fence],
