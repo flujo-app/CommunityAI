@@ -111,6 +111,16 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   native-platform skips in each complete matrix. Both are USD 0 checkpoints;
   key generation, vaulting, protected delivery, and native Linux probes remain
   open, and paid start/collection remain disabled.
+- Qwen3.8 controller secrets and protected host delivery are now generation-bound
+  end to end. The controller vaults one private key per exact instance generation
+  and epoch with crash-safe rotation, revocation tombstones, and idempotent cleanup.
+  A bounded authenticated bundle installs atomically as one root-private host file,
+  while fixed IAP SSH delivery streams it through stdin and accepts a receipt only
+  between stable provider inventories. Receipt authentication precedes freshness
+  policy, key material never enters argv, environment, logs, or ordinary state, and
+  paid start/collection remain blocked. The final USD 0 candidate passes 412 complete
+  Gate Q3.8 tests with five native-platform skips plus Black, isort, compilation, and
+  whitespace checks; native Linux and provider-read probes remain open.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
