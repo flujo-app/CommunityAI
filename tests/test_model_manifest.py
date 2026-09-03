@@ -12,8 +12,11 @@ from drift.model_manifest import (
     ModelManifest,
     create_manifest_from_snapshot,
     resolve_manifest_loading,
+    select_manifest_block_artifacts,
 )
+from drift.server import from_pretrained as from_pretrained_module
 from drift.server.handler import TransformerConnectionHandler
+from drift.server.server import _scoped_manifest_artifact_verifier
 
 
 def test_qwen3_first_rung_candidate_is_exactly_pinned():
@@ -106,6 +109,34 @@ def test_qwen3_8_27b_fp8_dequant_candidate_is_exactly_pinned():
     assert len(manifest.artifacts) == 73
     assert sum(artifact.size for artifact in manifest.artifacts) == 30_889_967_831
     assert sum(artifact.size for artifact in manifest.artifacts if artifact.role == "weight") == 30_866_866_928
+
+
+def test_qwen3_8_16_block_worker_plan_excludes_outside_mtp_and_other_layers():
+    candidate = Path(__file__).resolve().parents[1] / "manifests" / "candidates" / "qwen3.8-27b-fp8-dequant-eager.json"
+    manifest = ModelManifest.load(candidate)
+    weight_map = {f"model.language_model.layers.{index}.weight": f"layers-{index}.safetensors" for index in range(64)}
+    weight_map.update(
+        {
+            "model.visual.weight": "outside.safetensors",
+            "model.mtp.weight": "mtp.safetensors",
+        }
+    )
+
+    plan = select_manifest_block_artifacts(
+        manifest,
+        block_prefix="model.language_model.layers",
+        start_block=16,
+        end_block=32,
+        weight_map=weight_map,
+    )
+
+    assert plan.artifact_bytes == 6_095_829_389
+    assert plan.artifact_paths == (
+        "config.json",
+        *(f"layers-{index}.safetensors" for index in range(16, 32)),
+        "model.safetensors.index.json",
+    )
+    assert {"outside.safetensors", "mtp.safetensors", "tokenizer.json"}.isdisjoint(plan.artifact_paths)
 
 
 def test_gemma4_edge_standby_candidate_is_exactly_pinned():
@@ -211,6 +242,262 @@ def create_test_snapshot_manifest(root: Path) -> ModelManifest:
         attention_implementation="eager",
         dtype="float32",
     )
+
+
+def create_block_plan_snapshot(
+    root: Path, *, index_payload: bytes | None = None
+) -> tuple[ModelManifest, dict[str, bytes]]:
+    if index_payload is None:
+        index_payload = json.dumps(
+            {
+                "metadata": {"format": "pt"},
+                "weight_map": {
+                    "model.layers.0.attn.weight": "shared.safetensors",
+                    "model.layers.1.attn.weight": "shared.safetensors",
+                    "model.layers.2.attn.weight": "layer-2.safetensors",
+                    "model.embed_tokens.weight": "outside.safetensors",
+                    "model.mtp.weight": "mtp.safetensors",
+                },
+            },
+            sort_keys=True,
+        ).encode()
+    payloads = {
+        "config.json": b"{}",
+        "model.safetensors.index.json": index_payload,
+        "shared.safetensors": b"shared",
+        "layer-2.safetensors": b"layer two",
+        "outside.safetensors": b"outside",
+        "mtp.safetensors": b"mtp",
+        "tokenizer.json": b"tokenizer",
+    }
+    roles = {
+        "config.json": "config",
+        "model.safetensors.index.json": "weight_index",
+        "tokenizer.json": "tokenizer",
+    }
+    for path, payload in payloads.items():
+        (root / path).write_bytes(payload)
+    source = manifest_dict()
+    source["model"]["num_blocks"] = 3
+    source["artifacts"] = [
+        {
+            "role": roles.get(path, "weight"),
+            "path": path,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size": len(payload),
+        }
+        for path, payload in payloads.items()
+    ]
+    return ModelManifest.from_dict(source), payloads
+
+
+def test_block_artifact_plan_deduplicates_shared_shards_and_excludes_unassigned_files(tmp_path):
+    manifest, payloads = create_block_plan_snapshot(tmp_path)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        manifest.source.repository,
+        manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+
+    first = verifier.plan_block_artifacts(block_prefix="model.layers", start_block=0, end_block=2)
+    second = verifier.plan_block_artifacts(block_prefix="model.layers", start_block=1, end_block=3)
+
+    assert first.artifact_paths == (
+        "config.json",
+        "model.safetensors.index.json",
+        "shared.safetensors",
+    )
+    assert first.artifact_bytes == sum(len(payloads[path]) for path in first.artifact_paths)
+    assert len(first.artifact_set_digest) == 64
+    assert second.artifact_paths == (
+        "config.json",
+        "layer-2.safetensors",
+        "model.safetensors.index.json",
+        "shared.safetensors",
+    )
+    assert first.artifact_set_digest != second.artifact_set_digest
+    assert {"outside.safetensors", "mtp.safetensors", "tokenizer.json"}.isdisjoint(first.artifact_paths)
+
+
+def test_unsharded_block_plan_counts_the_single_checkpoint_once():
+    source = manifest_dict()
+    source["artifacts"][0]["path"] = "model.safetensors"
+    manifest = ModelManifest.from_dict(source)
+
+    plan = select_manifest_block_artifacts(
+        manifest,
+        block_prefix="model.layers",
+        start_block=1,
+        end_block=7,
+    )
+
+    assert plan.artifact_paths == ("config.json", "model.safetensors")
+    assert plan.artifact_bytes == 4
+    assert "tokenizer.json" not in plan.artifact_paths
+
+
+def test_manifested_server_builds_an_exact_worker_scope(monkeypatch, tmp_path):
+    manifest, _ = create_block_plan_snapshot(tmp_path)
+    accesses = []
+    original_ensure_path = ManifestArtifactVerifier.ensure_path
+
+    def audited_ensure_path(self, path, **kwargs):
+        accesses.append((path, self.allowed_paths))
+        assert self.allowed_paths is not None
+        assert path in self.allowed_paths
+        return original_ensure_path(self, path, **kwargs)
+
+    monkeypatch.setattr(ManifestArtifactVerifier, "ensure_path", audited_ensure_path)
+    verifier = _scoped_manifest_artifact_verifier(
+        manifest,
+        repository=manifest.source.repository,
+        revision=manifest.source.revision,
+        token=False,
+        cache_dir=str(tmp_path),
+        max_disk_space=10_000,
+        block_prefix="model.layers",
+        block_indices=(0, 1),
+        artifact_root=tmp_path,
+    )
+
+    assert accesses
+    assert accesses[0][1] == frozenset({"config.json", "model.safetensors.index.json"})
+    assert verifier.allowed_paths == frozenset({"config.json", "model.safetensors.index.json", "shared.safetensors"})
+    monkeypatch.setattr(ManifestArtifactVerifier, "ensure_path", original_ensure_path)
+    with pytest.raises(ManifestError, match="outside this worker artifact plan"):
+        verifier.ensure_path("outside.safetensors")
+    with pytest.raises(ManifestError, match="contiguous block span"):
+        _scoped_manifest_artifact_verifier(
+            manifest,
+            repository=manifest.source.repository,
+            revision=manifest.source.revision,
+            token=False,
+            cache_dir=str(tmp_path),
+            max_disk_space=10_000,
+            block_prefix="model.layers",
+            block_indices=(0, 2),
+            artifact_root=tmp_path,
+        )
+
+
+def test_worker_artifact_scope_fails_before_unassigned_access(tmp_path):
+    manifest, _ = create_block_plan_snapshot(tmp_path)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        manifest.source.repository,
+        manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+    plan = verifier.plan_block_artifacts(block_prefix="model.layers", start_block=0, end_block=2)
+    verifier.restrict_to_paths(plan.artifact_paths)
+
+    assert verifier.ensure_path("shared.safetensors", allowed_roles={"weight"}) == tmp_path / "shared.safetensors"
+    for path in ("layer-2.safetensors", "outside.safetensors", "mtp.safetensors", "tokenizer.json"):
+        with pytest.raises(ManifestError, match="outside this worker artifact plan"):
+            verifier.ensure_path(path)
+        with pytest.raises(ManifestError, match="outside this worker artifact plan"):
+            verifier.partial_size(path)
+        with pytest.raises(ManifestError, match="outside this worker artifact plan"):
+            verifier.verify_resolved_file(tmp_path / path)
+
+
+@pytest.mark.parametrize(
+    "weight_map,match",
+    [
+        ({"model.layers.0.weight": "../shared.safetensors"}, "non-normalized"),
+        ({"model.layers.0.weight": "missing.safetensors"}, "not declared"),
+        ({"model.layers.0.weight": "tokenizer.json"}, "non-checkpoint role"),
+        ({"model.layers.0.weight": "shared.safetensors"}, "block prefix"),
+    ],
+)
+def test_block_artifact_plan_rejects_unsafe_or_incomplete_index_maps(tmp_path, weight_map, match):
+    manifest, _ = create_block_plan_snapshot(tmp_path)
+
+    with pytest.raises(ManifestError, match=match):
+        select_manifest_block_artifacts(
+            manifest,
+            block_prefix="model.layers",
+            start_block=0,
+            end_block=2,
+            weight_map=weight_map,
+        )
+
+
+def test_weight_index_parser_rejects_duplicate_json_keys(tmp_path):
+    duplicate = (
+        b'{"weight_map":{"model.layers.0.weight":"shared.safetensors",'
+        b'"model.layers.0.weight":"shared.safetensors"}}'
+    )
+    manifest, _ = create_block_plan_snapshot(tmp_path, index_payload=duplicate)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        manifest.source.repository,
+        manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+
+    with pytest.raises(ManifestError, match="duplicate object key"):
+        verifier.load_weight_map()
+
+
+def test_manifested_block_loader_consumes_the_strict_in_memory_weight_map(monkeypatch, tmp_path):
+    manifest, _ = create_block_plan_snapshot(tmp_path)
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        manifest.source.repository,
+        manifest.source.revision,
+        artifact_root=tmp_path,
+    )
+    index_path = tmp_path / "model.safetensors.index.json"
+    index_reads = []
+    original_read_bytes = Path.read_bytes
+
+    def tracked_read_bytes(path):
+        if path == index_path:
+            index_reads.append(path)
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
+    plan = verifier.plan_block_artifacts(block_prefix="model.layers", start_block=0, end_block=2)
+    verifier.restrict_to_paths(plan.artifact_paths)
+    loaded = []
+
+    def fake_load(_model, filename, *, block_prefix, **_kwargs):
+        loaded.append(filename)
+        return {f"{block_prefix}weight": object()}
+
+    def forbid_permissive_open(*_args, **_kwargs):
+        raise AssertionError("manifested loader reopened the index pathname")
+
+    monkeypatch.setattr(from_pretrained_module, "_load_state_dict_from_repo_file", fake_load)
+    monkeypatch.setattr(from_pretrained_module, "open", forbid_permissive_open, raising=False)
+
+    state_dict = from_pretrained_module._load_state_dict_from_repo(
+        manifest.source.repository,
+        "model.layers.0.",
+        revision=manifest.source.revision,
+        token=False,
+        cache_dir=str(tmp_path),
+        artifact_verifier=verifier,
+    )
+
+    assert set(state_dict) == {"weight"}
+    assert state_dict["weight"] is not None
+    assert loaded == ["shared.safetensors"]
+    assert index_reads == [index_path]
+    weight_map = verifier.load_weight_map()
+    assert weight_map is verifier.load_weight_map()
+    with pytest.raises(TypeError):
+        weight_map["model.layers.0.weight"] = "outside.safetensors"
+
+
+def test_manifest_rejects_case_colliding_artifact_paths():
+    source = manifest_dict()
+    source["artifacts"].append({"role": "weight", "path": "Weights.bin", "sha256": "4" * 64, "size": 4})
+
+    with pytest.raises(ManifestError, match="collide case-insensitively"):
+        ModelManifest.from_dict(source)
 
 
 def test_digest_and_namespace_are_canonical_and_order_independent():

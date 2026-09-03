@@ -18,6 +18,26 @@ MODEL_DISPERSION_POINTS = 32.0
 
 
 @dataclass(frozen=True)
+class PlacementArtifactPlan:
+    """Content-bound resource claim for one possible contiguous span."""
+
+    start_block: int
+    end_block: int
+    artifact_bytes: int
+    artifact_set_digest: str
+
+    def __post_init__(self) -> None:
+        if self.start_block < 0 or self.end_block <= self.start_block or self.artifact_bytes < 0:
+            raise ValueError("placement artifact plan range and byte count are invalid")
+        if (
+            len(self.artifact_set_digest) != 64
+            or self.artifact_set_digest.lower() != self.artifact_set_digest
+            or any(character not in "0123456789abcdef" for character in self.artifact_set_digest)
+        ):
+            raise ValueError("placement artifact plan digest must be lowercase SHA-256")
+
+
+@dataclass(frozen=True)
 class PlacementCandidate:
     """One exact manifested model evaluated against local policy and live coverage."""
 
@@ -31,6 +51,8 @@ class PlacementCandidate:
     route_observation: Optional[Mapping[str, Any]] = None
     remote_route_observation: Optional[Mapping[str, Any]] = None
     policy_reason: Optional[str] = None
+    artifact_plans: Tuple[PlacementArtifactPlan, ...] = ()
+    max_artifact_bytes: Optional[int] = None
 
     def __post_init__(self) -> None:
         if not self.model_id or not self.manifest_digest:
@@ -39,6 +61,16 @@ class PlacementCandidate:
             raise ValueError("placement candidate sizes and priority must be non-negative")
         if self.total_blocks > MAX_AUTOMATIC_PLACEMENT_BLOCKS:
             raise ValueError("placement candidate exceeds the automatic placement block limit")
+        if self.max_artifact_bytes is not None and self.max_artifact_bytes < 0:
+            raise ValueError("placement candidate artifact budget must be non-negative")
+        ranges = set()
+        for plan in self.artifact_plans:
+            if plan.end_block > self.total_blocks:
+                raise ValueError("placement artifact plan exceeds the candidate block range")
+            key = (plan.start_block, plan.end_block)
+            if key in ranges:
+                raise ValueError("placement candidate contains duplicate artifact-plan ranges")
+            ranges.add(key)
 
 
 @dataclass(frozen=True)
@@ -52,6 +84,7 @@ class PlacementDecision:
     replica_counts: Tuple[int, ...]
     score: float
     reason: str
+    artifact_set_digest: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +219,20 @@ class AutomaticContributionPlanner:
         ):
             return None, "coverage observation has invalid replica counts"
 
+        artifact_plans = {(plan.start_block, plan.end_block): plan for plan in candidate.artifact_plans}
+        if not artifact_plans and candidate.max_artifact_bytes is not None:
+            if candidate.artifact_bytes > candidate.max_artifact_bytes:
+                return None, (
+                    f"manifested artifacts require {candidate.artifact_bytes} bytes, above the "
+                    f"{candidate.max_artifact_bytes}-byte disk budget"
+                )
+        if artifact_plans:
+            expected_ranges = {
+                (start, start + self.num_blocks) for start in range(candidate.total_blocks - self.num_blocks + 1)
+            }
+            if set(artifact_plans) != expected_ranges:
+                return None, f"exact artifact plans are unavailable for every {self.num_blocks}-block span"
+
         # Find the least-covered contiguous window in one bounded pass. Equal
         # windows use a node-specific rendezvous rank instead of numeric start, so
         # a cohort sharing one snapshot does not all announce range zero.
@@ -207,6 +254,13 @@ class AutomaticContributionPlanner:
                 continue
             start = index - self.num_blocks + 1
             end = start + self.num_blocks
+            artifact_plan = artifact_plans.get((start, end))
+            if (
+                artifact_plan is not None
+                and candidate.max_artifact_bytes is not None
+                and artifact_plan.artifact_bytes > candidate.max_artifact_bytes
+            ):
+                continue
             key = (
                 counts[maxima[0]],
                 window_sum,
@@ -216,7 +270,16 @@ class AutomaticContributionPlanner:
             if best_key is None or key < best_key:
                 best_key = key
                 best_start = start
+        if best_key is None:
+            return None, (
+                f"every {self.num_blocks}-block artifact set exceeds the "
+                f"{candidate.max_artifact_bytes}-byte disk budget"
+            )
         start = best_start
+        end = start + self.num_blocks
+        selected_artifacts = artifact_plans.get((start, end))
+        artifact_bytes = candidate.artifact_bytes if selected_artifacts is None else selected_artifacts.artifact_bytes
+        artifact_set_digest = None if selected_artifacts is None else selected_artifacts.artifact_set_digest
         window = tuple(counts[start : start + self.num_blocks])
         minimum_replicas = min(window)
         coverage_pressure = max(0, 2 - minimum_replicas) * 100.0
@@ -235,7 +298,6 @@ class AutomaticContributionPlanner:
             + remote_signal
             + self._jitter(candidate.manifest_digest)
         )
-        end = start + self.num_blocks
         reason = f"selected {start}:{end} from fresh verified coverage; minimum replicas {minimum_replicas}"
         if local_observation is not None:
             reason += (
@@ -254,10 +316,11 @@ class AutomaticContributionPlanner:
                 model_id=candidate.model_id,
                 manifest_digest=candidate.manifest_digest,
                 block_indices=f"{start}:{end}",
-                artifact_bytes=candidate.artifact_bytes,
+                artifact_bytes=artifact_bytes,
                 replica_counts=window,
                 score=score,
                 reason=reason,
+                artifact_set_digest=artifact_set_digest,
             ),
             "",
         )
@@ -300,7 +363,31 @@ class AutomaticContributionPlanner:
             ),
             None,
         )
-        if current is not None and self._assigned_at is not None:
+        current_assignment_is_eligible = current is not None
+        if current_assignment_is_eligible:
+            current_candidate = next(
+                candidate for candidate in candidates if candidate.manifest_digest == self._current.manifest_digest
+            )
+            if current_candidate.artifact_plans:
+                start, end = (int(value) for value in self._current.block_indices.split(":"))
+                plan = next(
+                    (
+                        plan
+                        for plan in current_candidate.artifact_plans
+                        if (plan.start_block, plan.end_block) == (start, end)
+                    ),
+                    None,
+                )
+                current_assignment_is_eligible = (
+                    plan is not None
+                    and (
+                        current_candidate.max_artifact_bytes is None
+                        or plan.artifact_bytes <= current_candidate.max_artifact_bytes
+                    )
+                    and plan.artifact_bytes == self._current.artifact_bytes
+                    and plan.artifact_set_digest == self._current.artifact_set_digest
+                )
+        if current_assignment_is_eligible and self._assigned_at is not None:
             residency_elapsed = now - self._assigned_at
             cooldown_elapsed = math.inf if self._last_switch_at is None else now - self._last_switch_at
             if residency_elapsed < self._minimum_residency or cooldown_elapsed < self._cooldown:

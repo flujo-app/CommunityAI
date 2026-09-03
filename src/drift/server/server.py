@@ -24,7 +24,7 @@ from transformers import PretrainedConfig
 import drift
 from drift.constants import DTYPE_MAP
 from drift.data_structures import CHAIN_DELIMITER, UID_DELIMITER, ModelInfo, ServerInfo, ServerState, parse_uid
-from drift.model_manifest import ManifestArtifactVerifier, ModelManifest
+from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest
 from drift.protocol_identity import (
     MAX_SIGNED_RECORD_TTL_SECONDS,
     NodeIdentity,
@@ -78,6 +78,44 @@ def parse_block_indices(value: str, num_hidden_layers: int) -> range:
     if not 0 <= start_block < end_block <= num_hidden_layers:
         raise ValueError(f"--block_indices must select a non-empty range within 0:{num_hidden_layers}")
     return range(start_block, end_block)
+
+
+def _scoped_manifest_artifact_verifier(
+    manifest: Optional[ModelManifest],
+    *,
+    repository: str,
+    revision: Optional[str],
+    token,
+    cache_dir: str,
+    max_disk_space: int,
+    block_prefix: str,
+    block_indices: Sequence[int],
+    artifact_root=None,
+) -> Optional[ManifestArtifactVerifier]:
+    if manifest is None:
+        return None
+    if not block_indices:
+        raise ManifestError("Manifested module container requires at least one block")
+    start_block, end_block = min(block_indices), max(block_indices) + 1
+    if list(block_indices) != list(range(start_block, end_block)):
+        raise ManifestError("Manifested module container requires one contiguous block span")
+    startup_paths = tuple(artifact.path for artifact in manifest.artifacts_for_roles({"config", "weight_index"}))
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        repository=repository,
+        revision=revision,
+        token=token,
+        cache_dir=cache_dir,
+        max_disk_space=max_disk_space,
+        artifact_root=artifact_root,
+        allowed_paths=startup_paths,
+    )
+    verifier.bind_block_artifact_plan(
+        block_prefix=block_prefix,
+        start_block=start_block,
+        end_block=end_block,
+    )
+    return verifier
 
 
 def _probe_quantization(quant_type: QuantType, device: torch.device) -> Optional[str]:
@@ -765,17 +803,15 @@ class ModuleContainer(threading.Thread):
 
         blocks = {}
         try:
-            artifact_verifier = (
-                ManifestArtifactVerifier(
-                    model_manifest,
-                    repository=converted_model_name_or_path,
-                    revision=revision,
-                    token=token,
-                    cache_dir=cache_dir,
-                    max_disk_space=max_disk_space,
-                )
-                if model_manifest is not None
-                else None
+            artifact_verifier = _scoped_manifest_artifact_verifier(
+                model_manifest,
+                repository=converted_model_name_or_path,
+                revision=revision,
+                token=token,
+                cache_dir=cache_dir,
+                max_disk_space=max_disk_space,
+                block_prefix=block_config.block_prefix,
+                block_indices=block_indices,
             )
             for module_uid, block_index in zip(module_uids, block_indices):
                 block = load_pretrained_block(

@@ -220,28 +220,27 @@ def _load_state_dict_from_repo(
         artifact_verifier=artifact_verifier,
     )
     if index_file.endswith(".index.json"):  # Sharded model
-        path = (
-            str(artifact_verifier.ensure_path(index_file, allowed_roles={"weight_index"}))
-            if artifact_verifier is not None
-            else get_file_from_repo(
+        if artifact_verifier is not None:
+            weight_map = artifact_verifier.load_weight_map()
+            if weight_map is None:  # pragma: no cover - maintained by the index-file branch
+                raise ManifestError("Manifested sharded checkpoint lost its verified weight map")
+        else:
+            path = get_file_from_repo(
                 model_name,
                 filename=index_file,
                 revision=revision,
                 use_auth_token=token,
                 cache_dir=cache_dir,
             )
-        )
-        if path is None:
-            # _find_index_file() told that a file exists but we can't get it (e.g., it just disappeared)
-            raise ValueError(f"Failed to get file {index_file}")
-
-        with open(path) as f:
-            index = json.load(f)
-        filenames = {
-            filename for param_name, filename in index["weight_map"].items() if param_name.startswith(block_prefix)
-        }
+            if path is None:
+                # _find_index_file() told that a file exists but we can't get it (e.g., it just disappeared)
+                raise ValueError(f"Failed to get file {index_file}")
+            with open(path) as f:
+                index = json.load(f)
+            weight_map = index["weight_map"]
+        filenames = {filename for param_name, filename in weight_map.items() if param_name.startswith(block_prefix)}
         if not filenames:
-            raise RuntimeError(f"Block {block_prefix}* not found in the index: {index['weight_map']}")
+            raise RuntimeError(f"Block {block_prefix}* not found in the index: {weight_map}")
     else:  # Non-sharded model
         filenames = {index_file}
     logger.debug(f"Loading {block_prefix}* from {filenames}")

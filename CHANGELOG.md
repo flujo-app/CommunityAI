@@ -17,6 +17,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   primary and 146 regression tests. The source-bound checkpoint is partial:
   official artifact verification, a real Qwen3.8 layer, the complete 64-block
   route, parity, recovery, packaging, and hardware measurements remain open.
+- Automatic Qwen3.8 workers now plan and enforce the exact startup metadata and
+  deduplicated checkpoint shards for their contiguous block span instead of
+  admitting against the full model. Server loading is restricted to that set,
+  and cached signed intents are invalidated by selected-set, budget, throughput,
+  proposal, identity-key, or lease-expiry changes. Public v1 intent claims keep
+  the same privacy-safe shape. This checkpoint passes 142 focused, 132 adjacent,
+  and 1,564 offline unit tests without downloading model weights or using cloud.
 - Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
   lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
   pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
