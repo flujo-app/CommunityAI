@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -26,6 +27,22 @@ _RUN_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?")
 
 class CommandError(Gate13CloudError):
     """A bounded local or provider command failed."""
+
+
+def _command_for_subprocess(command: list[str]) -> list[str]:
+    if sys.platform == "win32" and command and command[0].casefold() == "gcloud":
+        launcher = shutil.which("gcloud.cmd") or shutil.which("gcloud")
+        if launcher is not None:
+            sdk_root = Path(launcher).resolve().parent.parent
+            python = sdk_root / "platform" / "bundledpython" / "python.exe"
+            entrypoint = sdk_root / "lib" / "gcloud.py"
+            if python.is_file() and entrypoint.is_file():
+                return [os.fspath(python), "-S", os.fspath(entrypoint), *command[1:]]
+            raise CommandError("the Google Cloud SDK Python launcher is unavailable")
+    executable = shutil.which(command[0])
+    if executable is not None:
+        command[0] = executable
+    return command
 
 
 class LoggedRunner:
@@ -52,16 +69,14 @@ class LoggedRunner:
         check: bool = True,
         sensitive_output: bool = False,
     ) -> subprocess.CompletedProcess[str]:
-        command = [os.fspath(item) for item in argv]
-        executable = shutil.which(command[0])
-        if executable is not None:
-            command[0] = executable
+        command = _command_for_subprocess([os.fspath(item) for item in argv])
         started = time.time()
         self.progress(action)
         environment = dict(os.environ)
         environment.update(
             {
                 "CLOUDSDK_CORE_DISABLE_PROMPTS": "1",
+                "CLOUDSDK_SSH_PUTTY_FORCE_CONNECT": "1",
                 "GIT_TERMINAL_PROMPT": "0",
                 "PYTHONUTF8": "1",
             }

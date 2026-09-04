@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import gate13_gcp_provider as gcp
 from gate13_cloud_orchestrator import PackageArtifact
 from gate13_gcp_provider import GcpConfig, GcpProvider, GitHubPackageSource, LoggedRunner
 
@@ -97,6 +98,40 @@ def test_logged_runner_does_not_retain_argv_or_output(tmp_path):
     assert secret not in journal
     assert "-c" not in journal
     assert json.loads(journal)["output_retained"] is False
+
+
+def test_windows_gcloud_bypasses_cmd_argument_parsing(tmp_path, monkeypatch):
+    sdk = tmp_path / "google-cloud-sdk"
+    launcher = sdk / "bin" / "gcloud.cmd"
+    python = sdk / "platform" / "bundledpython" / "python.exe"
+    entrypoint = sdk / "lib" / "gcloud.py"
+    for path in (launcher, python, entrypoint):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"test")
+    monkeypatch.setattr(gcp.sys, "platform", "win32")
+    monkeypatch.setattr(gcp.shutil, "which", lambda name: str(launcher) if name in {"gcloud", "gcloud.cmd"} else None)
+    remote = "powershell.exe -Command \"Get-Process explorer | Where-Object {$_.Id}\""
+
+    command = gcp._command_for_subprocess(["gcloud", "compute", "ssh", "vm", "--command", remote])
+
+    assert command == [str(python), "-S", str(entrypoint), "compute", "ssh", "vm", "--command", remote]
+
+
+def test_logged_runner_forces_noninteractive_putty_host_key_acceptance(tmp_path, monkeypatch):
+    observed = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = command
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(gcp.subprocess, "run", fake_run)
+    runner = LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None)
+
+    runner.run([sys.executable, "-c", "pass"], action="Test command")
+
+    assert observed["env"]["CLOUDSDK_CORE_DISABLE_PROMPTS"] == "1"
+    assert observed["env"]["CLOUDSDK_SSH_PUTTY_FORCE_CONNECT"] == "1"
 
 
 class CreateRunner:
