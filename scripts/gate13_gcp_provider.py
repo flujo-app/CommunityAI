@@ -157,6 +157,13 @@ def _strict_object(payload: str, label: str) -> dict[str, Any]:
     return value
 
 
+def _strict_terminal_object(payload: str, label: str) -> dict[str, Any]:
+    lines = [line for line in payload.splitlines() if line.strip()]
+    if not lines:
+        return _strict_object(payload, label)
+    return _strict_object(lines[-1], label)
+
+
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ARG002
         return None
@@ -1649,7 +1656,10 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             action=f"Validating the {platform} qualification stage",
             timeout=300,
         )
-        value = _strict_object(result.stdout, f"{platform} qualification stage")
+        if platform == "linux":
+            value = _strict_terminal_object(result.stdout, "linux qualification stage")
+        else:
+            value = _strict_object(result.stdout, "windows qualification stage")
         if value.get("result") != "passed" or value.get("ready") is not True:
             raise Gate13CloudError(f"{platform} qualification stage rejected")
         return {

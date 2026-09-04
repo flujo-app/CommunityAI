@@ -348,7 +348,12 @@ def test_client_readiness_cleans_the_route_relay_before_job_staging(tmp_path, mo
     monkeypatch.setattr(
         item,
         "_ssh",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, '{"result":"passed","ready":true}\n', ""),
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [],
+            0,
+            'Access granted. Press Return to begin session.\n{"result":"passed","ready":true}\n',
+            "",
+        ),
     )
 
     result = item.prepare_client("linux", artifact("linux"))
