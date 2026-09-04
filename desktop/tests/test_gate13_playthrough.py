@@ -15,6 +15,7 @@ from communityai_desktop.gate13_playthrough import (
     Gate13Playthrough,
     PlaythroughError,
     PlaythroughPlan,
+    _manual_route_ready,
     qualify_localhost_inference,
 )
 
@@ -76,6 +77,32 @@ def _inference(_controller, plan):  # noqa: ANN001
 
 
 class PlaythroughPlanTests(unittest.TestCase):
+    def test_manual_readiness_uses_the_node_client_nested_route(self):
+        plan = PlaythroughPlan(
+            run_id="gate13-automated-test",
+            platform="windows",
+            stage="initial",
+            model_id=MODEL_ID,
+            manifest_digest=MANIFEST_DIGEST,
+            total_blocks=36,
+            policy=_config("initial")["policy"],
+            timeout_seconds=30,
+            inference_timeout_seconds=10,
+        )
+        with fake_node() as (url, token):
+            status = NodeClient(url, token).status()
+        selected = next(model for model in status["models"] if model["id"] == MODEL_ID)
+        # The desktop fake node omits model identity metadata; the production
+        # ModelSnapshot includes it alongside the nested route object.
+        selected["manifest_digest"] = MANIFEST_DIGEST
+
+        self.assertTrue(_manual_route_ready(status, plan))
+        selected["route"]["covered_blocks"] = 35
+        self.assertFalse(_manual_route_ready(status, plan))
+        selected["route"]["covered_blocks"] = 36
+        selected["manifest_digest"] = "sha256:" + "c" * 64
+        self.assertFalse(_manual_route_ready(status, plan))
+
     def test_plan_is_strict_and_bounded(self):
         from tempfile import TemporaryDirectory
 
@@ -143,9 +170,12 @@ class PlaythroughPlanTests(unittest.TestCase):
                         {
                             "id": MODEL_ID,
                             "manifest_digest": MANIFEST_DIGEST,
-                            "route_complete": True,
-                            "covered_blocks": plan.total_blocks,
-                            "total_blocks": plan.total_blocks,
+                            "route": {
+                                "status": "complete",
+                                "covered_blocks": plan.total_blocks,
+                                "total_blocks": plan.total_blocks,
+                                "peer_count": 1,
+                            },
                         }
                     ],
                 }
@@ -188,6 +218,39 @@ class PlaythroughPlanTests(unittest.TestCase):
         self.assertEqual(unavailable_then_ready.call_count, 2)
         readiness_sleep.assert_called_once_with(5.0)
         self.assertEqual({item["id"] for item in client.list_keys() if item["revoked_at"] is None}, {"baseline"})
+
+        with patch(
+            "communityai_desktop.gate13_playthrough._completion_after_manual_readiness_wait",
+            side_effect=PlaythroughError("inference_http_503"),
+        ):
+            with self.assertRaisesRegex(PlaythroughError, "^inference_http_503$"):
+                qualify_localhost_inference(SimpleNamespace(client=client), plan)
+        self.assertEqual({item["id"] for item in client.list_keys() if item["revoked_at"] is None}, {"baseline"})
+
+        unavailable_then_timeout = MagicMock(
+            side_effect=[PlaythroughError("inference_http_503"), PlaythroughError("inference_timed_out")]
+        )
+        with (
+            patch("communityai_desktop.gate13_playthrough._completion_request", unavailable_then_timeout),
+            patch("communityai_desktop.gate13_playthrough.time.sleep"),
+        ):
+            with self.assertRaisesRegex(PlaythroughError, "^inference_timed_out$"):
+                qualify_localhost_inference(SimpleNamespace(client=client), plan)
+        self.assertEqual(unavailable_then_timeout.call_count, 2)
+        self.assertEqual({item["id"] for item in client.list_keys() if item["revoked_at"] is None}, {"baseline"})
+
+    def test_inference_http_failure_retains_status_without_response_or_secret(self):
+        from urllib.error import HTTPError
+
+        from communityai_desktop.gate13_playthrough import _completion_request
+
+        opener = MagicMock()
+        opener.open.side_effect = HTTPError(
+            "http://127.0.0.1:8080/v1/chat/completions", 503, "private response detail", None, None
+        )
+        with patch("communityai_desktop.gate13_playthrough.build_opener", return_value=opener):
+            with self.assertRaisesRegex(PlaythroughError, "^inference_http_503$"):
+                _completion_request("http://127.0.0.1:8080/v1/chat/completions", "private-key", 10)
 
     def test_localhost_inference_requests_exactly_one_token(self):
         from communityai_desktop.gate13_playthrough import _completion_request
@@ -242,6 +305,42 @@ class PlaythroughPlanTests(unittest.TestCase):
 
 
 class PackagedUiPlaythroughTests(unittest.TestCase):
+    def test_failure_evidence_keeps_phase_and_only_controlled_inference_detail(self):
+        from tempfile import TemporaryDirectory
+
+        def submit(operation, _finished, failed):
+            try:
+                operation()
+            except Exception as exc:
+                failed(str(exc))
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, (error_message, expected_detail) in enumerate(
+                (("inference_http_503", "inference_http_503"), ("private-key response content", "inference_failed"))
+            ):
+                with self.subTest(error_message=error_message):
+                    evidence_path = root / f"failure-{index}.json"
+                    automation = Gate13Playthrough(
+                        _write_plan(root / f"plan-{index}.json", "initial"),
+                        evidence_path,
+                        inference_runner=MagicMock(side_effect=PlaythroughError(error_message)),
+                    )
+                    automation._window = SimpleNamespace(_controller=object(), _submit=submit)
+                    automation._begin_inference("after_initial_inference")
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    self.assertEqual(evidence["failure_phase"], "after_initial_inference")
+                    self.assertEqual(evidence["failure_code"], "inference_failed")
+                    self.assertEqual(evidence["failure_detail"], expected_detail)
+                    self.assertNotIn("private-key", json.dumps(evidence))
+
+            evidence_path = root / "timeout.json"
+            automation = Gate13Playthrough(_write_plan(root / "timeout-plan.json", "initial"), evidence_path)
+            automation._timeout()
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(evidence["failure_phase"], "wait_ready")
+            self.assertEqual(evidence["failure_code"], "playthrough_timed_out")
+
     def test_policy_auto_start_is_normalized_through_model_toggle_before_master_start(self):
         from tempfile import TemporaryDirectory
 

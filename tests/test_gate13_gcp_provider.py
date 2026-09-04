@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import subprocess
@@ -44,13 +45,48 @@ def provider(tmp_path, runner, signed_url=lambda package: "https://productionres
     )
 
 
-def test_package_build_is_fresh_even_when_a_matching_old_run_exists(tmp_path):
+@pytest.mark.parametrize(
+    "existing_changes,expired_artifact,omitted_artifact,expected_run_id",
+    [
+        ({}, None, None, 10),
+        ({"head_sha": "b" * 40}, None, None, 11),
+        ({"conclusion": "failure"}, None, None, 11),
+        ({"status": "in_progress", "conclusion": None}, None, None, 11),
+        ({}, "communityai-desktop-audit-linux", None, 11),
+        ({}, None, "communityai-desktop-install-windows", 11),
+    ],
+    ids=["reuse", "different-source", "failed", "unfinished", "expired-audit", "missing-install"],
+)
+def test_package_reuses_only_a_complete_successful_run_of_the_pushed_source(
+    tmp_path, existing_changes, expired_artifact, omitted_artifact, expected_run_id
+):
     calls = []
 
     class Runner:
         def run(self, argv, **_kwargs):
             calls.append([str(item) for item in argv])
             return subprocess.CompletedProcess(argv, 0, "", "")
+
+        def json(self, argv, **_kwargs):
+            existing_run = "/runs/10/" in str(argv[2])
+            return {
+                "artifacts": [
+                    {
+                        "id": number,
+                        "name": name,
+                        "expired": existing_run and name == expired_artifact,
+                    }
+                    for number, name in enumerate(
+                        (
+                            f"communityai-desktop-{kind}-{platform}"
+                            for kind in ("install", "audit")
+                            for platform in ("windows", "linux")
+                        ),
+                        start=1,
+                    )
+                    if not (existing_run and name == omitted_artifact)
+                ]
+            }
 
     source = GitHubPackageSource(
         repository_root=ROOT,
@@ -65,6 +101,7 @@ def test_package_build_is_fresh_even_when_a_matching_old_run_exists(tmp_path):
         "head_sha": "a" * 40,
         "status": "completed",
         "conclusion": "success",
+        **existing_changes,
     }
     fresh = {
         "id": 11,
@@ -74,16 +111,13 @@ def test_package_build_is_fresh_even_when_a_matching_old_run_exists(tmp_path):
     }
     listings = iter([[old], [fresh]])
     source._workflow_runs = lambda _branch: next(listings)
-    source._artifacts = lambda run_id: {
-        f"communityai-desktop-{kind}-{platform}": {"id": run_id}
-        for kind in ("install", "audit")
-        for platform in ("windows", "linux")
-    }
 
-    run_id, _artifacts = source._select_or_build_run("a" * 40, "test-branch")
+    run_id, artifacts = source._select_or_build_run("a" * 40, "test-branch")
 
-    assert run_id == 11
-    assert any(command[1:3] == ["workflow", "run"] for command in calls)
+    assert run_id == expected_run_id
+    assert len(artifacts) == 4
+    assert all(item["expired"] is False for item in artifacts.values())
+    assert any(command[1:3] == ["workflow", "run"] for command in calls) is (expected_run_id == 11)
 
 
 def test_logged_runner_does_not_retain_argv_or_output(tmp_path):
@@ -112,7 +146,7 @@ def test_windows_gcloud_bypasses_cmd_argument_parsing(tmp_path, monkeypatch):
         path.write_bytes(b"test")
     monkeypatch.setattr(gcp.sys, "platform", "win32")
     monkeypatch.setattr(gcp.shutil, "which", lambda name: str(launcher) if name in {"gcloud", "gcloud.cmd"} else None)
-    remote = "powershell.exe -Command \"Get-Process explorer | Where-Object {$_.Id}\""
+    remote = 'powershell.exe -Command "Get-Process explorer | Where-Object {$_.Id}"'
 
     command = gcp._command_for_subprocess(["gcloud", "compute", "ssh", "vm", "--command", remote])
 
@@ -272,9 +306,7 @@ def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
         assert hashlib.sha256(payload).hexdigest() == digest
 
 
-def test_route_preparation_waits_five_minutes_and_for_ubuntu_installer(
-    tmp_path, monkeypatch
-):
+def test_route_preparation_waits_five_minutes_and_for_ubuntu_installer(tmp_path, monkeypatch):
     item = provider(
         tmp_path,
         LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
@@ -287,9 +319,7 @@ def test_route_preparation_waits_five_minutes_and_for_ubuntu_installer(
     monkeypatch.setattr(
         item,
         "_describe_instance",
-        lambda _name: {
-            "networkInterfaces": [{"accessConfigs": [{"natIP": "198.51.100.1"}]}]
-        },
+        lambda _name: {"networkInterfaces": [{"accessConfigs": [{"natIP": "198.51.100.1"}]}]},
     )
     monkeypatch.setattr(item, "_build_route_bundle", lambda: bundle)
     monkeypatch.setattr(
@@ -389,6 +419,30 @@ def test_generated_client_jobs_are_exactly_source_and_package_bound(tmp_path):
         assert stage_script.is_file()
 
 
+@pytest.mark.parametrize("platform", ["windows", "linux"])
+def test_failed_client_stage_retains_output_even_with_a_success_marker(tmp_path, monkeypatch, platform):
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None))
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    monkeypatch.setattr(item, "_wait_ssh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(item, "_cleanup_route_relay", lambda *_args: None)
+    monkeypatch.setattr(item, "_build_client_stage", lambda *_args: (stage, stage / "stage-script"))
+    monkeypatch.setattr(item, "_scp", lambda *_args, **_kwargs: None)
+
+    def ssh(_instance, _command, **kwargs):
+        assert kwargs["check"] is False
+        return subprocess.CompletedProcess(
+            [], 1, "GATE13_STAGE_RESULT result=passed ready=true\n", "actual stage failure\n"
+        )
+
+    monkeypatch.setattr(item, "_ssh", ssh)
+    with pytest.raises(gcp.Gate13CloudError, match="stage failed with exit code 1"):
+        item.prepare_client(platform, artifact(platform))
+    captured = json.loads((tmp_path / f"{platform}-stage-command-output.json").read_text())
+    assert captured["exit_code"] == 1
+    assert captured["stderr"] == "actual stage failure\n"
+
+
 def test_client_status_poll_retries_one_temporary_connection_failure(tmp_path, monkeypatch):
     item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None))
     waits = []
@@ -399,7 +453,7 @@ def test_client_status_poll_retries_one_temporary_connection_failure(tmp_path, m
             subprocess.CompletedProcess([], 1, "", "temporary DNS failure"),
             subprocess.CompletedProcess([], 0, '{"job_state":"passed"}\n', ""),
             subprocess.CompletedProcess([], 0, '{"result":"passed"}\n', ""),
-            subprocess.CompletedProcess([], 0, '{}\n', ""),
+            subprocess.CompletedProcess([], 0, "{}\n", ""),
         ]
     )
     monkeypatch.setattr(item, "_ssh", lambda *_args, **_kwargs: next(replies))
@@ -421,7 +475,7 @@ def test_linux_client_reads_json_after_the_ssh_greeting(tmp_path, monkeypatch):
             subprocess.CompletedProcess([], 0, greeting + '{"job_state":"running"}\n', ""),
             subprocess.CompletedProcess([], 0, greeting + '{"job_state":"passed"}\n', ""),
             subprocess.CompletedProcess([], 0, greeting + '{"result":"passed"}\n', ""),
-            subprocess.CompletedProcess([], 0, greeting + '{}\n', ""),
+            subprocess.CompletedProcess([], 0, greeting + "{}\n", ""),
         ]
     )
     monkeypatch.setattr(item, "_ssh", lambda *_args, **_kwargs: next(replies))
@@ -432,8 +486,12 @@ def test_linux_client_reads_json_after_the_ssh_greeting(tmp_path, monkeypatch):
     assert payload == b'{"result":"passed"}\n'
 
 
-def test_linux_client_captures_terminal_and_stderr_before_raising(tmp_path, monkeypatch):
+@pytest.mark.parametrize("platform", ["windows", "linux"])
+def test_client_captures_terminal_and_stderr_before_raising(tmp_path, monkeypatch, platform):
     item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None))
+    calls = []
+    messages = []
+    item.progress = messages.append
     replies = iter(
         [
             subprocess.CompletedProcess([], 0, '{"job_state":"running"}\n', ""),
@@ -443,15 +501,76 @@ def test_linux_client_captures_terminal_and_stderr_before_raising(tmp_path, monk
             subprocess.CompletedProcess([], 0, '{"result":"failed","phase":"launch"}\n', ""),
         ]
     )
-    monkeypatch.setattr(item, "_ssh", lambda *_args, **_kwargs: next(replies))
+
+    def ssh(instance, command, **kwargs):
+        calls.append((instance, command, kwargs))
+        return next(replies)
+
+    monkeypatch.setattr(item, "_ssh", ssh)
 
     with pytest.raises(gcp.Gate13CloudError, match="captured output"):
-        item.run_client("linux", artifact("linux"))
+        item.run_client(platform, artifact(platform))
 
-    captured = json.loads((tmp_path / "linux-host-job-failure-output.json").read_text())
+    captured = json.loads((tmp_path / f"{platform}-host-job-failure-output.json").read_text())
     assert "lifecycle_failed" in captured["terminal"]["stdout"]
     assert captured["stderr"]["stdout"] == "actual lifecycle error\n"
     assert '"phase":"launch"' in captured["evidence"]["stdout"]
+    assert any("actual lifecycle error" in message for message in messages)
+    observed = json.loads((tmp_path / f"{item.clients[platform]}-host-job-command-output.json").read_text())
+    assert observed["stdout"] == '{"job_state":"failed"}\n'
+    for call, filename in zip(calls[2:], ("terminal.json", "stderr.log", "evidence.json")):
+        assert call[0] == item.clients[platform]
+        if platform == "windows":
+            assert call[2]["user"] == "Gate13Admin"
+            script = base64.b64decode(call[1].split()[-1]).decode("utf-16-le")
+            assert f"'C:\\Gate13Run\\{filename}'" in script
+            assert "[IO.File]::ReadAllText" in script
+        else:
+            assert call[1] == f"sudo cat /qualification/{filename}"
+
+
+@pytest.mark.parametrize("platform", ["windows", "linux"])
+def test_failure_capture_keeps_earlier_files_when_a_later_read_times_out(tmp_path, monkeypatch, platform):
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None))
+    output_path = tmp_path / f"{platform}-host-job-failure-output.json"
+    calls = []
+
+    def ssh(_instance, _command, **_kwargs):
+        calls.append(_command)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess([], 0, '{"failure_code":"lifecycle_failed"}\n', "")
+        assert "lifecycle_failed" in json.loads(output_path.read_text())["terminal"]["stdout"]
+        if len(calls) == 2:
+            raise gcp.CommandError("transport timed out")
+        return subprocess.CompletedProcess([], 0, '{"failed_step":"initial_session"}\n', "")
+
+    def fail(*_args):
+        raise gcp.Gate13CloudError(f"{platform} host job ended in state failed")
+
+    monkeypatch.setattr(item, "_run_client", fail)
+    monkeypatch.setattr(item, "_ssh", ssh)
+    with pytest.raises(gcp.Gate13CloudError, match=f"{platform} host job ended in state failed"):
+        item.run_client(platform, artifact(platform))
+
+    captured = json.loads(output_path.read_text())
+    assert captured["stderr"] == {"capture_error": "CommandError"}
+    assert "initial_session" in captured["evidence"]["stdout"]
+
+
+def test_failure_capture_disk_error_does_not_replace_original_failure(tmp_path, monkeypatch):
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None))
+
+    def fail(*_args):
+        raise gcp.Gate13CloudError("windows host job ended in state failed")
+
+    def capture(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(item, "_run_client", fail)
+    monkeypatch.setattr(item, "_capture_host_failure", capture)
+    with pytest.raises(gcp.Gate13CloudError, match="windows host job ended in state failed") as error:
+        item.run_client("windows", artifact("windows"))
+    assert "collection failed (OSError)" in str(error.value)
 
 
 def test_cleanup_instance_inspection_retries_instead_of_claiming_absence(tmp_path):

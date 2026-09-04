@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import ipaddress
 import json
@@ -26,9 +27,7 @@ _RUN_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?")
 _GCLOUD_READ_ATTEMPTS = 5
 _GCLOUD_RETRY_SECONDS = 15
 _HOST_JOB_COMMAND_ATTEMPTS = 5
-_LINUX_STAGE_SUCCESS_RE = re.compile(
-    r"\bGATE13_STAGE_RESULT[ \t]+result=passed[ \t]+ready=true\b"
-)
+_LINUX_STAGE_SUCCESS_RE = re.compile(r"\bGATE13_STAGE_RESULT[ \t]+result=passed[ \t]+ready=true\b")
 
 
 class CommandError(Gate13CloudError):
@@ -280,6 +279,19 @@ class GitHubPackageSource:
 
     def _select_or_build_run(self, head: str, branch: str) -> tuple[int, dict[str, Mapping[str, Any]]]:
         prior_runs = self._workflow_runs(branch)
+        for run in prior_runs:
+            run_id = run.get("id")
+            if (
+                run.get("head_sha") == head
+                and run.get("status") == "completed"
+                and run.get("conclusion") == "success"
+                and type(run_id) is int
+                and run_id > 0
+            ):
+                artifacts = self._artifacts(run_id)
+                if self._has_required_artifacts(artifacts):
+                    self.progress(f"Reusing successful production package run {run_id} for the pushed source commit")
+                    return run_id, artifacts
         prior_run_ids = {item.get("id") for item in prior_runs if isinstance(item.get("id"), int)}
         self.runner.run(
             ["gh", "workflow", "run", self.workflow, "--repo", self.repository, "--ref", branch],
@@ -560,10 +572,7 @@ class GcpProvider:
             except CommandError:
                 if attempt == _GCLOUD_READ_ATTEMPTS:
                     raise
-                self.progress(
-                    f"{action} did not complete; trying again "
-                    f"({attempt + 1} of {_GCLOUD_READ_ATTEMPTS})"
-                )
+                self.progress(f"{action} did not complete; trying again " f"({attempt + 1} of {_GCLOUD_READ_ATTEMPTS})")
                 self.sleeper(_GCLOUD_RETRY_SECONDS)
         raise AssertionError("unreachable")
 
@@ -1132,7 +1141,7 @@ class GcpProvider:
         self._wait_ssh(
             self.route,
             "test -f /etc/os-release && "
-            "test \"$(cut -d. -f1 /proc/uptime)\" -ge 300 && "
+            'test "$(cut -d. -f1 /proc/uptime)" -ge 300 && '
             "(! command -v fuser >/dev/null || "
             "(! sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && "
             "! sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 && "
@@ -1168,8 +1177,7 @@ class GcpProvider:
             if tail:
                 self.progress("Route setup failed; bounded redacted tail:\n" + tail)
             raise CommandError(
-                "Installing and starting the route services failed with exit code "
-                f"{setup.returncode}"
+                "Installing and starting the route services failed with exit code " f"{setup.returncode}"
             )
         fence = self.repository_root / "scripts" / "gate13_route_fence.py"
         self._scp(
@@ -1639,7 +1647,7 @@ test "$(stat -c %s /qualification/package/{package.archive_name})" = "{package.a
 test -x /qualification/install/CommunityAI/CommunityAI
 sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null
 printf 'GATE13_STAGE_RESULT result=passed ready=true host_user=gate13 display=:99 hashes_verified=true\\n'
-printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":":99,"hashes_verified":true}}'
+printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":":99","hashes_verified":true}}'
 """
         path = stage / "stage.sh"
         path.write_text(content, encoding="utf-8", newline="\n")
@@ -1662,7 +1670,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             ready_command = (
                 "if test -f /var/lib/gate13-bootstrap-ready; then "
                 "sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null; "
-                "elif test \"$(cat /var/lib/gate13-bootstrap-status 2>/dev/null)\" = failed; then "
+                'elif test "$(cat /var/lib/gate13-bootstrap-status 2>/dev/null)" = failed; then '
                 "printf GATE13_BOOTSTRAP_FAILED; exit 2; else exit 1; fi"
             )
         self._wait_ssh(
@@ -1699,21 +1707,26 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             user=user,
             action=f"Validating the {platform} qualification stage",
             timeout=300,
+            check=False,
         )
-        if platform == "linux":
-            output_path = self.output_root / "linux-stage-command-output.json"
-            self._write_json(
-                output_path,
-                {
-                    "exit_code": result.returncode,
-                    "stderr": result.stderr,
-                    "stdout": result.stdout,
-                },
+        output_path = self.output_root / f"{platform}-stage-command-output.json"
+        self._write_json(
+            output_path,
+            {
+                "exit_code": result.returncode,
+                "stderr": result.stderr,
+                "stdout": result.stdout,
+            },
+        )
+        if result.returncode != 0:
+            raise Gate13CloudError(
+                f"{platform} qualification stage failed with exit code {result.returncode}; "
+                f"captured output: {output_path}"
             )
+        if platform == "linux":
             if _LINUX_STAGE_SUCCESS_RE.search(result.stdout) is None:
                 raise Gate13CloudError(
-                    "linux qualification stage success marker was not found; "
-                    f"captured output: {output_path}"
+                    "linux qualification stage success marker was not found; " f"captured output: {output_path}"
                 )
         else:
             value = _strict_object(result.stdout, "windows qualification stage")
@@ -1757,41 +1770,88 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
                 timeout=timeout,
                 check=False,
             )
+            # Preserve the response before parsing or retrying it. Credentials and
+            # signed package URLs are never part of a host-job command response.
+            output_path = self.output_root / f"{instance}-host-job-command-output.json"
+            self._write_json(
+                output_path,
+                {
+                    "action": action,
+                    "attempt": attempt,
+                    "exit_code": result.returncode,
+                    "stderr": result.stderr,
+                    "stdout": result.stdout,
+                },
+            )
             if result.returncode == 0:
                 return result
             if attempt == _HOST_JOB_COMMAND_ATTEMPTS:
-                raise CommandError(f"{action} failed {_HOST_JOB_COMMAND_ATTEMPTS} times in a row")
+                raise CommandError(
+                    f"{action} failed {_HOST_JOB_COMMAND_ATTEMPTS} times in a row; " f"captured output: {output_path}"
+                )
             self.progress(
-                f"{action} did not complete; trying again "
-                f"({attempt + 1} of {_HOST_JOB_COMMAND_ATTEMPTS})"
+                f"{action} did not complete; trying again " f"({attempt + 1} of {_HOST_JOB_COMMAND_ATTEMPTS})"
             )
             self.sleeper(30)
         raise AssertionError("unreachable")
 
-    def _capture_linux_host_failure(self, instance: str) -> Path:
-        output_path = self.output_root / "linux-host-job-failure-output.json"
+    def _capture_host_failure(self, platform: str, instance: str) -> Path:
+        output_path = self.output_root / f"{platform}-host-job-failure-output.json"
         captured: dict[str, Any] = {}
-        for label, remote_path in (
-            ("terminal", "/qualification/terminal.json"),
-            ("stderr", "/qualification/stderr.log"),
-            ("evidence", "/qualification/evidence.json"),
+        for label, filename in (
+            ("terminal", "terminal.json"),
+            ("stderr", "stderr.log"),
+            ("evidence", "evidence.json"),
         ):
-            result = self._ssh(
-                instance,
-                f"sudo cat {remote_path}",
-                action=f"Collecting the failed Linux host job {label}",
-                timeout=90,
-                check=False,
-            )
-            captured[label] = {
-                "exit_code": result.returncode,
-                "stderr": result.stderr,
-                "stdout": result.stdout,
-            }
-        self._write_json(output_path, captured)
+            if platform == "windows":
+                script = (
+                    "$ErrorActionPreference = 'Stop'; "
+                    "[Console]::Out.Write([IO.File]::ReadAllText("
+                    f"'C:\\Gate13Run\\{filename}'))"
+                )
+                encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+                command = f"powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}"
+                user = "Gate13Admin"
+            else:
+                command = f"sudo cat /qualification/{filename}"
+                user = None
+            try:
+                result = self._ssh(
+                    instance,
+                    command,
+                    user=user,
+                    action=f"Collecting the failed {platform} host job {label}",
+                    timeout=90,
+                    check=False,
+                )
+                captured[label] = {
+                    "exit_code": result.returncode,
+                    "stderr": result.stderr,
+                    "stdout": result.stdout,
+                }
+            except Exception as exc:
+                # A missing file or failed SSH read must not hide the original
+                # qualification error or discard files already collected.
+                captured[label] = {"capture_error": type(exc).__name__}
+            self._write_json(output_path, captured)
+            for stream in ("stdout", "stderr"):
+                output = captured[label].get(stream, "").strip()
+                if output:
+                    self.progress(f"Failed {platform} host job {label} ({stream}):\n{output}")
         return output_path
 
     def run_client(self, platform: str, package: PackageArtifact) -> bytes:
+        try:
+            return self._run_client(platform, package)
+        except Exception as exc:
+            try:
+                output_path = self._capture_host_failure(platform, self.clients[platform])
+                suffix = f"; captured output: {output_path}"
+            except Exception as capture_error:
+                suffix = f"; failure output collection failed ({type(capture_error).__name__})"
+            raise Gate13CloudError(f"{exc}{suffix}") from exc
+
+    def _run_client(self, platform: str, package: PackageArtifact) -> bytes:
         name = self.clients[platform]
         start_command, user = self._host_command(platform, "start")
         started = self._run_host_job_command(
@@ -1821,10 +1881,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             if state == "passed":
                 break
             if state in {"failed", "ambiguous", "absent"}:
-                suffix = ""
-                if platform == "linux":
-                    suffix = f"; captured output: {self._capture_linux_host_failure(name)}"
-                raise Gate13CloudError(f"{platform} host job ended in state {state}{suffix}")
+                raise Gate13CloudError(f"{platform} host job ended in state {state}")
             if state not in {"starting", "running"}:
                 raise Gate13CloudError(f"{platform} host job returned an invalid state")
             self.progress(f"{platform.capitalize()} qualification is {state}; waiting")

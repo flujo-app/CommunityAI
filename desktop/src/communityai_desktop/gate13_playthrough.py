@@ -35,6 +35,21 @@ MANUAL_ROUTE_POLL_SECONDS = 5.0
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 _MODEL_RE = re.compile(r"[ -~]{1,128}")
+_INFERENCE_DETAILS = {
+    "inference_failed",
+    "inference_rejected",
+    "inference_transport_failed",
+    "inference_timed_out",
+    "inference_response_invalid",
+    "inference_selection_changed",
+    "inference_key_baseline_missing",
+    "inference_key_baseline_dirty",
+    "inference_key_response_invalid",
+    "inference_model_mismatch",
+    "inference_token_count_invalid",
+    "inference_unexpected_error",
+    "inference_key_cleanup_failed",
+}
 _POLICY_FIELDS = {
     "sharing_enabled",
     "allowed_models",
@@ -78,6 +93,12 @@ _CONFIG_FIELDS = {
 
 class PlaythroughError(ValueError):
     """A qualification plan or observed desktop state failed closed."""
+
+
+def _safe_inference_detail(message: str) -> str:
+    if message in _INFERENCE_DETAILS or re.fullmatch(r"inference_http_[1-5][0-9]{2}", message):
+        return message
+    return "inference_failed"
 
 
 def _reject_constant(_value: str) -> None:
@@ -260,18 +281,21 @@ def _completion_request(url: str, secret: str, timeout: float) -> Mapping[str, A
     try:
         with opener.open(request, timeout=timeout) as response:
             if response.status != 200 or response.headers.get_content_type() != "application/json":
-                raise PlaythroughError("localhost inference was rejected")
+                raise PlaythroughError("inference_rejected")
             payload = response.read(MAX_RESPONSE_BYTES + 1)
-    except (HTTPError, URLError, OSError, TimeoutError) as exc:
-        raise PlaythroughError("localhost inference failed") from exc
+    except HTTPError as exc:
+        raise PlaythroughError(_safe_inference_detail(f"inference_http_{exc.code}")) from exc
+    except (URLError, OSError, TimeoutError) as exc:
+        timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
+        raise PlaythroughError("inference_timed_out" if timed_out else "inference_transport_failed") from exc
     if not 1 <= len(payload) <= MAX_RESPONSE_BYTES:
-        raise PlaythroughError("localhost inference response is invalid")
+        raise PlaythroughError("inference_response_invalid")
     try:
         value = json.loads(payload.decode("utf-8"), parse_constant=_reject_constant)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise PlaythroughError("localhost inference response is invalid") from exc
+        raise PlaythroughError("inference_response_invalid") from exc
     if not isinstance(value, dict):
-        raise PlaythroughError("localhost inference response is invalid")
+        raise PlaythroughError("inference_response_invalid")
     return value
 
 
@@ -290,6 +314,7 @@ def _manual_route_ready(status: Mapping[str, Any], plan: PlaythroughPlan) -> boo
         ),
         None,
     )
+    route = selected.get("route") if selected is not None else None
     return bool(
         selection.get("status") == "selected"
         and selection.get("model") == plan.model_id
@@ -298,10 +323,10 @@ def _manual_route_ready(status: Mapping[str, Any], plan: PlaythroughPlan) -> boo
         and selection.get("total_blocks") == plan.total_blocks
         and isinstance(selection.get("peer_count"), int)
         and selection["peer_count"] > 0
-        and selected is not None
-        and selected.get("route_complete") is True
-        and selected.get("covered_blocks") == plan.total_blocks
-        and selected.get("total_blocks") == plan.total_blocks
+        and isinstance(route, dict)
+        and route.get("status") == "complete"
+        and route.get("covered_blocks") == plan.total_blocks
+        and route.get("total_blocks") == plan.total_blocks
     )
 
 
@@ -326,8 +351,8 @@ def _completion_after_manual_readiness_wait(
             if _manual_route_ready(status, plan):
                 try:
                     return _completion_request(url, secret, plan.inference_timeout_seconds)
-                except PlaythroughError:
-                    raise first_error
+                except PlaythroughError as retry_error:
+                    raise retry_error from first_error
         raise first_error
 
 
@@ -337,12 +362,12 @@ def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[
     baseline_items = [item for item in controller.client.list_keys() if item.get("revoked_at") is None]
     baseline = {item["id"] for item in baseline_items}
     if not baseline:
-        raise PlaythroughError("a preexisting client key is required")
+        raise PlaythroughError("inference_key_baseline_missing")
     if any(item.get("label") == QUALIFICATION_KEY_LABEL for item in baseline_items):
-        raise PlaythroughError("a prior qualification key remains active")
+        raise PlaythroughError("inference_key_baseline_dirty")
     created_id = ""
     secret = ""
-    failed = False
+    failure_detail = None
     cleanup_failed = False
     completion_count = 0
     generated_token_count = 0
@@ -354,7 +379,7 @@ def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[
             or selection.get("model") != plan.model_id
             or selection.get("manifest_digest") != plan.manifest_digest
         ):
-            raise PlaythroughError("automatic selection changed before inference")
+            raise PlaythroughError("inference_selection_changed")
         created = controller.client.create_key(QUALIFICATION_KEY_LABEL)
         created_id = created.get("key", {}).get("id", "")
         secret = created.get("secret", "")
@@ -364,7 +389,7 @@ def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[
             or not isinstance(secret, str)
             or not 1 <= len(secret) <= 512
         ):
-            raise PlaythroughError("temporary client key response is invalid")
+            raise PlaythroughError("inference_key_response_invalid")
         base = normalize_loopback_url(status["openai_base_url"])
         completion = _completion_after_manual_readiness_wait(
             controller,
@@ -373,15 +398,17 @@ def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[
             secret,
         )
         if completion.get("model") != plan.model_id:
-            raise PlaythroughError("localhost inference identity is invalid")
+            raise PlaythroughError("inference_model_mismatch")
         usage = completion.get("usage")
         generated = usage.get("completion_tokens") if isinstance(usage, dict) else None
         if type(generated) is not int or generated != 1:
-            raise PlaythroughError("localhost inference token count is invalid")
+            raise PlaythroughError("inference_token_count_invalid")
         completion_count = 1
         generated_token_count = generated
+    except PlaythroughError as exc:
+        failure_detail = _safe_inference_detail(str(exc))
     except BaseException:
-        failed = True
+        failure_detail = "inference_unexpected_error"
     finally:
         secret = ""
         try:
@@ -397,8 +424,10 @@ def qualify_localhost_inference(controller: Any, plan: PlaythroughPlan) -> dict[
                 raise PlaythroughError("temporary client key cleanup failed")
         except BaseException:
             cleanup_failed = True
-    if failed or cleanup_failed:
-        raise PlaythroughError("localhost inference or key cleanup failed")
+    if cleanup_failed:
+        raise PlaythroughError("inference_key_cleanup_failed")
+    if failure_detail is not None:
+        raise PlaythroughError(failure_detail)
     return {
         "passed": True,
         "model_id": plan.model_id,
@@ -501,7 +530,7 @@ class Gate13Playthrough:
 
     def _timeout(self) -> None:
         if not self._done:
-            self._fail()
+            self._fail("playthrough_timed_out")
 
     def _ready(self) -> bool:
         window = self._window
@@ -619,7 +648,7 @@ class Gate13Playthrough:
         self._window._submit(
             lambda: self._inference_runner(controller, self.plan),
             finished,
-            lambda _message: self._fail(),
+            lambda message: self._fail("inference_failed", _safe_inference_detail(message)),
         )
 
     def _begin_policy_edit(self) -> None:
@@ -797,11 +826,14 @@ class Gate13Playthrough:
         )
         self._finish(value)
 
-    def _fail(self) -> None:
+    def _fail(self, failure_code: str = "playthrough_failed", failure_detail: str | None = None) -> None:
         if self._done:
             return
         value = self._base_result("failed")
-        value["failure_code"] = "playthrough_failed"
+        value["failure_code"] = failure_code
+        value["failure_phase"] = self._state
+        if failure_detail is not None:
+            value["failure_detail"] = failure_detail
         self._finish(value)
 
     def _finish(self, value: Mapping[str, Any]) -> None:
@@ -817,6 +849,7 @@ class Gate13Playthrough:
         except BaseException:
             fallback = self._base_result("failed")
             fallback["failure_code"] = "evidence_write_failed"
+            fallback["failure_phase"] = self._state
             try:
                 _atomic_json(self.evidence_path, fallback)
             except BaseException:

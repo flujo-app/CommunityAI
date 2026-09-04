@@ -211,3 +211,146 @@ def test_config_and_session_evidence_fail_closed(tmp_path):
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
     with pytest.raises(replay.ReplayError):
         replay._validate_session(evidence_path, config, "initial")
+
+
+def run_main_with_runner(tmp_path, monkeypatch, capsys, runner, platform="windows"):
+    document = config_document(tmp_path, platform)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+    real_replay = replay.run_replay
+    monkeypatch.setattr(replay, "run_replay", lambda config: real_replay(config, runner=runner))
+    assert replay.main(["--config", str(config_path)]) == 1
+    return document, json.loads(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("action", ["--check-runtime", "--self-test", "--ui-self-test", "--onboarding-ui-self-test"])
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_self_test_failure_reports_the_exact_action_and_process_outcome(
+    tmp_path, monkeypatch, capsys, action, timed_out
+):
+    actions = []
+
+    def runner(argv, **kwargs):
+        actions.append(argv[1])
+        if argv[1] == action:
+            if timed_out:
+                raise subprocess.TimeoutExpired(
+                    argv, kwargs["timeout"], output="private prompt", stderr="private secret"
+                )
+            return subprocess.CompletedProcess(argv, 37, stdout="private prompt", stderr="private secret")
+        return subprocess.CompletedProcess(argv, 0)
+
+    document, failure = run_main_with_runner(tmp_path, monkeypatch, capsys, runner)
+
+    assert actions[-1] == action
+    assert failure["failed_step"] == action
+    assert failure["error_category"] == ("process_timeout" if timed_out else "process_exit")
+    assert failure["timeout_seconds" if timed_out else "exit_code"] == (120 if timed_out else 37)
+    assert "private" not in json.dumps(failure)
+    assert not Path(document["work_root"]).exists()
+
+
+@pytest.mark.parametrize("platform", ["windows", "linux"])
+@pytest.mark.parametrize("stage", ["initial", "restart"])
+@pytest.mark.parametrize("outcome", ["exit", "timeout", "failed_evidence"])
+def test_session_failure_evidence_survives_temporary_cleanup(tmp_path, monkeypatch, capsys, platform, stage, outcome):
+    def runner(argv, **kwargs):
+        if "--gate13-ui-playthrough" not in argv:
+            return subprocess.CompletedProcess(argv, 0)
+        plan = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+        evidence_path = Path(argv[4])
+        evidence = session_evidence(plan)
+        if plan["stage"] == stage:
+            evidence = {
+                key: item
+                for key, item in evidence.items()
+                if key not in ("route", "inference", "ui", "limits", "timing", "privacy")
+            }
+            evidence.update(
+                result="failed",
+                failure_code="inference_failed",
+                duration_seconds=29.25,
+                failure_phase="wait_ready",
+                failure_detail="inference_http_503",
+            )
+        else:
+            # Even unknown fields inside accepted inference evidence must not
+            # become retained diagnostics when a later session fails.
+            evidence["inference"]["unrecognized_private_value"] = "private model output"
+        evidence["unrecognized_private_value"] = "private credential" if plan["stage"] == stage else None
+        if plan["stage"] != stage:
+            del evidence["unrecognized_private_value"]
+        evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+        if plan["stage"] == stage:
+            if outcome == "timeout":
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"], stderr="private stderr")
+            return subprocess.CompletedProcess(argv, 19 if outcome == "exit" else 0)
+        return subprocess.CompletedProcess(argv, 0)
+
+    document, failure = run_main_with_runner(tmp_path, monkeypatch, capsys, runner, platform)
+
+    assert failure["failed_step"] == f"{stage}_session"
+    assert (
+        failure["error_category"]
+        == {"exit": "process_exit", "timeout": "process_timeout", "failed_evidence": "session_evidence_invalid"}[
+            outcome
+        ]
+    )
+    if outcome == "exit":
+        assert failure["exit_code"] == 19
+    elif outcome == "timeout":
+        assert failure["timeout_seconds"] == 90
+    retained = failure["session_evidence"][stage]
+    assert retained["result"] == "failed"
+    assert retained["failure_code"] == "inference_failed"
+    assert retained["failure_phase"] == "wait_ready"
+    assert retained["failure_detail"] == "inference_http_503"
+    assert retained["duration_seconds"] == 29.25
+    if stage == "restart":
+        assert failure["session_evidence"]["initial"]["result"] == "passed"
+        assert failure["session_evidence"]["initial"]["inference"]["passed"] is True
+    assert "private" not in json.dumps(failure)
+    assert failure["qualification_temporaries_removed"] is True
+    assert not Path(document["work_root"]).exists()
+
+
+@pytest.mark.parametrize("result", ["failed", "passed"])
+def test_session_diagnostics_drop_arbitrary_failure_text_and_success_only_failure_fields(tmp_path, result):
+    document = config_document(tmp_path)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+    config = replay.load_config(config_path)
+    evidence = session_evidence({**document, "stage": "initial"})
+    evidence.update(
+        result=result,
+        failure_code="private credential" if result == "failed" else "playthrough_timed_out",
+        failure_phase={"private": "prompt"} if result == "failed" else "wait_ready",
+        failure_detail="inference_http_503 private response" if result == "failed" else "inference_timed_out",
+    )
+    evidence_path = tmp_path / "session.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    retained = replay._session_diagnostic(evidence_path, config, "initial")
+
+    assert all(field not in retained for field in ("failure_code", "failure_phase", "failure_detail"))
+    assert "private" not in json.dumps(retained)
+
+
+def test_cleanup_error_does_not_obscure_the_failed_session(tmp_path, monkeypatch, capsys):
+    def runner(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 23 if "--gate13-ui-playthrough" in argv else 0)
+
+    def failed_cleanup(_path):
+        raise OSError("private filesystem path")
+
+    monkeypatch.setattr(replay.shutil, "rmtree", failed_cleanup)
+    document, failure = run_main_with_runner(tmp_path, monkeypatch, capsys, runner)
+
+    assert failure["failed_step"] == "initial_session"
+    assert failure["exit_code"] == 23
+    assert failure["error_category"] == "process_exit"
+    assert failure["session_evidence_error"] == "required file is unavailable"
+    assert failure["cleanup_failure_code"] == "qualification_temporary_cleanup_failed"
+    assert failure["qualification_temporaries_removed"] is False
+    assert Path(document["work_root"]).exists()
+    assert "private" not in json.dumps(failure)

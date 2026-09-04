@@ -36,6 +36,33 @@ SEQUENCE_PROFILES = {
 }
 MAX_CONFIG_BYTES = 65_536
 MAX_EVIDENCE_BYTES = 65_536
+_SESSION_FAILURE_CODES = {"playthrough_failed", "playthrough_timed_out", "inference_failed", "evidence_write_failed"}
+_SESSION_FAILURE_PHASES = {
+    "wait_ready",
+    "wait_policy",
+    "wait_prestart_paused",
+    "wait_started_intent",
+    "wait_resumed",
+    "wait_paused_intent",
+    "after_initial_inference",
+    "after_restart_inference",
+    "editing_policy",
+}
+_SESSION_FAILURE_DETAILS = {
+    "inference_failed",
+    "inference_rejected",
+    "inference_transport_failed",
+    "inference_timed_out",
+    "inference_response_invalid",
+    "inference_selection_changed",
+    "inference_key_baseline_missing",
+    "inference_key_baseline_dirty",
+    "inference_key_response_invalid",
+    "inference_model_mismatch",
+    "inference_token_count_invalid",
+    "inference_unexpected_error",
+    "inference_key_cleanup_failed",
+}
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -104,6 +131,10 @@ def _manual_schedule() -> dict[str, Any]:
 
 class ReplayError(ValueError):
     """A replay input, session, or cleanup boundary failed closed."""
+
+    def __init__(self, message: str, *, diagnostics: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = dict(diagnostics or {})
 
 
 def _reject_constant(_value: str) -> None:
@@ -394,6 +425,106 @@ def _validate_session(path: Path, config: ReplayConfig, stage: str) -> Mapping[s
     return value
 
 
+def _session_diagnostic(path: Path, config: ReplayConfig, stage: str) -> Mapping[str, Any]:
+    """Keep the bounded session outcome, never arbitrary child text or payloads."""
+    value = _json_file(path, MAX_EVIDENCE_BYTES)
+    expected = {
+        "schema_version": SCHEMA_VERSION,
+        "scope": "gate13-packaged-desktop-playthrough",
+        "run_id": config.run_id,
+        "platform": config.platform,
+        "stage": stage,
+        "model_id": config.model_id,
+        "manifest_digest": config.manifest_digest,
+    }
+    if any(value.get(key) != item for key, item in expected.items()) or value.get("result") not in ("passed", "failed"):
+        raise ReplayError("session diagnostic identity is invalid")
+    duration = _number(value.get("duration_seconds"), "session duration", 0, config.session_timeout_seconds + 60)
+    diagnostic = {**expected, "result": value["result"], "duration_seconds": duration}
+    if value["result"] == "failed":
+        for field, allowed in (("failure_code", _SESSION_FAILURE_CODES), ("failure_phase", _SESSION_FAILURE_PHASES)):
+            item = value.get(field)
+            if isinstance(item, str) and item in allowed:
+                diagnostic[field] = item
+        detail = value.get("failure_detail")
+        if isinstance(detail, str) and (
+            detail in _SESSION_FAILURE_DETAILS or re.fullmatch(r"inference_http_[1-5][0-9]{2}", detail)
+        ):
+            diagnostic["failure_detail"] = detail
+    # These are the existing structured observations. Ignore all unknown fields,
+    # even when the child adds them inside otherwise valid session evidence.
+    boolean_fields = {
+        "route": ("rendered_in_real_window", "complete"),
+        "inference": ("passed", "response_content_retained", "token_identifiers_retained", "temporary_key_removed"),
+        "ui": (
+            "real_window_opened",
+            "policy_dialog_saved",
+            "start_clicked",
+            "pause_control_observed",
+            "pause_clicked",
+            "restart_resume_observed",
+            "sharing_intent_enabled_observed",
+            "sharing_intent_disabled_observed",
+        ),
+        "limits": ("storage", "memory_or_vram", "bandwidth", "power", "pause_timeout", "schedule"),
+        "privacy": (
+            "prompt_retained",
+            "response_content_retained",
+            "token_identifiers_retained",
+            "credentials_retained",
+            "paths_retained",
+            "endpoints_retained",
+        ),
+    }
+    numeric_fields = {
+        "route": ("covered_blocks", "total_blocks"),
+        "inference": ("completion_count", "generated_token_count"),
+        "timing": ("start_observation_seconds", "restart_observation_seconds"),
+    }
+    for section in boolean_fields.keys() | numeric_fields.keys():
+        source = value.get(section)
+        if not isinstance(source, dict):
+            continue
+        fields = {key: source[key] for key in boolean_fields.get(section, ()) if type(source.get(key)) is bool}
+        for key in numeric_fields.get(section, ()):
+            item = source.get(key)
+            if type(item) in (int, float) and 0 <= item <= 86_400 and math.isfinite(item):
+                fields[key] = item
+        if fields:
+            diagnostic[section] = fields
+    return diagnostic
+
+
+def _run_desktop(
+    config: ReplayConfig,
+    arguments: Sequence[str],
+    *,
+    step: str,
+    timeout: float,
+    runner: Callable[..., subprocess.CompletedProcess],
+) -> None:
+    diagnostics: dict[str, Any] = {"failed_step": step}
+    try:
+        result = runner(
+            [os.fspath(config.desktop_executable), *arguments],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=timeout,
+            close_fds=True,
+        )
+    except subprocess.TimeoutExpired as exc:
+        diagnostics.update(error_category="process_timeout", timeout_seconds=timeout)
+        raise ReplayError("packaged desktop process timed out", diagnostics=diagnostics) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        diagnostics["error_category"] = "process_launch_failed" if isinstance(exc, OSError) else "process_error"
+        raise ReplayError("packaged desktop process could not run", diagnostics=diagnostics) from exc
+    if result.returncode != 0:
+        diagnostics.update(error_category="process_exit", exit_code=result.returncode)
+        raise ReplayError("packaged desktop process exited unsuccessfully", diagnostics=diagnostics)
+
+
 def _run_session(
     config: ReplayConfig,
     stage: str,
@@ -403,26 +534,29 @@ def _run_session(
     evidence_path = config.work_root / f"{stage}-evidence.json"
     _write_private_json(plan_path, _session_plan(config, stage))
     try:
-        result = runner(
+        _run_desktop(
+            config,
             [
-                os.fspath(config.desktop_executable),
                 "--gate13-ui-playthrough",
                 os.fspath(plan_path),
                 "--gate13-ui-evidence",
                 os.fspath(evidence_path),
             ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+            step=f"{stage}_session",
             timeout=config.session_timeout_seconds + 60,
-            close_fds=True,
+            runner=runner,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ReplayError("packaged desktop session failed") from exc
-    if result.returncode != 0:
-        raise ReplayError("packaged desktop session failed")
-    return _validate_session(evidence_path, config, stage)
+        return _validate_session(evidence_path, config, stage)
+    except ReplayError as exc:
+        exc.diagnostics.setdefault("failed_step", f"{stage}_session")
+        exc.diagnostics.setdefault("error_category", "session_evidence_invalid")
+        try:
+            exc.diagnostics["session_evidence"] = {stage: _session_diagnostic(evidence_path, config, stage)}
+        except Exception as evidence_exc:
+            exc.diagnostics["session_evidence_error"] = (
+                str(evidence_exc) if isinstance(evidence_exc, ReplayError) else "session diagnostic could not be read"
+            )
+        raise
 
 
 def _digest_file(path: Path) -> str:
@@ -442,20 +576,7 @@ def _run_package_self_tests(
     runner: Callable[..., subprocess.CompletedProcess],
 ) -> None:
     for action in ("--check-runtime", "--self-test", "--ui-self-test", "--onboarding-ui-self-test"):
-        try:
-            result = runner(
-                [os.fspath(config.desktop_executable), action],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=120,
-                close_fds=True,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise ReplayError("packaged desktop self-test failed") from exc
-        if result.returncode != 0:
-            raise ReplayError("packaged desktop self-test failed")
+        _run_desktop(config, [action], step=action, timeout=120, runner=runner)
 
 
 def run_replay(
@@ -472,9 +593,21 @@ def run_replay(
     cleanup_passed = False
     start: Mapping[str, Any] | None = None
     resumed: Mapping[str, Any] | None = None
+    failure: BaseException | None = None
     try:
         start = _run_session(config, "initial", runner)
         resumed = _run_session(config, "restart", runner)
+    except BaseException as exc:
+        failure = exc
+        if isinstance(exc, ReplayError) and start is not None:
+            try:
+                exc.diagnostics.setdefault("session_evidence", {})["initial"] = _session_diagnostic(
+                    config.work_root / "initial-evidence.json", config, "initial"
+                )
+            except Exception:
+                # Failure diagnostics must not replace the original failed step.
+                pass
+        raise
     finally:
         try:
             resolved = config.work_root.resolve(strict=True)
@@ -483,8 +616,14 @@ def run_replay(
                 raise ReplayError("work-root cleanup target changed")
             shutil.rmtree(resolved)
             cleanup_passed = not config.work_root.exists()
-        except OSError as exc:
-            raise ReplayError("qualification temporary cleanup failed") from exc
+        except (OSError, ReplayError) as exc:
+            if failure is None:
+                raise ReplayError("qualification temporary cleanup failed") from exc
+            if isinstance(failure, ReplayError):
+                failure.diagnostics["cleanup_failure_code"] = "qualification_temporary_cleanup_failed"
+        finally:
+            if isinstance(failure, ReplayError):
+                failure.diagnostics["qualification_temporaries_removed"] = cleanup_passed
     if start is None or resumed is None or not cleanup_passed:
         raise ReplayError("automated replay did not complete")
     if (
@@ -527,13 +666,21 @@ def run_replay(
     }
 
 
-def _failure() -> Mapping[str, Any]:
-    return {
+def _failure(exc: BaseException) -> Mapping[str, Any]:
+    value: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "scope": SCOPE,
         "result": "failed",
         "failure_code": "automated_replay_failed",
     }
+    if isinstance(exc, ReplayError):
+        # ReplayError messages are authored here; arbitrary exception/child text
+        # can contain paths, credentials, prompts, or generated output.
+        value["failure_reason"] = str(exc)
+        value.update(exc.diagnostics)
+    else:
+        value["error_category"] = "replay_interrupted" if isinstance(exc, KeyboardInterrupt) else "unexpected_error"
+    return value
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -542,8 +689,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         value = run_replay(load_config(args.config))
-    except BaseException:
-        value = _failure()
+    except BaseException as exc:
+        value = _failure(exc)
     print(json.dumps(value, sort_keys=True, separators=(",", ":")))
     return 0 if value.get("result") == "passed" else 1
 
