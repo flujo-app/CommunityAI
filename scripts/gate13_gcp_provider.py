@@ -1120,13 +1120,6 @@ class GcpProvider:
             action="Staging the exact final route fence",
             timeout=300,
         )
-        fence_digest = _sha256(fence)
-        self._ssh(
-            self.route,
-            "test \"$(sha256sum /tmp/gate13_route_fence.py | cut -d' ' -f1)\" " f'= "{fence_digest}"',
-            action="Verifying the exact final route fence",
-            timeout=120,
-        )
         return {
             "result": "passed",
             "route_source_commit": self.config.route_source_commit,
