@@ -27,7 +27,7 @@ SCHEMA_VERSION = 1
 SCOPE = "gate13-route-client-fence"
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_SECRET_BYTES = 512
-SERVICE_ACTION_TIMEOUT_SECONDS = 180
+SERVICE_ACTION_TIMEOUT_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -130,10 +130,12 @@ def _systemctl(
             timeout=timeout_seconds,
             close_fds=True,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise FenceError(f"systemctl_{arguments[0]}_timeout") from exc
     except (OSError, subprocess.SubprocessError) as exc:
-        raise FenceError("route service action failed") from exc
+        raise FenceError(f"systemctl_{arguments[0]}_unavailable") from exc
     if result.returncode != 0:
-        raise FenceError("route service action failed")
+        raise FenceError(f"systemctl_{arguments[0]}_failed")
 
 
 def _snapshot(profile: Profile, opener: Any) -> bool:
@@ -253,6 +255,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             timeout_seconds=args.timeout_seconds,
             settle_seconds=args.settle_seconds,
         )
+    except FenceError as exc:
+        result = {
+            "schema_version": SCHEMA_VERSION,
+            "scope": SCOPE,
+            "result": "failed",
+            "failure_code": str(exc),
+        }
     except BaseException:
         result = {
             "schema_version": SCHEMA_VERSION,

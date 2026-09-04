@@ -8,8 +8,27 @@ metadata() {
 }
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq \
+apt_deadline=$(( $(date +%s) + 300 ))
+run_apt() {
+  local phase="$1"
+  shift
+  local remaining=$(( apt_deadline - $(date +%s) ))
+  if (( remaining <= 0 )); then
+    echo "Gate 13 APT ${phase} exceeded the five-minute startup bound" >&2
+    exit 1
+  fi
+  if ! timeout --signal=TERM --kill-after=15s "${remaining}s" apt-get \
+    -o Acquire::Retries=3 \
+    -o Acquire::http::Timeout=30 \
+    -o Acquire::https::Timeout=30 \
+    -o DPkg::Lock::Timeout=60 \
+    "$@"; then
+    echo "Gate 13 APT ${phase} failed within the five-minute startup bound" >&2
+    exit 1
+  fi
+}
+run_apt update update -qq
+run_apt install install -y -qq \
   python3 xvfb xauth x11-utils xdotool imagemagick dbus-x11 \
   gnome-keyring libsecret-tools libsecret-1-0 libdbus-1-3 \
   libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \

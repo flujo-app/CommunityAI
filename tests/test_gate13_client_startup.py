@@ -74,6 +74,19 @@ def test_linux_bootstrap_contains_the_proven_x11_runtime_and_display():
     assert "DISPLAY=:99 xdpyinfo" in source
 
 
+def test_linux_bootstrap_bounds_apt_network_and_lock_waits():
+    source = LINUX.read_text(encoding="utf-8")
+
+    assert "apt_deadline=$(( $(date +%s) + 300 ))" in source
+    assert 'timeout --signal=TERM --kill-after=15s "${remaining}s" apt-get' in source
+    assert "Acquire::Retries=3" in source
+    assert "Acquire::http::Timeout=30" in source
+    assert "Acquire::https::Timeout=30" in source
+    assert "DPkg::Lock::Timeout=60" in source
+    assert "run_apt update update -qq" in source
+    assert "run_apt install install -y -qq" in source
+
+
 @pytest.mark.skipif(BASH is None, reason="requires bash parser")
 def test_linux_bootstrap_parses_natively():
     result = subprocess.run(

@@ -162,9 +162,15 @@ def _strict_object(payload: str, label: str) -> dict[str, Any]:
 
 def _strict_terminal_object(payload: str, label: str) -> dict[str, Any]:
     lines = [line for line in payload.splitlines() if line.strip()]
-    if not lines:
-        return _strict_object(payload, label)
-    return _strict_object(lines[-1], label)
+    objects = []
+    for line in lines:
+        try:
+            objects.append(_strict_object(line, label))
+        except Gate13CloudError:
+            pass
+    if len(objects) != 1:
+        raise Gate13CloudError(f"{label} did not contain exactly one strict JSON object")
+    return objects[0]
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -1184,10 +1190,13 @@ class GcpProvider:
             "--timeout-seconds 900 --settle-seconds 30",
             action=f"Fencing the route for {platform}",
             timeout=1_200,
+            check=False,
         )
         value = _strict_object(result.stdout, f"{platform} route fence")
         if value.get("result") != "passed" or value.get("target") != platform:
-            raise Gate13CloudError(f"{platform} route fence rejected")
+            failure_code = value.get("failure_code")
+            suffix = f": {failure_code}" if isinstance(failure_code, str) else ""
+            raise Gate13CloudError(f"{platform} route fence rejected{suffix}")
         return value
 
     def _route_private_ip(self) -> str:
