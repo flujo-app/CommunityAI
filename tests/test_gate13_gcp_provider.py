@@ -262,8 +262,8 @@ def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
             "3f8600c42a3c0765e100963c2e28cdef7c6b248992924ff3406941aefce7cf47",
         ),
         "linux": (
-            2138,
-            "72ac32fb78946ac09b60bbef571a944a018d790871fafbb818ec7006bee292c6",
+            2721,
+            "f4d28f8034f1d3aa30918623c68b85604330ee50ceda904ecaf559c68ff8ba73",
         ),
     }
     for platform, (byte_count, digest) in expected.items():
