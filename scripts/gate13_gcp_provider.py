@@ -162,15 +162,12 @@ def _strict_object(payload: str, label: str) -> dict[str, Any]:
 
 def _strict_terminal_object(payload: str, label: str) -> dict[str, Any]:
     lines = [line for line in payload.splitlines() if line.strip()]
-    objects = []
-    for line in lines:
+    for line in reversed(lines):
         try:
-            objects.append(_strict_object(line, label))
+            return _strict_object(line, label)
         except Gate13CloudError:
             pass
-    if len(objects) != 1:
-        raise Gate13CloudError(f"{label} did not contain exactly one strict JSON object")
-    return objects[0]
+    raise Gate13CloudError(f"{label} did not contain a strict JSON object")
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
