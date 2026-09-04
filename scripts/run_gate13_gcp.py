@@ -283,6 +283,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     None,
                 )
                 print(f"Failed phase: {failure or 'cleanup verification'}")
+                print(f"Reason: {result.get('failure_reason') or result.get('failure_code') or 'unknown'}")
             print(f"Result: {output_root / 'result.json'}")
             print("=" * 68)
             return 0 if result.get("result") == "passed" else 1

@@ -171,6 +171,7 @@ class RunRecorder:
         self.cleanup: dict[str, Any] | None = None
         self.result: str | None = None
         self.failure_code: str | None = None
+        self.failure_reason: str | None = None
         self._persist()
 
     @property
@@ -201,16 +202,24 @@ class RunRecorder:
             "cleanup": self.cleanup,
             "result": self.result,
             "failure_code": self.failure_code,
+            "failure_reason": self.failure_reason,
         }
 
     def _persist(self) -> None:
         _atomic_json(self.state_path, self._document())
 
-    def finish(self, result: str, *, failure_code: str | None = None) -> dict[str, Any]:
+    def finish(
+        self,
+        result: str,
+        *,
+        failure_code: str | None = None,
+        failure_reason: str | None = None,
+    ) -> dict[str, Any]:
         if result not in TERMINAL_RESULTS:
             raise Gate13CloudError("terminal result is invalid")
         self.result = result
         self.failure_code = failure_code
+        self.failure_reason = failure_reason
         self.current_phase = "COMPLETE" if result == "passed" else "FAILED"
         document = self._document()
         document["finished_at_unix"] = int(self.clock())
@@ -244,6 +253,7 @@ class Gate13CloudOrchestrator:
         recorder = RunRecorder(self.run_id, self.provider.name, self.output_root, self.clock)
         cloud_mutated = False
         failure_code: str | None = None
+        failure_reason: str | None = None
         try:
             recorder.phase("PREFLIGHT")
             _require_passed(self.provider.preflight(), "cloud preflight")
@@ -289,11 +299,13 @@ class Gate13CloudOrchestrator:
             self.provider.delete_route()
         except BaseException as exc:
             failure_code = type(exc).__name__
+            failure_reason = str(exc) or failure_code
             failed_phase = recorder.current_phase
             recorder.phase(
                 "FAILURE",
                 failed_phase=failed_phase,
                 failure_code=failure_code,
+                failure_reason=failure_reason,
             )
         finally:
             if cloud_mutated:
@@ -302,12 +314,14 @@ class Gate13CloudOrchestrator:
                     recorder.cleanup = dict(self.provider.cleanup_all())
                     if recorder.cleanup.get("result") != "passed":
                         failure_code = failure_code or "CleanupError"
+                        failure_reason = failure_reason or "cloud cleanup did not pass"
                 except BaseException as cleanup_exc:
                     recorder.cleanup = {
                         "result": "failed",
                         "failure_code": type(cleanup_exc).__name__,
                     }
                     failure_code = failure_code or "CleanupError"
+                    failure_reason = failure_reason or str(cleanup_exc) or "CleanupError"
 
         try:
             recorder.phase("CLEANUP_VERIFYING")
@@ -315,6 +329,7 @@ class Gate13CloudOrchestrator:
             recorder.cleanup = verified_cleanup
         except BaseException as cleanup_exc:
             failure_code = failure_code or type(cleanup_exc).__name__
+            failure_reason = failure_reason or str(cleanup_exc) or type(cleanup_exc).__name__
             recorder.cleanup = {
                 "result": "failed",
                 "failure_code": type(cleanup_exc).__name__,
@@ -326,4 +341,8 @@ class Gate13CloudOrchestrator:
             and isinstance(recorder.cleanup, dict)
             and recorder.cleanup.get("result") == "passed"
         )
-        return recorder.finish("passed" if passed else "failed", failure_code=failure_code)
+        return recorder.finish(
+            "passed" if passed else "failed",
+            failure_code=failure_code,
+            failure_reason=failure_reason,
+        )

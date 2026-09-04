@@ -162,6 +162,7 @@ def test_every_cloud_failure_attempts_cleanup_and_verifies_absence(tmp_path, fai
     ).run()
 
     assert result["result"] == "failed"
+    assert result["failure_reason"]
     assert "cleanup_all" in provider.calls
     assert provider.calls[-1] == "verify_cleanup"
 
