@@ -432,6 +432,26 @@ def test_linux_client_reads_json_after_the_ssh_greeting(tmp_path, monkeypatch):
     assert payload == b'{"result":"passed"}\n'
 
 
+def test_linux_client_captures_terminal_and_stderr_before_raising(tmp_path, monkeypatch):
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None))
+    replies = iter(
+        [
+            subprocess.CompletedProcess([], 0, '{"job_state":"running"}\n', ""),
+            subprocess.CompletedProcess([], 0, '{"job_state":"failed"}\n', ""),
+            subprocess.CompletedProcess([], 0, '{"failure_code":"lifecycle_failed"}\n', ""),
+            subprocess.CompletedProcess([], 0, "actual lifecycle error\n", ""),
+        ]
+    )
+    monkeypatch.setattr(item, "_ssh", lambda *_args, **_kwargs: next(replies))
+
+    with pytest.raises(gcp.Gate13CloudError, match="captured output"):
+        item.run_client("linux", artifact("linux"))
+
+    captured = json.loads((tmp_path / "linux-host-job-failure-output.json").read_text())
+    assert "lifecycle_failed" in captured["terminal"]["stdout"]
+    assert captured["stderr"]["stdout"] == "actual lifecycle error\n"
+
+
 def test_cleanup_instance_inspection_retries_instead_of_claiming_absence(tmp_path):
     calls = []
     waits = []

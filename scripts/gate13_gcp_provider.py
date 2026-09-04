@@ -1768,6 +1768,28 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             self.sleeper(30)
         raise AssertionError("unreachable")
 
+    def _capture_linux_host_failure(self, instance: str) -> Path:
+        output_path = self.output_root / "linux-host-job-failure-output.json"
+        captured: dict[str, Any] = {}
+        for label, remote_path in (
+            ("terminal", "/qualification/terminal.json"),
+            ("stderr", "/qualification/stderr.log"),
+        ):
+            result = self._ssh(
+                instance,
+                f"sudo cat {remote_path}",
+                action=f"Collecting the failed Linux host job {label}",
+                timeout=90,
+                check=False,
+            )
+            captured[label] = {
+                "exit_code": result.returncode,
+                "stderr": result.stderr,
+                "stdout": result.stdout,
+            }
+        self._write_json(output_path, captured)
+        return output_path
+
     def run_client(self, platform: str, package: PackageArtifact) -> bytes:
         name = self.clients[platform]
         start_command, user = self._host_command(platform, "start")
@@ -1798,7 +1820,10 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             if state == "passed":
                 break
             if state in {"failed", "ambiguous", "absent"}:
-                raise Gate13CloudError(f"{platform} host job ended in state {state}")
+                suffix = ""
+                if platform == "linux":
+                    suffix = f"; captured output: {self._capture_linux_host_failure(name)}"
+                raise Gate13CloudError(f"{platform} host job ended in state {state}{suffix}")
             if state not in {"starting", "running"}:
                 raise Gate13CloudError(f"{platform} host job returned an invalid state")
             self.progress(f"{platform.capitalize()} qualification is {state}; waiting")
