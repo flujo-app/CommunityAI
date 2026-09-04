@@ -440,6 +440,7 @@ def test_linux_client_captures_terminal_and_stderr_before_raising(tmp_path, monk
             subprocess.CompletedProcess([], 0, '{"job_state":"failed"}\n', ""),
             subprocess.CompletedProcess([], 0, '{"failure_code":"lifecycle_failed"}\n', ""),
             subprocess.CompletedProcess([], 0, "actual lifecycle error\n", ""),
+            subprocess.CompletedProcess([], 0, '{"result":"failed","phase":"launch"}\n', ""),
         ]
     )
     monkeypatch.setattr(item, "_ssh", lambda *_args, **_kwargs: next(replies))
@@ -450,6 +451,7 @@ def test_linux_client_captures_terminal_and_stderr_before_raising(tmp_path, monk
     captured = json.loads((tmp_path / "linux-host-job-failure-output.json").read_text())
     assert "lifecycle_failed" in captured["terminal"]["stdout"]
     assert captured["stderr"]["stdout"] == "actual lifecycle error\n"
+    assert '"phase":"launch"' in captured["evidence"]["stdout"]
 
 
 def test_cleanup_instance_inspection_retries_instead_of_claiming_absence(tmp_path):

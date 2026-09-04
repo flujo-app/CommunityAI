@@ -1774,6 +1774,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         for label, remote_path in (
             ("terminal", "/qualification/terminal.json"),
             ("stderr", "/qualification/stderr.log"),
+            ("evidence", "/qualification/evidence.json"),
         ):
             result = self._ssh(
                 instance,
