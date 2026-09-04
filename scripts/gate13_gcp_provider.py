@@ -1192,7 +1192,7 @@ class GcpProvider:
             timeout=1_200,
             check=False,
         )
-        value = _strict_object(result.stdout, f"{platform} route fence")
+        value = _strict_terminal_object(result.stdout, f"{platform} route fence")
         if value.get("result") != "passed" or value.get("target") != platform:
             failure_code = value.get("failure_code")
             suffix = f": {failure_code}" if isinstance(failure_code, str) else ""
