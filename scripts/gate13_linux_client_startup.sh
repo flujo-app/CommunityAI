@@ -8,27 +8,52 @@ metadata() {
 }
 
 export DEBIAN_FRONTEND=noninteractive
+bootstrap_status=/var/lib/gate13-bootstrap-status
+printf '%s\n' starting >"$bootstrap_status"
+trap 'rc=$?; if (( rc != 0 )); then printf "%s\\n" failed >"$bootstrap_status"; fi' EXIT
+
 apt_deadline=$(( $(date +%s) + 300 ))
-run_apt() {
-  local phase="$1"
-  shift
-  local remaining=$(( apt_deadline - $(date +%s) ))
+apt_options=(
+  -o Acquire::ForceIPv4=true
+  -o Acquire::Retries=1
+  -o Acquire::http::Timeout=20
+  -o Acquire::https::Timeout=20
+  -o DPkg::Lock::Timeout=30
+)
+
+apt_updated=false
+for attempt in 1 2 3; do
+  remaining=$(( apt_deadline - $(date +%s) ))
   if (( remaining <= 0 )); then
-    echo "Gate 13 APT ${phase} exceeded the five-minute startup bound" >&2
-    exit 1
+    break
   fi
-  if ! timeout --signal=TERM --kill-after=15s "${remaining}s" apt-get \
-    -o Acquire::Retries=3 \
-    -o Acquire::http::Timeout=30 \
-    -o Acquire::https::Timeout=30 \
-    -o DPkg::Lock::Timeout=60 \
-    "$@"; then
-    echo "Gate 13 APT ${phase} failed within the five-minute startup bound" >&2
-    exit 1
+  attempt_timeout=$(( remaining / (4 - attempt) ))
+  if (( attempt_timeout > 90 )); then
+    attempt_timeout=90
   fi
-}
-run_apt update update -qq
-run_apt install install -y -qq \
+  echo "Gate 13 APT update attempt ${attempt}/3 (${attempt_timeout}s maximum)"
+  if timeout --signal=TERM --kill-after=10s "${attempt_timeout}s" \
+    apt-get "${apt_options[@]}" update; then
+    apt_updated=true
+    break
+  fi
+  echo "Gate 13 APT update attempt ${attempt}/3 failed" >&2
+  rm -rf -- /var/lib/apt/lists/partial
+  install -d -m 0755 /var/lib/apt/lists/partial
+done
+if [[ "$apt_updated" != true ]]; then
+  echo "Gate 13 APT update failed after three attempts" >&2
+  exit 1
+fi
+
+remaining=$(( apt_deadline - $(date +%s) ))
+if (( remaining <= 0 )); then
+  echo "Gate 13 APT install had no time remaining" >&2
+  exit 1
+fi
+echo "Gate 13 APT install (${remaining}s maximum)"
+timeout --signal=TERM --kill-after=10s "${remaining}s" \
+  apt-get "${apt_options[@]}" install -y \
   python3 xvfb xauth x11-utils xdotool imagemagick dbus-x11 \
   gnome-keyring libsecret-tools libsecret-1-0 libdbus-1-3 \
   libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
@@ -70,7 +95,9 @@ systemd-run --quiet --collect --service-type=exec \
   /usr/bin/Xvfb :99 -screen 0 1280x900x24 -nolisten tcp
 for _ in $(seq 1 30); do
   if sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null 2>&1; then
+    printf '%s\n' ready >"$bootstrap_status"
     touch /var/lib/gate13-bootstrap-ready
+    trap - EXIT
     exit 0
   fi
   sleep 1

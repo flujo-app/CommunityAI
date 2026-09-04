@@ -353,8 +353,11 @@ def test_client_readiness_cleans_the_route_relay_before_job_staging(tmp_path, mo
         lambda *_args, **_kwargs: subprocess.CompletedProcess(
             [],
             0,
-            'Access granted. Press Return to begin session.\n{"result":"passed","ready":true}\n',
-            "",
+            "Access granted. Press Return to begin session.\n"
+            "remote banner text\n"
+            "GATE13_STAGE_RESULT result=passed ready=true host_user=gate13\n"
+            "trailing transport text\n",
+            "non-fatal transport warning\n",
         ),
     )
 
@@ -363,6 +366,9 @@ def test_client_readiness_cleans_the_route_relay_before_job_staging(tmp_path, mo
     assert "gate13-bootstrap-ready" in events[0][1]
     assert [event[0] for event in events] == ["ready", "relay-cleaned", "stage-copied"]
     assert result["package_relay_verified"] is True
+    captured = json.loads((tmp_path / "linux-stage-command-output.json").read_text())
+    assert "remote banner text" in captured["stdout"]
+    assert captured["stderr"] == "non-fatal transport warning\n"
 
 
 def test_generated_client_jobs_are_exactly_source_and_package_bound(tmp_path):

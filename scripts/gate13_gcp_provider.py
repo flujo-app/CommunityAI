@@ -26,6 +26,9 @@ _RUN_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?")
 _GCLOUD_READ_ATTEMPTS = 5
 _GCLOUD_RETRY_SECONDS = 15
 _HOST_JOB_COMMAND_ATTEMPTS = 5
+_LINUX_STAGE_SUCCESS_RE = re.compile(
+    r"\bGATE13_STAGE_RESULT[ \t]+result=passed[ \t]+ready=true\b"
+)
 
 
 class CommandError(Gate13CloudError):
@@ -678,6 +681,7 @@ class GcpProvider:
         action: str,
         user: str | None = None,
         timeout_seconds: int = 1_800,
+        fatal_marker: str | None = None,
     ) -> str:
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
@@ -691,6 +695,8 @@ class GcpProvider:
             )
             if result.returncode == 0:
                 return result.stdout.strip()
+            if fatal_marker is not None and fatal_marker in result.stdout:
+                raise Gate13CloudError(f"{action} reported a permanent startup failure")
             self.sleeper(15)
         raise Gate13CloudError(f"{action} exceeded its time bound")
 
@@ -1632,6 +1638,7 @@ test "$(sha256sum /qualification/package/{package.archive_name} | cut -d' ' -f1)
 test "$(stat -c %s /qualification/package/{package.archive_name})" = "{package.archive_bytes}"
 test -x /qualification/install/CommunityAI/CommunityAI
 sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null
+printf 'GATE13_STAGE_RESULT result=passed ready=true host_user=gate13 display=:99 hashes_verified=true\\n'
 printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":":99,"hashes_verified":true}}'
 """
         path = stage / "stage.sh"
@@ -1653,7 +1660,10 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         else:
             user = None
             ready_command = (
-                "test -f /var/lib/gate13-bootstrap-ready && " "sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null"
+                "if test -f /var/lib/gate13-bootstrap-ready; then "
+                "sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null; "
+                "elif test \"$(cat /var/lib/gate13-bootstrap-status 2>/dev/null)\" = failed; then "
+                "printf GATE13_BOOTSTRAP_FAILED; exit 2; else exit 1; fi"
             )
         self._wait_ssh(
             name,
@@ -1661,6 +1671,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             user=user,
             action=f"Waiting for the clean {platform} client",
             timeout_seconds=5_400,
+            fatal_marker="GATE13_BOOTSTRAP_FAILED" if platform == "linux" else None,
         )
         self._cleanup_route_relay(platform)
         stage, stage_script = self._build_client_stage(platform, package)
@@ -1690,11 +1701,24 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             timeout=300,
         )
         if platform == "linux":
-            value = _strict_terminal_object(result.stdout, "linux qualification stage")
+            output_path = self.output_root / "linux-stage-command-output.json"
+            self._write_json(
+                output_path,
+                {
+                    "exit_code": result.returncode,
+                    "stderr": result.stderr,
+                    "stdout": result.stdout,
+                },
+            )
+            if _LINUX_STAGE_SUCCESS_RE.search(result.stdout) is None:
+                raise Gate13CloudError(
+                    "linux qualification stage success marker was not found; "
+                    f"captured output: {output_path}"
+                )
         else:
             value = _strict_object(result.stdout, "windows qualification stage")
-        if value.get("result") != "passed" or value.get("ready") is not True:
-            raise Gate13CloudError(f"{platform} qualification stage rejected")
+            if value.get("result") != "passed" or value.get("ready") is not True:
+                raise Gate13CloudError(f"{platform} qualification stage rejected")
         return {
             "result": "passed",
             "package_relay_verified": True,

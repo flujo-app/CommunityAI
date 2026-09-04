@@ -78,13 +78,16 @@ def test_linux_bootstrap_bounds_apt_network_and_lock_waits():
     source = LINUX.read_text(encoding="utf-8")
 
     assert "apt_deadline=$(( $(date +%s) + 300 ))" in source
-    assert 'timeout --signal=TERM --kill-after=15s "${remaining}s" apt-get' in source
-    assert "Acquire::Retries=3" in source
-    assert "Acquire::http::Timeout=30" in source
-    assert "Acquire::https::Timeout=30" in source
-    assert "DPkg::Lock::Timeout=60" in source
-    assert "run_apt update update -qq" in source
-    assert "run_apt install install -y -qq" in source
+    assert "for attempt in 1 2 3" in source
+    assert '"${attempt_timeout}s"' in source
+    assert "Acquire::ForceIPv4=true" in source
+    assert "Acquire::Retries=1" in source
+    assert "Acquire::http::Timeout=20" in source
+    assert "Acquire::https::Timeout=20" in source
+    assert "DPkg::Lock::Timeout=30" in source
+    assert "update attempt ${attempt}/3" in source
+    assert 'apt-get "${apt_options[@]}" install -y' in source
+    assert "bootstrap_status=/var/lib/gate13-bootstrap-status" in source
 
 
 @pytest.mark.skipif(BASH is None, reason="requires bash parser")
