@@ -23,6 +23,9 @@ from gate13_cloud_orchestrator import Gate13CloudError, PackageArtifact
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _RUN_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?")
+_GCLOUD_READ_ATTEMPTS = 5
+_GCLOUD_RETRY_SECONDS = 15
+_HOST_JOB_COMMAND_ATTEMPTS = 5
 
 
 class CommandError(Gate13CloudError):
@@ -544,6 +547,20 @@ class GcpProvider:
         except json.JSONDecodeError as exc:
             raise Gate13CloudError(f"{action} returned invalid JSON") from exc
 
+    def _gcloud_json_with_retry(self, *arguments: str, action: str, timeout: float = 300) -> Any:
+        for attempt in range(1, _GCLOUD_READ_ATTEMPTS + 1):
+            try:
+                return self._gcloud_json(*arguments, action=action, timeout=timeout)
+            except CommandError:
+                if attempt == _GCLOUD_READ_ATTEMPTS:
+                    raise
+                self.progress(
+                    f"{action} did not complete; trying again "
+                    f"({attempt + 1} of {_GCLOUD_READ_ATTEMPTS})"
+                )
+                self.sleeper(_GCLOUD_RETRY_SECONDS)
+        raise AssertionError("unreachable")
+
     def _ssh(
         self,
         instance: str,
@@ -596,22 +613,32 @@ class GcpProvider:
         )
 
     def _describe_instance(self, name: str, *, check: bool = True) -> Mapping[str, Any] | None:
-        result = self._gcloud(
-            "compute",
-            "instances",
-            "describe",
-            name,
-            "--project",
-            self.config.project,
-            "--zone",
-            self.config.zone,
-            "--format=json",
-            action=f"Inspecting instance {name}",
-            timeout=60,
-            check=check,
-        )
-        if result.returncode != 0:
-            return None
+        action = f"Inspecting instance {name}"
+        attempts = 1 if check else _GCLOUD_READ_ATTEMPTS
+        for attempt in range(1, attempts + 1):
+            result = self._gcloud(
+                "compute",
+                "instances",
+                "describe",
+                name,
+                "--project",
+                self.config.project,
+                "--zone",
+                self.config.zone,
+                "--format=json",
+                action=action,
+                timeout=60,
+                check=check,
+            )
+            if result.returncode == 0:
+                break
+            output = f"{result.stdout}\n{result.stderr}".casefold()
+            if "was not found" in output:
+                return None
+            if attempt == attempts:
+                raise CommandError(f"{action} failed after {attempts} attempts")
+            self.progress(f"{action} did not complete; trying again ({attempt + 1} of {attempts})")
+            self.sleeper(_GCLOUD_RETRY_SECONDS)
         try:
             value = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
@@ -693,7 +720,7 @@ class GcpProvider:
             self.iap_firewall,
             self.relay_firewall,
         }
-        instance_inventory = self._gcloud_json(
+        instance_inventory = self._gcloud_json_with_retry(
             "compute",
             "instances",
             "list",
@@ -702,7 +729,7 @@ class GcpProvider:
             action="Inventorying run-scoped GCP instances",
             timeout=120,
         )
-        disk_inventory = self._gcloud_json(
+        disk_inventory = self._gcloud_json_with_retry(
             "compute",
             "disks",
             "list",
@@ -711,7 +738,7 @@ class GcpProvider:
             action="Inventorying run-scoped GCP disks",
             timeout=120,
         )
-        firewall_inventory = self._gcloud_json(
+        firewall_inventory = self._gcloud_json_with_retry(
             "compute",
             "firewall-rules",
             "list",
@@ -1682,31 +1709,61 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             None,
         )
 
+    def _run_host_job_command(
+        self,
+        instance: str,
+        command: str,
+        *,
+        user: str | None,
+        action: str,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        for attempt in range(1, _HOST_JOB_COMMAND_ATTEMPTS + 1):
+            result = self._ssh(
+                instance,
+                command,
+                user=user,
+                action=action,
+                timeout=timeout,
+                check=False,
+            )
+            if result.returncode == 0:
+                return result
+            if attempt == _HOST_JOB_COMMAND_ATTEMPTS:
+                raise CommandError(f"{action} failed {_HOST_JOB_COMMAND_ATTEMPTS} times in a row")
+            self.progress(
+                f"{action} did not complete; trying again "
+                f"({attempt + 1} of {_HOST_JOB_COMMAND_ATTEMPTS})"
+            )
+            self.sleeper(30)
+        raise AssertionError("unreachable")
+
     def run_client(self, platform: str, package: PackageArtifact) -> bytes:
         name = self.clients[platform]
         start_command, user = self._host_command(platform, "start")
-        started = self._ssh(
+        started = self._run_host_job_command(
             name,
             start_command,
             user=user,
             action=f"Starting the durable {platform} qualification job",
             timeout=180,
         )
-        start_value = _strict_object(started.stdout, f"{platform} host-job start")
+        parser = _strict_terminal_object if platform == "linux" else _strict_object
+        start_value = parser(started.stdout, f"{platform} host-job start")
         if start_value.get("job_state") not in {"starting", "running", "passed"}:
             raise Gate13CloudError(f"{platform} host job did not start")
 
         status_command, _ = self._host_command(platform, "status")
         deadline = time.monotonic() + 14_700
         while time.monotonic() < deadline:
-            observed = self._ssh(
+            observed = self._run_host_job_command(
                 name,
                 status_command,
                 user=user,
                 action=f"Checking the {platform} qualification job",
                 timeout=180,
             )
-            status = _strict_object(observed.stdout, f"{platform} host-job status")
+            status = parser(observed.stdout, f"{platform} host-job status")
             state = status.get("job_state")
             if state == "passed":
                 break
@@ -1720,16 +1777,23 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             raise Gate13CloudError(f"{platform} host job exceeded its time bound")
 
         collect_command, _ = self._host_command(platform, "collect")
-        collected = self._ssh(
+        collected = self._run_host_job_command(
             name,
             collect_command,
             user=user,
             action=f"Collecting the {platform} qualification evidence",
             timeout=300,
         )
-        payload = collected.stdout.encode("utf-8")
+        if platform == "linux":
+            lines = [line for line in collected.stdout.splitlines() if line.strip()]
+            if not lines:
+                raise Gate13CloudError("linux evidence is empty")
+            _strict_object(lines[-1], "linux qualification evidence")
+            payload = (lines[-1] + "\n").encode("utf-8")
+        else:
+            payload = collected.stdout.encode("utf-8")
         cleanup_command, _ = self._host_command(platform, "cleanup")
-        self._ssh(
+        self._run_host_job_command(
             name,
             cleanup_command,
             user=user,
@@ -1750,7 +1814,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         raise Gate13CloudError("instance target is outside this run")
 
     def _delete_orphan_disk(self, name: str) -> None:
-        inventory = self._gcloud_json(
+        inventory = self._gcloud_json_with_retry(
             "compute",
             "disks",
             "list",
@@ -1768,7 +1832,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             return
         if len(present) != 1:
             raise Gate13CloudError(f"disk inventory for {name} is ambiguous")
-        disk = self._gcloud_json(
+        disk = self._gcloud_json_with_retry(
             "compute",
             "disks",
             "describe",
@@ -1847,7 +1911,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         }
         if name not in bindings:
             raise Gate13CloudError(f"refusing to inspect unknown firewall {name}")
-        inventory = self._gcloud_json(
+        inventory = self._gcloud_json_with_retry(
             "compute",
             "firewall-rules",
             "list",
@@ -1865,7 +1929,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             return
         if len(present) != 1:
             raise Gate13CloudError(f"firewall inventory for {name} is ambiguous")
-        firewall = self._gcloud_json(
+        firewall = self._gcloud_json_with_retry(
             "compute",
             "firewall-rules",
             "describe",
@@ -1933,7 +1997,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
 
     def verify_cleanup(self) -> Mapping[str, Any]:
         instances, disks, firewalls = self._resource_absence()
-        bootstrap = self._gcloud_json(
+        bootstrap = self._gcloud_json_with_retry(
             "compute",
             "instances",
             "describe",

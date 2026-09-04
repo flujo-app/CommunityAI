@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -379,3 +381,106 @@ def test_generated_client_jobs_are_exactly_source_and_package_bound(tmp_path):
         assert host["lifecycle_run_id"] == f"{RUN_ID}-{platform}"
         assert host["attempt_ordinal"] == 1
         assert stage_script.is_file()
+
+
+def test_client_status_poll_retries_one_temporary_connection_failure(tmp_path, monkeypatch):
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None))
+    waits = []
+    messages = []
+    replies = iter(
+        [
+            subprocess.CompletedProcess([], 0, '{"job_state":"running"}\n', ""),
+            subprocess.CompletedProcess([], 1, "", "temporary DNS failure"),
+            subprocess.CompletedProcess([], 0, '{"job_state":"passed"}\n', ""),
+            subprocess.CompletedProcess([], 0, '{"result":"passed"}\n', ""),
+            subprocess.CompletedProcess([], 0, '{}\n', ""),
+        ]
+    )
+    monkeypatch.setattr(item, "_ssh", lambda *_args, **_kwargs: next(replies))
+    item.sleeper = waits.append
+    item.progress = messages.append
+
+    payload = item.run_client("windows", artifact("windows"))
+
+    assert payload == b'{"result":"passed"}\n'
+    assert waits == [30]
+    assert messages == ["Checking the windows qualification job did not complete; trying again (2 of 5)"]
+
+
+def test_linux_client_reads_json_after_the_ssh_greeting(tmp_path, monkeypatch):
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None))
+    greeting = "Access granted. Press Return to begin session.\n"
+    replies = iter(
+        [
+            subprocess.CompletedProcess([], 0, greeting + '{"job_state":"running"}\n', ""),
+            subprocess.CompletedProcess([], 0, greeting + '{"job_state":"passed"}\n', ""),
+            subprocess.CompletedProcess([], 0, greeting + '{"result":"passed"}\n', ""),
+            subprocess.CompletedProcess([], 0, greeting + '{}\n', ""),
+        ]
+    )
+    monkeypatch.setattr(item, "_ssh", lambda *_args, **_kwargs: next(replies))
+    item.sleeper = lambda _seconds: None
+
+    payload = item.run_client("linux", artifact("linux"))
+
+    assert payload == b'{"result":"passed"}\n'
+
+
+def test_cleanup_instance_inspection_retries_instead_of_claiming_absence(tmp_path):
+    calls = []
+    waits = []
+
+    class Runner:
+        def run(self, argv, **_kwargs):
+            calls.append(argv)
+            if len(calls) == 1:
+                return subprocess.CompletedProcess(argv, 1, "", "temporary DNS failure")
+            name = str(argv[argv.index("describe") + 1])
+            value = {
+                "name": name,
+                "labels": {"communityai_run": RUN_ID},
+                "deletionProtection": False,
+                "disks": [{"autoDelete": True, "source": f"https://example.invalid/disks/{name}"}],
+            }
+            return subprocess.CompletedProcess(argv, 0, json.dumps(value), "")
+
+    item = provider(tmp_path, Runner())
+    item.sleeper = waits.append
+
+    value = item._describe_instance(item.clients["windows"], check=False)
+
+    assert value["name"] == item.clients["windows"]
+    assert len(calls) == 2
+    assert waits == [15]
+
+
+def test_cleanup_instance_inspection_raises_when_gcp_never_answers(tmp_path):
+    calls = []
+
+    class Runner:
+        def run(self, argv, **_kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 1, "", "temporary DNS failure")
+
+    item = provider(tmp_path, Runner())
+    item.sleeper = lambda _seconds: None
+
+    with pytest.raises(gcp.CommandError, match="failed after 5 attempts"):
+        item._describe_instance(item.clients["windows"], check=False)
+
+    assert len(calls) == 5
+
+
+def test_cleanup_instance_inspection_accepts_an_explicit_not_found_response(tmp_path):
+    calls = []
+
+    class Runner:
+        def run(self, argv, **_kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 1, "", "The resource was not found")
+
+    item = provider(tmp_path, Runner())
+    item.sleeper = lambda _seconds: pytest.fail("an explicit not-found response must not be retried")
+
+    assert item._describe_instance(item.clients["windows"], check=False) is None
+    assert len(calls) == 1
