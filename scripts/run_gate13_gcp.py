@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import secrets
 import sys
 import time
@@ -19,29 +18,6 @@ from gate13_gcp_provider import GcpConfig, GcpProvider, GitHubPackageSource, Log
 
 REPOSITORY = "flujo-app/CommunityAI"
 WORKFLOW = "desktop.yaml"
-_RUN_RE = re.compile(r"g13-[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
-
-
-def _strict_object(path: Path) -> dict[str, Any]:
-    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate key")
-            result[key] = value
-        return result
-
-    try:
-        value = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=unique,
-            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        raise Gate13CloudError(f"{path.name} is not strict JSON") from exc
-    if not isinstance(value, dict):
-        raise Gate13CloudError(f"{path.name} is not a JSON object")
-    return value
 
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -159,60 +135,6 @@ def _provider(
     )
 
 
-def _recover_previous(
-    active_path: Path,
-    repository_root: Path,
-    runs_root: Path,
-) -> None:
-    if not active_path.is_file():
-        return
-    active = _strict_object(active_path)
-    run_id = active.get("run_id")
-    directory = active.get("output_directory")
-    if (
-        not isinstance(run_id, str)
-        or _RUN_RE.fullmatch(run_id) is None
-        or directory != run_id
-        or active.get("provider") != "gcp"
-    ):
-        raise Gate13CloudError("active-run recovery record is invalid")
-    output_root = runs_root / run_id
-    config = GcpConfig.load(output_root / "provider-config.json")
-    result_path = output_root / "result.json"
-    if result_path.is_file():
-        result = _strict_object(result_path)
-        cleanup = result.get("cleanup")
-        if isinstance(cleanup, dict) and cleanup.get("result") == "passed":
-            active_path.unlink()
-            return
-    print(f"Recovering unfinished run {run_id} before starting a new run")
-    runner = LoggedRunner(output_root / "recovery-command-journal.jsonl")
-    provider = _provider(
-        run_id=run_id,
-        repository_root=repository_root,
-        output_root=output_root,
-        config=config,
-        runner=runner,
-        packages=None,
-    )
-    cleanup = dict(provider.cleanup_all())
-    verification = dict(provider.verify_cleanup())
-    recovery = {
-        "schema_version": 1,
-        "scope": "gate13-one-click-gcp-recovery",
-        "run_id": run_id,
-        "cleanup": cleanup,
-        "verification": verification,
-        "result": (
-            "passed" if cleanup.get("result") == "passed" and verification.get("result") == "passed" else "failed"
-        ),
-    }
-    _write_json(output_root / "recovery.json", recovery)
-    if recovery["result"] != "passed":
-        raise Gate13CloudError("unfinished prior run could not be cleaned safely")
-    active_path.unlink()
-
-
 def _new_run_id() -> str:
     return time.strftime("g13-%Y%m%d-%H%M%S", time.gmtime()) + "-" + secrets.token_hex(2)
 
@@ -223,24 +145,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     repository_root = Path(__file__).resolve().parent.parent
     runs_root = repository_root / ".gate13-runs" / "gcp"
-    active_path = runs_root / "active.json"
     try:
         config = GcpConfig.load(repository_root / "config" / "gate13_gcp.json")
         with LauncherLock(runs_root / "launcher.lock"):
-            _recover_previous(active_path, repository_root, runs_root)
             run_id = _new_run_id()
             output_root = runs_root / run_id
             output_root.mkdir(parents=True, exist_ok=False)
             _write_json(output_root / "provider-config.json", asdict(config))
-            _write_json(
-                active_path,
-                {
-                    "schema_version": 1,
-                    "provider": "gcp",
-                    "run_id": run_id,
-                    "output_directory": run_id,
-                },
-            )
             runner = LoggedRunner(output_root / "command-journal.jsonl")
             packages = GitHubPackageSource(
                 repository_root=repository_root,
@@ -264,9 +175,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output_root=output_root,
                 evidence_validator=_evidence_validator(run_id),
             ).run()
-            cleanup = result.get("cleanup")
-            if isinstance(cleanup, dict) and cleanup.get("result") == "passed":
-                active_path.unlink(missing_ok=True)
             duration = result.get("duration_seconds")
             print()
             print("=" * 68)
