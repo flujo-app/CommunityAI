@@ -67,6 +67,15 @@ def _port_is_open(node_url: str, timeout: float) -> bool:
         return False
 
 
+def _bootstrap_output_detail(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
+    for output in (stderr, stdout):
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        if output and output.strip():
+            return output.strip().splitlines()[-1][:600]
+    return ""
+
+
 class NodeLifecycleSupervisor:
     """Start one native-key node sidecar and stop only the process it owns."""
 
@@ -80,7 +89,7 @@ class NodeLifecycleSupervisor:
         node_command: Optional[Sequence[str]] = None,
         bootstrap_config_path: Optional[Path | str] = None,
         bootstrap_command: Optional[Sequence[str]] = None,
-        bootstrap_timeout: float = 60.0,
+        bootstrap_timeout: float = 300.0,
         startup_timeout: float = 45.0,
         poll_interval: float = 0.2,
         client_timeout: float = 2.0,
@@ -204,12 +213,15 @@ class NodeLifecycleSupervisor:
         try:
             result = self._bootstrap_runner(command, **kwargs)
         except subprocess.TimeoutExpired as exc:
-            raise NodeLifecycleError("The signed model catalog installation timed out") from exc
+            detail = _bootstrap_output_detail(exc.stdout, exc.stderr)
+            suffix = f": {detail}" if detail else ""
+            raise NodeLifecycleError(
+                f"The signed model catalog installation timed out after {self.bootstrap_timeout:g} seconds{suffix}"
+            ) from exc
         except OSError as exc:
             raise NodeLifecycleError(f"Could not run the bundled catalog installer: {exc}") from exc
         if result.returncode:
-            output = (result.stderr or result.stdout or "").strip().splitlines()
-            detail = output[-1][:600] if output else f"exit code {result.returncode}"
+            detail = _bootstrap_output_detail(result.stdout, result.stderr) or f"exit code {result.returncode}"
             raise NodeLifecycleError(f"The signed model catalog could not be installed: {detail}")
         if not self.config_path.is_file() or self.config_path.is_symlink():
             raise NodeLifecycleError("The signed model catalog installer did not create a safe node configuration")

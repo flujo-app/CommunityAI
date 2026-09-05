@@ -271,7 +271,7 @@ def test_session_failure_evidence_survives_temporary_cleanup(tmp_path, monkeypat
                 failure_code="inference_failed",
                 duration_seconds=29.25,
                 failure_phase="wait_ready",
-                failure_detail="inference_http_503",
+                failure_detail="bootstrap_failed" if outcome == "timeout" else "inference_http_503",
             )
         else:
             # Even unknown fields inside accepted inference evidence must not
@@ -304,7 +304,7 @@ def test_session_failure_evidence_survives_temporary_cleanup(tmp_path, monkeypat
     assert retained["result"] == "failed"
     assert retained["failure_code"] == "inference_failed"
     assert retained["failure_phase"] == "wait_ready"
-    assert retained["failure_detail"] == "inference_http_503"
+    assert retained["failure_detail"] == ("bootstrap_failed" if outcome == "timeout" else "inference_http_503")
     assert retained["duration_seconds"] == 29.25
     if stage == "restart":
         assert failure["session_evidence"]["initial"]["result"] == "passed"
@@ -354,3 +354,30 @@ def test_cleanup_error_does_not_obscure_the_failed_session(tmp_path, monkeypatch
     assert failure["qualification_temporaries_removed"] is False
     assert Path(document["work_root"]).exists()
     assert "private" not in json.dumps(failure)
+
+
+def test_bounded_session_log_reaches_host_stderr_before_temporary_cleanup(tmp_path, capsys):
+    document = config_document(tmp_path)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+    config = replay.load_config(config_path)
+    message = (
+        "gate13-playthrough: stage=initial phase=wait_ready "
+        "The signed model catalog could not be installed: "
+        "Another first-install catalog bootstrap is already in progress\n"
+    )
+
+    def runner(argv, **kwargs):
+        if "--gate13-ui-playthrough" not in argv:
+            return subprocess.CompletedProcess(argv, 0)
+        Path(argv[4]).with_suffix(".log").write_bytes(message.encode("utf-8"))
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    with pytest.raises(replay.ReplayError) as caught:
+        replay.run_replay(config, runner=runner)
+
+    assert capsys.readouterr().err == message
+    assert caught.value.diagnostics["failed_step"] == "initial_session"
+    assert caught.value.diagnostics["qualification_temporaries_removed"] is True
+    assert not config.work_root.exists()
+    assert "signed model catalog" not in json.dumps(replay._failure(caught.value))

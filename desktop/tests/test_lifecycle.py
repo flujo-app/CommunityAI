@@ -306,6 +306,8 @@ class NodeLifecycleTests(unittest.TestCase):
             supervisor.close()
 
         self.assertEqual(len(bootstrap_calls), 1)
+        self.assertEqual(bootstrap_calls[0][1]["timeout"], 300.0)
+        self.assertEqual(supervisor.startup_timeout, 45.0)
         bootstrap_command = bootstrap_calls[0][0]
         self.assertEqual(bootstrap_command[:2], ("python", "fake-bootstrap.py"))
         self.assertEqual(bootstrap_command[2], os.path.abspath(bootstrap_path))
@@ -340,6 +342,46 @@ class NodeLifecycleTests(unittest.TestCase):
             supervisor.close()
 
         self.assertEqual(processes, [])
+
+    def test_catalog_bootstrap_timeout_preserves_bounded_output_without_starting_node(self):
+        cases = (
+            (b"ignored stdout", b"older line\nbootstrap: HTTPS fetch stalled\n", "bootstrap: HTTPS fetch stalled"),
+            ("bootstrap stdout detail\n", b"", "bootstrap stdout detail"),
+            (None, b"x" * 700, "x" * 600),
+            (None, None, ""),
+        )
+        for stdout, stderr, expected_detail in cases:
+            with self.subTest(expected_detail=expected_detail), TemporaryDirectory() as directory:
+                root = Path(directory)
+                bootstrap_path = root / "catalog-bootstrap.json"
+                bootstrap_path.write_text("{}\n", encoding="utf-8")
+                processes = []
+                runner = mock.Mock(
+                    side_effect=lifecycle.subprocess.TimeoutExpired("bootstrap", 300, output=stdout, stderr=stderr)
+                )
+                supervisor = NodeLifecycleSupervisor(
+                    "http://127.0.0.1:8080",
+                    FakeStore(),
+                    config_path=root / "node-config.json",
+                    data_dir=root / "data",
+                    node_command=("python", "fake-node.py"),
+                    bootstrap_command=("python", "fake-bootstrap.py"),
+                    bootstrap_config_path=bootstrap_path,
+                    bootstrap_runner=runner,
+                    process_factory=lambda *args, **kwargs: processes.append((args, kwargs)),
+                    client_factory=FakeClient,
+                    port_probe=PortSequence(False),
+                )
+                with self.assertRaises(NodeLifecycleError) as caught:
+                    supervisor.ensure_client()
+                supervisor.close()
+
+                expected = "The signed model catalog installation timed out after 300 seconds"
+                if expected_detail:
+                    expected += f": {expected_detail}"
+                self.assertEqual(str(caught.exception), expected)
+                self.assertEqual(runner.call_args.kwargs["timeout"], 300.0)
+                self.assertEqual(processes, [])
 
 
 if __name__ == "__main__":

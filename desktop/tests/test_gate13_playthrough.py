@@ -305,6 +305,62 @@ class PlaythroughPlanTests(unittest.TestCase):
 
 
 class PackagedUiPlaythroughTests(unittest.TestCase):
+    def test_wait_ready_logs_only_changed_bounded_bootstrap_errors_before_failure(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence_path = root / "failure.json"
+            automation = Gate13Playthrough(_write_plan(root / "plan.json", "initial"), evidence_path)
+            messages = [
+                "The signed model catalog could not be installed: drift bootstrap: error: "
+                "Another first-install catalog bootstrap is already in progress"
+            ]
+            automation._window = SimpleNamespace(
+                _controller=None,
+                _busy=False,
+                connection_detail=SimpleNamespace(text=lambda: messages[0]),
+            )
+            log_path = evidence_path.with_suffix(".log")
+            for _ in range(5):
+                automation._tick()
+            logged = log_path.read_text(encoding="utf-8")
+            self.assertEqual(logged.count("Another first-install"), 1)
+            self.assertEqual(len(logged.splitlines()), 2)  # phase, then error
+            self.assertFalse(automation._done)
+            self.assertFalse(evidence_path.exists())
+            messages[0] = "The signed model catalog installation timed out after 300 seconds: " + "x" * 800
+            automation._tick()
+            automation._tick()
+            logged = log_path.read_text(encoding="utf-8")
+            self.assertEqual(len(logged.splitlines()), 3)
+            retained_message = logged.splitlines()[-1].split("phase=wait_ready ", 1)[1]
+            self.assertEqual(retained_message, messages[0][:600])
+            automation._timeout()
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(evidence["failure_code"], "playthrough_timed_out")
+            self.assertEqual(evidence["failure_phase"], "wait_ready")
+            self.assertEqual(evidence["failure_detail"], "bootstrap_failed")
+            self.assertNotIn("signed model catalog", json.dumps(evidence))
+
+    def test_progress_log_stays_bounded_and_ignores_unrelated_ui_text(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            automation = Gate13Playthrough(_write_plan(root / "plan.json", "initial"), root / "evidence.json")
+            automation._window = SimpleNamespace(
+                _controller=None,
+                _busy=False,
+                connection_detail=SimpleNamespace(text=lambda: "private unrelated UI content"),
+            )
+            automation._tick()
+            for _ in range(100):
+                automation._log_progress("x" * 800)
+            logged = (root / "evidence.log").read_bytes()
+            self.assertLessEqual(len(logged), 16_384)
+            self.assertNotIn(b"private", logged)
+
     def test_failure_evidence_keeps_phase_and_only_controlled_inference_detail(self):
         from tempfile import TemporaryDirectory
 

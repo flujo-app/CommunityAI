@@ -36,6 +36,7 @@ SEQUENCE_PROFILES = {
 }
 MAX_CONFIG_BYTES = 65_536
 MAX_EVIDENCE_BYTES = 65_536
+MAX_PROGRESS_BYTES = 16_384
 _SESSION_FAILURE_CODES = {"playthrough_failed", "playthrough_timed_out", "inference_failed", "evidence_write_failed"}
 _SESSION_FAILURE_PHASES = {
     "wait_ready",
@@ -49,6 +50,7 @@ _SESSION_FAILURE_PHASES = {
     "editing_policy",
 }
 _SESSION_FAILURE_DETAILS = {
+    "bootstrap_failed",
     "inference_failed",
     "inference_rejected",
     "inference_transport_failed",
@@ -550,6 +552,13 @@ def _run_session(
     except ReplayError as exc:
         exc.diagnostics.setdefault("failed_step", f"{stage}_session")
         exc.diagnostics.setdefault("error_category", "session_evidence_invalid")
+        try:
+            progress = _regular_bytes(evidence_path.with_suffix(".log"), MAX_PROGRESS_BYTES)
+            # Preserve the desktop's bounded phase/bootstrap log in host stderr
+            # before run_replay removes the exact session temporary directory.
+            print(progress.decode("utf-8", errors="replace"), end="", file=sys.stderr, flush=True)
+        except Exception:
+            pass
         try:
             exc.diagnostics["session_evidence"] = {stage: _session_diagnostic(evidence_path, config, stage)}
         except Exception as evidence_exc:

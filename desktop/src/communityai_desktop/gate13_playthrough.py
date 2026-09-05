@@ -31,6 +31,7 @@ MAX_RESPONSE_BYTES = 1_048_576
 QUALIFICATION_KEY_LABEL = "Gate 13 automated qualification"
 MANUAL_ROUTE_WAIT_SECONDS = 450.0
 MANUAL_ROUTE_POLL_SECONDS = 5.0
+MAX_PROGRESS_BYTES = 16_384
 
 _RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -499,6 +500,8 @@ class Gate13Playthrough:
         )
         self._started = clock()
         self._state = "wait_ready"
+        self._logged_phase: str | None = None
+        self._bootstrap_failure = ""
         self._done = False
         self._inference: Mapping[str, Any] | None = None
         self._window = None
@@ -516,6 +519,21 @@ class Gate13Playthrough:
             "sharing_intent_enabled_observed": False,
             "sharing_intent_disabled_observed": False,
         }
+
+    def _log_progress(self, message: str) -> None:
+        """Keep readable diagnostics even when a windowed bundle has no stderr."""
+        path = self.evidence_path.with_suffix(".log")
+        payload = ("gate13-playthrough: " + " ".join(message.split())[:700] + "\n").encode("utf-8")
+        try:
+            if path.is_symlink():
+                return
+            with path.open("ab") as stream:
+                if stream.tell() + len(payload) <= MAX_PROGRESS_BYTES:
+                    stream.write(payload)
+                    stream.flush()
+        except OSError:
+            # Logging must never change the replay's acceptance result.
+            pass
 
     def install(self, window: Any, application: Any, qt: Mapping[str, Any]) -> None:
         self._window = window
@@ -558,7 +576,27 @@ class Gate13Playthrough:
         if self._done or self._window is None:
             return
         try:
+            if self._state != self._logged_phase:
+                self._log_progress(f"stage={self.plan.stage} phase={self._state}")
+                self._logged_phase = self._state
             if self._state == "wait_ready":
+                detail_label = getattr(self._window, "connection_detail", None)
+                detail = detail_label.text() if detail_label is not None else ""
+                bootstrap_failure = (
+                    detail[:600]
+                    if isinstance(detail, str)
+                    and detail.startswith(
+                        (
+                            "The signed model catalog could not be installed:",
+                            "The signed model catalog installation timed out after ",
+                        )
+                    )
+                    else ""
+                )
+                if bootstrap_failure != self._bootstrap_failure:
+                    self._bootstrap_failure = bootstrap_failure
+                    if bootstrap_failure:
+                        self._log_progress(f"stage={self.plan.stage} phase=wait_ready {bootstrap_failure}")
                 if not self._ready():
                     return
                 if self.plan.stage == "initial":
@@ -832,6 +870,8 @@ class Gate13Playthrough:
         value = self._base_result("failed")
         value["failure_code"] = failure_code
         value["failure_phase"] = self._state
+        if failure_detail is None and self._state == "wait_ready" and self._bootstrap_failure:
+            failure_detail = "bootstrap_failed"
         if failure_detail is not None:
             value["failure_detail"] = failure_detail
         self._finish(value)
