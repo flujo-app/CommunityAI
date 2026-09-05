@@ -6,7 +6,9 @@ import collections
 import logging
 import math
 import os
+import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -135,7 +137,9 @@ class WorkerLaunch:
     preferred: bool = False
     automatic: bool = False
     block_indices: Optional[str] = None
-    placement_reason: Optional[str] = None
+    # Coverage/demand explanations change without changing the worker assignment.
+    # They must not make the placement reconciler stop a healthy worker.
+    placement_reason: Optional[str] = field(default=None, compare=False)
     max_disk_bytes: Optional[int] = None
     max_vram_bytes: Optional[int] = None
     vram_device: Optional[str] = None
@@ -399,6 +403,7 @@ class WorkerSupervisor:
                 bufsize=1,
                 env=environment,
                 creationflags=self._creation_flags(),
+                **({"start_new_session": True} if sys.platform.startswith("linux") else {}),
             )
         except Exception as exc:
             record.process = None
@@ -447,6 +452,7 @@ class WorkerSupervisor:
         exit_code = process.poll()
         if exit_code is None:
             return
+        self._kill_linux_worker_group(process)
         record.process = None
         record.last_exit_code = exit_code
         if record.desired_running:
@@ -584,14 +590,28 @@ class WorkerSupervisor:
             record.desired_running = True
             return self._spawn_locked(record)
 
-    def _terminate(self, process: subprocess.Popen) -> int:
-        if process.poll() is None:
-            process.terminate()
+    @staticmethod
+    def _kill_linux_worker_group(process: subprocess.Popen) -> None:
+        if sys.platform.startswith("linux"):
+            # Each worker owns a new session. Its multiprocessing DHT children
+            # can survive the direct child's exit and otherwise retain p2pd's
+            # identity/port, preventing the replacement worker from starting.
             try:
-                return process.wait(timeout=self._stop_timeout)
-            except subprocess.TimeoutExpired:
-                process.kill()
-        return process.wait(timeout=self._stop_timeout)
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def _terminate(self, process: subprocess.Popen) -> int:
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    return process.wait(timeout=self._stop_timeout)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            return process.wait(timeout=self._stop_timeout)
+        finally:
+            self._kill_linux_worker_group(process)
 
     def pause_worker(self, worker_id: str) -> bool:
         """Pause a worker and persist the operator's explicit stopped intent."""
