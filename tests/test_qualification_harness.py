@@ -7,6 +7,7 @@ import torch
 
 import scripts.smoke_tinyllama_local_swarm as local_swarm
 from drift.model_manifest import ModelManifest
+from drift.utils.convert_block import QuantType
 from scripts.qualify_model_manifest import (
     DEFAULT_QUALIFICATION_PROMPT,
     build_parser as build_qualification_parser,
@@ -257,6 +258,32 @@ def test_manifest_smoke_passes_runtime_cache_to_the_distributed_client():
     )[0]
 
     assert "cache_dir=args.cache_dir," in model_kwargs
+
+
+def test_manifest_smoke_uses_the_exact_fp8_worker_profile(monkeypatch):
+    candidate = REPOSITORY_ROOT / "manifests" / "candidates" / "qwen3.8-27b-fp8-dequant-eager.json"
+    manifest = ModelManifest.load(candidate)
+    created = {}
+
+    monkeypatch.setattr(local_swarm, "ServerInfo", lambda **kwargs: kwargs)
+
+    def capture_create(**kwargs):
+        created.update(kwargs)
+        return "worker"
+
+    monkeypatch.setattr(local_swarm.ModuleContainer, "create", capture_create)
+
+    worker = local_swarm.create_qualification_worker(
+        manifest=manifest,
+        server_info_kwargs={"throughput": 1.0},
+        container_kwargs={"dht_prefix": manifest.dht_prefix},
+    )
+
+    assert worker == "worker"
+    assert created["server_info"] == {"throughput": 1.0, "quant_type": "fp8_dequant"}
+    assert created["quant_type"] is QuantType.FP8_DEQUANT
+    assert created["dht_prefix"] == manifest.dht_prefix
+    assert local_swarm.manifest_quant_type(None) is QuantType.NONE
 
 
 def test_hub_snapshot_cache_is_inferred_narrowly(tmp_path):

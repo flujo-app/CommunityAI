@@ -80,7 +80,7 @@ def _generate(argv=None) -> None:
     parser.add_argument("--maximum_version_exclusive", default="2.4.0")
     parser.add_argument("--attention_implementation", choices=("auto", "eager", "sdpa"), default="auto")
     parser.add_argument("--dtype", choices=("float32", "float16", "bfloat16"), default="bfloat16")
-    parser.add_argument("--quantization", choices=("none", "int8", "nf4"), default="none")
+    parser.add_argument("--quantization", choices=("none", "int8", "nf4", "fp8_dequant"), default="none")
     parser.add_argument("--token", help="Hugging Face token for gated repositories")
     parser.add_argument("--cache_dir", help="Hugging Face cache directory")
     parser.add_argument("--output", help="Write pretty, deterministic JSON to this path instead of stdout")

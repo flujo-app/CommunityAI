@@ -7,6 +7,273 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Qwen3.8-27B FP8 now has exact candidate and BF16 reference manifests plus an
+  explicit `fp8_dequant` execution profile. Source quantization metadata is
+  preserved and validated bidirectionally; block loading expands fine-grained
+  scale grids into the manifested BF16/FP16 dtype; server advertisement,
+  memory accounting, CLI selection, and the product qualification worker carry
+  the same profile. A synthetic FP8 checkpoint passes the production
+  config/load/forward path, and independent offline verification passes 158
+  primary and 146 regression tests. The source-bound checkpoint is partial:
+  official artifact verification, a real Qwen3.8 layer, the complete 64-block
+  route, parity, recovery, packaging, and hardware measurements remain open.
+- Automatic Qwen3.8 workers now plan and enforce the exact startup metadata and
+  deduplicated checkpoint shards for their contiguous block span instead of
+  admitting against the full model. Server loading is restricted to that set,
+  and cached signed intents are invalidated by selected-set, budget, throughput,
+  proposal, identity-key, or lease-expiry changes. Public v1 intent claims keep
+  the same privacy-safe shape. This checkpoint passes 142 focused, 132 adjacent,
+  and 1,564 offline unit tests without downloading model weights or using cloud.
+- Acknowledged automatic worker plans now bind the exact manifest, canonical
+  span/cache, byte count, and artifact-set digest into the real source or frozen
+  server command. The supervisor rejects executable or flag substitution and
+  unsafe config/module/training/credential options; the server ignores ambient
+  config and revalidates the exact plan before announcement or weight access.
+  This no-spend checkpoint passes 147 focused, 259 related, and 1,568 offline
+  tests without downloading model weights or claiming real Qwen execution.
+- The exact Qwen3.8 `0:1` worker plan now has a real local Windows/CUDA
+  outcome: a new isolated cache anonymously acquired and rehashed the official
+  384,054,133-byte config/index/layer selection, loaded it in manifested BF16,
+  and returned a finite changed `[1,1,5120]` exact-peer result in 0.363
+  seconds. A later network-disabled cache-reuse replay bound 19 production
+  paths to pushed commit `af7d887`, repeated the same deterministic result,
+  exited cleanly, and retained an exact PID/listener/tagged-process cleanup
+  audit. Complete-route parity, recovery, packaging, and RTX 30/40/50
+  qualification remain open.
+- Qwen3.8 complete-route attempts now have a durable, provider-neutral
+  controller that rederives the exact four-span artifact plan from the official
+  layer index, emits canonical GCP resource specifications, binds protected
+  authorization to the stable plan and exact sources, journals start issuance
+  before the action, and recovers or cleans up without replaying paid work.
+  Independent bypass review, 102 focused, 423 adjacent, and 1,651 offline unit
+  tests pass. This is a USD 0 controller checkpoint: the ledger contains no
+  Q3.8 reservation, so no cloud create or complete-route result is claimed.
+- Qwen3.8 complete-route attempts now have a source-bound GCP adapter that
+  compiles the exact private eleven-resource start specification, validates
+  run-prefixed inventory and plan-scoped network isolation, and performs
+  retry-safe best-effort cleanup including terminal resources. Paid start and
+  collection reject before any provider call until the protected host runtime
+  and fresh status/evidence transport are bound. This USD 0 checkpoint passes
+  137 focused, 168 adjacent, and 1,686 offline unit tests.
+- Qwen3.8 Linux staging now has a source-bound production-package validator
+  that binds the exact archive/audit, physical and semantic manifest, complete
+  packaged node onedir inventory, and controller protection pass into one
+  canonical record. It rejects unsafe links/modes, packaged model weights,
+  verifier mutation, and archive pathname replacement. This USD 0 checkpoint
+  passes 26 focused, 184 adjacent, and 1,712 offline unit tests; native Linux
+  validator execution and privileged host staging remain open.
+- Qwen3.8 runtime-package validation now feeds the final route contract through
+  a strict protected source context instead of circularly consuming that plan.
+  The complete immutable package record is bound into the stable plan,
+  execution inventory, action IDs, reservation, and preflight evidence. This
+  USD 0 checkpoint passes 156 focused, 184 Gate Q3.8, 205 adjacent, and 1,733
+  offline unit tests; native Linux host staging and execution remain open.
+- Qwen3.8 Linux hosts now have a privileged, source-bound runtime preparation
+  and cleanup contract. It validates the exact archive and release inventory,
+  safely extracts a protected root-owned runtime, runs an offline nonroot
+  packaged preflight, proves process-group cleanup on every failure path, and
+  publishes durable no-replace digest-only prepared state. The final local
+  candidate passes 55 host-runtime, 240 Gate Q3.8, 206 adjacent, and 1,789
+  offline tests; native Linux execution, bootstrap/status integration, and any
+  paid route remain open.
+- Qwen3.8 route observation now latches the exact GCP instance generation set
+  before entering active phases. Provider ID and creation-time substitutions,
+  same-name instance recreation, or partial generation loss force cleanup, while
+  disks and firewalls cannot carry instance-generation metadata. Paid start and
+  collection remain fail-closed until the protected host bootstrap/status bridge
+  is complete. This USD 0 checkpoint passes 170 focused and 264 complete Gate
+  Q3.8 tests with four native-platform skips.
+- Qwen3.8 Linux host status now has a bounded canonical authenticated-envelope
+  primitive. Controller contexts and HMAC-signed worker/job records bind the exact
+  source, plan, actions, provider generation, boot UUID, monotonic revision, and
+  prepared-record digest while rejecting stale, replayed, substituted, deeply nested,
+  or oversized input. This USD 0 checkpoint passes 41 transport, 211 controller/adapter,
+  and 305 complete Gate Q3.8 tests with four native-platform skips; protected key and
+  context installation, prepared-record equality, adapter consumption, and native
+  Linux bootstrap remain open.
+- Qwen3.8 Linux runtime preparation now loads protected controller context and
+  per-instance key inputs, binds provider generation and boot identity into
+  prepared state, and derives the authenticated status envelope from the
+  reopened record. Preparation and cleanup share one lifecycle lock, and
+  cleanup publishes a durable terminal marker before deleting state. This USD 0
+  checkpoint passes 119 focused, 328 complete Gate Q3.8, and 1,877 offline
+  tests; key/context delivery, external publication, adapter consumption, and
+  native Linux execution remain open.
+- Qwen3.8 route plans now bind a separate exact run-scoped IAP SSH
+  firewall, and the GCP adapter can consume canonical authenticated guest
+  attributes only through paired protected key/replay resolvers and only
+  between generation-stable complete provider inventories. Broadened or
+  substituted firewall state, malformed or ambiguous carriers, wrong keys,
+  replayed revisions, instance recreation, and protected-bootstrap loss fail
+  closed; cleanup never depends on status material. The firewall candidate
+  passes 180 focused and 368 complete Gate Q3.8 tests, and the consumer
+  candidate passes 101 focused and 376 complete Gate Q3.8 tests, with four
+  native-platform skips in each complete matrix. Both are USD 0 checkpoints;
+  key generation, vaulting, protected delivery, and native Linux probes remain
+  open, and paid start/collection remain disabled.
+- Qwen3.8 controller secrets and protected host delivery are now generation-bound
+  end to end. The controller vaults one private key per exact instance generation
+  and epoch with crash-safe rotation, revocation tombstones, and idempotent cleanup.
+  A bounded authenticated bundle installs atomically as one root-private host file,
+  while fixed IAP SSH delivery streams it through stdin and accepts a receipt only
+  between stable provider inventories. Receipt authentication precedes freshness
+  policy, key material never enters argv, environment, logs, or ordinary state, and
+  paid start/collection remain blocked. The final USD 0 candidate passes 412 complete
+  Gate Q3.8 tests with five native-platform skips plus Black, isort, compilation, and
+  whitespace checks; native Linux and provider-read probes remain open.
+- Qwen3.8 protected-host behavior now has a native Linux root result. An
+  ephemeral network-disabled container ran the exact pushed controller, adapter,
+  transport, runtime, and staging matrix from read-only mounts: 415 tests passed
+  and only two Windows-only checks skipped. Linux ownership, private modes,
+  nonroot traversal, symlink rejection, atomic delivery, receipt/replay,
+  generation-bracketed fake-provider reads, and terminal cleanup executed at
+  USD 0. No live GCP, IAP, metadata, capacity, or paid-route result is claimed;
+  paid start/collection remain blocked pending a committed reservation.
+- Gate 14 hardware acceptance now has a fail-closed, source-bound verifier, durable
+  lifecycle controller, thin Windows/Linux host probes, and an exact GCP action executor. They
+  pin the Gate 13 packaged lifecycle and Windows/Qwen plus Linux/Gemma Gate 9 envelopes, enforce
+  the USD 100 aggregate ledger ceiling, serialize fresh L4 hosts, and require cleanup proof for
+  the exact authorization bytes, controller source, provider plan, project, zone, resources,
+  and successful terminal state while excluding the protected bootstrap. Host evidence now binds
+  fresh calibrated bandwidth and physical-power samples before, across, and below the configured
+  limits. Every calibration is bound to a controller-issued, one-time 15-minute challenge and
+  measured start/end timestamps inside a maximum 120-second sample window. Controller state
+  persists the issued digest and one-time consumption, while interrupted issuance reattaches only
+  the exact still-valid file; stale, missing, future-dated, or cross-challenge evidence fails closed.
+  Every provider mutation is bound
+  to a valid controller action and a fresh authenticated inventory; exact disks must retain the full
+  authorized image-project path, and instances must prove that no service account is attached.
+  The focused 67-test suite covers challenge freshness, calibration, deadline, rollback,
+  orphan/returned resources,
+  forged state, evidence substitution, cross-platform, hidden/excess spend, cleanup binding, foreign
+  image projects, attached service accounts, and stale direct actions. The original verifier/controller
+  source `c0f2342e15aa7e12ca7c2980deca64d613204143` passed independent adversarial review,
+  CodeQL, style, Linux/Windows tests, and production-package provenance verification. After native
+  GCP authentication was refreshed, a read-only preflight proved one active account, an active
+  project, the protected bootstrap running, global GPU quota 1 with usage 0, ready L4/G2 and
+  Windows/Linux image inputs, and zero Gate 14 instances, disks, firewalls, or running L4s.
+  No reservation or provider resource was created, so the current-epoch USD 44 remainder is intact.
+  Automatic workers now remain policy-blocked until their signed placement intent has been published
+  and acknowledged by a remote DHT peer. The privileged worker contract carries both facts into the
+  source-bound host evidence path; failed publication cannot admit an unacknowledged assignment.
+  The broader placement, discovery, supervisor, and control-API verification passes 141 tests.
+  Gate 14 also has a separate exact-once native Scheduled Task/systemd host-job namespace that
+  validates only the final strict platform evidence. Its shared process-safety core is canonical-
+  digest-bound by the already hashed adapter and compiled directly from the verified in-memory
+  bytes, preserving Gate 13 defaults while rejecting changed, linked, or raced core input. Exact
+  source `5632cc528b7a3e39296fd3fef8a0b3fd6dd620d0` passed both Windows and Linux production-package
+  jobs in run `33679402658`, including exact-source build/smoke, independent checksum/provenance
+  verification, and archive-bound uploads. A final no-spend audit also replaced a stale Gate 13
+  Linux HOME/runtime hardcode with the configured host-job values, so the Gate 14 desktop session
+  accepts its isolated paths. The combined Gate 13/Gate 14 host-job and Gate 14 contract suite now
+  passes 107 tests. A shared packaged-lifecycle sequencer now rejects user-supplied pass claims,
+  binds the exact production archive and release metadata, completes the non-calibration drills,
+  and publishes an immutable challenge-ready checkpoint before accepting a controller challenge.
+  The challenge covers that exact checkpoint digest; retained checkpoints cannot replay the
+  lifecycle. Controller-owned staging is separated from lifecycle outputs, validated with exact
+  POSIX ownership or native Windows owner/protected-DACL and per-right access probes, and every
+  staged file is read without following a raced path and revalidated around action phases.
+  Failure cleanup is unconditional, private facts are removed before final evidence publication,
+  and the persisted evidence is strictly reread and compared. Gate 14 now also aligns the
+  controller and lifecycle on the exact `gate14-lifecycle.json` basename and adds a
+  source-digest-bound persistent Windows PowerShell action bridge. The bridge keeps one native
+  host and state nonce across prepare/calibrate/cleanup, accepts only bounded canonical
+  controller-bound frames, rejects duplicate keys, replayed or out-of-order request IDs, and
+  private response material, and force-cleans the product process tree on EOF or failure. Its
+  production prepare/calibrate handlers intentionally fail closed until the release audit
+  companions and Gate 9 warm cache are controller-bound. The expanded no-spend Gate 14 contract
+  matrix passes 154 tests, including native and client-side rejection of Boolean, numeric,
+  array-coerced, and changed controller bindings. The controller-owned lifecycle input now binds
+  the complete Actions audit ZIP by exact artifact name, digest, size, and the exact four extracted
+  `SHA256SUMS`, desktop-metrics, provenance, and release-metadata members. Their package, source,
+  platform, archive, checksum inventory, smoke, and incomplete unsigned-alpha claims are validated
+  together. A separate warm-cache binding preserves the historical Gate 9 acquisition and envelope
+  identities while requiring a fresh direct-upstream, no-mirror, empty-cache materialization record
+  with the exact sorted artifact digests, roles, counts, and bytes for Windows/Qwen and Linux/Gemma.
+  Outer archive, extracted member, and materialization-record drift is rechecked at every lifecycle
+  boundary, and the immutable challenge-ready checkpoint binds all three identities. The lifecycle/
+  controller focus passes 75 tests, including unknown nested cache fields, wrong repository,
+  non-finite timing, historical-artifact mutation, and source/member substitution. Exact source
+  `d4586f02530be7ce052ce9298ae95207e4368f05` passed both jobs in production desktop run
+  `33695073372`. Its retained Actions artifacts are Windows install
+  `sha256:3eea3254309fac149de210fa7c397cc94d0bf3f38c8a302e2f8d4b52671caa4e`
+  (2,695,093,223 bytes), Windows audit
+  `sha256:afb5a6201f0a1d5788c43ead11f1fcb0994f8749d6d64525b8aa5ae4e78a2c4f`
+  (468,612 bytes), Linux install
+  `sha256:ee1a9dccba6dbdb800e9b65cca6f0abbe7a8f38cb8f425802cebdb3cbffff47c`
+  (3,360,731,719 bytes), and Linux audit
+  `sha256:210e65d8b7fbe6517813638eecbcc8eddfe639a48f5180e5e9ef8dac80b658d0`
+  (514,751 bytes), expiring 2026-09-09. Gate 14 now has a native cross-platform lifecycle
+  entrypoint and an equivalent source-digest-bound persistent Linux action host alongside the
+  Windows PowerShell host. Both carry the complete safe controller challenge summary into
+  calibration, enforce operation-specific bounded timeouts, retain one process/state identity
+  across prepare, challenge wait, calibration, and cleanup, reject malformed/replayed/coerced
+  frames, and clean on EOF or failure. The Linux parent also kills its owned process group if
+  graceful host cleanup times out. Production prepare/calibrate remain fail-closed until their
+  real package/cache/control handlers are installed; the transport self-test cannot manufacture
+  acceptance evidence. The cross-platform action/entrypoint focus passes 64 tests. No physical
+  Gate 9 cache survives the cleaned historical hosts, so the paid run still requires fresh direct
+  host materialization. This is software and preflight evidence only: no Gate 14 hardware or
+  cloud-run pass is claimed yet. Restart-safe Linux and Windows product-action checkpoints now
+  source-bind concrete package, warm-cache, policy, automatic-placement, recovery, calibration,
+  and cleanup operations through their persistent hosts. The Windows implementation adds native
+  Job Object membership cleanup, no-follow locked cache identity, action-specific persistent
+  launch paths, release/config/source binding, and phased retryable teardown that retains failed
+  process, burn, and credential cleanup state. The Windows product/transport focus passes 50 tests,
+  its Gate 13 lifecycle regression passes 16, and the complete Gate 14 matrix passes 211 tests.
+  Gate 14 now also has a source-bound two-phase official-cache boundary. The ordinary process
+  verifies a controller-owned canonical plan and lifecycle template before transfer, writes only
+  the exact manifest cache and canonical handoff below its work root, and cannot mutate protected
+  staging. A privileged promoter revalidates source, plan, record, binding, handoff, and physical
+  cache identity before creating the lifecycle inputs. Structural controller ownership is separate
+  from the qualification token's write-denial proof. A bootstrap-boundary review then caught that
+  the first promoted-file policy also denied the ordinary host job its required read path. Promoted
+  Windows files now use a protected DACL with SYSTEM/Administrators full control and Authenticated
+  Users generic read; POSIX files remain root-owned mode 0644. The ordinary identity can read but
+  receives no write, delete, owner-change, or DACL-change grant. Promotion has a retryable commit
+  point, and invalid templates fail before any acquisition. The cache/lifecycle focus passes 97
+  tests and the complete Gate 14 matrix passes 254 under independent adversarial review. No
+  production model bytes, reservation, or cloud resource were used (USD 0). The clean-host
+  materializer now invokes the exact packaged node without reopening a verified manifest or
+  executable by pathname: controller mode sends the once-read bounded manifest through stdin
+  under its exact digest, Windows holds restrictive read-only-share handles through process exit,
+  and Linux executes the verified descriptor through procfs while preserving the original onedir
+  path as argv zero. Native mutation/launch probes, malformed-input tests, the 64-test focused
+  cache/acquisition suite, the 264-test Gate 14 matrix, and packaged dispatch regressions pass
+  locally with the Linux-native descriptor test deferred to Linux CI. Real fresh native
+  materialization, complete onedir sidecar-inventory verification, bootstrap integration,
+  packaged execution, and physical Windows/Linux L4 qualification remain open.
+- Gate 13's successful manual desktop flow now has a bounded automated replay. The
+  production package can open its real Qt window in a hidden qualification mode, perform
+  localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,
+  prove sharing resumed, click Pause, and infer again without retaining prompt, response,
+  credential, endpoint, or path data. A standard-library outer runner verifies the exact
+  production archive, runs all four packaged self-tests, executes both sessions, validates
+  canonical evidence, and removes its run temporaries. The durable host-job boundary now
+  accepts the Python replay entrypoint on Windows and Linux. Local real-window and contract
+  tests pass; no paid clean-host replay or new release artifact is claimed by this change.
+- The owner raised the current combined GCP/Fly public-alpha accounting epoch to USD 500 on
+  2026-08-31. The existing USD 52 committed maximum remains charged. Run
+  `gate13-20260831-b` reserved USD 56 but failed before VM creation when its two IAP tags reached
+  gcloud as one value; exact cleanup passed. Fresh run `gate13-20260831-c` reserves USD 56 with
+  corrected explicit tag arguments, leaving USD 336. Per-run preflight, hard deadlines, exact
+  cleanup, protected-resource, and evidence requirements are unchanged.
+- Gate 13 paid qualification now has durable source-bound native host jobs: an exact-current-user
+  Windows Scheduled Task and a non-root transient Linux systemd service persist one attempt across
+  operator disconnects, bound output, terminate the complete process tree on timeout or overflow,
+  revalidate canonical lifecycle evidence before collection, and never re-arm consumed route or
+  client intents. Exact Windows lifecycle-config co-location and full Linux `ExecStart` structure
+  matching close the final independent-review gaps. Source `0e16ac2` passes the 217-test Gate 13 and
+  desktop matrix independently. This is a software prerequisite only: it created no cloud resources,
+  authorizes no paid run, and does not claim a completed clean-host lifecycle or Gate 13 pass.
+- Gate 13 paid qualification now has a persisted authorization-bound run-state contract that
+  inventories exact resources before every transition, accepts the product route before any
+  client, runs Windows/Qwen before Linux/Gemma, permanently consumes a failed or ambiguous
+  lifecycle host, rejects stale/foreign/deadline-expired observations, validates digest-bound
+  canonical 16-phase records, and permits a pass only after both records and exact provider
+  absence. The failed `gate13-20260831-a` attempt is cleanup-proved: its route, clients, disks,
+  and firewalls are absent while the protected bootstrap remains running. No lifecycle pass is
+  claimed, and the run's USD 52 maximum remains committed in the current budget epoch.
 - Gate 13 packaged-lifecycle prerequisites now emit deterministic self-contained Windows ZIP
   and Linux tar.gz archives, preserve or reject platform filesystem semantics fail-closed, and
   bind the archive plus strict desktop metrics into exact-type release provenance. The local

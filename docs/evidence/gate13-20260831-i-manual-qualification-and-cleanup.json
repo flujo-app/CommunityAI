@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-packaged-clean-install-manual-qualification",
+  "gate": 13,
+  "run_id": "gate13-20260831-i",
+  "result": "passed",
+  "recorded_at": "2026-09-01T05:25:34.3103224Z",
+  "goal": "Prove that a normal user can install, open, use, restart, and control the packaged CommunityAI desktop on clean Windows and Linux hosts against the public route.",
+  "decision": {
+    "manual_playthrough_is_acceptance_source": true,
+    "opaque_lifecycle_wrapper_required_for_gate_decision": false,
+    "reason": "The manual playthrough exercised the actual desktop and exposed the real product defect hidden by the wrappers. Reinstall, uninstall, retained-data choice, and publisher release work remain Gate 15."
+  },
+  "source": {
+    "published_package_commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "windows_path_fix_commit": "f1dc3a0e38b0b2ee12150fe403fd1de435c49f71",
+    "windows_path_fix": "Use extended-length Windows paths for long manifest artifact partial, final, and lock paths without changing their on-disk layout."
+  },
+  "route": {
+    "accepted_before_client_creation": true,
+    "qwen": {
+      "model": "Qwen3.5 2B",
+      "manifest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "blocks": 24,
+      "peer_count": 1,
+      "primary_inference_passed": true,
+      "restored_inference_passed": true
+    },
+    "gemma": {
+      "model": "Gemma 4 E2B IT",
+      "manifest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "blocks": 35,
+      "peer_count": 1,
+      "fallback_inference_passed": true
+    },
+    "primary_fallback_restoration_total_duration_ms": 337038,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "credentials_retained": false
+  },
+  "windows": {
+    "result": "passed",
+    "image": "windows-server-2025-dc-v20260814",
+    "machine_type": "e2-standard-8",
+    "ordinary_user": true,
+    "is_admin_during_product_run": false,
+    "interactive_console_session": true,
+    "published_archive": {
+      "sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+      "bytes": 2695065068,
+      "download_verified_before_install": true
+    },
+    "packaged_self_tests": {
+      "runtime": "passed",
+      "application": "passed",
+      "ui": "passed",
+      "onboarding_ui": "passed"
+    },
+    "manual_flow": [
+      "installed the verified archive into an empty ordinary-user install root",
+      "opened CommunityAI.exe in the real interactive console",
+      "observed complete Qwen and Gemma routes",
+      "ran one-token Qwen inference",
+      "closed the desktop and verified the desktop and node stopped",
+      "restarted the desktop in the same ordinary-user console",
+      "edited sharing limits through the UI",
+      "selected Qwen and clicked Start sharing",
+      "clicked Pause sharing after restart"
+    ],
+    "initial_defect": {
+      "classification": "product",
+      "not_gcp": true,
+      "not_ssh_or_scheduler": true,
+      "error": "Windows legacy MAX_PATH rejected a manifest artifact lock path under the default per-user data directory.",
+      "reproduced_with_published_package": true,
+      "short_data_root_control_inference": {
+        "passed": true,
+        "model": "Qwen3.5 2B",
+        "completion_tokens": 1,
+        "duration_ms": 239683
+      }
+    },
+    "fixed_default_path_inference": {
+      "passed": true,
+      "model": "Qwen3.5 2B",
+      "completion_tokens": 1,
+      "duration_ms": 204348,
+      "data_root": "default per-user data root",
+      "fixed_node_source": "f1dc3a0e38b0b2ee12150fe403fd1de435c49f71",
+      "prompt_retained": false,
+      "output_retained": false,
+      "credential_retained": false
+    },
+    "screenshots": {
+      "ready": {
+        "path": "gate13-20260831-i-windows-ready.png",
+        "sha256": "19926d36d8d9fa1c2a8b36449e891e31dd7dfe244ec85ad8921e8793ea9e8d24"
+      },
+      "paused_after_restart": {
+        "path": "gate13-20260831-i-windows-paused.png",
+        "sha256": "f9a1da9a94a6d9d158f0479b8e3b1647b39a7a8aa19f08328c7f533f820463b8"
+      }
+    }
+  },
+  "linux": {
+    "result": "passed",
+    "image": "ubuntu-2404-noble-amd64-v20260826",
+    "machine_type": "e2-standard-8",
+    "ordinary_user": true,
+    "sudo_available_during_product_run": false,
+    "display": "Xvfb interactive X11 display",
+    "native_credential_store": "GNOME Secret Service",
+    "published_archive": {
+      "sha256": "f96d3ca651964380d4684855ab08682e8187b33386327ec3895cda25b43c2a00",
+      "bytes": 3360717934,
+      "download_verified_before_install": true
+    },
+    "packaged_self_tests": {
+      "runtime": "passed",
+      "application": "passed",
+      "ui": "passed",
+      "onboarding_ui": "passed"
+    },
+    "manual_flow": [
+      "installed the verified archive into an empty ordinary-user install root",
+      "opened the real Linux desktop on an X11 display",
+      "observed complete Qwen and Gemma routes",
+      "ran one-token Gemma inference",
+      "edited sharing limits through the UI",
+      "selected Gemma and clicked Start sharing",
+      "stopped the complete app and node process tree",
+      "restarted the desktop with the native credential store",
+      "observed Gemma sharing resume",
+      "clicked Pause sharing",
+      "ran one-token Gemma inference again after restart and pause"
+    ],
+    "initial_inference": {
+      "passed": true,
+      "model": "Gemma 4 E2B IT",
+      "completion_tokens": 1,
+      "duration_ms": 197652,
+      "prompt_retained": false,
+      "output_retained": false,
+      "credential_retained": false
+    },
+    "post_restart_inference": {
+      "passed": true,
+      "model": "Gemma 4 E2B IT",
+      "completion_tokens": 1,
+      "duration_ms": 54352,
+      "prompt_retained": false,
+      "output_retained": false,
+      "credential_retained": false
+    },
+    "screenshots": {
+      "ready": {
+        "path": "gate13-20260831-i-linux-ready.png",
+        "sha256": "1c51f20269a032de813a309e8230abae0d87759e30288d2347c8de46f48d2e6a"
+      },
+      "sharing": {
+        "path": "gate13-20260831-i-linux-sharing.png",
+        "sha256": "a0ef7ec97bc186d3a3ecffcb2baf9241074cf382ff2bb441bcf6853da86857fc"
+      },
+      "paused_after_restart": {
+        "path": "gate13-20260831-i-linux-paused.png",
+        "sha256": "343abc26d180578ba97723e2f31e1717dbed2eb247b81ae23aaab69f53207a0b"
+      }
+    }
+  },
+  "cleanup": {
+    "exact_instances_absent": [
+      "route-20260831-i-node",
+      "gate13-20260831-i-win",
+      "gate13-20260831-i-linux"
+    ],
+    "exact_disks_absent": [
+      "route-20260831-i-node",
+      "gate13-20260831-i-win",
+      "gate13-20260831-i-linux"
+    ],
+    "exact_firewalls_absent": [
+      "route-20260831-i-dht",
+      "route-20260831-i-iap"
+    ],
+    "global_l4_quota": {
+      "metric": "GPUS_ALL_REGIONS",
+      "limit": 1,
+      "usage": 0
+    },
+    "protected_bootstrap": {
+      "name": "communityai-bootstrap-1",
+      "status": "RUNNING"
+    },
+    "passed": true
+  },
+  "privacy": {
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "credentials_retained": false,
+    "signed_urls_retained": false,
+    "provider_endpoints_retained": false
+  }
+}

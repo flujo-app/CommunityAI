@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-failed-attempt-and-cleanup",
+  "run_id": "gate13-20260831-f",
+  "recorded_at": "2026-09-01T00:46:17Z",
+  "result": "failed_cleanup_verified",
+  "gate": 13,
+  "route_acceptance": {
+    "completed_before_client_create": true,
+    "result": "passed",
+    "evidence_digest": "sha256:eb614c1b281a3661560536825edde1ad0e960c0c564e5aabd4900dd41bb2dea4",
+    "primary_model": "Qwen3.5 2B",
+    "standby_model": "Gemma 4 E2B IT",
+    "fallback_and_restoration_passed": true,
+    "total_duration_ms": 295357,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "credentials_retained": false
+  },
+  "windows_attempt": {
+    "lifecycle_run_id": "gate13-20260831-f-windows",
+    "attempt_ordinal": 1,
+    "execution_transport": "durable_iap_ssh_foreground_as_ordinary_user",
+    "ordinary_user_admin": false,
+    "result": "failed",
+    "failure_code": "windows_packaged_lifecycle_failed",
+    "failure_phase": "signed_bootstrap",
+    "terminal_failure_code": "lifecycle_failed",
+    "terminal_exit_code": 2,
+    "started_at_unix": 1788222739,
+    "finished_at_unix": 1788223261,
+    "elapsed_seconds": 522,
+    "failure_record_bytes": 126,
+    "failure_stderr_bytes": 0,
+    "canonical_lifecycle_evidence_present": false,
+    "linux_client_created": false
+  },
+  "pre_start_proofs": {
+    "windows_archive_bytes": 2695065068,
+    "windows_archive_sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+    "archive_verified_before_attempt": true,
+    "staged_file_hashes_verified": 12,
+    "host_config_validated": true,
+    "status_absent_before_start": true,
+    "terminal_absent_before_start": true,
+    "evidence_absent_before_start": true
+  },
+  "findings": [
+    {
+      "class": "supervisor_hypothesis_eliminated",
+      "finding": "The direct ordinary-user foreground execution failed at the same elapsed time and same signed_bootstrap phase as the S4U/Limited execution.",
+      "conclusion": "Scheduled Tasks, S4U, SSH account authorization, and the privileged provisioning boundary are not the packaged lifecycle failure.",
+      "gcp_related": false
+    },
+    {
+      "class": "windows_runtime_environment",
+      "finding": "The host adapter passed only SYSTEMROOT, WINDIR, TEMP, TMP, and USERPROFILE into the Windows lifecycle. It removed standard non-secret user runtime variables including APPDATA, LOCALAPPDATA, PROGRAMDATA, COMSPEC, PATH, and PATHEXT before the packaged desktop was started.",
+      "timing_inference": "The roughly 300-second difference between preliminary package work and terminal failure is consistent with Wait-Gate13ProductStatus exhausting its 300-second readiness bound in signed_bootstrap.",
+      "correction": "Keep a fixed allowlist of standard non-secret Windows runtime variables while continuing to exclude arbitrary variables and credential/token names.",
+      "gcp_related": false
+    },
+    {
+      "class": "bounded_failure_localization",
+      "finding": "The phase-bounded failure record localized the deterministic defect to signed_bootstrap without retaining exception text, paths, endpoints, prompts, outputs, or credentials.",
+      "correction": "Add a hard-coded operation name inside signed_bootstrap for the next run while preserving the same privacy boundary.",
+      "gcp_related": false
+    }
+  ],
+  "gate11_comparison": {
+    "repeated_gate11_gcp_issue": false,
+    "gate11_quota_fix_reused": true,
+    "route_product_acceptance_passed": true,
+    "gcp_route_or_quota_blocker": false,
+    "delay_class": "gate13_windows_host_environment_contract"
+  },
+  "cleanup": {
+    "exact_instances_absent": true,
+    "exact_disks_absent": true,
+    "exact_firewalls_absent": true,
+    "regional_l4_limit": 1,
+    "regional_l4_usage": 0,
+    "verified_at": "2026-09-01T00:46:17Z",
+    "protected_bootstrap_deleted": false
+  },
+  "cost": {
+    "maximum_committed_usd": "56.00",
+    "observed_cost_usd": null
+  },
+  "claims": {
+    "gate_13_passed": false,
+    "windows_lifecycle_passed": false,
+    "linux_lifecycle_started": false,
+    "run_id_reusable": false,
+    "resources_reusable": false
+  }
+}

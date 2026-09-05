@@ -1,4 +1,4 @@
-"""Offline loading tests for the Qwen3.5 multimodal wrapper's text tower."""
+"""Offline loading tests for the Qwen3.5/Qwen3.8 multimodal wrapper's text tower."""
 
 import os
 
@@ -101,6 +101,121 @@ def test_qwen3_5_wrapper_detection_and_dispatch(wrapper_checkpoint, text_only_ch
     assert config._source_architectures == ("Qwen3_5ForConditionalGeneration",)
     assert config.block_prefix == "model.language_model.layers"
     assert AutoDistributedConfig.from_pretrained(text_only_checkpoint).block_prefix == "model.layers"
+
+
+def test_qwen3_8_27b_release_shape_dispatches_offline(tmp_path):
+    """Lock the public 27B release's architecture contract without downloading its weights."""
+    from transformers.models.qwen3_5 import Qwen3_5Config, Qwen3_5VisionConfig
+
+    text_config = DistributedQwen3_5Config(
+        vocab_size=248320,
+        hidden_size=5120,
+        intermediate_size=17408,
+        num_hidden_layers=64,
+        num_attention_heads=24,
+        num_key_value_heads=4,
+        head_dim=256,
+        linear_num_key_heads=16,
+        linear_num_value_heads=48,
+        linear_key_head_dim=128,
+        linear_value_head_dim=128,
+        linear_conv_kernel_dim=4,
+        full_attention_interval=4,
+        max_position_embeddings=262144,
+        tie_word_embeddings=False,
+    )
+    outer_config = Qwen3_5Config(
+        text_config=text_config.to_dict(),
+        vision_config=Qwen3_5VisionConfig(
+            depth=27,
+            hidden_size=1152,
+            intermediate_size=4304,
+            num_heads=16,
+            out_hidden_size=5120,
+            num_position_embeddings=2304,
+        ).to_dict(),
+        tie_word_embeddings=False,
+    )
+    outer_config.architectures = ["Qwen3_5ForConditionalGeneration"]
+    outer_config.save_pretrained(tmp_path)
+
+    config = AutoDistributedConfig.from_pretrained(tmp_path)
+
+    assert isinstance(config, DistributedQwen3_5Config)
+    assert config._source_architectures == ("Qwen3_5ForConditionalGeneration",)
+    assert config.block_prefix == "model.language_model.layers"
+    assert config.num_hidden_layers == 64
+    assert config.hidden_size == 5120
+    assert config.vocab_size == 248320
+    assert config.layer_types.count("linear_attention") == 48
+    assert config.layer_types.count("full_attention") == 16
+
+
+def test_fp8_source_config_dequantizes_a_real_block_and_runs_forward(tmp_path, monkeypatch):
+    """Cover source config dispatch through the production block loader and forward path."""
+    import importlib
+
+    from transformers.models.qwen3_5 import Qwen3_5Config, Qwen3_5ForCausalLM, Qwen3_5VisionConfig
+
+    from drift.server.block_utils import get_model_block
+
+    text_config = _tiny_text_config()
+    text_config.num_hidden_layers = 1
+    text_config.layer_types = text_config.layer_types[:1]
+    torch.manual_seed(1)
+    reference = Qwen3_5ForCausalLM(text_config).eval()
+    outer_config = Qwen3_5Config(
+        text_config=text_config.to_dict(),
+        vision_config=Qwen3_5VisionConfig(
+            depth=1,
+            hidden_size=32,
+            intermediate_size=64,
+            num_heads=4,
+            out_hidden_size=64,
+            num_position_embeddings=16,
+        ).to_dict(),
+        tie_word_embeddings=True,
+        quantization_config={
+            "quant_method": "fp8",
+            "activation_scheme": "dynamic",
+            "weight_block_size": [128, 128],
+        },
+    )
+    outer_config.architectures = ["Qwen3_5ForConditionalGeneration"]
+    outer_config.save_pretrained(tmp_path)
+
+    config = AutoDistributedConfig.from_pretrained(tmp_path)
+    assert config._source_quantization_method == "fp8"
+
+    checkpoint, expected_state = {}, {}
+    for name, tensor in reference.model.layers[0].state_dict().items():
+        if tensor.is_floating_point() and tensor.ndim >= 2:
+            quantized = tensor.to(torch.float8_e4m3fn)
+            checkpoint[name] = quantized
+            checkpoint[f"{name}_scale_inv"] = torch.ones((*tensor.shape[:-2], 1, 1), dtype=torch.float32)
+            expected_state[name] = quantized.to(torch.float32)
+        else:
+            checkpoint[name] = tensor.detach().clone()
+            expected_state[name] = tensor.detach().clone()
+
+    loader_module = importlib.import_module("drift.server.from_pretrained")
+    monkeypatch.setattr(loader_module, "_load_state_dict_from_repo", lambda *args, **kwargs: checkpoint)
+
+    actual_block = load_pretrained_block(
+        str(tmp_path),
+        0,
+        config=config,
+        torch_dtype=torch.float32,
+        quant_type=QuantType.FP8_DEQUANT,
+    ).eval()
+    expected_block = get_model_block(config, layer_idx=0).eval()
+    expected_block.load_state_dict(expected_state)
+
+    hidden_states = torch.randn(1, 4, config.hidden_size)
+    with torch.inference_mode():
+        (actual,) = actual_block(hidden_states)
+        (expected,) = expected_block(hidden_states)
+    assert torch.allclose(actual, expected, atol=1e-6), (actual - expected).abs().max()
 
 
 def test_qwen3_5_cache_budget_includes_fixed_recurrent_state():

@@ -15,11 +15,12 @@ from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 from hivemind.utils.timed_storage import get_dht_time
 
 import drift
-from drift.model_manifest import ManifestError, ModelManifest
+from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest, select_manifest_block_artifacts
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
 from drift.node.contribution_planner import (
     AutomaticContributionPlanner,
     AutomaticPlacementService,
+    PlacementArtifactPlan,
     PlacementCandidate,
     PlacementPlan,
     PlacementRegistry,
@@ -50,6 +51,8 @@ from drift.protocol_identity import (
     create_intent_lease,
     create_route_demand,
 )
+from drift.utils.auto_config import AutoDistributedConfig
+from drift.utils.disk_cache import DEFAULT_CACHE_DIR
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
@@ -307,6 +310,58 @@ def _resolve_policy_models(
     return resolved
 
 
+def _resolved_automatic_cache_root(worker, model_config: NodeModelConfig) -> Path:
+    configured = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
+    return Path(DEFAULT_CACHE_DIR if configured is None else configured).expanduser().resolve()
+
+
+def _manifest_artifact_plans(
+    manifest: ModelManifest,
+    worker,
+    *,
+    token: str | None,
+    cache_dir: Path | None,
+    max_disk_space: int,
+) -> tuple[PlacementArtifactPlan, ...]:
+    if worker.num_blocks is None or worker.num_blocks > manifest.model.num_blocks:
+        raise ManifestError("Automatic worker block count exceeds the manifested model")
+    source_token = token if manifest.model.gated else False
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        repository=manifest.source.repository,
+        revision=manifest.source.revision,
+        token=source_token,
+        cache_dir=cache_dir,
+        max_disk_space=max_disk_space,
+    )
+    config_root = verifier.ensure_startup_metadata()
+    block_config = AutoDistributedConfig.from_pretrained(
+        config_root,
+        token=source_token,
+        local_files_only=True,
+    )
+    manifest.validate_model_config(block_config)
+    weight_map = verifier.load_weight_map()
+    return tuple(
+        PlacementArtifactPlan(
+            start_block=start,
+            end_block=start + worker.num_blocks,
+            artifact_bytes=plan.artifact_bytes,
+            artifact_set_digest=plan.artifact_set_digest,
+        )
+        for start in range(manifest.model.num_blocks - worker.num_blocks + 1)
+        for plan in (
+            select_manifest_block_artifacts(
+                manifest,
+                block_prefix=block_config.block_prefix,
+                start_block=start,
+                end_block=start + worker.num_blocks,
+                weight_map=weight_map,
+            ),
+        )
+    )
+
+
 def _automatic_placement_candidates(
     config: NodeConfig,
     manager: ModelManager,
@@ -334,13 +389,13 @@ def _automatic_placement_candidates(
         key = _model_key(descriptor)
         if key not in ordered_keys:
             ordered_keys.append(key)
-        manifested.append((manifest, descriptor, key))
+        manifested.append((model_config, manifest, descriptor, key))
     priority = {key: index for index, key in enumerate(ordered_keys)}
 
     disk_limits = [value for value in (worker.max_disk_bytes, policy.max_disk_bytes) if value is not None]
     effective_disk_bytes = min(disk_limits, default=None)
     candidates = []
-    for manifest, descriptor, key in manifested:
+    for model_config, manifest, descriptor, key in manifested:
         artifact_bytes = sum(artifact.size for artifact in manifest.artifacts)
         if key in denied:
             reason = f"model {descriptor.model_id!r} is denied by contribution policy"
@@ -350,13 +405,20 @@ def _automatic_placement_candidates(
             reason = f"model {descriptor.model_id!r} requires gated artifact authorization"
         elif effective_disk_bytes is None:
             reason = "automatic placement requires a finite disk budget"
-        elif artifact_bytes > effective_disk_bytes:
-            reason = (
-                f"manifested artifacts require {artifact_bytes} bytes, above the "
-                f"{effective_disk_bytes}-byte disk budget"
-            )
         else:
             reason = None
+        artifact_plans = ()
+        if reason is None:
+            try:
+                artifact_plans = _manifest_artifact_plans(
+                    manifest,
+                    worker,
+                    token=token,
+                    cache_dir=_resolved_automatic_cache_root(worker, model_config),
+                    max_disk_space=effective_disk_bytes,
+                )
+            except (ManifestError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                reason = f"exact block artifact planning failed: {type(exc).__name__}"
         candidates.append(
             PlacementCandidate(
                 model_id=descriptor.model_id,
@@ -371,6 +433,8 @@ def _automatic_placement_candidates(
                     discovery.route_demand_snapshot(manifest.digest_id) if allow_remote_route_demand else None
                 ),
                 policy_reason=reason,
+                artifact_plans=artifact_plans,
+                max_artifact_bytes=effective_disk_bytes,
             )
         )
     return tuple(candidates)
@@ -461,10 +525,16 @@ def _prepare_worker_supervisor_settings(
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
 
         resolved_model = _model_key(descriptor)
+        intent_published = bool(automatic and placement is not None and placement.intent_published)
+        remote_acknowledged = bool(automatic and placement is not None and placement.remote_acknowledged)
         if not policy.sharing_enabled:
             policy_reason = "sharing is disabled by contribution policy"
         elif automatic and decision is None:
             policy_reason = placement_reason
+        elif automatic and not (intent_published and remote_acknowledged):
+            policy_reason = "automatic placement intent is not remotely acknowledged"
+        elif automatic and decision.artifact_set_digest is None:
+            policy_reason = "automatic placement has no exact artifact-set binding"
         elif resolved_model in denied_models:
             policy_reason = f"model {descriptor.model_id!r} is denied by contribution policy"
         elif allowed_models and resolved_model not in allowed_models:
@@ -557,9 +627,30 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--num_blocks", str(selected_num_blocks)))
         else:
             command.extend(("--block_indices", selected_block_indices))
+        cache_dir = (
+            _resolved_automatic_cache_root(worker, model_config)
+            if automatic
+            else worker.cache_dir
+            if worker.cache_dir is not None
+            else model_config.cache_dir
+        )
+        if automatic and decision is not None and decision.artifact_set_digest is not None:
+            command.extend(
+                (
+                    "--expected_manifest_digest",
+                    decision.manifest_digest,
+                    "--expected_block_indices",
+                    selected_block_indices,
+                    "--expected_artifact_bytes",
+                    str(decision.artifact_bytes),
+                    "--expected_artifact_set_digest",
+                    decision.artifact_set_digest,
+                    "--expected_cache_root",
+                    str(cache_dir),
+                )
+            )
         if worker.device is not None:
             command.extend(("--device", worker.device))
-        cache_dir = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
         if cache_dir is not None:
             command.extend(("--cache_dir", str(cache_dir)))
         if effective_disk_space is not None:
@@ -572,6 +663,7 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--public_ip", worker.public_ip))
         for revocation_file in model_config.revocation_files:
             command.extend(("--revocation_file", str(revocation_file)))
+        placement_binding = decision if decision is not None and decision.artifact_set_digest is not None else None
 
         launches.append(
             WorkerLaunch(
@@ -587,6 +679,14 @@ def _prepare_worker_supervisor_settings(
                 automatic=automatic,
                 block_indices=selected_block_indices if automatic else None,
                 placement_reason=placement_reason,
+                intent_published=intent_published,
+                remote_acknowledged=remote_acknowledged,
+                placement_manifest_digest=(None if placement_binding is None else placement_binding.manifest_digest),
+                placement_artifact_bytes=(None if placement_binding is None else placement_binding.artifact_bytes),
+                placement_artifact_set_digest=(
+                    None if placement_binding is None else placement_binding.artifact_set_digest
+                ),
+                placement_cache_root=None if placement_binding is None else str(cache_dir),
                 max_disk_bytes=effective_disk_bytes,
                 max_vram_bytes=effective_vram_bytes,
                 vram_device=vram_device,
@@ -665,6 +765,55 @@ def _prepare_route_identity(
         return None
 
 
+def _intent_lease_binding(worker, decision, identity_key_id: str) -> tuple[int, int, dict, tuple]:
+    start_block, end_block = (int(value) for value in decision.block_indices.split(":"))
+    throughput = None if isinstance(worker.throughput, str) else max(1, round(worker.throughput * 1000))
+    resource_claims = {
+        "schema_version": INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION,
+        "artifact_bytes": decision.artifact_bytes,
+        "block_count": end_block - start_block,
+        "throughput_milli_rps": throughput,
+    }
+    decision_key = (
+        decision.manifest_digest,
+        start_block,
+        end_block,
+        decision.artifact_set_digest,
+        str(worker.identity_path),
+        identity_key_id,
+        tuple(sorted(resource_claims.items())),
+    )
+    return start_block, end_block, resource_claims, decision_key
+
+
+def _placement_decision_key(worker, decision, identity_key_id: str) -> tuple:
+    return _intent_lease_binding(worker, decision, identity_key_id)[3]
+
+
+def _can_retain_acknowledged_plan(
+    previous: PlacementPlan | None,
+    current_decision,
+    worker,
+    identity_key_id: str | None,
+    lease: Mapping | None,
+    *,
+    now: float,
+) -> bool:
+    if previous is None or previous.decision is None or identity_key_id is None:
+        return False
+    previous_key = _placement_decision_key(worker, previous.decision, identity_key_id)
+    current_key = _placement_decision_key(worker, current_decision, identity_key_id)
+    return bool(
+        previous.remote_acknowledged
+        and lease is not None
+        and lease.get("decision_key") == previous_key == current_key
+        and isinstance(lease.get("expires_at"), (int, float))
+        and not isinstance(lease.get("expires_at"), bool)
+        and math.isfinite(lease["expires_at"])
+        and lease["expires_at"] > now
+    )
+
+
 def _build_automatic_placement_service(
     config: NodeConfig,
     manager: ModelManager,
@@ -691,7 +840,6 @@ def _build_automatic_placement_service(
     }
     intent_ttl_seconds = 10 * 60
     intent_refresh_seconds = 2 * 60
-    intent_identities = {}
     intent_sequences = {}
     intent_leases = {}
     route_identity = _prepare_route_identity(discovery, route_identity_path, config.route_demand_authority_roots)
@@ -735,9 +883,16 @@ def _build_automatic_placement_service(
                 "expires_at": expires_at,
             }
 
-    def publish_intent(worker_id, worker, decision) -> bool:
-        identity_path = str(worker.identity_path)
-        decision_key = (decision.manifest_digest, decision.block_indices, identity_path)
+    def publish_intent(worker_id, worker, decision) -> tuple[bool, str | None]:
+        if decision.artifact_set_digest is None:
+            return False, None
+        try:
+            identity = NodeIdentity.ensure(worker.identity_path)
+            start_block, end_block, resource_claims, decision_key = _intent_lease_binding(
+                worker, decision, identity.key_id
+            )
+        except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
+            return False, None
         now = get_dht_time()
         current_lease = intent_leases.get(worker_id)
         if (
@@ -745,16 +900,8 @@ def _build_automatic_placement_service(
             and current_lease["decision_key"] == decision_key
             and current_lease["expires_at"] - now > intent_refresh_seconds
         ):
-            return True
+            return True, identity.key_id
         try:
-            identity_entry = intent_identities.get(worker_id)
-            if identity_entry is None or identity_entry[0] != identity_path:
-                identity = NodeIdentity.ensure(worker.identity_path)
-                intent_identities[worker_id] = (identity_path, identity)
-            else:
-                identity = identity_entry[1]
-            start_block, end_block = (int(value) for value in decision.block_indices.split(":"))
-            throughput = None if isinstance(worker.throughput, str) else max(1, round(worker.throughput * 1000))
             sequence = max(intent_sequences.get(worker_id, 0) + 1, time.time_ns())
             intent_sequences[worker_id] = sequence
             expires_at = now + intent_ttl_seconds
@@ -763,25 +910,20 @@ def _build_automatic_placement_service(
                 manifest_digest=decision.manifest_digest.removeprefix("sha256:"),
                 start_block=start_block,
                 end_block=end_block,
-                resource_claims={
-                    "schema_version": INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION,
-                    "artifact_bytes": decision.artifact_bytes,
-                    "block_count": end_block - start_block,
-                    "throughput_milli_rps": throughput,
-                },
+                resource_claims=resource_claims,
                 issued_at=now,
                 expires_at=expires_at,
                 sequence=sequence,
             )
         except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
-            return False
+            return False, identity.key_id
         if not discovery.publish_intent(decision.manifest_digest, record.to_dict()):
-            return False
+            return False, identity.key_id
         intent_leases[worker_id] = {
             "decision_key": decision_key,
             "expires_at": expires_at,
         }
-        return True
+        return True, identity.key_id
 
     def reconcile() -> None:
         current = config if config_path is None else NodeConfig.load(config_path)
@@ -815,19 +957,34 @@ def _build_automatic_placement_service(
                 sharing_enabled=current.contribution_policy.sharing_enabled,
             )
             if proposal.decision is not None:
-                if not publish_intent(worker_id, worker, proposal.decision):
+                published, identity_key_id = publish_intent(worker_id, worker, proposal.decision)
+                if not published:
                     previous = previous_plans.get(worker_id)
+                    lease = intent_leases.get(worker_id)
+                    now = get_dht_time()
                     plans[worker_id] = (
                         previous
-                        if previous is not None and previous.decision is not None
+                        if _can_retain_acknowledged_plan(
+                            previous,
+                            proposal.decision,
+                            worker,
+                            identity_key_id,
+                            lease,
+                            now=now,
+                        )
                         else PlacementPlan(
                             None,
-                            "signed placement intent could not be published to a remote peer",
+                            "signed placement intent could not be published with a live matching lease",
                             proposal.evaluated_models,
                         )
                     )
                     continue
                 planner.commit(proposal)
+                proposal = replace(
+                    proposal,
+                    intent_published=True,
+                    remote_acknowledged=True,
+                )
             plans[worker_id] = proposal
         registry.replace(plans)
         settings = _prepare_worker_supervisor_settings(

@@ -1,4 +1,8 @@
 import json
+import os
+import subprocess
+import sys
+import time
 
 import pytest
 
@@ -142,7 +146,156 @@ def test_bootstrap_installs_verified_manifests_and_atomic_node_config(tmp_path):
     assert (data_dir / "catalogs" / "communityai-test" / "rollback-state.json").is_file()
     assert calls[0] == (bootstrap["catalog_mirrors"][0], MAX_CATALOG_BYTES)
     assert any(limit == MAX_MANIFEST_BYTES for _, limit in calls)
-    assert not (data_dir / ".catalog-bootstrap.lock").exists()
+    assert (data_dir / ".catalog-bootstrap.lock").is_file()
+
+
+@pytest.mark.parametrize("prior_failure", [False, True])
+def test_bootstrap_recovers_an_empty_legacy_lock_marker(tmp_path, prior_failure):
+    bootstrap, envelope, manifests = _release_documents()
+    bootstrap_path = _write_bootstrap(tmp_path, bootstrap)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    lock_path = data_dir / ".catalog-bootstrap.lock"
+    lock_path.touch()
+    original = lock_path.stat()
+    if prior_failure:
+        with pytest.raises(CatalogBootstrapError, match="No trusted usable"):
+            bootstrap_node_from_catalog(
+                bootstrap_path,
+                data_dir=data_dir,
+                config_path=data_dir / "node-config.json",
+                fetch_text=lambda *_: (_ for _ in ()).throw(CatalogBootstrapError("offline")),
+                now=NOW,
+            )
+
+    result = bootstrap_node_from_catalog(
+        bootstrap_path,
+        data_dir=data_dir,
+        config_path=data_dir / "node-config.json",
+        fetch_text=lambda url, _: json.dumps(envelope.to_dict())
+        if url in bootstrap["catalog_mirrors"]
+        else manifests[url],
+        now=NOW,
+    )
+
+    assert result.created is True
+    assert os.path.samestat(original, lock_path.stat())
+
+
+def test_bootstrap_lock_excludes_a_live_installer_and_recovers_after_process_kill(tmp_path):
+    bootstrap, envelope, manifests = _release_documents()
+    bootstrap_path = _write_bootstrap(tmp_path, bootstrap)
+    data_dir = tmp_path / "data"
+    config_path = data_dir / "node-config.json"
+    ready_path = tmp_path / "fetch-started"
+    child_code = """
+import sys
+import time
+from pathlib import Path
+from drift.node.catalog_bootstrap import bootstrap_node_from_catalog
+
+def blocked_fetch(*_args):
+    Path(sys.argv[4]).touch()
+    while True:
+        time.sleep(1)
+
+bootstrap_node_from_catalog(sys.argv[1], data_dir=sys.argv[2], config_path=sys.argv[3], fetch_text=blocked_fetch)
+"""
+    child = subprocess.Popen(
+        [sys.executable, "-c", child_code, str(bootstrap_path), str(data_dir), str(config_path), str(ready_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not ready_path.exists() and child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if child.poll() is not None:
+            stdout, stderr = child.communicate(timeout=5)
+            pytest.fail(f"bootstrap child exited before reaching the locked fetch: {stdout}\n{stderr}")
+        assert ready_path.exists(), "bootstrap child did not reach the locked fetch"
+        lock_path = data_dir / ".catalog-bootstrap.lock"
+        original = lock_path.stat()
+        with pytest.raises(CatalogBootstrapError, match="already in progress"):
+            bootstrap_node_from_catalog(
+                bootstrap_path,
+                data_dir=data_dir,
+                config_path=config_path,
+                fetch_text=lambda *_: pytest.fail("a concurrent installer must not fetch"),
+                now=NOW,
+            )
+        assert os.path.samestat(original, lock_path.stat())
+        child.kill()
+        child.communicate(timeout=10)
+        assert not config_path.exists()
+
+        result = bootstrap_node_from_catalog(
+            bootstrap_path,
+            data_dir=data_dir,
+            config_path=config_path,
+            fetch_text=lambda url, _: (
+                json.dumps(envelope.to_dict()) if url in bootstrap["catalog_mirrors"] else manifests[url]
+            ),
+            now=NOW,
+        )
+        assert result.created is True
+        assert os.path.samestat(original, lock_path.stat())
+        assert NodeConfig.load(config_path).models
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=10)
+
+
+@pytest.mark.parametrize("unsafe_kind", ["symlink", "hardlink", "directory"])
+def test_bootstrap_refuses_unsafe_lock_targets_before_fetching(tmp_path, unsafe_kind):
+    bootstrap, _, _ = _release_documents()
+    bootstrap_path = _write_bootstrap(tmp_path, bootstrap)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    lock_path = data_dir / ".catalog-bootstrap.lock"
+    target = tmp_path / "unrelated-file"
+    target.write_text("unchanged", encoding="utf-8")
+    try:
+        if unsafe_kind == "symlink":
+            lock_path.symlink_to(target)
+        elif unsafe_kind == "hardlink":
+            os.link(target, lock_path)
+        else:
+            lock_path.mkdir()
+    except OSError:
+        pytest.skip(f"{unsafe_kind} is unavailable on this test host")
+    with pytest.raises(CatalogBootstrapError, match="unsafe catalog bootstrap lock"):
+        bootstrap_node_from_catalog(
+            bootstrap_path,
+            data_dir=data_dir,
+            config_path=data_dir / "node-config.json",
+            fetch_text=lambda *_: pytest.fail("an unsafe lock target must not fetch"),
+            now=NOW,
+        )
+    assert target.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_bootstrap_refuses_a_linked_lock_directory(tmp_path):
+    bootstrap, _, _ = _release_documents()
+    bootstrap_path = _write_bootstrap(tmp_path, bootstrap)
+    real_data = tmp_path / "real-data"
+    real_data.mkdir()
+    linked_data = tmp_path / "linked-data"
+    try:
+        linked_data.symlink_to(real_data, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symbolic links are unavailable on this test host")
+    with pytest.raises(CatalogBootstrapError, match="unsafe catalog bootstrap lock directory"):
+        bootstrap_node_from_catalog(
+            bootstrap_path,
+            data_dir=linked_data,
+            config_path=tmp_path / "node-config.json",
+            fetch_text=lambda *_: pytest.fail("a linked lock directory must not fetch"),
+            now=NOW,
+        )
+    assert list(real_data.iterdir()) == []
 
 
 def test_existing_config_is_preserved_without_network_access(tmp_path):

@@ -26,6 +26,7 @@ from drift.constants import DTYPE_MAP
 from drift.model_manifest import ManifestArtifactVerifier, ManifestError
 from drift.server.block_utils import get_model_block, resolve_block_dtype
 from drift.utils.auto_config import AutoDistributedConfig
+from drift.utils.convert_block import QuantType
 from drift.utils.disk_cache import (
     DEFAULT_CACHE_DIR,
     allow_cache_reads,
@@ -58,6 +59,56 @@ def _find_unconsumed_checkpoint_keys(block: nn.Module, state_dict: "StateDict") 
     )
 
 
+def _dequantize_finegrained_fp8_tensor(
+    weight: torch.Tensor, scale_inv: torch.Tensor, *, output_dtype: torch.dtype
+) -> torch.Tensor:
+    """Dequantize one block-scaled FP8 matrix using its checkpoint scale grid."""
+    if weight.ndim < 2 or scale_inv.ndim < 2:
+        raise ValueError(
+            f"Fine-grained FP8 weight and scale must be matrices, got {tuple(weight.shape)} and "
+            f"{tuple(scale_inv.shape)}"
+        )
+    rows, cols = weight.shape[-2:]
+    scale_rows, scale_cols = scale_inv.shape[-2:]
+    if scale_rows < 1 or scale_cols < 1 or rows % scale_rows or cols % scale_cols:
+        raise ValueError(
+            f"Fine-grained FP8 weight shape ({rows}, {cols}) is not divisible by scale grid "
+            f"({scale_rows}, {scale_cols})"
+        )
+    if weight.shape[:-2] != scale_inv.shape[:-2]:
+        raise ValueError(
+            f"Fine-grained FP8 weight and scale batch dimensions differ: {tuple(weight.shape[:-2])} "
+            f"versus {tuple(scale_inv.shape[:-2])}"
+        )
+
+    block_rows, block_cols = rows // scale_rows, cols // scale_cols
+    quantized = weight.to(torch.float32).reshape(-1, scale_rows, block_rows, scale_cols, block_cols)
+    scales = scale_inv.to(torch.float32).reshape(-1, scale_rows, scale_cols).unsqueeze(2).unsqueeze(-1)
+    return (quantized * scales).to(output_dtype).reshape(weight.shape)
+
+
+def dequantize_finegrained_fp8_state_dict(state_dict: "StateDict", *, output_dtype: torch.dtype) -> "StateDict":
+    """Replace checkpoint FP8 matrices and ``weight_scale_inv`` grids with dense tensors."""
+    result = dict(state_dict)
+    scale_names = sorted(name for name in state_dict if name.endswith(".weight_scale_inv"))
+    if not scale_names:
+        raise ValueError("Fine-grained FP8 checkpoint block contains no weight_scale_inv tensors")
+
+    for scale_name in scale_names:
+        weight_name = scale_name.removesuffix("_scale_inv")
+        if weight_name not in state_dict:
+            raise ValueError(f"Fine-grained FP8 scale {scale_name!r} has no matching {weight_name!r}")
+        result[weight_name] = _dequantize_finegrained_fp8_tensor(
+            state_dict[weight_name], state_dict[scale_name], output_dtype=output_dtype
+        )
+        del result[scale_name]
+
+    orphan_fp8 = sorted(name for name, tensor in result.items() if str(tensor.dtype).startswith("torch.float8"))
+    if orphan_fp8:
+        raise ValueError(f"Fine-grained FP8 checkpoint tensors have no scale grid: {orphan_fp8}")
+    return result
+
+
 def load_pretrained_block(
     model_name: str,
     block_index: int,
@@ -69,6 +120,7 @@ def load_pretrained_block(
     cache_dir: Optional[str] = None,
     max_disk_space: Optional[int] = None,
     artifact_verifier: Optional[ManifestArtifactVerifier] = None,
+    quant_type: QuantType = QuantType.NONE,
 ) -> nn.Module:
     if config is None:
         config_source = artifact_verifier.ensure_startup_metadata() if artifact_verifier is not None else model_name
@@ -97,6 +149,17 @@ def load_pretrained_block(
         max_disk_space=max_disk_space,
         artifact_verifier=artifact_verifier,
     )
+
+    source_quantization = getattr(config, "_source_quantization_method", None)
+    if source_quantization == "fp8":
+        if quant_type != QuantType.FP8_DEQUANT:
+            raise ValueError(
+                "This checkpoint contains pre-quantized fine-grained FP8 weights; load it with "
+                "quant_type=QuantType.FP8_DEQUANT"
+            )
+        state_dict = dequantize_finegrained_fp8_state_dict(state_dict, output_dtype=torch_dtype)
+    elif quant_type == QuantType.FP8_DEQUANT:
+        raise ValueError("FP8_DEQUANT requires a checkpoint whose config declares quant_method='fp8'")
 
     # transformers >=5.0 may restructure weights when loading (e.g. Mixtral fuses per-expert
     # weights). DRIFT-LLM loads block weights by name, so apply the same conversion here.
@@ -157,28 +220,27 @@ def _load_state_dict_from_repo(
         artifact_verifier=artifact_verifier,
     )
     if index_file.endswith(".index.json"):  # Sharded model
-        path = (
-            str(artifact_verifier.ensure_path(index_file, allowed_roles={"weight_index"}))
-            if artifact_verifier is not None
-            else get_file_from_repo(
+        if artifact_verifier is not None:
+            weight_map = artifact_verifier.load_weight_map()
+            if weight_map is None:  # pragma: no cover - maintained by the index-file branch
+                raise ManifestError("Manifested sharded checkpoint lost its verified weight map")
+        else:
+            path = get_file_from_repo(
                 model_name,
                 filename=index_file,
                 revision=revision,
                 use_auth_token=token,
                 cache_dir=cache_dir,
             )
-        )
-        if path is None:
-            # _find_index_file() told that a file exists but we can't get it (e.g., it just disappeared)
-            raise ValueError(f"Failed to get file {index_file}")
-
-        with open(path) as f:
-            index = json.load(f)
-        filenames = {
-            filename for param_name, filename in index["weight_map"].items() if param_name.startswith(block_prefix)
-        }
+            if path is None:
+                # _find_index_file() told that a file exists but we can't get it (e.g., it just disappeared)
+                raise ValueError(f"Failed to get file {index_file}")
+            with open(path) as f:
+                index = json.load(f)
+            weight_map = index["weight_map"]
+        filenames = {filename for param_name, filename in weight_map.items() if param_name.startswith(block_prefix)}
         if not filenames:
-            raise RuntimeError(f"Block {block_prefix}* not found in the index: {index['weight_map']}")
+            raise RuntimeError(f"Block {block_prefix}* not found in the index: {weight_map}")
     else:  # Non-sharded model
         filenames = {index_file}
     logger.debug(f"Loading {block_prefix}* from {filenames}")

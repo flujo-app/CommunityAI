@@ -1,9 +1,12 @@
 import hashlib
+import io
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+import drift.cli.run_edge_acquisition as run_edge_acquisition
 from drift.client.from_pretrained import select_checkpoint_shards
 from drift.model_manifest import ManifestError, ManifestTransferInterrupted, ModelManifest
 from drift.node.edge_acquisition import acquire_client_artifacts
@@ -73,6 +76,154 @@ class _FakeVerifier:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(self.contents[path])
         return destination
+
+
+def test_cli_can_require_anonymous_acquisition(tmp_path, monkeypatch, capsys):
+    manifest = _manifest(
+        [
+            ("config.json", "config", b"{}"),
+            ("tokenizer.json", "tokenizer", b"{}"),
+            ("weights.bin", "weight", b"weights"),
+        ]
+    )
+    observed = {}
+
+    def acquire(_manifest, **kwargs):
+        observed.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(run_edge_acquisition.ModelManifest, "load", staticmethod(lambda _path: manifest))
+    monkeypatch.setattr(run_edge_acquisition, "acquire_client_artifacts", acquire)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "drift edge-acquire",
+            str(tmp_path / "manifest.json"),
+            "--cache_dir",
+            str(tmp_path / "cache"),
+            "--no_token",
+        ],
+    )
+
+    run_edge_acquisition.main()
+
+    assert observed["token"] is False
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    with pytest.raises(SystemExit):
+        run_edge_acquisition.build_parser().parse_args(
+            [
+                str(tmp_path / "manifest.json"),
+                "--cache_dir",
+                str(tmp_path / "cache"),
+                "--token",
+                "secret",
+                "--no_token",
+            ]
+        )
+
+
+def test_cli_can_bind_manifest_bytes_from_stdin(tmp_path, monkeypatch, capsys):
+    manifest = _manifest(
+        [
+            ("config.json", "config", b"{}"),
+            ("tokenizer.json", "tokenizer", b"{}"),
+            ("weights.bin", "weight", b"weights"),
+        ]
+    )
+    payload = (manifest.canonical_json() + "\n").encode("utf-8")
+    digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+    observed = {}
+
+    def acquire(received_manifest, **kwargs):
+        observed["manifest"] = received_manifest
+        observed.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(run_edge_acquisition, "acquire_client_artifacts", acquire)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "drift edge-acquire",
+            "--manifest_stdin_sha256",
+            digest,
+            "--cache_dir",
+            str(tmp_path / "cache"),
+            "--no_token",
+        ],
+    )
+
+    run_edge_acquisition.main()
+
+    assert observed["manifest"].digest_id == manifest.digest_id
+    assert observed["token"] is False
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+
+
+def test_cli_rejects_changed_or_ambiguous_stdin_manifest(tmp_path, monkeypatch):
+    payload = b"{}\n"
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "drift edge-acquire",
+            "--manifest_stdin_sha256",
+            "sha256:" + "0" * 64,
+            "--cache_dir",
+            str(tmp_path / "cache"),
+            "--no_token",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        run_edge_acquisition.main()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "drift edge-acquire",
+            str(tmp_path / "manifest.json"),
+            "--manifest_stdin_sha256",
+            "sha256:" + hashlib.sha256(payload).hexdigest(),
+            "--cache_dir",
+            str(tmp_path / "cache"),
+        ],
+    )
+    with pytest.raises(SystemExit):
+        run_edge_acquisition.main()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"",
+        b"x" * (run_edge_acquisition.MAX_MANIFEST_STDIN_BYTES + 1),
+        b"\xff",
+        b'{"schema_version":1,"schema_version":1}\n',
+    ],
+    ids=["empty", "oversized", "invalid-utf8", "duplicate-key"],
+)
+def test_cli_rejects_invalid_digest_bound_stdin_manifest(tmp_path, monkeypatch, payload):
+    digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "drift edge-acquire",
+            "--manifest_stdin_sha256",
+            digest,
+            "--cache_dir",
+            str(tmp_path / "cache"),
+            "--no_token",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        run_edge_acquisition.main()
 
 
 def test_select_checkpoint_shards_matches_loader_filtering():

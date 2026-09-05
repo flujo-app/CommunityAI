@@ -188,6 +188,7 @@ def run(
     activate_existing_instance: bool = True,
     instance_name: str | None = None,
     before_termination_restore: Callable[[], None] | None = None,
+    qualification_automation=None,  # noqa: ANN001
 ) -> int:
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
@@ -1060,6 +1061,7 @@ def run(
                 return
 
             dialog = QDialog(self)
+            dialog.setObjectName("sharingPolicyDialog")
             dialog.setWindowTitle("Edit sharing limits")
             dialog.setMinimumWidth(620)
             layout = QVBoxLayout(dialog)
@@ -1072,6 +1074,7 @@ def run(
             form = QFormLayout()
 
             sharing_enabled = QCheckBox("Allow this node to share compute")
+            sharing_enabled.setObjectName("policy_sharing_enabled")
             sharing_enabled.setChecked(policy["sharing_enabled"])
             form.addRow("Sharing", sharing_enabled)
 
@@ -1082,6 +1085,7 @@ def run(
                 ("denied_models", "Denied models"),
             ):
                 editor = QPlainTextEdit()
+                editor.setObjectName(f"policy_{field}")
                 editor.setPlainText("\n".join(policy[field]))
                 editor.setPlaceholderText("One exact model selector per line")
                 editor.setFixedHeight(64)
@@ -1098,6 +1102,7 @@ def run(
                 ("pause_timeout", "Pause timeout (seconds)", "10"),
             ):
                 editor = QLineEdit()
+                editor.setObjectName(f"policy_{field}")
                 value = policy[field]
                 editor.setText("" if value is None else f"{value:g}" if isinstance(value, float) else str(value))
                 editor.setPlaceholderText(placeholder)
@@ -1106,6 +1111,7 @@ def run(
                 form.addRow(title, editor)
 
             schedule = QPlainTextEdit()
+            schedule.setObjectName("policy_schedule")
             schedule.setPlainText("" if policy["schedule"] is None else json.dumps(policy["schedule"], indent=2))
             schedule.setPlaceholderText(
                 '{"timezone":"local","windows":[{"days":["mon"],"start":"22:00","end":"06:00"}]}'
@@ -1116,6 +1122,7 @@ def run(
             layout.addLayout(form)
 
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+            buttons.setObjectName("sharingPolicyButtons")
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
@@ -1310,6 +1317,20 @@ def run(
         window.showMinimized()
     else:
         window.show()
+
+    if qualification_automation is not None:
+        qualification_automation.install(
+            window,
+            application,
+            {
+                "QTimer": QTimer,
+                "QDialog": QDialog,
+                "QDialogButtonBox": QDialogButtonBox,
+                "QCheckBox": QCheckBox,
+                "QPlainTextEdit": QPlainTextEdit,
+                "QLineEdit": QLineEdit,
+            },
+        )
 
     if instance_server is not None:
 

@@ -12,6 +12,9 @@ import json
 import os
 import re
 import secrets
+import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
@@ -29,6 +32,8 @@ from drift.model_catalog import (
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError
 from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
+from drift.node.config_lock import _acquire as _acquire_process_lock
+from drift.node.config_lock import _release as _release_process_lock
 
 CATALOG_BOOTSTRAP_SCHEMA_VERSION = 1
 MAX_CATALOG_BYTES = 4 * 1024 * 1024
@@ -58,6 +63,66 @@ class CatalogBootstrapError(RuntimeError):
 def _absolute_path(path: Path | str) -> Path:
     """Make a path absolute without following its final symbolic link."""
     return Path(os.path.abspath(os.fspath(Path(path).expanduser())))
+
+
+def _unsafe_lock_metadata(metadata: os.stat_result) -> bool:
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+@contextmanager
+def _catalog_bootstrap_lock(path: Path) -> Iterator[None]:
+    """Hold a kernel lock, released even if the bootstrap process is killed.
+
+    Keep the sidecar: unlinking it lets concurrent installers lock different
+    files. An empty marker left by an older interrupted bootstrap is reusable.
+    """
+    descriptor = None
+    acquired = False
+    try:
+        for parent in (path.parent, *path.parent.parents):
+            if _unsafe_lock_metadata(parent.lstat()):
+                raise CatalogBootstrapError("Refusing unsafe catalog bootstrap lock directory")
+        try:
+            existing = path.lstat()
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and (
+            _unsafe_lock_metadata(existing) or not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1
+        ):
+            raise CatalogBootstrapError("Refusing unsafe catalog bootstrap lock file")
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        descriptor = os.open(path, flags, 0o600)
+        opened = os.fstat(descriptor)
+        current = path.lstat()
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or _unsafe_lock_metadata(current)
+            or not os.path.samestat(opened, current)
+        ):
+            raise CatalogBootstrapError("Refusing unsafe catalog bootstrap lock file")
+        try:
+            _acquire_process_lock(descriptor)
+        except OSError as exc:
+            raise CatalogBootstrapError("Another first-install catalog bootstrap is already in progress") from exc
+        acquired = True
+        current = path.lstat()
+        if _unsafe_lock_metadata(current) or not os.path.samestat(opened, current):
+            raise CatalogBootstrapError("Catalog bootstrap lock changed while it was acquired")
+    except OSError as exc:
+        raise CatalogBootstrapError(f"Could not lock catalog bootstrap in {path.parent}: {exc}") from exc
+    else:
+        yield
+    finally:
+        if descriptor is not None:
+            if acquired:
+                try:
+                    _release_process_lock(descriptor)
+                except OSError:
+                    pass
+            os.close(descriptor)
 
 
 def _require_mapping(value: Any, field: str) -> Mapping[str, Any]:
@@ -409,7 +474,7 @@ class CatalogBootstrapInstaller:
         now: Optional[float] = None,
     ) -> None:
         self.bootstrap = bootstrap
-        self.data_dir = Path(data_dir).expanduser().resolve()
+        self.data_dir = _absolute_path(data_dir)
         self.config_path = _absolute_path(config_path)
         self.fetch_text = fetch_text
         self.now = now
@@ -570,15 +635,7 @@ class CatalogBootstrapInstaller:
             return self._existing_result()
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            descriptor = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError as exc:
-            raise CatalogBootstrapError("Another first-install catalog bootstrap is already in progress") from exc
-        except OSError as exc:
-            raise CatalogBootstrapError(f"Could not lock catalog bootstrap in {self.data_dir}: {exc}") from exc
-
-        os.close(descriptor)
-        try:
+        with _catalog_bootstrap_lock(self.lock_path):
             if self.config_path.is_file() and not self.config_path.is_symlink():
                 return self._existing_result()
             try:
@@ -614,11 +671,6 @@ class CatalogBootstrapInstaller:
                     errors.append(f"Could not use last-known-good catalog: {exc}")
             detail = "; ".join(errors) if errors else "no catalog source was available"
             raise CatalogBootstrapError(f"No trusted usable model catalog could be installed: {detail}")
-        finally:
-            try:
-                self.lock_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def bootstrap_node_from_catalog(

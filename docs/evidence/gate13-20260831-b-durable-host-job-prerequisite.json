@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-durable-native-host-job-prerequisite",
+  "recorded_at": "2026-08-31T20:27:03Z",
+  "result": "passed_software_prerequisite",
+  "gate": 13,
+  "gate_status": "in_progress",
+  "source": {
+    "commit": "0e16ac2aa088e0719e9c3c89451176544602bab3",
+    "base_commit": "2fe0de9e1591e36be918fcbac82ecf72c96f8959",
+    "branch": "codex/gate13-20260831-a",
+    "pushed": true
+  },
+  "artifacts": {
+    "host_job_adapter": {
+      "path": "scripts/gate13_host_job.py",
+      "sha256": "44b26b0f9828121fed9eef65d830bc9c02760fb8f8ddbb31ed0f1491c1b5d9d4",
+      "bytes": 41294
+    },
+    "run_controller": {
+      "path": "scripts/gate13_run_controller.py",
+      "sha256": "32b31a3380f4a0e295c0185b9d6c2078b072b601d48a846acc119fbc555f2f8d",
+      "bytes": 33795
+    },
+    "linux_lifecycle_helper": {
+      "path": "scripts/gate13_linux_packaged_lifecycle.py",
+      "sha256": "90f3af65bb4f77317f707a6b52e329e1d5f81cdeddcb9615a210ec9a5a4cf535",
+      "bytes": 113748
+    },
+    "windows_lifecycle_helper": {
+      "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+      "sha256": "9b860ff820851b31ac272ee4d28dd3a899f56014b8dfce45e912ba4fc9ab605c",
+      "bytes": 132097
+    }
+  },
+  "contract": {
+    "action_intent_persisted_before_mutation": true,
+    "route_acceptance_intent_never_rearmed": true,
+    "windows_start_intent_never_rearmed": true,
+    "linux_start_intent_never_rearmed": true,
+    "client_attempt_ordinal_maximum": 1,
+    "clients_sequential": true,
+    "windows_supervisor": "Scheduled Task",
+    "windows_principal": "exact current ordinary qualification user",
+    "windows_logon_type": "Interactive",
+    "windows_run_level": "Limited",
+    "linux_supervisor": "transient systemd service",
+    "linux_principal": "gate13",
+    "linux_no_new_privileges": false,
+    "linux_sudo_required_for_inner_owned_cgroups": true,
+    "native_command_and_safety_settings_exactly_inventoried": true,
+    "lifecycle_config_path_and_digest_bound": true,
+    "windows_lifecycle_config_exactly_beside_entrypoint": true,
+    "linux_exec_start_structure_exactly_bound": true,
+    "stdout_maximum_bytes": 1048576,
+    "stderr_maximum_bytes": 262144,
+    "timeout_and_overflow_tree_shutdown": true,
+    "linux_termination_enters_finally_cleanup": true,
+    "terminal_record_contains_evidence_digest_only": true,
+    "successful_collection_revalidates_canonical_evidence": true
+  },
+  "verification": {
+    "broad_gate13_matrix": {
+      "passed": 217,
+      "failed": 0,
+      "command_scope": [
+        "tests/test_gate13_host_job.py",
+        "tests/test_gate13_run_controller.py",
+        "tests/test_gate13_packaged_lifecycle.py",
+        "tests/test_gate13_windows_packaged_lifecycle.py",
+        "tests/test_gate13_linux_packaged_lifecycle.py",
+        "tests/test_gate13_linux_localhost_inference.py",
+        "tests/test_gate13_download_artifact.py",
+        "desktop/tests/test_build_desktop.py",
+        "desktop/tests/test_credentials.py"
+      ]
+    },
+    "focused_host_job_matrix": {
+      "passed": 23,
+      "failed": 0
+    },
+    "independent_broad_gate13_matrix": {
+      "passed": 217,
+      "failed": 0,
+      "warnings": 29
+    },
+    "windows_powershell_native_parser": "passed",
+    "python_compile": "passed",
+    "black_check": "passed",
+    "isort_check": "passed",
+    "git_diff_check": "passed"
+  },
+  "provider_preflight": {
+    "mutation_performed": false,
+    "native_authentication": "passed",
+    "protected_bootstrap_running": true,
+    "next_run_namespace": "gate13-20260831-b",
+    "exact_target_instances_absent": true,
+    "exact_target_disks_absent": true,
+    "exact_target_firewalls_absent": true,
+    "g2_standard_8_available": true,
+    "e2_standard_8_available": true,
+    "windows_2025_image_resolved": true,
+    "ubuntu_2404_image_resolved": true,
+    "l4_quota_limit": 1,
+    "l4_quota_usage": 0
+  },
+  "cost": {
+    "cloud_resources_created": 0,
+    "cloud_resources_changed": 0,
+    "cloud_spend_usd": "0.00",
+    "current_epoch_committed_before_next_run_usd": "52.00",
+    "current_epoch_remaining_usd": "48.00"
+  },
+  "claims": {
+    "paid_run_authorized_by_this_record": false,
+    "clean_host_lifecycle_completed": false,
+    "gate_13_passed": false,
+    "credits_work": false,
+    "macos_work": false
+  }
+}

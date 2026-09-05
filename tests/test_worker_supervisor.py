@@ -1,7 +1,13 @@
+import os
+import signal
+import socket
+import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -14,6 +20,7 @@ from drift.node.worker_supervisor import (
     WorkerSupervisor,
     WorkerSupervisorSettings,
 )
+from drift.node import worker_supervisor as worker_module
 
 
 def _wait_for(predicate, timeout=2):
@@ -23,6 +30,146 @@ def _wait_for(predicate, timeout=2):
             return
         time.sleep(0.01)
     raise AssertionError("condition was not reached before timeout")
+
+
+def _automatic_server_command(block_indices, binding):
+    return (
+        sys.executable,
+        "-m",
+        "drift.cli",
+        "server",
+        "org/model",
+        "--block_indices",
+        block_indices,
+        "--expected_manifest_digest",
+        binding["placement_manifest_digest"],
+        "--expected_block_indices",
+        block_indices,
+        "--expected_artifact_bytes",
+        str(binding["placement_artifact_bytes"]),
+        "--expected_artifact_set_digest",
+        binding["placement_artifact_set_digest"],
+        "--expected_cache_root",
+        binding["placement_cache_root"],
+        "--cache_dir",
+        binding["placement_cache_root"],
+    )
+
+
+def _sleep_popen(command, **kwargs):
+    return subprocess.Popen((sys.executable, "-c", "import time; time.sleep(30)"), **kwargs)
+
+
+def test_placement_explanation_changes_do_not_change_worker_assignment():
+    from drift.node.contribution_planner import AutomaticContributionPlanner, PlacementCandidate
+
+    planner = AutomaticContributionPlanner(num_blocks=35, jitter_seed="gate13-gemma")
+    candidate = PlacementCandidate(
+        "gemma",
+        "sha256:" + "a" * 64,
+        0,
+        True,
+        1234,
+        35,
+        {"status": "incomplete", "last_updated_age": 0, "replica_counts": [0] * 35},
+    )
+    first = planner.plan([candidate], sharing_enabled=True, now=0)
+    covered = replace(candidate, health={"status": "complete", "last_updated_age": 0, "replica_counts": [1] * 35})
+    refreshed = planner.plan([covered], sharing_enabled=True, now=901)
+    assert first.decision.block_indices == refreshed.decision.block_indices == "0:35"
+    assert first.reason != refreshed.reason
+    binding = {
+        "placement_manifest_digest": "sha256:" + "a" * 64,
+        "placement_artifact_bytes": 1234,
+        "placement_artifact_set_digest": "b" * 64,
+        "placement_cache_root": os.path.realpath(sys.prefix),
+    }
+    initial = WorkerLaunch(
+        "automatic",
+        "gemma",
+        _automatic_server_command("0:35", binding),
+        automatic=True,
+        block_indices="0:35",
+        intent_published=True,
+        remote_acknowledged=True,
+        placement_reason=first.reason,
+        **binding,
+    )
+    # The reconciler compares these launches after the 15-minute residency.
+    assert initial == replace(initial, placement_reason=refreshed.reason)
+    assert initial == replace(initial, placement_reason="same range; local demand bucket 1")
+    assert initial != replace(initial, policy_admitted=False, policy_reason="coverage stale")
+    assert initial != replace(
+        initial,
+        block_indices="0:34",
+        command=_automatic_server_command("0:34", binding),
+    )
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+@pytest.mark.parametrize("exit_mode", ["graceful", "timeout", "crashed"])
+def test_worker_group_cleanup_is_linux_only(monkeypatch, platform, exit_mode):
+    monkeypatch.setattr(worker_module, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(worker_module, "signal", SimpleNamespace(SIGKILL=9))
+    kill_group = Mock()
+    monkeypatch.setattr(worker_module.os, "killpg", kill_group, raising=False)
+    process = Mock(pid=12345, stdout=None)
+    process.poll.return_value = None
+    process.wait.return_value = 0
+    popen = Mock(return_value=process)
+    launch = WorkerLaunch("worker", "model", ("node", "server"), auto_restart=False)
+    supervisor = WorkerSupervisor([launch], popen=popen)
+    supervisor.start_worker("worker")
+    assert popen.call_args.kwargs.get("start_new_session", False) is (platform == "linux")
+    if exit_mode == "crashed":
+        process.poll.return_value = 1
+        assert supervisor.snapshot("worker")["state"] == "crashed"
+    else:
+        if exit_mode == "timeout":
+            process.wait.side_effect = [subprocess.TimeoutExpired("worker", 10), -9]
+        supervisor.pause_worker("worker")
+        process.terminate.assert_called_once()
+        assert process.kill.call_count == int(exit_mode == "timeout")
+    if platform == "linux":
+        kill_group.assert_called_once_with(process.pid, 9)
+    else:
+        kill_group.assert_not_called()
+    supervisor.shutdown()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="requires Linux process groups")
+@pytest.mark.parametrize("crash", [False, True])
+def test_linux_worker_exit_releases_descendant_listening_port(crash):
+    child = (
+        "import signal,socket,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+        "s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); "
+        "print(s.getsockname()[1],flush=True); time.sleep(30)"
+    )
+    parent = "import subprocess,sys,time; " f"subprocess.Popen([sys.executable,'-c',{child!r}]); time.sleep(30)"
+    launch = WorkerLaunch("worker", "model", (sys.executable, "-c", parent), auto_restart=False)
+    supervisor = WorkerSupervisor([launch], stop_timeout=1, poll_period=0.01)
+    try:
+        supervisor.start_worker("worker")
+        _wait_for(lambda: bool(supervisor.snapshot("worker")["recent_logs"]))
+        snapshot = supervisor.snapshot("worker")
+        port = int(snapshot["recent_logs"][0])
+        if crash:
+            os.kill(snapshot["pid"], signal.SIGKILL)
+            _wait_for(lambda: supervisor.snapshot("worker")["state"] == "crashed")
+        else:
+            supervisor.pause_worker("worker")
+
+        def port_released():
+            with socket.socket() as probe:
+                try:
+                    probe.bind(("127.0.0.1", port))
+                except OSError:
+                    return False
+                return True
+
+        _wait_for(port_released)
+    finally:
+        supervisor.shutdown()
 
 
 def test_supervisor_reconfigures_only_after_persistence_and_while_idle():
@@ -58,7 +205,106 @@ def test_supervisor_reconfigures_only_after_persistence_and_while_idle():
     supervisor.shutdown()
 
 
+def test_automatic_worker_requires_exact_remote_intent_acknowledgement():
+    common = {
+        "worker_id": "automatic",
+        "model_id": "model",
+        "command": (sys.executable, "-c", "raise SystemExit(0)"),
+        "automatic": True,
+        "block_indices": "0:1",
+        "placement_reason": "selected",
+    }
+    with pytest.raises(ValueError, match="remotely acknowledged"):
+        WorkerLaunch(**common)
+    with pytest.raises(ValueError, match="remote acknowledgement"):
+        WorkerLaunch(**common, policy_admitted=False, policy_reason="blocked", intent_published=True)
+    with pytest.raises(ValueError, match="manual workers"):
+        WorkerLaunch(
+            "manual",
+            "model",
+            common["command"],
+            intent_published=True,
+            remote_acknowledged=True,
+        )
+    with pytest.raises(ValueError, match="configured together"):
+        WorkerLaunch(
+            **common,
+            policy_admitted=False,
+            policy_reason="blocked",
+            placement_manifest_digest="sha256:" + "a" * 64,
+        )
+
+
+def test_automatic_worker_binds_artifact_claims_to_exact_server_command():
+    binding = {
+        "placement_manifest_digest": "sha256:" + "a" * 64,
+        "placement_artifact_bytes": 1234,
+        "placement_artifact_set_digest": "b" * 64,
+        "placement_cache_root": os.path.realpath(sys.prefix),
+    }
+    admitted = {
+        "worker_id": "automatic",
+        "model_id": "model",
+        "automatic": True,
+        "block_indices": "0:1",
+        "placement_reason": "selected",
+        "intent_published": True,
+        "remote_acknowledged": True,
+        **binding,
+    }
+    command = _automatic_server_command("0:1", binding)
+    WorkerLaunch(command=command, **admitted)
+    frozen_command = (sys.executable, "server", *command[4:])
+    WorkerLaunch(command=frozen_command, **admitted)
+
+    fake_executable = os.path.join(os.path.dirname(sys.executable), "not-the-node-executable")
+    with pytest.raises(ValueError, match="current node executable"):
+        WorkerLaunch(command=(fake_executable, *command[1:]), **admitted)
+    with pytest.raises(ValueError, match="current node executable"):
+        WorkerLaunch(command=(fake_executable, *frozen_command[1:]), **admitted)
+
+    with pytest.raises(ValueError, match="forbidden server option"):
+        WorkerLaunch(command=(sys.executable, "-c", "raise SystemExit(0)"), **admitted)
+
+    wrong_span = list(command)
+    wrong_span[wrong_span.index("--block_indices") + 1] = "1:2"
+    with pytest.raises(ValueError, match="mismatched --block_indices"):
+        WorkerLaunch(command=tuple(wrong_span), **admitted)
+
+    missing_cache_claim = list(command)
+    expected_cache = missing_cache_claim.index("--expected_cache_root")
+    del missing_cache_claim[expected_cache : expected_cache + 2]
+    with pytest.raises(ValueError, match="exactly one --expected_cache_root"):
+        WorkerLaunch(command=tuple(missing_cache_claim), **admitted)
+
+    with pytest.raises(ValueError, match="exactly one --expected_manifest_digest"):
+        WorkerLaunch(
+            command=command + ("--expected_manifest_digest", binding["placement_manifest_digest"]),
+            **admitted,
+        )
+
+    with pytest.raises(ValueError, match="must not use --num_blocks"):
+        WorkerLaunch(command=command + ("--num_blocks", "1"), **admitted)
+
+    for forbidden in (
+        ("-c", "config.yml"),
+        ("--config", "config.yml"),
+        ("--custom_module_path", "custom.py"),
+        ("--allow_training_rpcs",),
+        ("--token", "secret"),
+        ("--use_auth_token",),
+    ):
+        with pytest.raises(ValueError, match="forbidden server option"):
+            WorkerLaunch(command=command + forbidden, **admitted)
+
+
 def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
+    artifact_binding = {
+        "placement_manifest_digest": "sha256:" + "a" * 64,
+        "placement_artifact_bytes": 1234,
+        "placement_artifact_set_digest": "b" * 64,
+        "placement_cache_root": os.path.realpath(sys.prefix),
+    }
     initial = WorkerLaunch(
         "automatic",
         "auto",
@@ -72,14 +318,17 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
     updated = WorkerLaunch(
         "automatic",
         "model",
-        (sys.executable, "-c", "import time; time.sleep(30)"),
+        _automatic_server_command("2:3", artifact_binding),
         auto_start=True,
         policy_admitted=True,
         automatic=True,
         block_indices="2:3",
         placement_reason="selected least-covered block",
+        intent_published=True,
+        remote_acknowledged=True,
+        **artifact_binding,
     )
-    supervisor = WorkerSupervisor([initial], stop_timeout=2, poll_period=0.01)
+    supervisor = WorkerSupervisor([initial], stop_timeout=2, poll_period=0.01, popen=_sleep_popen)
     supervisor.start_service()
 
     assert supervisor.replace_launch(updated) is True
@@ -89,6 +338,11 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
     assert snapshot["automatic"] is True
     assert snapshot["block_indices"] == "2:3"
     assert snapshot["placement_reason"] == "selected least-covered block"
+    assert snapshot["intent_published"] is True
+    assert snapshot["remote_acknowledged"] is True
+    assert "placement_manifest_digest" not in snapshot
+    assert "placement_artifact_set_digest" not in snapshot
+    assert "placement_cache_root" not in snapshot
 
     with pytest.raises(WorkerReconfigurationBusyError, match="pause contribution worker"):
         supervisor.replace_launch(initial)
@@ -97,12 +351,15 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
     migrated = WorkerLaunch(
         "automatic",
         "other-model",
-        updated.command,
+        _automatic_server_command("3:4", artifact_binding),
         auto_start=True,
         policy_admitted=True,
         automatic=True,
         block_indices="3:4",
         placement_reason="coverage changed",
+        intent_published=True,
+        remote_acknowledged=True,
+        **artifact_binding,
     )
     assert supervisor.replace_launch(migrated, start=True) is True
     _wait_for(lambda: supervisor.snapshot("automatic")["state"] == "running")
@@ -115,12 +372,15 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
     paused_update = WorkerLaunch(
         "automatic",
         "third-model",
-        updated.command,
+        _automatic_server_command("4:5", artifact_binding),
         auto_start=True,
         policy_admitted=True,
         automatic=True,
         block_indices="4:5",
         placement_reason="coverage changed again",
+        intent_published=True,
+        remote_acknowledged=True,
+        **artifact_binding,
     )
     assert supervisor.replace_launch(paused_update, start=True) is True
     snapshot = supervisor.snapshot("automatic")

@@ -11,8 +11,10 @@ from drift.cli.run_node import (
     _build_automatic_placement_service,
     _build_model_manager,
     _build_worker_supervisor,
+    _can_retain_acknowledged_plan,
     _load_persisted_and_runtime_config,
     _merge_cached_initial_peers,
+    _placement_decision_key,
     _prepare_route_identity,
     _reuse_runtime_initial_peers,
 )
@@ -29,6 +31,7 @@ from drift.node.config import (
 from drift.node.contribution_planner import (
     MAX_AUTOMATIC_PLACEMENT_BLOCKS,
     MAX_AUTOMATIC_PLACEMENT_CANDIDATES,
+    PlacementArtifactPlan,
     PlacementDecision,
     PlacementPlan,
     PlacementRegistry,
@@ -376,12 +379,62 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
         replica_counts=(0,),
         score=100,
         reason="selected 1:2 from fresh verified coverage",
+        artifact_set_digest="a" * 64,
     )
-    placed = _build_worker_supervisor(
+    unacknowledged = _build_worker_supervisor(
         config,
         manager,
         automatic_placements={
             "automatic": PlacementPlan(decision, decision.reason, 1),
+        },
+    )
+    unacknowledged_launch = unacknowledged.launches[0]
+    assert unacknowledged_launch.policy_admitted is False
+    assert unacknowledged_launch.intent_published is False
+    assert unacknowledged_launch.remote_acknowledged is False
+    assert "not remotely acknowledged" in unacknowledged_launch.policy_reason
+    unacknowledged.shutdown()
+
+    unbound_decision = PlacementDecision(
+        model_id=manifest.name,
+        manifest_digest=manifest.digest_id,
+        block_indices="1:2",
+        artifact_bytes=decision.artifact_bytes,
+        replica_counts=(0,),
+        score=100,
+        reason=decision.reason,
+    )
+    unbound = _build_worker_supervisor(
+        config,
+        manager,
+        automatic_placements={
+            "automatic": PlacementPlan(
+                unbound_decision,
+                unbound_decision.reason,
+                1,
+                intent_published=True,
+                remote_acknowledged=True,
+            ),
+        },
+    )
+    unbound_launch = unbound.launches[0]
+    assert unbound_launch.policy_admitted is False
+    assert "no exact artifact-set binding" in unbound_launch.policy_reason
+    assert "--expected_artifact_set_digest" not in unbound_launch.command
+    assert unbound_launch.placement_manifest_digest is None
+    unbound.shutdown()
+
+    placed = _build_worker_supervisor(
+        config,
+        manager,
+        automatic_placements={
+            "automatic": PlacementPlan(
+                decision,
+                decision.reason,
+                1,
+                intent_published=True,
+                remote_acknowledged=True,
+            ),
         },
     )
     launch = placed.launches[0]
@@ -389,10 +442,103 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
     assert launch.policy_admitted is True
     assert launch.automatic is True
     assert launch.block_indices == "1:2"
+    assert launch.intent_published is True
+    assert launch.remote_acknowledged is True
     assert launch.command[launch.command.index("--block_indices") + 1] == "1:2"
+    assert launch.command[launch.command.index("--expected_manifest_digest") + 1] == manifest.digest_id
+    assert launch.command[launch.command.index("--expected_block_indices") + 1] == "1:2"
+    assert launch.command[launch.command.index("--expected_artifact_bytes") + 1] == str(decision.artifact_bytes)
+    assert launch.command[launch.command.index("--expected_artifact_set_digest") + 1] == "a" * 64
+    expected_cache_root = str(Path(run_node_module.DEFAULT_CACHE_DIR).expanduser().resolve())
+    assert launch.command[launch.command.index("--cache_dir") + 1] == expected_cache_root
+    assert launch.command[launch.command.index("--expected_cache_root") + 1] == expected_cache_root
+    assert launch.placement_manifest_digest == manifest.digest_id
+    assert launch.placement_artifact_bytes == decision.artifact_bytes
+    assert launch.placement_artifact_set_digest == "a" * 64
+    assert launch.placement_cache_root == expected_cache_root
     assert "--num_blocks" not in launch.command
     placed.shutdown()
     manager.shutdown()
+
+
+def test_retained_placement_requires_an_unexpired_lease_for_the_current_identity(tmp_path):
+    worker = WorkerConfig(
+        worker_id="automatic",
+        model="auto",
+        identity_path=tmp_path / "worker.key",
+        num_blocks=1,
+    )
+    decision = PlacementDecision(
+        model_id="qwen",
+        manifest_digest="sha256:" + "1" * 64,
+        block_indices="1:2",
+        artifact_bytes=123,
+        replica_counts=(0,),
+        score=100,
+        reason="selected",
+        artifact_set_digest="2" * 64,
+    )
+    previous = PlacementPlan(
+        decision,
+        decision.reason,
+        1,
+        intent_published=True,
+        remote_acknowledged=True,
+    )
+    identity_key_id = "sha256:" + "3" * 64
+    lease = {
+        "decision_key": _placement_decision_key(worker, decision, identity_key_id),
+        "expires_at": 100.0,
+    }
+
+    assert _can_retain_acknowledged_plan(previous, decision, worker, identity_key_id, lease, now=99.0)
+    assert not _can_retain_acknowledged_plan(previous, decision, worker, identity_key_id, lease, now=100.0)
+    assert not _can_retain_acknowledged_plan(
+        previous,
+        decision,
+        worker,
+        identity_key_id,
+        {**lease, "expires_at": float("inf")},
+        now=99.0,
+    )
+    assert not _can_retain_acknowledged_plan(
+        previous,
+        decision,
+        worker,
+        identity_key_id,
+        {**lease, "expires_at": float("nan")},
+        now=99.0,
+    )
+    assert not _can_retain_acknowledged_plan(previous, decision, worker, "sha256:" + "4" * 64, lease, now=99.0)
+
+    changed_decision = PlacementDecision(
+        model_id="qwen",
+        manifest_digest=decision.manifest_digest,
+        block_indices="0:1",
+        artifact_bytes=122,
+        replica_counts=(1,),
+        score=99,
+        reason="smaller eligible span",
+        artifact_set_digest="5" * 64,
+    )
+    assert not _can_retain_acknowledged_plan(previous, changed_decision, worker, identity_key_id, lease, now=99.0)
+
+    rotated = WorkerConfig(
+        worker_id="automatic",
+        model="auto",
+        identity_path=tmp_path / "rotated.key",
+        num_blocks=1,
+    )
+    assert not _can_retain_acknowledged_plan(previous, decision, rotated, identity_key_id, lease, now=99.0)
+
+    changed_throughput = WorkerConfig(
+        worker_id="automatic",
+        model="auto",
+        identity_path=worker.identity_path,
+        num_blocks=1,
+        throughput=2.5,
+    )
+    assert not _can_retain_acknowledged_plan(previous, decision, changed_throughput, identity_key_id, lease, now=99.0)
 
 
 @pytest.mark.parametrize(
@@ -408,12 +554,20 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     route_identity = NodeIdentity.create(tmp_path / "route-demand.key")
     second_authority = NodeIdentity.create(tmp_path / "second-route-demand.key")
     authority_roots = tuple(sorted((route_identity.key_id, second_authority.key_id)))
+    dht_time = [2_000.0]
+    monkeypatch.setattr(run_node_module, "get_dht_time", lambda: dht_time[0])
     monkeypatch.setattr(
         "drift.cli.run_node.make_manifest_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config_source = _config_dict(
-        models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+        models=[
+            {
+                "manifest": str(manifest_path),
+                "initial_peers": ["peer-one"],
+                "cache_dir": "model-cache",
+            }
+        ],
         auto_model_priority=[manifest.digest_id],
         route_demand_authority_roots=list(authority_roots),
         workers=[
@@ -435,6 +589,18 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     config_path.write_text(json.dumps(config_source), encoding="utf-8")
     config = NodeConfig.load(config_path)
     manager, _, discovery = _build_model_manager(config, token=None)
+    selected_artifact_bytes = 4_242
+    artifact_plans = tuple(
+        PlacementArtifactPlan(index, index + 1, selected_artifact_bytes + index, f"{index + 1:064x}")
+        for index in range(manifest.model.num_blocks)
+    )
+    planning_cache_dirs = []
+
+    def fake_artifact_plans(*args, **kwargs):
+        planning_cache_dirs.append(kwargs["cache_dir"])
+        return artifact_plans
+
+    monkeypatch.setattr(run_node_module, "_manifest_artifact_plans", fake_artifact_plans)
     counts = [1] * manifest.model.num_blocks
     counts[1] = 0
     state = discovery._states[manifest.digest_id]
@@ -510,6 +676,7 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
 
     service.reconcile_once()
 
+    assert planning_cache_dirs == [tmp_path / "model-cache"]
     launch = supervisor.launches[0]
     snapshot = supervisor.snapshot("automatic")
     assert len(publish_calls) == 1
@@ -519,7 +686,16 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     assert published["payload"]["manifest_digest"] == manifest.digest
     assert published["payload"]["start_block"] == 1
     assert published["payload"]["end_block"] == 2
-    assert "private_path" not in published["payload"]["resource_claims"]
+    resource_claims = published["payload"]["resource_claims"]
+    assert set(resource_claims) == {
+        "schema_version",
+        "artifact_bytes",
+        "block_count",
+        "throughput_milli_rps",
+    }
+    assert resource_claims["artifact_bytes"] == selected_artifact_bytes + 1
+    assert resource_claims["artifact_bytes"] != sum(artifact.size for artifact in manifest.artifacts)
+    assert "private_path" not in resource_claims
     assert len(demand_calls) == 1
     demand = demand_calls[0][1]
     assert demand["kind"] == "route_demand"
@@ -538,6 +714,10 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         assert launch.model_id == manifest.name
         assert launch.block_indices == "1:2"
         assert launch.policy_admitted is True
+        assert launch.intent_published is True
+        assert launch.remote_acknowledged is True
+        assert snapshot["intent_published"] is True
+        assert snapshot["remote_acknowledged"] is True
         assert "local demand bucket 1" in launch.placement_reason
         assert snapshot["desired_running"] is expected_desired
         assert snapshot["operator_paused"] is pause_while_waiting
@@ -545,9 +725,62 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     else:
         assert launch.model_id == "auto"
         assert launch.policy_admitted is False
+        assert launch.intent_published is False
+        assert launch.remote_acknowledged is False
         assert "signed placement intent" in launch.policy_reason
         assert snapshot["pid"] is None
         assert registry.snapshot()["automatic"].decision is None
+
+    if publish_succeeds:
+        config_source["workers"][0]["throughput"] = 2.5
+        config_path.write_text(json.dumps(config_source), encoding="utf-8")
+        service.reconcile_once()
+        assert len(publish_calls) == 2
+        throughput_record = publish_calls[-1][1]
+        assert throughput_record["payload"]["resource_claims"]["throughput_milli_rps"] == 2_500
+        throughput_launch = supervisor.launches[0]
+        assert throughput_launch.command[throughput_launch.command.index("--throughput") + 1] == "2.5"
+
+        rotated_identity = NodeIdentity.create(tmp_path / "rotated-automatic.key")
+        (tmp_path / "automatic.key").chmod(0o600)
+        (tmp_path / "rotated-automatic.key").replace(tmp_path / "automatic.key")
+        service.reconcile_once()
+        assert len(publish_calls) == 3
+        assert publish_calls[-1][1]["key_id"] == rotated_identity.key_id
+
+        config_source["contribution_policy"]["max_disk_space"] = f"{selected_artifact_bytes}B"
+        config_path.write_text(json.dumps(config_source), encoding="utf-8")
+        failed_records = []
+        monkeypatch.setattr(
+            discovery,
+            "publish_intent",
+            lambda _digest, source: failed_records.append(source) or False,
+        )
+        service.reconcile_once()
+        assert failed_records[-1]["payload"]["start_block"] == 0
+        assert registry.snapshot()["automatic"].decision is None
+        assert supervisor.launches[0].policy_admitted is False
+
+        config_source["contribution_policy"]["max_disk_space"] = "1GiB"
+        config_path.write_text(json.dumps(config_source), encoding="utf-8")
+        monkeypatch.setattr(discovery, "publish_intent", publish_intent)
+        service.reconcile_once()
+        assert registry.snapshot()["automatic"].decision.block_indices == "1:2"
+
+        dht_time[0] = 2_481.0
+        monkeypatch.setattr(discovery, "publish_intent", lambda *_args, **_kwargs: False)
+        service.reconcile_once()
+        assert registry.snapshot()["automatic"].decision is not None
+
+        dht_time[0] = 2_600.0
+        service.reconcile_once()
+        assert registry.snapshot()["automatic"].decision is None
+        assert supervisor.launches[0].policy_admitted is False
+
+        dht_time[0] = 2_601.0
+        monkeypatch.setattr(discovery, "publish_intent", publish_intent)
+        service.reconcile_once()
+        assert registry.snapshot()["automatic"].decision is not None
 
     original_candidates = run_node_module._automatic_placement_candidates
     remote_consumption = []
@@ -558,11 +791,13 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
 
     monkeypatch.setattr(run_node_module, "_automatic_placement_candidates", capture_remote_consumption)
     config_source["route_demand_authority_roots"] = ["sha256:" + "0" * 64, "sha256:" + "f" * 64]
+    config_source["workers"][0]["cache_dir"] = "worker-cache"
     config_path.write_text(json.dumps(config_source), encoding="utf-8")
     demand_calls.clear()
     service.reconcile_once()
     assert demand_calls == []
     assert remote_consumption == [False]
+    assert planning_cache_dirs[-1] == tmp_path / "worker-cache"
 
     service.close()
     supervisor.shutdown()

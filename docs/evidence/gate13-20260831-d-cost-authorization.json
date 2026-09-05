@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-packaged-lifecycle-cost-authorization",
+  "run_id": "gate13-20260831-d",
+  "gate": 13,
+  "result": "authorized",
+  "recorded_at": "2026-08-31",
+  "source": {
+    "reservation_commit": "0dc2345f7c0880bbb63b1d8951187e4e4b744a84",
+    "durable_controller_commit": "ee0c05f83035ad22015fb089f5cb30f1713076e6",
+    "host_job_adapter_commit": "0e16ac2aa088e0719e9c3c89451176544602bab3",
+    "route_runtime_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
+    "package_commit": "1971f106cc5bf90724d938c986a719ce2744f3e7",
+    "windows_lifecycle_helper_commit": "0e16ac2aa088e0719e9c3c89451176544602bab3",
+    "linux_lifecycle_helper_commit": "0e16ac2aa088e0719e9c3c89451176544602bab3"
+  },
+  "authorization": {
+    "combined_cloud_ceiling_usd": "500.00",
+    "ledger_committed_before_run_usd": "164.00",
+    "maximum_estimate_usd": "56.00",
+    "route_maximum_estimate_usd": "30.00",
+    "clients_maximum_estimate_usd": "26.00",
+    "remaining_after_run_maximum_usd": "280.00",
+    "reservation_recorded": true,
+    "provisioning_authorized_after_fail_closed_preflight": true,
+    "provider_calls_authorized_without_preflight": false,
+    "pricing_as_of": "2026-08-31",
+    "pricing_basis": "same-day accepted Gate 13 ceilings scaled conservatively by hard duration: the 16-hour G2/L4 route is rounded up to USD 30 from the prior 14-hour USD 26 ceiling, and the two sequential 6-hour e2-standard-8 CPU clients retain the prior USD 26 ceiling"
+  },
+  "immutable_inputs": {
+    "durable_controller": {
+      "path": "scripts/gate13_run_controller.py",
+      "source_commit": "ee0c05f83035ad22015fb089f5cb30f1713076e6",
+      "sha256": "3a33f1c0782222d400296c944651ca80a58fb67b4df79ce6a7d9c7216fd23b84",
+      "bytes": 34143
+    },
+    "host_job_adapter": {
+      "path": "scripts/gate13_host_job.py",
+      "source_commit": "0e16ac2aa088e0719e9c3c89451176544602bab3",
+      "sha256": "44b26b0f9828121fed9eef65d830bc9c02760fb8f8ddbb31ed0f1491c1b5d9d4",
+      "bytes": 41294
+    },
+    "lifecycle_evidence_validator": {
+      "path": "scripts/gate13_packaged_lifecycle.py",
+      "source_commit": "0e16ac2aa088e0719e9c3c89451176544602bab3",
+      "sha256": "36e04fbb599dce57e2a7d9d105511e731ad0ceafaaf0b0820de7022711066157",
+      "bytes": 27268
+    },
+    "route_runtime_wheel": {
+      "filename": "drift-2.3.0.dev2-py3-none-any.whl",
+      "source_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
+      "sha256": "2a4f30bad7ae897fed019bc7da330a09965adb35685d11abaeaebf7a1d40aa60",
+      "bytes": 389107,
+      "model_artifacts_embedded": false
+    },
+    "windows_package": {
+      "sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+      "bytes": 2695065068
+    },
+    "linux_package": {
+      "sha256": "f96d3ca651964380d4684855ab08682e8187b33386327ec3895cda25b43c2a00",
+      "bytes": 3360717934
+    },
+    "qwen_manifest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+    "gemma_manifest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+    "windows_helper": {
+      "path": "scripts/gate13_windows_packaged_lifecycle.ps1",
+      "source_commit": "0e16ac2aa088e0719e9c3c89451176544602bab3",
+      "sha256": "9b860ff820851b31ac272ee4d28dd3a899f56014b8dfce45e912ba4fc9ab605c",
+      "bytes": 132097
+    },
+    "linux_helper": {
+      "path": "scripts/gate13_linux_packaged_lifecycle.py",
+      "source_commit": "0e16ac2aa088e0719e9c3c89451176544602bab3",
+      "sha256": "90f3af65bb4f77317f707a6b52e329e1d5f81cdeddcb9615a210ec9a5a4cf535",
+      "bytes": 113748
+    },
+    "windows_download_config": {
+      "path": "scripts/gate13_download_windows.json",
+      "sha256": "bf36b66bf22a8f4453ba481c5a4ad37d8e1856ad93ef25e5e105b566b39affc4",
+      "bytes": 293
+    },
+    "linux_download_config": {
+      "path": "scripts/gate13_download_linux.json",
+      "sha256": "c3e9dcd94ef0a8e61c95e650416a8c6ca8b169f4b6699a0acd06608e60da5550",
+      "bytes": 294
+    }
+  },
+  "provider_plan_digest": "sha256:d32050a51b8f696aa224fc7e748c9113e174e3c3069c1f8b2bc769b0c5ecea18",
+  "provider_plan": {
+    "project": "community-ai-506321",
+    "route": {
+      "instance": "route-20260831-d-node",
+      "zone": "us-central1-a",
+      "machine_type": "g2-standard-8",
+      "accelerator": "1 x NVIDIA L4",
+      "image": "deeplearning-platform-release/common-cu129-ubuntu-2404-nvidia-580-v20260819",
+      "boot_disk_gib": 200,
+      "boot_disk_type": "pd-balanced",
+      "boot_disk_auto_delete": true,
+      "max_run_seconds": 57600,
+      "termination_action": "DELETE",
+      "network": "communityai-discovery",
+      "subnet": "communityai-us-central1",
+      "public_ports": [
+        31337,
+        31338
+      ],
+      "firewalls": [
+        "route-20260831-d-dht",
+        "route-20260831-d-iap"
+      ],
+      "service_account": false,
+      "scopes": [],
+      "operator_access_target_tags": [
+        "route-20260831-d-node",
+        "gate13-20260831-d-client"
+      ]
+    },
+    "clients": [
+      {
+        "platform": "windows",
+        "model": "Qwen3.5 2B",
+        "instance": "gate13-20260831-d-win",
+        "zone": "us-central1-a",
+        "machine_type": "e2-standard-8",
+        "image": "windows-server-2025-dc-v20260814",
+        "image_project": "windows-cloud",
+        "boot_disk_gib": 120,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "max_run_seconds": 21600,
+        "termination_action": "DELETE",
+        "lifecycle_run_id": "gate13-20260831-d-windows",
+        "device_profile": "cpu",
+        "network": "communityai-discovery",
+        "subnet": "communityai-us-central1",
+        "network_tag": "gate13-20260831-d-client"
+      },
+      {
+        "platform": "linux",
+        "model": "Gemma 4 E2B IT",
+        "instance": "gate13-20260831-d-linux",
+        "zone": "us-central1-a",
+        "machine_type": "e2-standard-8",
+        "image": "ubuntu-2404-noble-amd64-v20260826",
+        "image_project": "ubuntu-os-cloud",
+        "boot_disk_gib": 120,
+        "boot_disk_type": "pd-balanced",
+        "boot_disk_auto_delete": true,
+        "max_run_seconds": 21600,
+        "termination_action": "DELETE",
+        "lifecycle_run_id": "gate13-20260831-d-linux",
+        "device_profile": "cpu",
+        "network": "communityai-discovery",
+        "subnet": "communityai-us-central1",
+        "network_tag": "gate13-20260831-d-client"
+      }
+    ],
+    "sequencing": {
+      "route_live_for_both_lifecycles": true,
+      "clients_may_run_concurrently": false,
+      "route_accepted_before_any_client_create": true,
+      "windows_collected_and_deleted_before_linux_create": true,
+      "all_16_phases_required_per_platform": true,
+      "exact_cleanup_before_pass": true
+    }
+  },
+  "preflight": {
+    "read_only_checked_at": "2026-08-31T21:38:14Z",
+    "native_gcloud_token_refresh": true,
+    "compute_api_access": true,
+    "exact_target_instances_absent": true,
+    "exact_target_disks_absent": true,
+    "exact_target_firewalls_absent": true,
+    "machine_types_available": true,
+    "images_available": true,
+    "one_l4_quota_free": true,
+    "protected_bootstrap_running": true,
+    "final_software_tests_passed": 219,
+    "independent_review_matrix_before_final_reservation_guard": 218,
+    "independent_reservation_guard_finding_resolved": true,
+    "fresh_native_revalidation_immediately_before_create_required": true
+  },
+  "cleanup": {
+    "delete_only_exact_run_resources": true,
+    "verify_absent": [
+      "route-20260831-d-node",
+      "route-20260831-d-node boot disk",
+      "route-20260831-d-dht",
+      "route-20260831-d-iap",
+      "gate13-20260831-d-win",
+      "gate13-20260831-d-win boot disk",
+      "gate13-20260831-d-linux",
+      "gate13-20260831-d-linux boot disk"
+    ],
+    "protected_resources": [
+      "communityai-bootstrap-1",
+      "all resources not named by this plan"
+    ],
+    "cleanup_required_on_success_or_failure": true
+  },
+  "prohibited": {
+    "fly_operations": 0,
+    "model_specific_images_or_mirrors": 0,
+    "macos_work": 0,
+    "credits_or_payments_work": 0
+  },
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "endpoints_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false
+  },
+  "plan_revision": {
+    "revision": 1,
+    "previous_provider_plan_digest": null,
+    "reason": "fresh replacement after the prior identity failed before VM creation; exact resource names change and the corrected IAP target tags remain two explicit values",
+    "resource_set_changed": true,
+    "cost_ceiling_changed": true
+  }
+}

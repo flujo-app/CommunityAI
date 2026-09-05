@@ -75,6 +75,23 @@ def qualification_lm_head_chunking(model) -> bool | str | None:
     return getattr(model.get_output_embeddings(), "use_chunked_forward", None)
 
 
+def manifest_quant_type(manifest: ModelManifest | None) -> QuantType:
+    """Use the exact manifest execution profile for the hosted blocks."""
+    return QuantType.NONE if manifest is None else QuantType[manifest.runtime.quantization.upper()]
+
+
+def create_qualification_worker(
+    *,
+    manifest: ModelManifest | None,
+    server_info_kwargs: dict,
+    container_kwargs: dict,
+):
+    """Create a worker whose advertised and effective quantization profiles agree."""
+    quant_type = manifest_quant_type(manifest)
+    server_info = ServerInfo(quant_type=quant_type.name.lower(), **server_info_kwargs)
+    return ModuleContainer.create(server_info=server_info, quant_type=quant_type, **container_kwargs)
+
+
 def parse_block_indices(value: str) -> list[int]:
     try:
         start_block, end_block = [int(index.strip()) for index in value.split(":")]
@@ -252,8 +269,6 @@ def main(argv=None) -> None:
             revision=None,
             dht_prefix=None,
         )
-        if manifest.runtime.quantization != "none":
-            raise ValueError("The local qualification smoke currently supports only manifest quantization='none'")
         if args.torch_dtype is None:
             args.torch_dtype = manifest.runtime.dtype
         elif args.torch_dtype != manifest.runtime.dtype:
@@ -378,55 +393,55 @@ def main(argv=None) -> None:
                 serving_identities.append(NodeIdentity.load(worker_identity_path) if worker_identity_path else None)
 
         for replica_index, (serving_dht, serving_identity) in enumerate(zip(serving_dhts, serving_identities)):
-            server_info = ServerInfo(
-                state=ServerState.JOINING,
-                throughput=1.0,
-                manifest_digest=manifest.digest if manifest is not None else None,
-                torch_dtype=str(torch_dtype).removeprefix("torch."),
-                quant_type=QuantType.NONE.name.lower(),
-                using_relay=False,
-            )
             model_info = ModelInfo(num_blocks=block_config.num_hidden_layers, repository=model_name)
 
             log(f"starting module container replica={replica_index}")
-            container = ModuleContainer.create(
-                dht=serving_dht,
-                dht_prefix=dht_prefix,
-                converted_model_name_or_path=model_name,
-                block_config=block_config,
-                attn_cache_bytes=attn_cache_bytes,
-                server_info=server_info,
-                model_info=model_info,
-                block_indices=block_indices,
-                num_handlers=1,
-                min_batch_size=1,
-                max_batch_size=64,
-                max_chunk_size_bytes=16 * 1024 * 1024,
-                max_alloc_timeout=30,
-                paged_cache=args.cache == "paged",
-                page_size=args.page_size,
-                inference_max_length=64,
-                torch_dtype=torch_dtype,
-                cache_dir=args.cache_dir,
-                max_disk_space=None,
-                device=device,
-                compression=CompressionType.NONE,
-                stats_report_interval=None,
-                update_period=2 if args.test_failover else 5,
-                expiration=max(10, MAX_DHT_TIME_DISCREPANCY_SECONDS),
-                request_timeout=args.failover_request_timeout if args.test_failover else 60,
-                session_timeout=60,
-                step_timeout=30,
-                prefetch_batches=1,
-                sender_threads=1,
-                revision=revision,
-                token=None,
-                model_manifest=manifest,
-                protocol_identity=serving_identity,
-                manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
-                quant_type=QuantType.NONE,
-                tensor_parallel_devices=(device,),
-                start=True,
+            container = create_qualification_worker(
+                manifest=manifest,
+                server_info_kwargs=dict(
+                    state=ServerState.JOINING,
+                    throughput=1.0,
+                    manifest_digest=manifest.digest if manifest is not None else None,
+                    torch_dtype=str(torch_dtype).removeprefix("torch."),
+                    using_relay=False,
+                ),
+                container_kwargs=dict(
+                    dht=serving_dht,
+                    dht_prefix=dht_prefix,
+                    converted_model_name_or_path=model_name,
+                    block_config=block_config,
+                    attn_cache_bytes=attn_cache_bytes,
+                    model_info=model_info,
+                    block_indices=block_indices,
+                    num_handlers=1,
+                    min_batch_size=1,
+                    max_batch_size=64,
+                    max_chunk_size_bytes=16 * 1024 * 1024,
+                    max_alloc_timeout=30,
+                    paged_cache=args.cache == "paged",
+                    page_size=args.page_size,
+                    inference_max_length=64,
+                    torch_dtype=torch_dtype,
+                    cache_dir=args.cache_dir,
+                    max_disk_space=None,
+                    device=device,
+                    compression=CompressionType.NONE,
+                    stats_report_interval=None,
+                    update_period=2 if args.test_failover else 5,
+                    expiration=max(10, MAX_DHT_TIME_DISCREPANCY_SECONDS),
+                    request_timeout=args.failover_request_timeout if args.test_failover else 60,
+                    session_timeout=60,
+                    step_timeout=30,
+                    prefetch_batches=1,
+                    sender_threads=1,
+                    revision=revision,
+                    token=None,
+                    model_manifest=manifest,
+                    protocol_identity=serving_identity,
+                    manifest_execution_profile=manifest.runtime.to_dict() if manifest is not None else None,
+                    tensor_parallel_devices=(device,),
+                    start=True,
+                ),
             )
             containers.append(container)
             assert container.ready.wait(timeout=30), "module container did not become ready"

@@ -16,6 +16,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from packaging.version import InvalidVersion, Version
@@ -36,7 +37,7 @@ _ARTIFACT_ROLES = {
     "weight_index",
 }
 _DTYPES = {"bfloat16", "float16", "float32"}
-_QUANTIZATIONS = {"int8", "nf4", "none"}
+_QUANTIZATIONS = {"fp8_dequant", "int8", "nf4", "none"}
 _ATTENTION_IMPLEMENTATIONS = {"auto", "eager", "sdpa"}
 _CHECKPOINT_ROLES = {"converted_weight", "quantized_weight", "weight"}
 _TOKENIZER_FILENAMES = {
@@ -53,6 +54,7 @@ _TOKENIZER_FILENAMES = {
 }
 _CHECKPOINT_INDEX_PREFERENCE = ("model.safetensors.index.json", "pytorch_model.bin.index.json")
 _CHECKPOINT_PREFERENCE = ("model.safetensors", "pytorch_model.bin")
+_MAX_CHECKPOINT_INDEX_BYTES = 16 * 1024 * 1024
 
 
 class ManifestError(ValueError):
@@ -331,6 +333,8 @@ class ModelManifest:
         paths = [artifact.path for artifact in artifacts]
         if len(set(paths)) != len(paths):
             raise ManifestError("artifacts must not contain duplicate paths")
+        if len({path.casefold() for path in paths}) != len(paths):
+            raise ManifestError("artifacts must not contain paths that collide case-insensitively")
         roles = {artifact.role for artifact in artifacts}
         missing_roles = {"config", "tokenizer"} - roles
         if not ({"weight", "converted_weight", "quantized_weight"} & roles):
@@ -453,6 +457,17 @@ class ModelManifest:
             raise ManifestError(
                 f"Manifest declares context length {self.model.context_length} but config declares {context_length!r}"
             )
+        source_quantization = getattr(config, "_source_quantization_method", None)
+        compatible_source_profile = (source_quantization, self.runtime.quantization) in {
+            ("fp8", "fp8_dequant"),
+        }
+        if self.runtime.quantization == "fp8_dequant" and not compatible_source_profile:
+            raise ManifestError("Manifest runtime profile 'fp8_dequant' requires source config quant_method='fp8'")
+        if source_quantization is not None and not compatible_source_profile:
+            raise ManifestError(
+                f"Source config declares pre-quantized {source_quantization!r} weights, but the manifest runtime "
+                f"profile declares {self.runtime.quantization!r}; this checkpoint needs an explicit compatible profile"
+            )
 
 
 def resolve_manifest_loading(
@@ -486,6 +501,26 @@ def _artifact_path_below_root(root: Path | str, relative_path: str) -> Path:
     return candidate
 
 
+def _windows_safe_path(path: Path) -> Path:
+    """Opt long manifest-cache paths into the Win32 extended namespace.
+
+    Full manifest and artifact SHA-256 identifiers make resumable lock and
+    partial paths exceed the legacy Win32 path limit under an ordinary user
+    profile. Python then reports a misleading ``FileNotFoundError`` even when
+    the parent directory exists. Keep the audited on-disk layout unchanged,
+    but use an extended-length spelling for filesystem operations.
+    """
+    absolute = path.absolute()
+    if os.name != "nt":
+        return absolute
+    rendered = str(absolute)
+    if rendered.startswith("\\\\?\\") or len(rendered) < 248:
+        return absolute
+    if rendered.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + rendered[2:])
+    return Path("\\\\?\\" + rendered)
+
+
 def _validate_artifact_file(artifact: ManifestArtifact, candidate: Path) -> os.stat_result:
     try:
         stat_result = candidate.stat()
@@ -512,6 +547,113 @@ def _verify_artifact_file(artifact: ManifestArtifact, candidate: Path) -> os.sta
     return stat_result
 
 
+@dataclass(frozen=True)
+class ManifestBlockArtifactPlan:
+    """Exact manifested artifacts required to serve one contiguous block span."""
+
+    start_block: int
+    end_block: int
+    artifacts: Tuple[ManifestArtifact, ...]
+
+    def __post_init__(self) -> None:
+        if self.start_block < 0 or self.end_block <= self.start_block:
+            raise ManifestError("Block artifact plan must select a non-empty non-negative range")
+        if not self.artifacts:
+            raise ManifestError("Block artifact plan must contain at least one artifact")
+        paths = tuple(artifact.path for artifact in self.artifacts)
+        if paths != tuple(sorted(paths)) or len(set(paths)) != len(paths):
+            raise ManifestError("Block artifact plan paths must be unique and sorted")
+
+    @property
+    def artifact_bytes(self) -> int:
+        return sum(artifact.size for artifact in self.artifacts)
+
+    @property
+    def artifact_paths(self) -> Tuple[str, ...]:
+        return tuple(artifact.path for artifact in self.artifacts)
+
+    @property
+    def artifact_set_digest(self) -> str:
+        payload = json.dumps(
+            [artifact.to_dict() for artifact in self.artifacts],
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def select_manifest_block_artifacts(
+    manifest: ModelManifest,
+    *,
+    block_prefix: str,
+    start_block: int,
+    end_block: int,
+    weight_map: Optional[Mapping[str, str]] = None,
+) -> ManifestBlockArtifactPlan:
+    """Select metadata and deduplicated checkpoint shards for an exact block span."""
+
+    if not isinstance(block_prefix, str) or not block_prefix or block_prefix.endswith("."):
+        raise ManifestError("Block prefix must be a non-empty dotted name without a trailing separator")
+    if (
+        isinstance(start_block, bool)
+        or isinstance(end_block, bool)
+        or not isinstance(start_block, int)
+        or not isinstance(end_block, int)
+        or start_block < 0
+        or end_block <= start_block
+        or end_block > manifest.model.num_blocks
+    ):
+        raise ManifestError(f"Block span must be within 0:{manifest.model.num_blocks}")
+
+    index_artifacts = manifest.artifacts_for_roles({"weight_index"})
+    if len(index_artifacts) > 1:
+        raise ManifestError("Manifest declares more than one checkpoint index")
+    selected = set(manifest.artifacts_for_roles({"config", "weight_index"}))
+    if index_artifacts:
+        if not isinstance(weight_map, Mapping) or not weight_map:
+            raise ManifestError("Manifested sharded checkpoint requires a non-empty weight_map")
+        prefixes = tuple(f"{block_prefix}.{index}." for index in range(start_block, end_block))
+        matched_prefixes = set()
+        for parameter_name, shard_path in weight_map.items():
+            if not isinstance(parameter_name, str) or not parameter_name:
+                raise ManifestError("Checkpoint index contains an invalid parameter name")
+            if not isinstance(shard_path, str) or not shard_path:
+                raise ManifestError("Checkpoint index contains an invalid shard path")
+            parsed_path = PurePosixPath(shard_path)
+            if (
+                parsed_path.is_absolute()
+                or parsed_path == PurePosixPath(".")
+                or "\\" in shard_path
+                or shard_path != parsed_path.as_posix()
+                or ".." in parsed_path.parts
+            ):
+                raise ManifestError(f"Checkpoint index contains a non-normalized shard path {shard_path!r}")
+            artifact = manifest.get_artifact(shard_path)
+            if artifact.role not in _CHECKPOINT_ROLES:
+                raise ManifestError(f"Checkpoint index shard {shard_path!r} has non-checkpoint role {artifact.role!r}")
+            for prefix in prefixes:
+                if parameter_name.startswith(prefix):
+                    selected.add(artifact)
+                    matched_prefixes.add(prefix)
+        missing = sorted(set(prefixes) - matched_prefixes)
+        if missing:
+            raise ManifestError(f"Checkpoint index contains no parameters for block prefix(es) {missing}")
+    else:
+        if weight_map is not None:
+            raise ManifestError("Unsharded manifested checkpoint must not provide a weight_map")
+        checkpoints = {artifact.path: artifact for artifact in manifest.artifacts_for_roles(_CHECKPOINT_ROLES)}
+        checkpoint_path = next((path for path in _CHECKPOINT_PREFERENCE if path in checkpoints), None)
+        if checkpoint_path is None:
+            raise ManifestError("Manifest does not declare a checkpoint format supported by the block loader")
+        selected.add(checkpoints[checkpoint_path])
+
+    if not any(artifact.role == "config" for artifact in selected):
+        raise ManifestError("Manifest has no configuration artifact")
+    return ManifestBlockArtifactPlan(start_block, end_block, tuple(sorted(selected, key=lambda item: item.path)))
+
+
 @dataclass
 class ManifestArtifactVerifier:
     """Download declared artifacts at the pinned revision and verify them before use.
@@ -529,8 +671,11 @@ class ManifestArtifactVerifier:
     cache_dir: Optional[Union[str, os.PathLike]] = None
     max_disk_space: Optional[int] = None
     artifact_root: Optional[Union[str, os.PathLike]] = None
+    allowed_paths: Optional[Iterable[str]] = None
     _verified: Dict[Tuple[str, int, int, str], bool] = field(default_factory=dict, init=False, repr=False)
     _snapshot_root: Optional[Path] = field(default=None, init=False, repr=False)
+    _weight_map: Optional[Mapping[str, str]] = field(default=None, init=False, repr=False)
+    _weight_map_loaded: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.repository != self.manifest.source.repository:
@@ -541,6 +686,8 @@ class ManifestArtifactVerifier:
             raise ManifestError(
                 f"Artifact verifier revision is {self.revision!r}, expected {self.manifest.source.revision!r}"
             )
+        if self.allowed_paths is not None:
+            self.allowed_paths = self._normalize_allowed_paths(self.allowed_paths)
         if self.artifact_root is not None:
             self._snapshot_root = Path(self.artifact_root).absolute()
         elif self.cache_dir is None:
@@ -548,11 +695,112 @@ class ManifestArtifactVerifier:
 
             self.cache_dir = DEFAULT_CACHE_DIR
 
+    def _normalize_allowed_paths(self, paths: Iterable[str]) -> frozenset[str]:
+        normalized = set()
+        for path in paths:
+            if not isinstance(path, str) or not path:
+                raise ManifestError("Artifact allowlist paths must be non-empty strings")
+            artifact = self.manifest.get_artifact(path)
+            if path != artifact.path:
+                raise ManifestError(f"Artifact allowlist path {path!r} is not normalized")
+            normalized.add(path)
+        if not normalized:
+            raise ManifestError("Artifact allowlist must not be empty")
+        return frozenset(normalized)
+
+    def restrict_to_paths(self, paths: Iterable[str]) -> None:
+        """Narrow this verifier to an exact manifested artifact set."""
+        normalized = self._normalize_allowed_paths(paths)
+        if self.allowed_paths is not None and not normalized.issubset(self.allowed_paths):
+            raise ManifestError("Artifact verifier allowlist cannot be widened")
+        self.allowed_paths = normalized
+
+    def _require_allowed(self, artifact: ManifestArtifact) -> None:
+        if self.allowed_paths is not None and artifact.path not in self.allowed_paths:
+            raise ManifestError(f"Artifact {artifact.path!r} is outside this worker artifact plan")
+
     @property
     def snapshot_root(self) -> Path:
         if self._snapshot_root is None:
             raise ManifestError("No manifest artifacts have been materialized yet")
         return self._snapshot_root
+
+    def load_weight_map(self) -> Optional[Mapping[str, str]]:
+        """Return one immutable parse of the exact verified checkpoint index."""
+        indices = self.manifest.artifacts_for_roles({"weight_index"})
+        if len(indices) > 1:
+            raise ManifestError("Manifest declares more than one checkpoint index")
+        if not indices:
+            self._weight_map_loaded = True
+            self._weight_map = None
+            return None
+        artifact = indices[0]
+        self._require_allowed(artifact)
+        if self._weight_map_loaded:
+            return self._weight_map
+        if artifact.size > _MAX_CHECKPOINT_INDEX_BYTES:
+            raise ManifestError(
+                f"Checkpoint index {artifact.path} exceeds the {_MAX_CHECKPOINT_INDEX_BYTES}-byte planning limit"
+            )
+        path = self.ensure_path(artifact.path, allowed_roles={"weight_index"})
+        try:
+            payload = path.read_bytes()
+            if len(payload) != artifact.size or hashlib.sha256(payload).hexdigest() != artifact.sha256:
+                raise ManifestError(f"Checkpoint index {artifact.path} changed while being planned")
+
+            def reject_duplicate_keys(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ManifestError(f"Checkpoint index contains duplicate object key {key!r}")
+                    result[key] = value
+                return result
+
+            def reject_non_finite(value):
+                raise ManifestError(f"Checkpoint index contains non-finite number {value}")
+
+            document = json.loads(
+                payload.decode("utf-8"),
+                object_pairs_hook=reject_duplicate_keys,
+                parse_constant=reject_non_finite,
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ManifestError(f"Could not parse checkpoint index {artifact.path}: {exc}") from exc
+        if not isinstance(document, dict) or not isinstance(document.get("weight_map"), dict):
+            raise ManifestError(f"Checkpoint index {artifact.path} has no weight_map object")
+        weight_map = document["weight_map"]
+        if not weight_map:
+            raise ManifestError(f"Checkpoint index {artifact.path} has an empty weight_map")
+        self._weight_map = MappingProxyType(dict(weight_map))
+        self._weight_map_loaded = True
+        return self._weight_map
+
+    def plan_block_artifacts(self, *, block_prefix: str, start_block: int, end_block: int) -> ManifestBlockArtifactPlan:
+        self.ensure_startup_metadata()
+        return select_manifest_block_artifacts(
+            self.manifest,
+            block_prefix=block_prefix,
+            start_block=start_block,
+            end_block=end_block,
+            weight_map=self.load_weight_map(),
+        )
+
+    def bind_block_artifact_plan(
+        self, *, block_prefix: str, start_block: int, end_block: int
+    ) -> ManifestBlockArtifactPlan:
+        """Expand a metadata-only scope to the exact plan derived from that metadata."""
+        if self.allowed_paths is None:
+            raise ManifestError("Block artifact binding requires an exact startup-metadata allowlist")
+        artifact_plan = self.plan_block_artifacts(
+            block_prefix=block_prefix,
+            start_block=start_block,
+            end_block=end_block,
+        )
+        planned_paths = frozenset(artifact_plan.artifact_paths)
+        if not self.allowed_paths.issubset(planned_paths):
+            raise ManifestError("Block artifact plan omitted required startup metadata")
+        self.allowed_paths = planned_paths
+        return artifact_plan
 
     def ensure_startup_metadata(self, *, include_tokenizer: bool = False) -> Path:
         roles: Set[str] = {"config", "weight_index"}
@@ -567,6 +815,7 @@ class ManifestArtifactVerifier:
 
     def ensure_path(self, path: str, *, allowed_roles: Optional[Iterable[str]] = None) -> Path:
         artifact = self.manifest.get_artifact(path)
+        self._require_allowed(artifact)
         if allowed_roles is not None and artifact.role not in set(allowed_roles):
             raise ManifestError(
                 f"Artifact {artifact.path!r} has role {artifact.role!r}, expected one of {sorted(set(allowed_roles))}"
@@ -657,6 +906,7 @@ class ManifestArtifactVerifier:
     def partial_size(self, path: str) -> int:
         """Return resumable bytes retained for one declared artifact, without exposing its local path."""
         artifact = self.manifest.get_artifact(path)
+        self._require_allowed(artifact)
         if self.cache_dir is None:
             return 0
         partial, _, _ = self._resumable_paths(artifact)
@@ -670,9 +920,9 @@ class ManifestArtifactVerifier:
         cache_root = Path(self.cache_dir).absolute()
         manifest_root = cache_root / "manifest-artifacts" / self.manifest.digest
         name_digest = hashlib.sha256(artifact.path.encode("utf-8")).hexdigest()
-        partial = manifest_root / "partial" / f"{name_digest}.part"
-        final = _artifact_path_below_root(manifest_root / "snapshot", artifact.path)
-        lock = manifest_root / "locks" / f"{name_digest}.lock"
+        partial = _windows_safe_path(manifest_root / "partial" / f"{name_digest}.part")
+        final = _windows_safe_path(_artifact_path_below_root(manifest_root / "snapshot", artifact.path))
+        lock = _windows_safe_path(manifest_root / "locks" / f"{name_digest}.lock")
         return partial, final, lock
 
     def _resumable_hub_download(self, artifact: ManifestArtifact, *, destination: Optional[Path] = None) -> str:
@@ -776,6 +1026,7 @@ class ManifestArtifactVerifier:
                 f"Resolved checkpoint file {candidate} does not map uniquely to a declared manifest artifact"
             )
         artifact = matches[0]
+        self._require_allowed(artifact)
         if allowed_roles is not None and artifact.role not in set(allowed_roles):
             raise ManifestError(
                 f"Resolved file {artifact.path!r} has role {artifact.role!r}, expected one of "
