@@ -296,8 +296,8 @@ def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
             "3f8600c42a3c0765e100963c2e28cdef7c6b248992924ff3406941aefce7cf47",
         ),
         "linux": (
-            3574,
-            "0fcbcb35e915772137f92c7b60f0376923db6daf673374ec353ba37d1dd6bdcc",
+            3808,
+            "892c9d8568c491d67a7ef027177d11fc6737673f86eecd5eee9e8191ca1e8a55",
         ),
     }
     for platform, (byte_count, digest) in expected.items():
@@ -394,6 +394,7 @@ def test_client_readiness_cleans_the_route_relay_before_job_staging(tmp_path, mo
     result = item.prepare_client("linux", artifact("linux"))
 
     assert "gate13-bootstrap-ready" in events[0][1]
+    assert "sudo grep -qx failed /var/lib/gate13-bootstrap-status" in events[0][1]
     assert [event[0] for event in events] == ["ready", "relay-cleaned", "stage-copied"]
     assert result["package_relay_verified"] is True
     captured = json.loads((tmp_path / "linux-stage-command-output.json").read_text())

@@ -1670,7 +1670,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             ready_command = (
                 "if test -f /var/lib/gate13-bootstrap-ready; then "
                 "sudo -u gate13 env DISPLAY=:99 xdpyinfo >/dev/null; "
-                'elif test "$(cat /var/lib/gate13-bootstrap-status 2>/dev/null)" = failed; then '
+                "elif sudo grep -qx failed /var/lib/gate13-bootstrap-status 2>/dev/null; then "
                 "printf GATE13_BOOTSTRAP_FAILED; exit 2; else exit 1; fi"
             )
         self._wait_ssh(

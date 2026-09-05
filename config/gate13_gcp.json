@@ -5,7 +5,7 @@
   "linux_image": "ubuntu-2404-noble-amd64-v20260826",
   "linux_image_project": "ubuntu-os-cloud",
   "linux_machine_type": "e2-standard-8",
-  "linux_startup_commit": "283d308ad0871f23dc884c596697d1af0e646f4f",
+  "linux_startup_commit": "0981c2829ffb42c7136ac5bb8e9dc78d888253f4",
   "network": "communityai-discovery",
   "project": "community-ai-506321",
   "protected_instance": "communityai-bootstrap-1",
