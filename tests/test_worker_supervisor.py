@@ -1,9 +1,13 @@
 import os
+import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -16,6 +20,7 @@ from drift.node.worker_supervisor import (
     WorkerSupervisor,
     WorkerSupervisorSettings,
 )
+from drift.node import worker_supervisor as worker_module
 
 
 def _wait_for(predicate, timeout=2):
@@ -53,6 +58,118 @@ def _automatic_server_command(block_indices, binding):
 
 def _sleep_popen(command, **kwargs):
     return subprocess.Popen((sys.executable, "-c", "import time; time.sleep(30)"), **kwargs)
+
+
+def test_placement_explanation_changes_do_not_change_worker_assignment():
+    from drift.node.contribution_planner import AutomaticContributionPlanner, PlacementCandidate
+
+    planner = AutomaticContributionPlanner(num_blocks=35, jitter_seed="gate13-gemma")
+    candidate = PlacementCandidate(
+        "gemma",
+        "sha256:" + "a" * 64,
+        0,
+        True,
+        1234,
+        35,
+        {"status": "incomplete", "last_updated_age": 0, "replica_counts": [0] * 35},
+    )
+    first = planner.plan([candidate], sharing_enabled=True, now=0)
+    covered = replace(candidate, health={"status": "complete", "last_updated_age": 0, "replica_counts": [1] * 35})
+    refreshed = planner.plan([covered], sharing_enabled=True, now=901)
+    assert first.decision.block_indices == refreshed.decision.block_indices == "0:35"
+    assert first.reason != refreshed.reason
+    binding = {
+        "placement_manifest_digest": "sha256:" + "a" * 64,
+        "placement_artifact_bytes": 1234,
+        "placement_artifact_set_digest": "b" * 64,
+        "placement_cache_root": os.path.realpath(sys.prefix),
+    }
+    initial = WorkerLaunch(
+        "automatic",
+        "gemma",
+        _automatic_server_command("0:35", binding),
+        automatic=True,
+        block_indices="0:35",
+        intent_published=True,
+        remote_acknowledged=True,
+        placement_reason=first.reason,
+        **binding,
+    )
+    # The reconciler compares these launches after the 15-minute residency.
+    assert initial == replace(initial, placement_reason=refreshed.reason)
+    assert initial == replace(initial, placement_reason="same range; local demand bucket 1")
+    assert initial != replace(initial, policy_admitted=False, policy_reason="coverage stale")
+    assert initial != replace(
+        initial,
+        block_indices="0:34",
+        command=_automatic_server_command("0:34", binding),
+    )
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+@pytest.mark.parametrize("exit_mode", ["graceful", "timeout", "crashed"])
+def test_worker_group_cleanup_is_linux_only(monkeypatch, platform, exit_mode):
+    monkeypatch.setattr(worker_module, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(worker_module, "signal", SimpleNamespace(SIGKILL=9))
+    kill_group = Mock()
+    monkeypatch.setattr(worker_module.os, "killpg", kill_group, raising=False)
+    process = Mock(pid=12345, stdout=None)
+    process.poll.return_value = None
+    process.wait.return_value = 0
+    popen = Mock(return_value=process)
+    launch = WorkerLaunch("worker", "model", ("node", "server"), auto_restart=False)
+    supervisor = WorkerSupervisor([launch], popen=popen)
+    supervisor.start_worker("worker")
+    assert popen.call_args.kwargs.get("start_new_session", False) is (platform == "linux")
+    if exit_mode == "crashed":
+        process.poll.return_value = 1
+        assert supervisor.snapshot("worker")["state"] == "crashed"
+    else:
+        if exit_mode == "timeout":
+            process.wait.side_effect = [subprocess.TimeoutExpired("worker", 10), -9]
+        supervisor.pause_worker("worker")
+        process.terminate.assert_called_once()
+        assert process.kill.call_count == int(exit_mode == "timeout")
+    if platform == "linux":
+        kill_group.assert_called_once_with(process.pid, 9)
+    else:
+        kill_group.assert_not_called()
+    supervisor.shutdown()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="requires Linux process groups")
+@pytest.mark.parametrize("crash", [False, True])
+def test_linux_worker_exit_releases_descendant_listening_port(crash):
+    child = (
+        "import signal,socket,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+        "s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); "
+        "print(s.getsockname()[1],flush=True); time.sleep(30)"
+    )
+    parent = "import subprocess,sys,time; " f"subprocess.Popen([sys.executable,'-c',{child!r}]); time.sleep(30)"
+    launch = WorkerLaunch("worker", "model", (sys.executable, "-c", parent), auto_restart=False)
+    supervisor = WorkerSupervisor([launch], stop_timeout=1, poll_period=0.01)
+    try:
+        supervisor.start_worker("worker")
+        _wait_for(lambda: bool(supervisor.snapshot("worker")["recent_logs"]))
+        snapshot = supervisor.snapshot("worker")
+        port = int(snapshot["recent_logs"][0])
+        if crash:
+            os.kill(snapshot["pid"], signal.SIGKILL)
+            _wait_for(lambda: supervisor.snapshot("worker")["state"] == "crashed")
+        else:
+            supervisor.pause_worker("worker")
+
+        def port_released():
+            with socket.socket() as probe:
+                try:
+                    probe.bind(("127.0.0.1", port))
+                except OSError:
+                    return False
+                return True
+
+        _wait_for(port_released)
+    finally:
+        supervisor.shutdown()
 
 
 def test_supervisor_reconfigures_only_after_persistence_and_while_idle():

@@ -256,7 +256,7 @@ def test_route_relay_script_is_bound_to_both_wrapper_and_inner_archive(tmp_path)
     assert "b" * 64 in source
 
 
-def test_route_bundle_reuses_the_exact_successful_inputs(tmp_path):
+def test_route_bundle_uses_fixed_runtime_and_unchanged_signed_catalog(tmp_path):
     item = provider(
         tmp_path,
         LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
@@ -266,12 +266,12 @@ def test_route_bundle_reuses_the_exact_successful_inputs(tmp_path):
 
     expected = {
         "drift-2.3.0.dev2-py3-none-any.whl": (
-            389107,
-            "7a42803811289e14f69835331e0fbab69dd353c70c835131c10bdfa96ca5f111",
+            389449,
+            "edfd4598c293719d4d7701c9613b64f47f9fd20c3a2dc2e4c0fcacacad3c493a",
         ),
         "gate13_route_setup.sh": (
             3371,
-            "045372ea0be9c4a8f31756a502b2a9ec799087eeaac294ebad2b34eccfe0affc",
+            "f8fb52f40133fdefcc137c4244e66bec81eb5c820cf902b46b85944a4d0229e1",
         ),
         "catalog-v1.tar": (
             20480,
