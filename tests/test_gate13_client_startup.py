@@ -85,9 +85,44 @@ def test_linux_bootstrap_bounds_apt_network_and_lock_waits():
     assert "Acquire::http::Timeout=20" in source
     assert "Acquire::https::Timeout=20" in source
     assert "DPkg::Lock::Timeout=30" in source
+    assert "APT::Update::Error-Mode=any" in source
     assert "update attempt ${attempt}/3" in source
     assert 'apt-get "${apt_options[@]}" install -y' in source
     assert "bootstrap_status=/var/lib/gate13-bootstrap-status" in source
+
+
+@pytest.mark.skipif(BASH is None, reason="requires bash")
+def test_linux_bootstrap_switches_only_security_transport_and_writes_newline(tmp_path):
+    source = LINUX.read_text(encoding="utf-8")
+    sources = tmp_path / "ubuntu.sources"
+    original = (
+        "Types: deb\n"
+        "URIs: http://us-central1.gce.archive.ubuntu.com/ubuntu/\n"
+        "Suites: noble noble-updates noble-backports\n"
+        "Components: main universe restricted multiverse\n"
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n"
+        "Types: deb\n"
+        "URIs: http://security.ubuntu.com/ubuntu/\n"
+        "Suites: noble-security\n"
+        "Components: main universe restricted multiverse\n"
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+    )
+    sources.write_text(original, encoding="utf-8", newline="\n")
+    rewrite = source[source.index("sed -i ") : source.index("\n\napt_deadline=")]
+    rewrite = rewrite.replace("/etc/apt/sources.list.d/ubuntu.sources", '"$1"')
+    trap = next(line for line in source.splitlines() if line.startswith("trap "))
+    result = subprocess.run(
+        [BASH, "-c", rewrite + "\n" + trap.replace(' >"$bootstrap_status"', "") + "\nexit 1", "--", sources.as_posix()],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 1, result.stderr
+    assert result.stdout == "failed\n"
+    assert sources.read_text(encoding="utf-8") == original.replace(
+        "http://security.ubuntu.com/ubuntu/", "https://security.ubuntu.com/ubuntu/"
+    )
 
 
 @pytest.mark.skipif(BASH is None, reason="requires bash parser")

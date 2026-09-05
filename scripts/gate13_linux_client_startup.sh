@@ -12,8 +12,13 @@ bootstrap_status=/var/lib/gate13-bootstrap-status
 printf '%s\n' starting >"$bootstrap_status"
 trap 'rc=$?; if (( rc != 0 )); then printf "%s\\n" failed >"$bootstrap_status"; fi' EXIT
 
+# The image's HTTP security mirror is unreachable from this GCP network.
+sed -i 's|http://security\.ubuntu\.com/ubuntu|https://security.ubuntu.com/ubuntu|g' \
+  /etc/apt/sources.list.d/ubuntu.sources
+
 apt_deadline=$(( $(date +%s) + 300 ))
 apt_options=(
+  -o APT::Update::Error-Mode=any
   -o Acquire::ForceIPv4=true
   -o Acquire::Retries=1
   -o Acquire::http::Timeout=20
