@@ -70,7 +70,7 @@ def stop_process_tree(process):
         return False
 
 
-def execute_packaged(run, output, config, inputs, future):
+def execute_packaged(run, output, config, inputs, future=None):
     ready = read(run / "packaged-client-ready.json")
     if ready["run_id"] != run.name or ready["deadline_unix"] <= time.time() + 60:
         raise ValueError("Packaged window is stale or belongs to another run")
@@ -108,7 +108,7 @@ def execute_packaged(run, output, config, inputs, future):
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             while process.poll() is None:
-                if time.time() >= ready["deadline_unix"] - 30 or future.done():
+                if time.time() >= ready["deadline_unix"] - 30 or (future is not None and future.done()):
                     raise TimeoutError("Packaged window ended; stopping the owned local process tree")
                 time.sleep(1)
         if process.returncode:

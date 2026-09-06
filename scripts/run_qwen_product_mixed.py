@@ -15,6 +15,9 @@ RUNS = ROOT / ".gate13-runs/qwen-product-mixed"
 
 
 class MixedProductRun(MixedRun, ProductRun):
+    def run_packaged_client(self):
+        """Optional synchronous client step; the original external handoff remains supported."""
+
     def enable_packaged_client(self):
         """Add only the preflight-resolved operator address to owned swarm rules."""
         address = str(ipaddress.IPv4Address(self.config["admin_ip"])) + "/32"
@@ -54,6 +57,7 @@ class MixedProductRun(MixedRun, ProductRun):
         until = min(time.time() + seconds, self.started + self.config["max_duration_seconds"] - 600)
         _write_json(self.path / "packaged-client-ready.json", {"run_id": self.run_id, "deadline_unix": until})
         self.event("waiting-for-packaged-client", deadline_unix=until)
+        self.run_packaged_client()
         receipt = self.path / "packaged-client-result.json"
         while time.time() < until:
             if receipt.exists():

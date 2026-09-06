@@ -55,6 +55,8 @@ The [maintained product replay](QWEN_PRODUCT_TEST.md) now includes the previousl
 ignored wrapper/reporting steps. It has local regression coverage; its own live
 replay remains open. The [run audit](evidence/qwen-c3-run-provenance-audit-20260906.md)
 records the interventions in the historical passing C3 run.
+The new [Gate 13-based entry point](QWEN_QUALIFICATION_RUNNER.md) runs the same
+audited Qwen scope through an ordered controller and durable phase records.
 
 ## Current gates
 

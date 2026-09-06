@@ -1,5 +1,9 @@
 # One-command Qwen product replay
 
+For the new no-argument entry point following Gate 13's launcher and phase
+recording pattern, use **[Run Qwen Qualification](QWEN_QUALIFICATION_RUNNER.md)**.
+The configurable replay described below remains the lower-level tool.
+
 `Run Qwen Product Test.cmd` runs the maintained equivalent of the final C3
 experiment: source-node transitions, then the frozen Windows node/controller's
 community completion/chat, CPU worker stop → local fallback → rejoin, local-only
