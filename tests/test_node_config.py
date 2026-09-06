@@ -1,6 +1,7 @@
 import json
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from drift.cli.run_node import (
     _prepare_route_identity,
     _reuse_runtime_initial_peers,
 )
-from drift.model_manifest import ModelManifest
+from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import (
     NODE_CONFIG_SCHEMA_VERSION,
     ContributionPolicyConfig,
@@ -32,6 +33,7 @@ from drift.node.contribution_planner import (
     MAX_AUTOMATIC_PLACEMENT_BLOCKS,
     MAX_AUTOMATIC_PLACEMENT_CANDIDATES,
     PlacementArtifactPlan,
+    PlacementCandidate,
     PlacementDecision,
     PlacementPlan,
     PlacementRegistry,
@@ -41,6 +43,38 @@ from drift.node.model_manager import ModelRuntime, ModelState
 from drift.node.route_metrics import RouteOutcomeTracker
 from drift.node.worker_supervisor import WorkerPolicyError
 from drift.protocol_identity import NodeIdentity, ProtocolSecurityError
+
+
+@pytest.mark.parametrize("mutation", ["none", "policy", "budget", "age", "never-seen", "digest", "blocks"])
+def test_discovery_gap_retention_requires_current_exact_admission(mutation):
+    decision = PlacementDecision("model", "sha256:" + "1" * 64, "1:2", 100, (0, 0), 1, "test", "2" * 64)
+    candidate = PlacementCandidate(
+        "model",
+        decision.manifest_digest,
+        0,
+        False,
+        100,
+        2,
+        {"status": "unknown", "last_known_status": "incomplete", "last_updated_age": 1.0},
+        artifact_plans=(PlacementArtifactPlan(1, 2, 100, "2" * 64),),
+        max_artifact_bytes=100,
+    )
+    if mutation == "policy":
+        candidate = replace(candidate, policy_reason="denied")
+    elif mutation == "budget":
+        candidate = replace(candidate, max_artifact_bytes=99)
+    elif mutation == "age":
+        candidate = replace(candidate, health={**candidate.health, "last_updated_age": 91})
+    elif mutation == "never-seen":
+        candidate = replace(candidate, health={"status": "unknown", "last_updated_age": 0})
+    elif mutation == "digest":
+        candidate = replace(candidate, artifact_plans=(PlacementArtifactPlan(1, 2, 100, "3" * 64),))
+    assert run_node_module._recent_gap_preserves_artifact_claim(
+        candidate,
+        decision,
+        2 if mutation == "blocks" else 1,
+        maximum_age=90,
+    ) is (mutation == "none")
 
 
 def _config_dict(**overrides):
@@ -732,6 +766,28 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
         assert registry.snapshot()["automatic"].decision is None
 
     if publish_succeeds:
+        # A verified immutable plan must survive later metadata-cache contention;
+        # otherwise a discovery tick can stop an admitted worker mid-download.
+        def unavailable_metadata(*args, **kwargs):
+            raise ManifestError("metadata temporarily unavailable during worker acquisition")
+
+        monkeypatch.setattr(run_node_module, "_manifest_artifact_plans", unavailable_metadata)
+        service.reconcile_once()
+        assert registry.snapshot()["automatic"].decision.block_indices == "1:2"
+        assert supervisor.launches[0].policy_admitted is True
+        assert len(planning_cache_dirs) == 1
+        monkeypatch.setattr(run_node_module, "_manifest_artifact_plans", fake_artifact_plans)
+
+        # A short discovery interruption preserves an already acknowledged exact
+        # claim; it must not kill a loading worker or renew the old lease.
+        prior = registry.snapshot()["automatic"]
+        state.last_error = "seed temporarily unavailable"
+        service.reconcile_once()
+        assert registry.snapshot()["automatic"] == prior
+        assert supervisor.launches[0].policy_admitted is True
+        assert len(publish_calls) == 1
+        state.last_error = None
+
         config_source["workers"][0]["throughput"] = 2.5
         config_path.write_text(json.dumps(config_source), encoding="utf-8")
         service.reconcile_once()

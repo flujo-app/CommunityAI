@@ -389,7 +389,7 @@ class Server:
         self.dht = DHT(
             initial_peers=initial_peers,
             start=True,
-            num_workers=self.block_config.num_hidden_layers,
+            num_workers=min(self.block_config.num_hidden_layers, 4),
             use_relay=use_relay,
             use_auto_relay=use_auto_relay,
             client_mode=reachable_via_relay,
@@ -1215,7 +1215,7 @@ class ModuleContainer(threading.Thread):
         healthy = previous_health and ready
         try:
             payload = build_public_worker_health(
-                manifest_digest=self.server_info.manifest_digest,
+                manifest_digest=f"sha256:{self.server_info.manifest_digest}",
                 start_block=self.server_info.start_block,
                 end_block=self.server_info.end_block,
                 admission_snapshot=admission_snapshot,
@@ -1225,8 +1225,8 @@ class ModuleContainer(threading.Thread):
                 pools_alive=pools_alive,
             )
             write_public_worker_health(self.health_state_path, payload)
-        except HealthStateError:
-            logger.error("Machine-readable public health is unavailable; the worker will restart")
+        except HealthStateError as exc:
+            logger.error("Machine-readable public health is unavailable; the worker will restart: %s", exc)
             return False
         return healthy
 

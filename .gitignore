@@ -132,3 +132,6 @@ dmypy.json
 
 .idea/
 /.gate*
+
+# Owner-requested local emergency publisher backup; never commit key material.
+/.publisher-secrets/

@@ -6,7 +6,7 @@ import asyncio
 import math
 import secrets
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Literal, Optional
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
@@ -36,6 +36,11 @@ from drift.node.worker_supervisor import (
 
 CONTROL_API_VERSION = 1
 CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
+
+
+class InferenceModeRequest(BaseModel):
+    inference_mode: Literal["auto", "local_only"]
+    expected_config_revision: str
 
 
 def _bounded_text(value, fallback: str, *, limit: int = 300) -> str:
@@ -221,6 +226,8 @@ def create_node_app(
             "started_at": started_at,
             "openai_base_url": f"http://{'[' + host + ']' if ':' in host else host}:{port}/v1",
             "runtime_budget": model_manager.residency(),
+            "inference_mode": model_manager.inference_mode,
+            "inference_mode_editable": contribution_policy_store is not None,
             "auto_selection": model_manager.auto_selection_snapshot(),
             "models": [snapshot.to_dict() for snapshot in model_manager.snapshots()],
             "workers": [
@@ -239,6 +246,20 @@ def create_node_app(
     async def get_contribution_policy(request: Request):
         check_control_auth(request)
         return require_policy_store().snapshot()
+
+    @app.put("/control/v1/inference-mode")
+    async def update_inference_mode(body: InferenceModeRequest, request: Request):
+        check_control_auth(request)
+        try:
+            result = require_policy_store().update_inference_mode(
+                body.inference_mode, expected_revision=body.expected_config_revision
+            )
+            model_manager.set_inference_mode(body.inference_mode)
+            return result
+        except ContributionPolicyConflictError as exc:
+            raise HTTPException(status_code=412, detail=str(exc)) from exc
+        except ContributionPolicyPersistenceError as exc:
+            raise HTTPException(status_code=503, detail="inference mode could not be saved") from exc
 
     @app.put("/control/v1/contribution-policy")
     async def update_contribution_policy(request: Request):

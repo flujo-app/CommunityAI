@@ -1,0 +1,114 @@
+{
+  "result": "passed",
+  "scope": "packaged-HTTPS-catalog-install-and-old-root-migration",
+  "files": [
+    {
+      "path": "bundle.json",
+      "sha256": "a904ed1b8487762507fcd35c4a125f03f0f71ee6c164bcacb993fbab677e0be9"
+    },
+    {
+      "path": "catalog-bootstrap.json",
+      "sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410"
+    },
+    {
+      "path": "catalog.signed.json",
+      "sha256": "315d7c3910fae3de0ba3aee6d1bdc5942bc2655294ab53b6566bbcfd14933315"
+    },
+    {
+      "path": "manifests/c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4.json",
+      "sha256": "a2621aa34aa47f0c9074f5baa0254b17549424f1c85d828ae9b1bf6ad9e76bb3"
+    },
+    {
+      "path": "manifests/e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0.json",
+      "sha256": "4536ac2bada7242b758db443b9ebb813a614dd167ab364643fc55c7eb657bb74"
+    },
+    {
+      "path": "publication-preflight.json",
+      "sha256": "b80f6c4a8d0b87a1d365fc4be01e643429759cc52eda5c200dbf236f2073f538"
+    }
+  ],
+  "clean_install": {
+    "catalog_digest": "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80",
+    "catalog_id": "communityai-public-alpha-v1",
+    "catalog_sequence": 2,
+    "created": true,
+    "model_count": 2,
+    "schema_version": 1,
+    "source": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-qwen-v2/catalog.signed.json",
+    "seconds": 9.515999999995984
+  },
+  "legacy_install": {
+    "catalog_digest": "sha256:70937f0aa10aa73f158753386170c27a95c685b468c66945f05bb3929263f195",
+    "catalog_id": "communityai-public-alpha-v1",
+    "catalog_sequence": 1,
+    "created": true,
+    "model_count": 2,
+    "schema_version": 1,
+    "source": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-v1/catalog.signed.json",
+    "seconds": 9.796999999998661
+  },
+  "migration": {
+    "catalog_digest": "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80",
+    "catalog_id": "communityai-public-alpha-v1",
+    "catalog_sequence": 2,
+    "created": true,
+    "model_count": 2,
+    "schema_version": 1,
+    "source": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-qwen-v2/catalog.signed.json",
+    "seconds": 11.906000000002678
+  },
+  "preferences_workers_and_cache_marker_preserved": true,
+  "old_root_rejected": true,
+  "repeat_start": {
+    "catalog_digest": "",
+    "catalog_id": "communityai-public-alpha-v1",
+    "catalog_sequence": 0,
+    "created": false,
+    "model_count": 4,
+    "schema_version": 1,
+    "source": "existing-config",
+    "seconds": 8.734000000004016
+  },
+  "repeat_start_config_unchanged": true,
+  "node_sha256": "270e8a7482d4e5c689644e1d53c48afb82a75aa49547aa994f12cc424997ffa3",
+  "complete_gate15": false,
+  "limitations": [
+    "Catalog/bootstrap CLI only; no ordinary-user installer lifecycle or full UI acceptance.",
+    "Migration fixture installed the actual online sequence 1, then added test preferences and a cache marker."
+  ],
+  "recorded_at": "2026-09-06",
+  "publication_commit": "2f79e6b774b599db5db1d87dbac8a25b847ab491",
+  "publication_branch": "codex/gate-v-auto-selection",
+  "publication_base_url": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-qwen-v2",
+  "legacy_publication_unchanged": true,
+  "package": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "c95c1b1f94eba68a04ffc54b8dc17a49e425390eca053ef8f3996efdcc9dbf1d",
+    "size_bytes": 2692398749,
+    "binding": {
+      "path": ".gate13-runs/qwen-product-build-v6/desktop-metrics.json",
+      "sha256": "fe79b3477766ff6d28744553b7e49da45dda5190aebacdb6cb9378f47900a0b2"
+    },
+    "real_local_result_binding": {
+      "path": ".gate13-runs/qwen-product-implementation/local-packaged-v6/result.json",
+      "sha256": "7d8379681c985e1ea3371806cfdce187d911e6552cf1eed68850fdef46da3102"
+    }
+  },
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-implementation/catalog-online-v6/result.json",
+      "sha256": "2b514337209690399af69963ba989a6ff72d3448918b32ca3c2cce2a1ba76d18"
+    },
+    {
+      "path": "scripts/qualify_catalog_online.py",
+      "sha256": "1ff07efe23e42afcba1349ccc861bb95a648d553bbb0a046149e383d4ebb78b6"
+    }
+  ]
+}

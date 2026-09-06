@@ -48,12 +48,37 @@ _RELEASE_SOURCE_PATHS = (
     "desktop/pyproject.toml",
     "desktop/src",
     "public-alpha/catalog-v1",
+    "public-alpha/catalog-qwen-v2",
     "pyproject.toml",
     "scripts/build_hivemind_windows.py",
     "scripts/hivemind-win32.patch",
     "src",
 )
 _EXPECTED_UNSET = object()
+
+
+def _check_build_storage(output_root: Path, build_root: Path) -> None:
+    """Reserve conservative staging/archive capacity on each actual volume."""
+    gib = 1024**3
+    volumes: dict[int, tuple[Path, int]] = {}
+    # Observed Windows output is 4.5 GB unpacked plus a 2.7 GB archive.
+    # Work staging also holds the sidecar before it is moved into the bundle.
+    for target, required in ((output_root, 8 * gib), (build_root, 5 * gib)):
+        existing = target.resolve()
+        while not existing.exists():
+            existing = existing.parent
+        volume = existing.stat().st_dev
+        prior = volumes.get(volume, (existing, 2 * gib))  # reserve per volume
+        volumes[volume] = (prior[0], prior[1] + required)
+    for location, required in volumes.values():
+        free = shutil.disk_usage(location).free
+        if free < required:
+            raise RuntimeError(
+                f"Insufficient build space on the volume containing {location}: "
+                f"{free / gib:.1f} GiB free; an estimated {required / gib:.1f} GiB is required "
+                "for staging, unpacked output, archive and reserve. Free space or choose "
+                "--output-root and --build-root on a volume with sufficient capacity."
+            )
 
 
 def _canonical_json(payload: object) -> str:
@@ -1135,7 +1160,23 @@ def _run_bundle(
 
 
 def _run_pyinstaller(arguments: list[str]) -> None:
-    subprocess.run([sys.executable, "-m", "PyInstaller", *arguments], check=True)
+    environment = os.environ.copy()
+    if os.name == "nt":
+        # Qt links Windows' ICU ABI. An unrelated tool on PATH may ship another
+        # icuuc.dll with the same basename and incompatible exports. Restrict
+        # dependency lookup to this Python environment and Windows; PyInstaller's
+        # package hooks still discover Torch and Qt's own runtime directories.
+        windows = Path(os.environ["SystemRoot"])
+        environment["PATH"] = os.pathsep.join(
+            str(path)
+            for path in (
+                Path(sys.executable).parent,
+                Path(sys.base_prefix),
+                windows / "System32",
+                windows,
+            )
+        )
+    subprocess.run([sys.executable, "-m", "PyInstaller", *arguments], check=True, env=environment)
 
 
 def _prepare_release_inputs(publication_bundle: Path | None) -> dict[str, object] | None:
@@ -1180,6 +1221,7 @@ def _verify_packaged_release_inputs(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--build-root", type=Path)
     parser.add_argument("--publication-bundle", type=Path)
     parser.add_argument("--source-commit")
     parser.add_argument("--build-workflow")
@@ -1234,7 +1276,8 @@ def main() -> int:
     source_commit, source_tree = _source_identity(repository, args.source_commit)
     build_workflow = args.build_workflow or os.environ.get("GITHUB_WORKFLOW_REF", "local")
     output_root = (args.output_root or project / "dist" / "desktop").resolve()
-    build_root = project / "build" / "desktop"
+    build_root = (args.build_root or project / "build" / "desktop").resolve()
+    _check_build_storage(output_root, build_root)
     bundle_root = output_root / APP_NAME
     icon_path = project / "src" / "communityai_desktop" / "assets" / "communityai.ico"
     if not icon_path.is_file():

@@ -11,6 +11,7 @@ import re
 import secrets
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
@@ -260,6 +261,10 @@ def _default_peer_snapshot(dht: Any) -> Sequence[str]:
     return dht.run_coroutine(_connected_peer_addresses)
 
 
+async def _routing_peer_count(_dht: Any, node: Any) -> int:
+    return len(node.protocol.routing_table.uid_to_peer_id)
+
+
 @dataclass(frozen=True)
 class CoverageTarget:
     manifest: ModelManifest
@@ -356,7 +361,7 @@ class ModelCoverageDiscovery:
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._dhts: Dict[Tuple[str, ...], Any] = {}
-        self._shutdown_dht_ids: set[int] = set()
+        self._shutdown_dhts = weakref.WeakSet()
         self._local_route_demand_keys: set[str] = set()
         self._started = False
         self._closed = False
@@ -494,10 +499,9 @@ class ModelCoverageDiscovery:
 
     def _shutdown_dht_once(self, dht: Any) -> None:
         with self._lock:
-            identity = id(dht)
-            if identity in self._shutdown_dht_ids:
+            if dht in self._shutdown_dhts:
                 return
-            self._shutdown_dht_ids.add(identity)
+            self._shutdown_dhts.add(dht)
         if dht.is_alive():
             dht.shutdown()
 
@@ -510,7 +514,7 @@ class ModelCoverageDiscovery:
                         dht = self._dht_factory(
                             initial_peers=list(initial_peers),
                             client_mode=True,
-                            num_workers=min(max(state.target.manifest.model.num_blocks for state in states), 32),
+                            num_workers=min(max(state.target.manifest.model.num_blocks for state in states), 4),
                             startup_timeout=self._startup_timeout,
                             start=True,
                             tls=True,
@@ -545,6 +549,16 @@ class ModelCoverageDiscovery:
                                 replay_guard=state.replay_guard,
                                 latest=True,
                             )
+                            if (
+                                callable(getattr(dht, "run_coroutine", None))
+                                and dht.run_coroutine(_routing_peer_count) == 0
+                            ):
+                                self._set_error(
+                                    states, RuntimeError("Discovery lost all routing peers; reconnecting to seeds")
+                                )
+                                self._shutdown_dht_once(dht)
+                                dht = None
+                                break
                         self._set_success(state, module_infos_route_health(module_infos))
                         any_success = True
                         if callable(getattr(dht, "get", None)):
@@ -559,7 +573,7 @@ class ModelCoverageDiscovery:
                         self._set_error((state,), exc)
                         logger.warning("Coverage discovery failed for %s: %s", manifest.digest_id, exc)
 
-                if any_success and self._peer_cache is not None:
+                if any_success and dht is not None and self._peer_cache is not None:
                     try:
                         connected_peers = self._peer_snapshot(dht)
                         for cache_scope in dict.fromkeys(state.target.cache_scope or initial_peers for state in states):

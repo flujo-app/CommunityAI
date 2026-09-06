@@ -1,0 +1,109 @@
+{
+  "result": "passed",
+  "packaged": true,
+  "scope": "resource-admission-guards",
+  "checks": {
+    "schedule": {
+      "state": "paused",
+      "pid": null,
+      "policy_admitted": true,
+      "policy_reason": null,
+      "resource_admitted": true,
+      "resource_reason": null,
+      "schedule_admitted": false,
+      "schedule_reason": "outside the configured contribution schedule",
+      "current_bandwidth_mbps": null,
+      "current_power_watts": null,
+      "max_disk_space_bytes": null,
+      "max_vram_bytes": 2147483648,
+      "local_tokens": 3
+    },
+    "power": {
+      "state": "paused",
+      "pid": null,
+      "policy_admitted": true,
+      "policy_reason": null,
+      "resource_admitted": false,
+      "resource_reason": "power usage 55.24 W exceeds the 1.00 W contribution budget",
+      "schedule_admitted": true,
+      "schedule_reason": null,
+      "current_bandwidth_mbps": null,
+      "current_power_watts": 55.241,
+      "max_disk_space_bytes": null,
+      "max_vram_bytes": 2147483648,
+      "local_tokens": 3
+    },
+    "bandwidth": {
+      "state": "paused",
+      "pid": null,
+      "policy_admitted": true,
+      "policy_reason": null,
+      "resource_admitted": false,
+      "resource_reason": "bandwidth usage 12.24 Mbps exceeds the 0.00 Mbps contribution budget",
+      "schedule_admitted": true,
+      "schedule_reason": null,
+      "current_bandwidth_mbps": 12.235487179277172,
+      "current_power_watts": null,
+      "max_disk_space_bytes": null,
+      "max_vram_bytes": 2147483648,
+      "local_tokens": 3
+    },
+    "storage": {
+      "state": "paused",
+      "pid": null,
+      "policy_admitted": false,
+      "policy_reason": "Qwen3.8 27B FP8 Dequant: every 1-block artifact set exceeds the 1048576-byte disk budget",
+      "resource_admitted": true,
+      "resource_reason": null,
+      "schedule_admitted": true,
+      "schedule_reason": null,
+      "current_bandwidth_mbps": null,
+      "current_power_watts": null,
+      "max_disk_space_bytes": null,
+      "max_vram_bytes": 2147483648,
+      "local_tokens": 3
+    }
+  },
+  "node_sha256": "270e8a7482d4e5c689644e1d53c48afb82a75aa49547aa994f12cc424997ffa3",
+  "complete_gate14": false,
+  "limitations": [
+    "Power and bandwidth are sampled host telemetry pause guards, not OS hard caps or traffic shapers.",
+    "Tiny thresholds prove blocked admission; sustained load, overshoot and automatic resumption are separate checks.",
+    "Storage checks declared manifested artifact admission, not total disk-cache quota.",
+    "Windows control API test; no Linux or literal desktop UI acceptance."
+  ],
+  "node_stopped": true,
+  "recorded_at": "2026-09-06",
+  "hardware": "Windows, NVIDIA RTX 2070 SUPER, 8 GB",
+  "other_admission_guards_open_for_each_checked_guard": true,
+  "package": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "c95c1b1f94eba68a04ffc54b8dc17a49e425390eca053ef8f3996efdcc9dbf1d",
+    "size_bytes": 2692398749,
+    "binding": {
+      "path": ".gate13-runs/qwen-product-build-v6/desktop-metrics.json",
+      "sha256": "fe79b3477766ff6d28744553b7e49da45dda5190aebacdb6cb9378f47900a0b2"
+    },
+    "real_local_result_binding": {
+      "path": ".gate13-runs/qwen-product-implementation/local-packaged-v6/result.json",
+      "sha256": "7d8379681c985e1ea3371806cfdce187d911e6552cf1eed68850fdef46da3102"
+    }
+  },
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-implementation/resource-controls-v6-final/result.json",
+      "sha256": "f31992f12391c32603329a0371e3776bba49d5d1bff0fc77dbdf444633aaf138"
+    },
+    {
+      "path": "scripts/qualify_qwen_resource_controls.py",
+      "sha256": "d722ae1c6149230c67d3228aa3a7b9ea909eabc819475291c6e4ca848ab89f8e"
+    }
+  ]
+}

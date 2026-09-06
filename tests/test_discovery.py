@@ -347,6 +347,43 @@ def test_discovery_shutdown_calls_each_dht_only_once_across_thread_race():
     assert dht.shutdown_calls == 1
 
 
+def test_discovery_rejoins_seeds_when_live_dht_loses_all_routing_peers():
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    disconnected, replacement = FakeDHT(), FakeDHT()
+    disconnected.run_coroutine = lambda callback: 0
+    replacement.run_coroutine = lambda callback: 1
+    created = []
+    refreshed = threading.Event()
+
+    def factory(**kwargs):
+        assert kwargs["initial_peers"] == ["seed"]
+        current = disconnected if not created else replacement
+        created.append(current)
+        return current
+
+    def lookup(dht, uids, **kwargs):
+        if dht is replacement:
+            refreshed.set()
+        return [RemoteModuleInfo(uid, {}) for uid in uids]
+
+    discovery = ModelCoverageDiscovery(
+        [CoverageTarget(manifest, ("seed",))],
+        update_period=0.01,
+        startup_timeout=1,
+        dht_factory=factory,
+        lookup=lookup,
+        peer_snapshot=lambda dht: (),
+    )
+    try:
+        discovery.start()
+        assert refreshed.wait(timeout=2)
+        assert created == [disconnected, replacement]
+        assert disconnected.shutdown_calls == 1
+    finally:
+        discovery.close()
+    assert replacement.shutdown_calls == 1
+
+
 def _route_demand_record(identity, manifest, *, now, attempts, successes, sequence):
     return create_route_demand(
         identity,

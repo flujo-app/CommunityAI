@@ -275,6 +275,22 @@ class ContributionPolicyStore:
                 except OSError:
                     pass
 
+    def update_inference_mode(self, mode: str, *, expected_revision: str) -> dict[str, Any]:
+        if mode not in ("auto", "local_only"):
+            raise NodeConfigError("inference mode must be auto or local_only")
+        with self._lock:
+            if expected_revision != self._revision:
+                raise ContributionPolicyConflictError("node config changed; refresh before saving")
+            document, payload = self._read()
+            if _revision(payload) != self._revision:
+                raise ContributionPolicyConflictError("node config changed; refresh before saving")
+            document["inference_mode"] = mode
+            NodeConfig.from_dict(document, base_dir=self.path.parent)
+            encoded = (json.dumps(document, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+            self._atomic_replace(encoded, expected_revision=self._revision)
+            self._revision = _revision(encoded)
+            return {"inference_mode": mode, "config_revision": self._revision}
+
     def update(self, source: Mapping[str, Any], *, expected_revision: str) -> dict[str, Any]:
         if not isinstance(expected_revision, str) or not expected_revision.startswith("sha256:"):
             raise ContributionPolicyConflictError("policy update has an invalid config revision")

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
+from collections import Counter
 from typing import Any, Dict, Sequence
 
 from drift.data_structures import RemoteModuleInfo, ServerState
@@ -20,6 +23,38 @@ def _coverage_health(replica_sets: Sequence[set], *, updated_age: float) -> Dict
 
     total_blocks = len(replica_sets)
     covered_blocks = total_blocks - len(missing_blocks)
+    peer_coverage = Counter(peer for peers in replica_sets for peer in peers)
+    largest_count = max(peer_coverage.values(), default=0)
+    surviving = min(
+        (
+            min((len(peers - {peer}) for peers in replica_sets), default=0)
+            for peer, count in peer_coverage.items()
+            if count == largest_count
+        ),
+        default=0,
+    )
+    available = set(peer_ids)
+    independent = 0
+    # Greedy disjoint routes are a conservative lower bound. A peer used anywhere
+    # in one route cannot be counted as an independent peer in another route.
+    while replica_sets and all(peers & available for peers in replica_sets):
+        used = set()
+        cursor = 0
+        while cursor < total_blocks:
+            candidates = []
+            for peer in replica_sets[cursor] & available:
+                end = cursor + 1
+                while end < total_blocks and peer in replica_sets[end]:
+                    end += 1
+                candidates.append((end, str(peer), peer))
+            end, _label, peer = max(candidates, key=lambda item: item[:2])
+            used.add(peer)
+            cursor = end
+        independent += 1
+        available.difference_update(used)
+    fingerprint = hashlib.sha256(
+        json.dumps([sorted(str(peer) for peer in peers) for peers in replica_sets], separators=(",", ":")).encode()
+    ).hexdigest()
     return {
         "status": "complete" if not missing_blocks else "incomplete",
         "total_blocks": total_blocks,
@@ -29,6 +64,9 @@ def _coverage_health(replica_sets: Sequence[set], *, updated_age: float) -> Dict
         "replica_counts": replica_counts,
         "peer_count": len(peer_ids),
         "last_updated_age": max(0.0, updated_age),
+        "independent_routes": independent,
+        "replicas_after_largest_peer_loss": surviving,
+        "coverage_fingerprint": fingerprint,
     }
 
 

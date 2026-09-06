@@ -7,6 +7,26 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Verified standalone Qwen3.5-0.8B inference now provides local fallback for
+  `auto` requests, with local-only preferences, token/context budgets and stream
+  cancellation. Packaged offline inference passed on Windows GPU and Linux CPU.
+- The Windows engineering package now has real Qwen3.8 community completion,
+  short chat, worker-loss fallback/rejoin and HTTP-blocked cache-restart results
+  through all 64 blocks under the signed public policy on an assigned L4/T4/C3 route.
+  Full CPU inference, same-session VM replacement and stock-reference parity
+  also passed. These bounded results do not complete desktop formation,
+  installation lifecycle or broader hardware/performance qualification; see
+  [current readiness](docs/RELEASE_READINESS.md).
+- Chat requests can explicitly set `enable_thinking: false` when supported by
+  the verified model template. Independent discovery observation maintains
+  readiness tracking during long generations. Interrupted artifact downloads
+  resume verified partial files, and disk admission includes owned manifest
+  cache files with hardlinks deduplicated.
+- Signed Qwen catalog sequence 2 is published at its qualification path. The
+  packaged bootstrap supports explicit migration to the replacement bundled
+  trust root while preserving preferences and cached data. Existing installations
+  need the updated application; a network catalog cannot replace its trust root.
+
 - Qwen3.8-27B FP8 now has exact candidate and BF16 reference manifests plus an
   explicit `fp8_dequant` execution profile. Source quantization metadata is
   preserved and validated bidirectionally; block loading expands fine-grained

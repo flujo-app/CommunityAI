@@ -242,7 +242,7 @@ def fence_route(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fence the Gate 13 route for one exact client")
     parser.add_argument("--target", choices=tuple(PROFILES), required=True)
-    parser.add_argument("--timeout-seconds", type=float, default=900.0)
+    parser.add_argument("--timeout-seconds", type=float, default=1_200.0)
     parser.add_argument("--settle-seconds", type=float, default=30.0)
     args = parser.parse_args(argv)
     try:

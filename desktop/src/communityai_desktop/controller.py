@@ -7,7 +7,9 @@ from typing import Any, Dict
 from communityai_desktop.client import NodeClient
 
 
-def _download_storage_estimate(size_bytes: int) -> str:
+def _download_storage_estimate(size_bytes: int | None) -> str:
+    if size_bytes is None:
+        return "Pending verified shard selection"
     return f"{size_bytes / 1_000_000_000:.1f} GB ({size_bytes:,} bytes)"
 
 
@@ -28,6 +30,8 @@ class DesktopController:
             "openai_base_url": status["openai_base_url"],
             "started_at": status.get("started_at"),
             "runtime_budget": status.get("runtime_budget", {}),
+            "inference_mode": status.get("inference_mode", "auto"),
+            "inference_mode_editable": status.get("inference_mode_editable", False),
             "models": models,
             "auto_selection": auto_selection,
             "workers": workers,
@@ -58,6 +62,7 @@ class DesktopController:
             "total_blocks": total,
             "route_complete": route_complete,
             "peer_count": route.get("peer_count"),
+            "execution": "local" if route.get("source") == "local" else "distributed",
             "selected_whole_shard_bytes": selected_whole_shard_bytes,
             "download_storage_estimate": _download_storage_estimate(selected_whole_shard_bytes),
             "active_requests": model.get("active_requests", 0),

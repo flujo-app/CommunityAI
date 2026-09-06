@@ -76,14 +76,16 @@ def normalize_loopback_url(value: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
-def _normalize_model_download(value: Any) -> Dict[str, int]:
+def _normalize_model_download(value: Any) -> Dict[str, Any]:
     expected_keys = {"schema_version", "selected_whole_shard_bytes"}
     if not isinstance(value, dict) or set(value) != expected_keys:
         raise NodeClientError("Local node model download estimate has an invalid schema")
     if type(value["schema_version"]) is not int or value["schema_version"] != MODEL_DOWNLOAD_SCHEMA_VERSION:
         raise NodeClientError("Local node model download estimate has an unsupported schema version")
     size = value["selected_whole_shard_bytes"]
-    if isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= MAX_SELECTED_WHOLE_SHARD_BYTES:
+    if size is not None and (
+        isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= MAX_SELECTED_WHOLE_SHARD_BYTES
+    ):
         raise NodeClientError("Local node model download estimate has invalid selected whole-shard bytes")
     return {
         "schema_version": MODEL_DOWNLOAD_SCHEMA_VERSION,
@@ -137,7 +139,10 @@ def _normalize_auto_selection(value: Any) -> Dict[str, Any]:
             raise NodeClientError("Local node status has invalid auto selection manifest")
         covered = _optional_number(value.get("covered_blocks"), "auto covered blocks", integer=True, positive=True)
         total = _optional_number(value.get("total_blocks"), "auto total blocks", integer=True, positive=True)
-        peers = _optional_number(value.get("peer_count"), "auto peer count", integer=True, positive=True)
+        local = value.get("source") == "local"
+        peers = _optional_number(value.get("peer_count"), "auto peer count", integer=True, positive=not local)
+        if local and peers != 0:
+            raise NodeClientError("Standalone inference must not claim remote peers")
         if covered is None or total is None or peers is None:
             raise NodeClientError("Local node status omitted automatic route evidence")
         if covered != total:
@@ -482,6 +487,16 @@ class NodeClient:
         return _normalize_policy_snapshot(
             self._request("GET", "/control/v1/contribution-policy"),
             require_revision=True,
+        )
+
+    def set_inference_mode(self, mode: str) -> Dict[str, Any]:
+        if mode not in ("auto", "local_only"):
+            raise ValueError("inference mode must be auto or local_only")
+        policy = self.get_contribution_policy()
+        return self._request(
+            "PUT",
+            "/control/v1/inference-mode",
+            payload={"inference_mode": mode, "expected_config_revision": policy["config_revision"]},
         )
 
     def update_contribution_policy(self, policy: Mapping[str, Any], *, expected_revision: str) -> Dict[str, Any]:

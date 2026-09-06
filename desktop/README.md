@@ -39,9 +39,12 @@ it automatically when `~/.drift/node/node-config.json` is absent. It authenticat
 bounded HTTPS catalog against a bundled root, enforces expiry and persistent rollback
 state, installs only exact digest-matched manifests, generates the seed-backed node
 configuration, and retains an unexpired last-known-good catalog for offline recovery.
-The first signed public-alpha bootstrap and its exact Qwen/Gemma manifests are
-published under [`public-alpha/catalog-v1`](../public-alpha/catalog-v1). Production
-desktop CI verifies and bundles those inputs; an input-free local engineering build
+The original Qwen/Gemma bootstrap remains under
+[`public-alpha/catalog-v1`](../public-alpha/catalog-v1). Desktop CI now verifies and
+bundles the separately published [Qwen sequence 2](../public-alpha/catalog-qwen-v2),
+with local Qwen3.5-0.8B, community Qwen3.8 and an explicit former-root migration.
+This candidate's [product qualification](../docs/QWEN_DESKTOP_PRODUCT_RESULTS.md)
+remains open. An input-free local engineering build
 remains available and honestly renders the missing-catalog state on a truly clean
 install. See [`CATALOG_BOOTSTRAP_V1.md`](../docs/CATALOG_BOOTSTRAP_V1.md).
 
@@ -113,7 +116,7 @@ bundle into the product with:
 
 ```shell
 python build_desktop.py \
-  --publication-bundle ../public-alpha/catalog-v1 \
+  --publication-bundle ../public-alpha/catalog-qwen-v2 \
   --source-commit <full-git-object-id> \
   --build-workflow local
 ```
@@ -134,7 +137,7 @@ completed output in a fresh process with:
 ```shell
 python build_desktop.py \
   --verify-release-output dist/desktop \
-  --publication-bundle ../public-alpha/catalog-v1 \
+  --publication-bundle ../public-alpha/catalog-qwen-v2 \
   --source-commit <full-git-object-id> \
   --build-workflow local \
   --verify-build-environment

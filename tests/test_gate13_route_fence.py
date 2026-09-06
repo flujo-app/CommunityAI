@@ -200,6 +200,16 @@ def test_snapshot_rejects_wrong_model_manifest_even_when_control_coverage_is_com
     assert fence._snapshot(item, opener) is False
 
 
+@pytest.mark.parametrize("target", ["windows", "linux"])
+def test_cli_defaults_to_1200_second_readiness_timeout(monkeypatch, target):
+    run_fence = MagicMock(return_value={"result": "passed"})
+    monkeypatch.setattr(fence, "fence_route", run_fence)
+    monkeypatch.setattr(fence.os, "geteuid", lambda: 0, raising=False)
+
+    assert fence.main(["--target", target]) == 0
+    run_fence.assert_called_once_with(fence.PROFILES[target], timeout_seconds=1_200.0, settle_seconds=30.0)
+
+
 def test_secret_rejects_links(tmp_path):
     target = tmp_path / "target"
     target.write_text("secret", encoding="ascii")

@@ -329,6 +329,14 @@ class NodeClientTests(unittest.TestCase):
         self.assertEqual(snapshot["workers"][0]["state"], "paused")
         self.assertEqual(snapshot["keys"][0]["label"], "bootstrap")
 
+    def test_multishard_model_with_pending_estimate_remains_visible(self):
+        from communityai_desktop.client import _normalize_model_download
+
+        download = _normalize_model_download({"schema_version": 1, "selected_whole_shard_bytes": None})
+        model = DesktopController._model_view({"id": "Qwen3.8", "download": download})
+        self.assertEqual(model["download_storage_estimate"], "Pending verified shard selection")
+        self.assertFalse(model["route_complete"])
+
 
 if __name__ == "__main__":
     unittest.main()

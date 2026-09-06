@@ -36,6 +36,16 @@ catalog, and model transport must remain separate.
 
 ## Required inputs
 
+Build operators must budget for both the unpacked runtime and its install archive.
+The current Windows bundle occupies about 4.5 GB unpacked and 2.7 GB compressed;
+each retained build therefore uses about 7.2 GB before model caches. The builder
+checks available space before compilation, allowing 8 GiB for outputs, 5 GiB for
+staging, and 2 GiB reserve per affected volume. `--output-root` and `--build-root`
+can place both on a larger disk. This is an estimate, not a filesystem reservation.
+Retain qualification receipts and the packages needed for current/replacement
+tests; review superseded build directories before starting another rebuild. Model
+caches and publisher-key backups have separate retention requirements.
+
 Resolve these before touching a clean host:
 
 1. The exact Windows and Linux artifacts from one successful production desktop

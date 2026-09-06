@@ -65,6 +65,53 @@ def allow_cache_writes(cache_dir: Optional[str]):
     return file_lock(Path(cache_dir, BLOCKS_LOCK_FILE), exclusive=True)
 
 
+def _cache_file_identity(path, info):
+    # Some filesystems do not expose stable inode numbers. Count those paths
+    # separately rather than accidentally treating every file as inode zero.
+    return (info.st_dev, info.st_ino) if info.st_ino else ("path", os.path.normcase(os.path.abspath(path)))
+
+
+def _manifest_cache_usage(cache_dir, cache_info):
+    """Count owned artifacts/partials once, including files shared with the Hub cache."""
+    root = Path(cache_dir) / "manifest-artifacts"
+    if root.is_symlink() or getattr(root, "is_junction", lambda: False)():
+        raise RuntimeError("Cannot account for a linked manifest artifact cache directory")
+    if not root.exists():
+        return 0, set()
+
+    def identity(path):
+        info = path.stat()
+        return _cache_file_identity(path, info)
+
+    seen = {
+        identity(file.blob_path) for repo in cache_info.repos for revision in repo.revisions for file in revision.files
+    }
+    protected = set()
+    additional_bytes = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        if directory.is_symlink() or getattr(directory, "is_junction", lambda: False)():
+            raise RuntimeError("Cannot account for a linked manifest artifact cache directory")
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_symlink():
+                    raise RuntimeError("Cannot account for a linked manifest artifact cache entry")
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    # DirEntry.stat() reports zero inode/device fields on Windows.
+                    info = Path(entry.path).stat(follow_symlinks=False)
+                    key = _cache_file_identity(entry.path, info)
+                    protected.add(key)
+                    if key not in seen:
+                        seen.add(key)
+                        additional_bytes += info.st_size
+                else:
+                    raise RuntimeError("Cannot account for a non-file manifest artifact cache entry")
+    return additional_bytes, protected
+
+
 def free_disk_space_for(
     size: int,
     *,
@@ -77,8 +124,11 @@ def free_disk_space_for(
     cache_info = huggingface_hub.scan_cache_dir(cache_dir)
 
     available_space = shutil.disk_usage(cache_dir).free - os_quota
+    manifest_bytes, protected = (0, set())
+    if max_disk_space is not None or size > available_space:
+        manifest_bytes, protected = _manifest_cache_usage(cache_dir, cache_info)
     if max_disk_space is not None:
-        available_space = min(available_space, max_disk_space - cache_info.size_on_disk)
+        available_space = min(available_space, max_disk_space - cache_info.size_on_disk - manifest_bytes)
 
     gib = 1024**3
     logger.debug(f"Disk space: required {size / gib:.1f} GiB, available {available_space / gib:.1f} GiB")
@@ -92,6 +142,9 @@ def free_disk_space_for(
     freed_space = 0
     extra_space_needed = size - available_space
     for file in sorted(cached_files, key=lambda file: file.blob_last_accessed):
+        info = file.blob_path.stat()
+        if _cache_file_identity(file.blob_path, info) in protected:
+            continue  # A manifest snapshot still owns these bytes; deleting its Hub alias frees nothing.
         os.remove(file.file_path)  # Remove symlink
         os.remove(file.blob_path)  # Remove contents
 
@@ -103,8 +156,10 @@ def free_disk_space_for(
         logger.info(f"Removed {len(removed_files)} files to free {freed_space / gib:.1f} GiB of disk space")
         logger.debug(f"Removed paths: {[str(file.file_path) for file in removed_files]}")
 
-    if freed_space < extra_space_needed:
+    remaining_os_shortfall = max(0, size - (shutil.disk_usage(cache_dir).free - os_quota))
+    shortfall = max(extra_space_needed - freed_space, remaining_os_shortfall)
+    if shortfall > 0:
         raise RuntimeError(
-            f"Insufficient disk space to load a block. Please free {(extra_space_needed - freed_space) / gib:.1f} GiB "
+            f"Insufficient disk space to load a block. Please free {shortfall / gib:.1f} GiB "
             f"on the volume for {cache_dir} or increase --max_disk_space if you set it manually"
         )

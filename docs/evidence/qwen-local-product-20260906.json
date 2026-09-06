@@ -1,0 +1,213 @@
+{
+  "recorded_at": "2026-09-06",
+  "scope": "Real standalone Qwen 0.8B through source and Windows packaged localhost API; no peers, verified cache, HF offline mode",
+  "hardware": "NVIDIA RTX 2070 SUPER, 8 GB",
+  "source_model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+  "runs": {
+    "local-gpu-source-1": {
+      "result": "passed",
+      "packaged": false,
+      "offline": true,
+      "device_requested": "cuda:0",
+      "completion_seconds": 7.85899999999674,
+      "completion": {
+        "id": "cmpl-7e4311ff3e6f4bf5b28ad005",
+        "object": "text_completion",
+        "created": 1788654335,
+        "model": "Qwen3.5-0.8B-Local",
+        "choices": [
+          {
+            "index": 0,
+            "text": " Paris.\nThe capital of France is",
+            "finish_reason": "length"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 8,
+          "total_tokens": 13
+        }
+      },
+      "token_budget_rejected": true,
+      "local_only_persisted": true,
+      "stream_cancel_released_lease": true,
+      "node_stopped": true,
+      "memory": {
+        "budget_bytes": 3221225472,
+        "allocated_bytes": 1714515456,
+        "reserved_bytes": 1744830464,
+        "peak_allocated_bytes": 1735198720,
+        "peak_reserved_bytes": 1744830464
+      },
+      "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+      "peer_count": 0,
+      "unauthenticated_rejected": true
+    },
+    "local-gpu-packaged-1": {
+      "result": "passed",
+      "packaged": true,
+      "offline": true,
+      "device_requested": "cuda:0",
+      "completion_seconds": 13.578999999997905,
+      "completion": {
+        "id": "cmpl-be95a6208f034d91b969fe2d",
+        "object": "text_completion",
+        "created": 1788654443,
+        "model": "Qwen3.5-0.8B-Local",
+        "choices": [
+          {
+            "index": 0,
+            "text": " Paris.\nThe capital of France is",
+            "finish_reason": "length"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 8,
+          "total_tokens": 13
+        }
+      },
+      "token_budget_rejected": true,
+      "local_only_persisted": true,
+      "stream_cancel_released_lease": true,
+      "node_stopped": true,
+      "memory": {
+        "budget_bytes": 3221225472,
+        "allocated_bytes": 1714515456,
+        "reserved_bytes": 1744830464,
+        "peak_allocated_bytes": 1735198720,
+        "peak_reserved_bytes": 1744830464
+      },
+      "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+      "peer_count": 0,
+      "unauthenticated_rejected": true
+    },
+    "local-packaged-v6": {
+      "result": "passed",
+      "packaged": true,
+      "offline": true,
+      "device_requested": "cuda:0",
+      "completion_seconds": 12.078000000001339,
+      "completion": {
+        "id": "cmpl-d61742741e99419b99271dcd",
+        "object": "text_completion",
+        "created": 1788667577,
+        "model": "Qwen3.5-0.8B-Local",
+        "choices": [
+          {
+            "index": 0,
+            "text": " Paris.\nThe capital of France is",
+            "finish_reason": "length"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 8,
+          "total_tokens": 13
+        }
+      },
+      "token_budget_rejected": true,
+      "local_only_persisted": true,
+      "stream_cancel_released_lease": true,
+      "node_stopped": true,
+      "memory": {
+        "budget_bytes": 3221225472,
+        "allocated_bytes": 1714515456,
+        "reserved_bytes": 1744830464,
+        "peak_allocated_bytes": 1735198720,
+        "peak_reserved_bytes": 1744830464
+      }
+    }
+  },
+  "packaged_zip_sha256": "fa568d77cdb8c8a693beb33f63ee1f29508436d59bea7797aab55e540f980f45",
+  "new_catalog_clean_install_proved": false,
+  "qwen38_packaged_inference_proved": false,
+  "rtx_30_40_50_qualification": false,
+  "current_package": {
+    "archive": {
+      "artifact_root": "CommunityAI",
+      "entry_count": 5924,
+      "format": "zip",
+      "path": "communityai-desktop-windows.zip",
+      "platform": "Windows",
+      "preserves_executable_modes": false,
+      "preserves_internal_file_symlinks": false,
+      "schema_version": 1,
+      "sha256": "fdf9ba76ed6a5ea8dad326c9656bb4da38cca955b6574264fc925cddf75980d0",
+      "size_bytes": 2692390008
+    },
+    "catalog_digest": "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80",
+    "catalog_sequence": 2,
+    "ui_smoke_passed": true,
+    "onboarding_ui_smoke_passed": true,
+    "runtime": {
+      "application": "CommunityAI-Node",
+      "catalog_bootstrap_schema": 1,
+      "drift": "2.3.0.dev2",
+      "fastapi": "0.141.1",
+      "frozen": true,
+      "hivemind": "1.1.12",
+      "keyring": "25.7.0",
+      "p2pd": "p2pd.exe",
+      "schema_version": 1,
+      "torch": "2.6.0+cu124",
+      "transformers": "5.13.1",
+      "uvicorn": "0.52.4"
+    },
+    "local_inference": {
+      "result": "passed",
+      "completion_seconds": 10.953000000001339,
+      "completion": {
+        "id": "cmpl-58154c9bdd95437692617c86",
+        "object": "text_completion",
+        "created": 1788659442,
+        "model": "Qwen3.5-0.8B-Local",
+        "choices": [
+          {
+            "index": 0,
+            "text": " Paris.\nThe capital of France is",
+            "finish_reason": "length"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 8,
+          "total_tokens": 13
+        }
+      },
+      "token_budget_rejected": true,
+      "local_only_persisted": true,
+      "stream_cancel_released_lease": true,
+      "node_stopped": true
+    },
+    "memory": {
+      "budget_bytes": 3221225472,
+      "allocated_bytes": 1714515456,
+      "reserved_bytes": 1744830464,
+      "peak_allocated_bytes": 1735198720,
+      "peak_reserved_bytes": 1744830464
+    },
+    "source_commit": null,
+    "complete_release_qualification": false
+  },
+  "current_windows_package": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "c95c1b1f94eba68a04ffc54b8dc17a49e425390eca053ef8f3996efdcc9dbf1d",
+    "size_bytes": 2692398749,
+    "binding": {
+      "path": ".gate13-runs/qwen-product-build-v6/desktop-metrics.json",
+      "sha256": "fe79b3477766ff6d28744553b7e49da45dda5190aebacdb6cb9378f47900a0b2"
+    },
+    "real_local_result_binding": {
+      "path": ".gate13-runs/qwen-product-implementation/local-packaged-v6/result.json",
+      "sha256": "7d8379681c985e1ea3371806cfdce187d911e6552cf1eed68850fdef46da3102"
+    }
+  }
+}

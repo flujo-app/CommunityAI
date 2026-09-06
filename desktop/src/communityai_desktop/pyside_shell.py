@@ -508,6 +508,15 @@ def run(
             self.auto_selection_detail.setWordWrap(True)
             info_layout.addWidget(self.auto_selection_title)
             info_layout.addWidget(self.auto_selection_detail)
+            self.inference_mode_button = QPushButton("Use only this computer")
+            self.inference_mode_button.setAccessibleName("Switch local-only inference")
+            self.inference_mode_button.clicked.connect(self._toggle_inference_mode)
+            info_layout.addWidget(self.inference_mode_button)
+            info_layout.addWidget(
+                label(
+                    "Changes apply to your next request. An active answer finishes on its current model.", "bodyMuted"
+                )
+            )
             layout.addWidget(info)
             self.models_list_layout = QVBoxLayout()
             self.models_list_layout.setSpacing(10)
@@ -776,6 +785,10 @@ def run(
             auto_selection = snapshot["auto_selection"]
             self.auto_selection_title.setText(auto_selection["title"])
             self.auto_selection_detail.setText(auto_selection["reason"])
+            self.inference_mode_button.setText(
+                "Allow community models" if snapshot.get("inference_mode") == "local_only" else "Use only this computer"
+            )
+            self.inference_mode_button.setEnabled(snapshot.get("inference_mode_editable", False))
             ready_models = [model for model in snapshot["models"] if model["route_complete"]]
             self.models_metric.setText(str(len(ready_models)))
             network = snapshot["network"]
@@ -802,7 +815,9 @@ def run(
             peers = model.get("peer_count")
             detail = f"{model['coverage']} blocks"
             availability = "Available now" if model["route_complete"] else "Incomplete route"
-            if isinstance(peers, int):
+            if model.get("execution") == "local":
+                detail = f"Runs on this computer  •  {availability}"
+            elif isinstance(peers, int):
                 peer_label = "peer" if peers == 1 else "peers"
                 detail = f"{detail}  •  {peers} {peer_label}  •  {availability}"
             else:
@@ -1175,6 +1190,16 @@ def run(
                 lambda: self._controller.set_workers_enabled(worker_ids, enabled),
                 lambda result: self.refresh(),
                 self._sharing_action_failed,
+            )
+
+        def _toggle_inference_mode(self) -> None:
+            if self._controller is None or self._busy:
+                return
+            mode = "auto" if self._snapshot.get("inference_mode") == "local_only" else "local_only"
+            self._submit(
+                lambda: self._controller.client.set_inference_mode(mode),
+                lambda _: self.refresh(),
+                lambda message: self.auto_selection_detail.setText(str(message)[:300]),
             )
 
         def _toggle_all_sharing(self) -> None:

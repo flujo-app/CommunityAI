@@ -1128,7 +1128,92 @@ class GcpProvider:
         )
         return bundle
 
+    def _write_route_log(self, stage: str, name: str, text: str) -> Path:
+        root = self.output_root / "route-diagnostics" / stage
+        root.mkdir(parents=True, exist_ok=True)
+        # These are local diagnostic logs, not public evidence. Do not retain signed URLs or bearer tokens.
+        text = re.sub(r"https?://\S+", "<redacted-url>", text)
+        text = re.sub(r"(?i)\bBearer\s+\S+", "Bearer <redacted>", text)
+        path = root / f"{name}.log"
+        with path.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return path
+
+    def _logged_route_ssh(
+        self, stage: str, name: str, command: str, *, action: str, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        output: Any = None
+        try:
+            output = self._ssh(self.route, command, action=action, timeout=timeout, check=False)
+            return output
+        except Exception as exc:
+            # LoggedRunner chains TimeoutExpired, which carries the partial stdout/stderr.
+            output = exc.__cause__ or exc
+            raise
+        finally:
+            if output is not None:
+                status = (
+                    f"{type(output).__name__}: {output}"
+                    if isinstance(output, BaseException)
+                    else f"exit_code={output.returncode}"
+                )
+                parts = [status]
+                for channel in ("stdout", "stderr"):
+                    value = getattr(output, channel, None) or ""
+                    if isinstance(value, bytes):
+                        value = value.decode("utf-8", errors="replace")
+                    parts.append(f"{channel.upper()}:\n{value}")
+                try:
+                    self._write_route_log(stage, name, "\n".join(parts))
+                except OSError as log_error:
+                    self.progress(f"Could not save route {name} output: {log_error}")
+                    if not isinstance(output, BaseException):
+                        raise
+
+    def _capture_route_failure(self, stage: str, failure: Exception) -> str:
+        try:
+            path = self._write_route_log(stage, "failure", f"{type(failure).__name__}: {failure}\n")
+            errors = []
+            commands = (
+                (
+                    "services",
+                    "sudo systemctl show communityai-qwen.service communityai-gemma.service "
+                    "-p Id -p ActiveState -p SubState -p MainPID -p ExecMainStatus -p Result -p NRestarts",
+                ),
+                (
+                    "journal",
+                    "sudo journalctl -b -u communityai-qwen.service -u communityai-gemma.service "
+                    "-u google-startup-scripts.service --no-pager -o short-iso",
+                ),
+            )
+            for name, command in commands:
+                try:
+                    result = self._logged_route_ssh(
+                        stage, name, command, action=f"Saving route failure {name}", timeout=90
+                    )
+                    if result.returncode != 0:
+                        errors.append(f"{name}: exit code {result.returncode}")
+                except Exception as exc:
+                    errors.append(f"{name}: {type(exc).__name__}: {exc}")
+            summary = "Collection incomplete: " + "; ".join(errors) if errors else "Collection completed"
+            self._write_route_log(stage, "collection", summary + "\n")
+            message = f"route diagnostics: {path.parent}; {summary}"
+        except Exception as exc:
+            # Diagnostics must not replace the original failure or prevent cloud cleanup.
+            message = f"route diagnostic collection failed ({type(exc).__name__}: {exc})"
+        self.progress(message)
+        return message
+
     def prepare_route(self) -> Mapping[str, Any]:
+        try:
+            return self._prepare_route()
+        except Exception as exc:
+            diagnostic = self._capture_route_failure("setup", exc)
+            raise Gate13CloudError(f"{exc}; {diagnostic}") from exc
+
+    def _prepare_route(self) -> Mapping[str, Any]:
         value = self._describe_instance(self.route)
         if value is None:
             raise Gate13CloudError("route VM is absent")
@@ -1161,14 +1246,14 @@ class GcpProvider:
             action="Staging the immutable route bundle",
             timeout=1_800,
         )
-        setup = self._ssh(
-            self.route,
+        setup = self._logged_route_ssh(
+            "setup",
+            "command",
             "install -d -m 0755 /tmp/gate13-route/catalog-v1 && "
             "tar -xf /tmp/gate13-route/catalog-v1.tar -C /tmp/gate13-route/catalog-v1 "
             "--strip-components=2 && sudo bash /tmp/gate13-route/gate13_route_setup.sh",
             action="Installing and starting the route services",
             timeout=7_200,
-            check=False,
         )
         if setup.returncode != 0:
             combined = "\n".join(part for part in (setup.stdout, setup.stderr) if part)
@@ -1194,14 +1279,22 @@ class GcpProvider:
         }
 
     def fence_route(self, platform: str) -> Mapping[str, Any]:
-        result = self._ssh(
-            self.route,
+        try:
+            return self._fence_route(platform)
+        except Exception as exc:
+            diagnostic = self._capture_route_failure(f"{platform}-fence", exc)
+            raise Gate13CloudError(f"{exc}; {diagnostic}") from exc
+
+    def _fence_route(self, platform: str) -> Mapping[str, Any]:
+        result = self._logged_route_ssh(
+            f"{platform}-fence",
+            "command",
             f"sudo /opt/communityai/venv/bin/python "
             f"/tmp/gate13_route_fence.py --target {platform} "
-            "--timeout-seconds 900 --settle-seconds 30",
+            "--timeout-seconds 1200 --settle-seconds 30",
             action=f"Fencing the route for {platform}",
-            timeout=1_200,
-            check=False,
+            # Allow two 300s service actions, 1200s readiness, and SSH/settle overhead.
+            timeout=2_100,
         )
         value = _strict_terminal_object(result.stdout, f"{platform} route fence")
         if value.get("result") != "passed" or value.get("target") != platform:

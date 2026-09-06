@@ -111,6 +111,43 @@ def test_chat_completion_non_stream(api):
     assert api.model.last_gen_kwargs["do_sample"] is False
 
 
+@pytest.mark.parametrize("thinking", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+def test_chat_reasoning_switch_reaches_template_only(thinking, stream):
+    class RecordingTokenizer(FakeTokenizer):
+        def apply_chat_template(self, messages, *, enable_thinking, **kwargs):
+            self.thinking = enable_thinking
+            return super().apply_chat_template(messages, **kwargs)
+
+    tokenizer, model = RecordingTokenizer(), FakeModel()
+    client = TestClient(create_app(model, tokenizer, model_name="fake/model"))
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Answer briefly"}],
+            "enable_thinking": thinking,
+            "stream": stream,
+            "max_tokens": 3,
+        },
+    )
+    assert response.status_code == 200
+    assert tokenizer.thinking is thinking
+    assert "enable_thinking" not in model.last_gen_kwargs
+
+
+@pytest.mark.parametrize("thinking", ["false", 0, {}, []])
+def test_chat_reasoning_switch_rejects_non_boolean_values(api, thinking):
+    response = api.client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "hi"}],
+            "enable_thinking": thinking,
+        },
+    )
+    assert response.status_code == 422
+    assert api.model.last_gen_kwargs is None
+
+
 def test_requested_model_must_resolve_exactly(api):
     response = api.client.post(
         "/v1/chat/completions",

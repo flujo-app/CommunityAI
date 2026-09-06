@@ -1,0 +1,158 @@
+{
+  "run_id": "q38pm-20260906-081449-5fdb",
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "overall_runner_result": "failed",
+  "topology": "GCP L4 + Azure T4 + two E2 CPU workers; assigned 16-block spans",
+  "source_commit": null,
+  "result": "failed",
+  "scope": "Windows v9 packaged public-policy stop/fallback/rejoin and offline cache restart attempt",
+  "node_sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45",
+  "node_stopped": true,
+  "error": "TimeoutError: Public catalog route thresholds were not satisfied",
+  "community_completion": {
+    "response": {
+      "id": "cmpl-25fc5dee16354181967be1b8",
+      "object": "text_completion",
+      "created": 1788684763,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "choices": [
+        {
+          "index": 0,
+          "text": " Paris.\n",
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 78.01600000000326
+  },
+  "community_chat": {
+    "response": {
+      "id": "chatcmpl-e9cafbbd117e40c89acce0b1",
+      "object": "chat.completion",
+      "created": 1788684903,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Paris\n"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 31,
+        "completion_tokens": 4,
+        "total_tokens": 35
+      }
+    },
+    "seconds": 140.59399999999732
+  },
+  "peak_observed_process_tree_rss_bytes": 4962603008,
+  "worker_outage": {
+    "scope": "CPU worker service stop and same-identity restart",
+    "stop": {
+      "instance": "q38pm-20260906-081449-5fdb-w2",
+      "action": "stop",
+      "before": "MainPID=4324\nKillMode=control-group\nActiveState=active\n",
+      "after": "MainPID=0\nKillMode=control-group\nActiveState=failed\n",
+      "observed_at_unix": 1788684957.1369302
+    },
+    "local_completion": {
+      "response": {
+        "id": "cmpl-941fabdea1a04cfa9ec6b15f",
+        "object": "text_completion",
+        "created": 1788684967,
+        "model": "Qwen3.5-0.8B-Local",
+        "choices": [
+          {
+            "index": 0,
+            "text": " Paris.\n",
+            "finish_reason": "length"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 3,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 10.438000000009197
+    },
+    "restart": {
+      "instance": "q38pm-20260906-081449-5fdb-w2",
+      "action": "start",
+      "before": "MainPID=0\nKillMode=control-group\nActiveState=failed\n",
+      "after": "MainPID=5191\nKillMode=control-group\nActiveState=active\n",
+      "observed_at_unix": 1788684985.3282397
+    }
+  },
+  "selected_before_stop": {
+    "selector": "auto",
+    "status": "selected",
+    "model": "Qwen3.8 27B FP8 Dequant",
+    "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+    "reason": "Selected catalog priority 1: live discovery reports a complete 64/64-block route from 4 verified peers.",
+    "covered_blocks": 64,
+    "total_blocks": 64,
+    "peer_count": 4,
+    "source": "runtime"
+  },
+  "fallback": {
+    "selector": "auto",
+    "status": "selected",
+    "model": "Qwen3.5-0.8B-Local",
+    "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+    "reason": "Selected a verified standalone model on this computer.",
+    "covered_blocks": 24,
+    "total_blocks": 24,
+    "peer_count": 0,
+    "source": "local"
+  },
+  "passed_observations": [
+    "Automatic Qwen selection, actual completion and chat",
+    "Confirmed worker stop followed by local selection and actual local tokens"
+  ],
+  "unfinished": [
+    "Automatic return to Qwen timed out ten minutes after the restart action",
+    "Offline-Hub cache restart was not reached"
+  ],
+  "limits": [
+    "Readiness rejection does not identify a unique root cause; no retained per-probe timing in the frozen v9 log",
+    "Reused independently verified client cache; no fresh acquisition claim",
+    "Assigned cloud spans and explicit owned seeds; not autonomous desktop formation"
+  ],
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-implementation/remote-packaged-v9-recovery-retry/result.json",
+      "sha256": "3978008ab1510c11a175cffd1d413e1d7c3b48fe7e40c91c7b227571019172b6"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-081449-5fdb/result.json",
+      "sha256": "21c01588085064e6c95ead6e4d49b30b26a4697bbda5c8a48bd99a302bee9104"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-081449-5fdb/packaged-harness-final-source.json",
+      "sha256": "dde8783396a7033334954254f19961ae3f3fd3d0d2de92d2b18796b64eb642bf"
+    }
+  ]
+}

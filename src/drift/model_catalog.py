@@ -383,7 +383,7 @@ class CatalogRung:
             raise ModelCatalogError(f"{name}.id must match {_RUNG_ID_RE.pattern}")
         minimum_replicas = _require_int(source["minimum_replicas"], f"{name}.minimum_replicas", minimum=1)
         minimum_surviving = _require_int(
-            source["minimum_surviving_replicas"], f"{name}.minimum_surviving_replicas", minimum=1
+            source["minimum_surviving_replicas"], f"{name}.minimum_surviving_replicas", minimum=0
         )
         if minimum_surviving > minimum_replicas:
             raise ModelCatalogError(f"{name}.minimum_surviving_replicas cannot exceed minimum_replicas")
@@ -432,6 +432,7 @@ class CatalogModel:
     total_parameters: int
     active_parameters: int
     weight_bytes: int
+    execution: Optional[str] = None
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any], *, index: int) -> "CatalogModel":
@@ -446,7 +447,10 @@ class CatalogModel:
             "active_parameters",
             "weight_bytes",
         )
-        _strict_fields(source, name, required=fields)
+        _strict_fields(source, name, required=fields, optional=("execution",))
+        execution = source.get("execution")
+        if "execution" in source and execution not in ("local", "distributed"):
+            raise ModelCatalogError(f"{name}.execution must be local or distributed")
         urls_value = source["manifest_urls"]
         if not isinstance(urls_value, list) or not urls_value:
             raise ModelCatalogError(f"{name}.manifest_urls must be a non-empty array")
@@ -468,10 +472,11 @@ class CatalogModel:
             total_parameters=total_parameters,
             active_parameters=active_parameters,
             weight_bytes=_require_int(source["weight_bytes"], f"{name}.weight_bytes", minimum=1),
+            execution=execution,
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "manifest_digest": self.manifest_digest,
             "manifest_urls": list(self.manifest_urls),
             "rung": self.rung_id,
@@ -480,6 +485,9 @@ class CatalogModel:
             "active_parameters": self.active_parameters,
             "weight_bytes": self.weight_bytes,
         }
+        if self.execution is not None:
+            result["execution"] = self.execution
+        return result
 
 
 @dataclass(frozen=True)
@@ -525,8 +533,8 @@ class ModelCatalog:
             raise ModelCatalogError("every catalog model must reference a declared rung")
         for rung_id in rung_ids:
             rung_models = [model for model in models if model.rung_id == rung_id]
-            if len(rung_models) < 2:
-                raise ModelCatalogError(f"catalog rung {rung_id!r} must approve at least two model options")
+            if not rung_models:
+                raise ModelCatalogError(f"catalog rung {rung_id!r} must approve at least one model")
             primary_count = sum(model.role == "primary" for model in rung_models)
             if primary_count != 1:
                 raise ModelCatalogError(f"catalog rung {rung_id!r} must declare exactly one primary model")
@@ -838,7 +846,7 @@ def select_highest_eligible_model(
     *,
     now: Optional[float] = None,
 ) -> Tuple[Optional[CatalogModel], Tuple[ModelEligibility, ...]]:
-    """Select the highest safe rung, preferring its primary over its standby.
+    """Select the highest safe rung, preferring its primary over any optional standby.
 
     This only selects a manifest for a *new* request. It does not mutate aliases,
     stop workers, or move an in-flight request between manifests.

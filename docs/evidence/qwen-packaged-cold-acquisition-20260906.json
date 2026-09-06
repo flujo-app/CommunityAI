@@ -1,0 +1,184 @@
+{
+  "result": "passed",
+  "scope": "packaged-direct-Hub-cold-client-artifact-acquisition",
+  "packaged": true,
+  "node_sha256": "80957b3569ed9c976273eca9d5061e1d604bb04d380cd65e2f578d41f67bc1f1",
+  "install_archive": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "cfbba0ab2d5c1fed6216a049b979d75019e521eb10bdb93b63e938a5b0a39fac",
+    "size_bytes": 2692397285
+  },
+  "manifest_file_sha256": "0591317317adf4752425725658732997597c51150a7b165bcd674cbc319bf2a1",
+  "started_at_unix": 1788672920.1102881,
+  "maximum_seconds": 10800,
+  "acquisition": {
+    "acquired_at_unix": 1788680102,
+    "artifacts": [
+      {
+        "elapsed_seconds": 0.6119755000036093,
+        "materialization_attempts": 1,
+        "path": "chat_template.jinja",
+        "resumed_from_bytes": [],
+        "resumptions": 0,
+        "role": "chat_template",
+        "sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "size_bytes": 8952
+      },
+      {
+        "elapsed_seconds": 0.4899148000040441,
+        "materialization_attempts": 1,
+        "path": "config.json",
+        "resumed_from_bytes": [],
+        "resumptions": 0,
+        "role": "config",
+        "sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc",
+        "size_bytes": 51350
+      },
+      {
+        "elapsed_seconds": 1.6342221000013524,
+        "materialization_attempts": 1,
+        "path": "merges.txt",
+        "resumed_from_bytes": [],
+        "resumptions": 0,
+        "role": "tokenizer",
+        "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+        "size_bytes": 3353259
+      },
+      {
+        "elapsed_seconds": 0.5074022999979206,
+        "materialization_attempts": 1,
+        "path": "model.safetensors.index.json",
+        "resumed_from_bytes": [],
+        "resumptions": 0,
+        "role": "weight_index",
+        "sha256": "f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2",
+        "size_bytes": 137335
+      },
+      {
+        "elapsed_seconds": 7150.6574702,
+        "materialization_attempts": 4,
+        "path": "outside.safetensors",
+        "resumed_from_bytes": [
+          1098907648,
+          1098907648,
+          4362076160
+        ],
+        "resumptions": 3,
+        "role": "weight",
+        "sha256": "ddff1d6665a2b39f2612fce0ef955e2436724c565bfbcbc127c7ffd078b698ff",
+        "size_bytes": 6007102112
+      },
+      {
+        "elapsed_seconds": 15.560392800005502,
+        "materialization_attempts": 1,
+        "path": "tokenizer.json",
+        "resumed_from_bytes": [],
+        "resumptions": 0,
+        "role": "tokenizer",
+        "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+        "size_bytes": 12809320
+      },
+      {
+        "elapsed_seconds": 0.5792560000045341,
+        "materialization_attempts": 1,
+        "path": "tokenizer_config.json",
+        "resumed_from_bytes": [],
+        "resumptions": 0,
+        "role": "tokenizer",
+        "sha256": "b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27",
+        "size_bytes": 17928
+      },
+      {
+        "elapsed_seconds": 2.311231300001964,
+        "materialization_attempts": 1,
+        "path": "vocab.json",
+        "resumed_from_bytes": [],
+        "resumptions": 0,
+        "role": "tokenizer",
+        "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "size_bytes": 6722759
+      }
+    ],
+    "model": {
+      "dtype": "bfloat16",
+      "id": "Qwen3.8 27B FP8 Dequant",
+      "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+      "repository": "Qwen/Qwen3.8-27B-FP8",
+      "revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
+    },
+    "privacy": {
+      "credentials_retained": false,
+      "local_paths_retained": false,
+      "response_bodies_retained": false,
+      "urls_retained": false
+    },
+    "runtime": {
+      "drift": "2.3.0.dev2",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "python": "3.12.9"
+    },
+    "schema_version": 1,
+    "selection": {
+      "artifact_bytes": 6030203015,
+      "artifact_count": 8,
+      "startup_artifact_paths": [
+        "chat_template.jinja",
+        "config.json",
+        "merges.txt",
+        "model.safetensors.index.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json"
+      ],
+      "weight_artifact_bytes": 6007102112,
+      "weight_artifact_paths": [
+        "outside.safetensors"
+      ]
+    },
+    "storage": {
+      "cache_bytes_after": 6030203015,
+      "cache_bytes_before": 0,
+      "cache_growth_bytes": 6030203015,
+      "cold_start": true,
+      "verified": true
+    },
+    "transfer": {
+      "completed": true,
+      "direct_upstream_transfer": true,
+      "elapsed_seconds": 7172.387451099996,
+      "max_resumptions": 3,
+      "mirror_used": false,
+      "resumptions": 3,
+      "source_class_verified": true,
+      "transport_override_present": false
+    }
+  },
+  "seconds": 7185.235951900482,
+  "node_stopped": true,
+  "limits": [
+    "Acquisition only: no distributed generation or desktop GUI inference claim",
+    "Frozen Windows v7 edge-acquire; the reusable cache will be checked by the later v9 client",
+    "One observed connection; elapsed time is not a general bandwidth guarantee"
+  ],
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-client-acquisition-v7/result.json",
+      "sha256": "06e9b5ec058785bd7fe60f42b0bd1ccdbd9c9dfee112e6cb78eb2cec77c90a50"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-client-acquisition-v7/acquisition.json",
+      "sha256": "44b071d16344c3103d3868ffd800de191b14b9b25755f13d1bc62350bdd78c09"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-build-v7/CommunityAI/node/CommunityAI-Node.exe",
+      "sha256": "80957b3569ed9c976273eca9d5061e1d604bb04d380cd65e2f578d41f67bc1f1"
+    }
+  ]
+}

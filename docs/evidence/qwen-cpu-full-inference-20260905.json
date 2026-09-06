@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "run_id": "q38-20260905-205155-ed78",
+  "zone": "us-central1-b",
+  "result": "passed",
+  "topology": "four CPU workers, 16 blocks each, plus CPU client/coordinator",
+  "hosts": [
+    {
+      "role": "c",
+      "machine_type": "e2-standard-4",
+      "original_instance_id": "407081139391512573",
+      "replacement_instance_id": null
+    },
+    {
+      "role": "w0",
+      "machine_type": "e2-highmem-4",
+      "original_instance_id": "7246986295379050346",
+      "replacement_instance_id": null
+    },
+    {
+      "role": "w1",
+      "machine_type": "e2-highmem-4",
+      "original_instance_id": "4767824729953353578",
+      "replacement_instance_id": "1182278691429890340"
+    },
+    {
+      "role": "w2",
+      "machine_type": "e2-highmem-4",
+      "original_instance_id": "5533403870236065642",
+      "replacement_instance_id": null
+    },
+    {
+      "role": "w3",
+      "machine_type": "e2-highmem-4",
+      "original_instance_id": "4036923224338022250",
+      "replacement_instance_id": null
+    }
+  ],
+  "source_bundle_sha256": "0f1751c96238a5ef183500aff032c04169217e6c43c9cbc4138c1a21c77a8eca",
+  "tested_host_script_sha256": "0da84c6e0bca09bc88c33ed966f028e564c3f33688a631c448cc33f5eadb6f90",
+  "tested_server_sha256": "550a0b9475cca3470510ff02a88c383827a41bb13028f599f66e04ce03861b4f",
+  "retained_client_result_sha256": "029a25c8e6340338c837d61b2e5ad5b091a73737dccba32138501b91981870b4",
+  "client_pid_before_and_during_resume": 4839,
+  "local_controller_resumed_after_scp_failure": true,
+  "client_evidence": {
+    "baseline": {
+      "route": [
+        {
+          "end": 16,
+          "peer_id": "QmbHicR7BoXzyNsHGvLxfTTivukR1RUHqcn4jBeqk2qmoK",
+          "session_id": "8721fa9a-2e1a-42b9-80d0-da85dfc3c5bb",
+          "start": 0
+        },
+        {
+          "end": 32,
+          "peer_id": "QmemXP3tT2qbhQ9MvG8t2At6Dw6jH9ps82LvnX5jp1ojDk",
+          "session_id": "76c5fa63-1204-41f3-8059-7ef6efa88e00",
+          "start": 16
+        },
+        {
+          "end": 48,
+          "peer_id": "QmSfECfZKd7zpZJBmBrWpPsrTuvmXB3GejLwduna4cqGkq",
+          "session_id": "92309163-67af-4bd6-bf58-f78deb2199c0",
+          "start": 32
+        },
+        {
+          "end": 64,
+          "peer_id": "Qmar8Js57J2kT9d6C9CAdNKEYHQKAoMc8Ekn4mTLTy8UAj",
+          "session_id": "1eae609b-7b74-48d6-93f6-119a8e22fca4",
+          "start": 48
+        }
+      ],
+      "seconds": 148.6120492399998,
+      "text": " Paris.\n",
+      "token_ids": [
+        11751,
+        13,
+        198
+      ]
+    },
+    "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+    "model_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+    "observed_at_unix": 1788644338.2040305,
+    "recovery": {
+      "after_route": [
+        {
+          "end": 16,
+          "peer_id": "QmbHicR7BoXzyNsHGvLxfTTivukR1RUHqcn4jBeqk2qmoK",
+          "session_id": "c2b2b08a-77de-4c03-bc8b-febe6d12b8cc",
+          "start": 0
+        },
+        {
+          "end": 32,
+          "peer_id": "QmSgJ3yctUZgkp74NACwFsD2hTDnYEiTddW9kHH1oZh6jq",
+          "session_id": "28b0020e-d34e-4458-9998-cd708e4f43bd",
+          "start": 16
+        },
+        {
+          "end": 48,
+          "peer_id": "QmSfECfZKd7zpZJBmBrWpPsrTuvmXB3GejLwduna4cqGkq",
+          "session_id": "c71ad71a-95e2-44b9-8ec9-eec58b6105e0",
+          "start": 32
+        },
+        {
+          "end": 64,
+          "peer_id": "Qmar8Js57J2kT9d6C9CAdNKEYHQKAoMc8Ekn4mTLTy8UAj",
+          "session_id": "3083ed6a-239d-443e-919c-bdc1ed16339b",
+          "start": 48
+        }
+      ],
+      "before_route": [
+        {
+          "end": 16,
+          "peer_id": "QmbHicR7BoXzyNsHGvLxfTTivukR1RUHqcn4jBeqk2qmoK",
+          "session_id": "c2b2b08a-77de-4c03-bc8b-febe6d12b8cc",
+          "start": 0
+        },
+        {
+          "end": 32,
+          "peer_id": "QmemXP3tT2qbhQ9MvG8t2At6Dw6jH9ps82LvnX5jp1ojDk",
+          "session_id": "1f503fa0-5db5-4c12-a295-1a432669f48e",
+          "start": 16
+        },
+        {
+          "end": 48,
+          "peer_id": "QmSfECfZKd7zpZJBmBrWpPsrTuvmXB3GejLwduna4cqGkq",
+          "session_id": "c71ad71a-95e2-44b9-8ec9-eec58b6105e0",
+          "start": 32
+        },
+        {
+          "end": 64,
+          "peer_id": "Qmar8Js57J2kT9d6C9CAdNKEYHQKAoMc8Ekn4mTLTy8UAj",
+          "session_id": "3083ed6a-239d-443e-919c-bdc1ed16339b",
+          "start": 48
+        }
+      ],
+      "matches_baseline": true,
+      "position_after": 7,
+      "position_before": 5,
+      "same_session": true,
+      "seconds": 307.51290894600015,
+      "text": " Paris.\n",
+      "token_ids": [
+        11751,
+        13,
+        198
+      ]
+    },
+    "result": "passed",
+    "versions": {
+      "hivemind": "1.1.12",
+      "python": "3.12.3",
+      "torch": "2.6.0+cpu",
+      "transformers": "5.13.1"
+    }
+  },
+  "cleanup": {
+    "errors": [],
+    "remaining": {
+      "disks": [],
+      "firewall-rules": [],
+      "instances": []
+    },
+    "verified": true
+  },
+  "limitations": [
+    "Three generated tokens; no long-context or concurrency qualification.",
+    "Source runtime, not packaged desktop qualification.",
+    "No stock-Transformers logit parity or GPU performance claim."
+  ]
+}

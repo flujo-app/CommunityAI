@@ -1,0 +1,22 @@
+{
+  "project": "community-ai-506321",
+  "region": "us-central1",
+  "zone": "us-central1-b",
+  "network": "communityai-discovery",
+  "subnet": "communityai-us-central1",
+  "image": "ubuntu-2404-noble-amd64-v20260826",
+  "image_project": "ubuntu-os-cloud",
+  "gpu_image": "ubuntu-2404-noble-amd64-v20260826",
+  "gpu_image_project": "ubuntu-os-cloud",
+  "ubuntu_driver_version": "580.173.02-0ubuntu0.24.04.1",
+  "gpu_machine_type": "g2-standard-8",
+  "worker_machine_type": "e2-highmem-4",
+  "client_machine_type": "e2-standard-4",
+  "disk_gb": 80,
+  "max_duration_seconds": 21600,
+  "spans": ["0:16", "16:32", "32:48", "48:64"],
+  "azure_subscription": "49af46a3-e748-4cdf-b5e2-fdc381b2333a",
+  "azure_location": "eastus",
+  "azure_size": "Standard_NC4as_T4_v3",
+  "azure_image": "Canonical:ubuntu-24_04-lts:server:24.04.202608270"
+}

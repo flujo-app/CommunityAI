@@ -847,7 +847,7 @@ class ManifestArtifactVerifier:
                     Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
                     with allow_cache_writes(self.cache_dir):
                         free_disk_space_for(
-                            artifact.size,
+                            max(0, artifact.size - self.partial_size(artifact.path)),
                             cache_dir=self.cache_dir,
                             max_disk_space=self.max_disk_space,
                         )
@@ -964,6 +964,22 @@ class ManifestArtifactVerifier:
 
             url = hf_hub_url(self.repository, artifact.path, revision=self.revision)
             headers = build_hf_headers(token=self.token, library_name="drift", library_version="2")
+            from drift.utils.hub_ranges import RANGE_BYTES, download_ranges
+
+            if artifact.size > RANGE_BYTES:
+                try:
+                    download_ranges(url, headers, partial, size=artifact.size, offset=offset)
+                    _verify_artifact_file(artifact, partial)
+                except (OSError, requests.RequestException) as exc:
+                    raise ManifestTransferInterrupted(
+                        f"Interrupted download of {artifact.path} at byte {offset}: {type(exc).__name__}"
+                    ) from exc
+                except ManifestError:
+                    if partial.exists() and partial.stat().st_size >= artifact.size:
+                        partial.unlink()
+                    raise
+                _replace_verified_artifact(partial, final)
+                return str(final)
             if offset:
                 headers["Range"] = f"bytes={offset}-"
 

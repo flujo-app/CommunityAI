@@ -912,7 +912,8 @@ def test_interrupted_download_can_resume_and_is_reverified(tmp_path, monkeypatch
     monkeypatch.setattr(
         "huggingface_hub.hf_hub_url", lambda *args, **kwargs: f"http://127.0.0.1:{server.server_port}/weights.bin"
     )
-    monkeypatch.setattr("drift.utils.disk_cache.free_disk_space_for", lambda *args, **kwargs: None)
+    reservations = []
+    monkeypatch.setattr("drift.utils.disk_cache.free_disk_space_for", lambda size, **kwargs: reservations.append(size))
     try:
         with pytest.raises(ManifestError, match="Interrupted download"):
             verifier.ensure_path("weights.bin", allowed_roles={"weight"})
@@ -923,6 +924,7 @@ def test_interrupted_download_can_resume_and_is_reverified(tmp_path, monkeypatch
         assert verifier.ensure_path("weights.bin", allowed_roles={"weight"}) == final.absolute()
         assert final.read_bytes() == resumed_payload
         assert InterruptOnceHandler.requests == [None, f"bytes={1024 * 1024}-"]
+        assert reservations == [len(resumed_payload), len(resumed_payload) - 1024 * 1024]
     finally:
         server.shutdown()
         server.server_close()

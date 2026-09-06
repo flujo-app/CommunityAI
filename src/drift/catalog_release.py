@@ -14,6 +14,7 @@ import re
 import secrets
 import shutil
 import stat
+import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 from urllib.parse import urlsplit
@@ -213,6 +214,11 @@ def verify_catalog_publication_bundle(
     selectors: dict[str, str] = {}
     for model in catalog.models:
         manifest = manifest_by_digest[model.manifest_digest]
+        if manifest.model.gated:
+            raise CatalogBootstrapError(
+                f"Publication manifest {manifest.digest_id} is gated; CommunityAI catalogs require "
+                "unauthenticated, no-consent artifact access"
+            )
         declared_weight_bytes = sum(artifact.size for artifact in manifest.artifacts if artifact.role == "weight")
         if model.weight_bytes != declared_weight_bytes:
             raise CatalogBootstrapError(
@@ -229,10 +235,10 @@ def verify_catalog_publication_bundle(
             selectors[folded] = manifest.digest_id
 
     for rung in catalog.rungs:
-        if rung.minimum_replicas < 1 or rung.minimum_independent_routes < 1 or rung.minimum_surviving_replicas < 1:
+        if rung.minimum_replicas < 1 or rung.minimum_independent_routes < 1 or rung.minimum_surviving_replicas < 0:
             raise CatalogBootstrapError(
                 f"Publication rung {rung.rung_id!r} must require at least one complete replica, "
-                "one route, and one surviving replica"
+                "one route, and a nonnegative surviving-replica requirement"
             )
 
     return {
@@ -519,6 +525,19 @@ def load_catalog_publication_bundle(
     return index
 
 
+def _replace_bundle_directory(source: Path, destination: Path) -> None:
+    # Windows scanners can briefly retain a handle after verification closes it.
+    # Retry the same atomic operation; never fall back to a partially copied bundle.
+    for attempt in range(6):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in (5, 32, 33) or attempt == 5:
+                raise
+            time.sleep(0.1)
+
+
 def write_catalog_publication_bundle(
     output_directory: Path | str,
     bootstrap: CatalogBootstrapConfig,
@@ -601,12 +620,12 @@ def write_catalog_publication_bundle(
             raise CatalogBootstrapError("Catalog publication bundle validation returned an unexpected index")
 
         if resolved.exists():
-            os.replace(resolved, backup)
+            _replace_bundle_directory(resolved, backup)
         try:
-            os.replace(staging, resolved)
+            _replace_bundle_directory(staging, resolved)
         except OSError:
             if backup.exists() and not resolved.exists():
-                os.replace(backup, resolved)
+                _replace_bundle_directory(backup, resolved)
             raise
         if backup.exists():
             shutil.rmtree(backup)

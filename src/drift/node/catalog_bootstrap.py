@@ -7,6 +7,7 @@ manifest implementation already live.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
@@ -31,9 +32,12 @@ from drift.model_catalog import (
 )
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError
-from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
-from drift.node.config_lock import _acquire as _acquire_process_lock
-from drift.node.config_lock import _release as _release_process_lock
+from drift.node.config_lock import (
+    NodeConfigWriteLockError,
+    _acquire as _acquire_process_lock,
+    _release as _release_process_lock,
+    node_config_write_lock,
+)
 
 CATALOG_BOOTSTRAP_SCHEMA_VERSION = 1
 MAX_CATALOG_BYTES = 4 * 1024 * 1024
@@ -316,6 +320,17 @@ class CatalogBootstrapConfig:
     catalog_mirrors: Tuple[str, ...]
     initial_peers: Tuple[str, ...]
     max_loaded_models: int = 1
+    replaces_trust_roots: Tuple[str, ...] = ()
+
+    @property
+    def trust_root_digest(self) -> str:
+        rendered = json.dumps(self.trust_root.to_dict(), sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+    def permits_replacement_of(self, previous: "CatalogBootstrapConfig") -> bool:
+        return self.trust_root.catalog_id == previous.trust_root.catalog_id and (
+            self.trust_root == previous.trust_root or previous.trust_root_digest in self.replaces_trust_roots
+        )
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any]) -> "CatalogBootstrapConfig":
@@ -324,7 +339,7 @@ class CatalogBootstrapConfig:
             source,
             "catalog bootstrap config",
             required=("schema_version", "trust_root", "catalog_mirrors", "initial_peers"),
-            optional=("max_loaded_models",),
+            optional=("max_loaded_models", "replaces_trust_roots"),
         )
         schema_version = _require_positive_int(source["schema_version"], "schema_version")
         if schema_version != CATALOG_BOOTSTRAP_SCHEMA_VERSION:
@@ -336,12 +351,23 @@ class CatalogBootstrapConfig:
             trust_root = CatalogTrustRoot.from_dict(_require_mapping(source["trust_root"], "trust_root"))
         except ModelCatalogError as exc:
             raise CatalogBootstrapError(f"Invalid catalog trust root: {exc}") from exc
+        replacements = source.get("replaces_trust_roots", [])
+        if (
+            not isinstance(replacements, list)
+            or len(replacements) > 16
+            or any(
+                not isinstance(value, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in replacements
+            )
+            or len(set(replacements)) != len(replacements)
+        ):
+            raise CatalogBootstrapError("replaces_trust_roots must be at most 16 distinct SHA-256 root digests")
         return cls(
             schema_version=schema_version,
             trust_root=trust_root,
             catalog_mirrors=_require_https_urls(source["catalog_mirrors"], "catalog_mirrors"),
             initial_peers=_require_initial_peers(source["initial_peers"]),
             max_loaded_models=_require_positive_int(source.get("max_loaded_models", 1), "max_loaded_models"),
+            replaces_trust_roots=tuple(replacements),
         )
 
     @classmethod
@@ -360,13 +386,16 @@ class CatalogBootstrapConfig:
         return cls.from_json(source)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "schema_version": self.schema_version,
             "trust_root": self.trust_root.to_dict(),
             "catalog_mirrors": list(self.catalog_mirrors),
             "initial_peers": list(self.initial_peers),
             "max_loaded_models": self.max_loaded_models,
         }
+        if self.replaces_trust_roots:
+            result["replaces_trust_roots"] = list(self.replaces_trust_roots)
+        return result
 
 
 @dataclass(frozen=True)
@@ -484,6 +513,10 @@ class CatalogBootstrapInstaller:
         self.manifest_dir = self.data_dir / "manifests"
         self.cache_dir = self.data_dir / "model-cache"
         self.lock_path = self.data_dir / ".catalog-bootstrap.lock"
+        bootstrap_bytes = json.dumps(bootstrap.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        self.installed_bootstrap_path = (
+            self.catalog_dir / f"bootstrap-{hashlib.sha256(bootstrap_bytes).hexdigest()}.json"
+        )
 
     def _existing_result(self) -> CatalogBootstrapResult:
         try:
@@ -508,6 +541,9 @@ class CatalogBootstrapInstaller:
             raise CatalogBootstrapError(f"Rejected model catalog from {source}: {exc}") from exc
 
     def _install_manifests(self, catalog: ModelCatalog) -> Tuple[Path, ...]:
+        import drift
+        from drift.node.loading import validate_manifest_execution
+
         installed = []
         selectors: Dict[str, str] = {}
         for model in catalog.models:
@@ -540,6 +576,11 @@ class CatalogBootstrapInstaller:
             if manifest is None:
                 detail = "; ".join(errors) if errors else "no manifest mirror was attempted"
                 raise CatalogBootstrapError(f"Could not install manifest {model.manifest_digest}: {detail}")
+            try:
+                manifest.validate_runtime(drift.__version__)
+                validate_manifest_execution(manifest, model.execution or "distributed")
+            except ManifestError as exc:
+                raise CatalogBootstrapError(f"Manifest {manifest.digest_id} is not executable: {exc}") from exc
 
             for selector in (manifest.name, *manifest.aliases):
                 folded = selector.casefold()
@@ -557,15 +598,18 @@ class CatalogBootstrapInstaller:
 
     def _render_node_config(self, catalog: ModelCatalog, manifest_paths: Tuple[Path, ...]) -> str:
         models = []
-        for path in manifest_paths:
+        for model, path in zip(catalog.models, manifest_paths):
             digest = path.stem
-            models.append(
-                {
-                    "manifest": str(path),
-                    "initial_peers": list(self.bootstrap.initial_peers),
-                    "cache_dir": str(self.cache_dir / digest),
-                }
-            )
+            entry = {
+                "manifest": str(path),
+                "initial_peers": [] if model.execution == "local" else list(self.bootstrap.initial_peers),
+                "cache_dir": str(self.cache_dir / digest),
+            }
+            if model.execution is not None:
+                entry["execution"] = model.execution
+                if model.execution == "distributed":
+                    entry["request_timeout"] = 180
+            models.append(entry)
         rung_order = {rung.rung_id: rung.order for rung in catalog.rungs}
         ranked_models = sorted(
             enumerate(catalog.models),
@@ -580,6 +624,10 @@ class CatalogBootstrapInstaller:
             "max_loaded_models": self.bootstrap.max_loaded_models,
             "models": models,
             "auto_model_priority": [model.manifest_digest for _, model in ranked_models],
+            "catalog_path": str(
+                self.catalog_dir / f"{catalog.sequence}-{catalog.digest.removeprefix('sha256:')}.signed.json"
+            ),
+            "catalog_bootstrap_path": str(self.installed_bootstrap_path),
             "route_demand_authority_roots": list(catalog.route_demand_authority_roots or ()),
             "workers": [
                 {
@@ -589,7 +637,9 @@ class CatalogBootstrapInstaller:
                     "num_blocks": 1,
                     "enabled": True,
                 }
-            ],
+            ]
+            if any(model.execution != "local" for model in catalog.models)
+            else [],
         }
         try:
             NodeConfig.from_dict(source, base_dir=self.config_path.parent)
@@ -598,12 +648,21 @@ class CatalogBootstrapInstaller:
         return json.dumps(source, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     def _try_candidate(
-        self, source: str, rendered: str, persisted_guard: CatalogRollbackGuard
+        self, source: str, rendered: str, persisted_guard: CatalogRollbackGuard, *, refresh: bool = False
     ) -> CatalogBootstrapResult:
         guard = CatalogRollbackGuard.from_dict(persisted_guard.to_dict())
         catalog = self._load_catalog(source, rendered, guard)
         manifest_paths = self._install_manifests(catalog)
         config_text = self._render_node_config(catalog, manifest_paths)
+
+        # Configuration points at an immutable envelope. A later failed refresh
+        # cannot silently change the policy used by the still-running old config.
+        _atomic_write(
+            self.catalog_dir / f"{catalog.sequence}-{catalog.digest.removeprefix('sha256:')}.signed.json",
+            rendered,
+            overwrite=True,
+        )
+        _atomic_write(self.installed_bootstrap_path, json.dumps(self.bootstrap.to_dict()), overwrite=True)
 
         _atomic_write(
             self.cached_catalog_path,
@@ -615,7 +674,52 @@ class CatalogBootstrapInstaller:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with node_config_write_lock(self.config_path):
-                _atomic_write(self.config_path, config_text, overwrite=False)
+                if refresh:
+                    original = self.config_path.read_text(encoding="utf-8")
+                    old_config = NodeConfig.from_json(original, base_dir=self.config_path.parent)
+                    previous = json.loads(original)
+                    generated = json.loads(config_text)
+                    old_entries = {
+                        model.manifest_path: entry for model, entry in zip(old_config.models, previous["models"])
+                    }
+                    entries = []
+                    current_paths = set()
+                    current_selectors = set()
+                    for entry in generated["models"]:
+                        path = Path(entry["manifest"])
+                        current_paths.add(path)
+                        manifest = ModelManifest.load(path)
+                        current_selectors.update(s.casefold() for s in (manifest.name, *manifest.aliases))
+                        prior = old_entries.get(path)
+                        # Preserve explicit per-model resource/cache preferences;
+                        # execution mode itself remains a signed catalog choice.
+                        if prior is not None:
+                            entry = dict(prior, execution=entry.get("execution", "distributed"))
+                            if entry["execution"] != "local":
+                                entry = {k: v for k, v in entry.items() if not k.startswith("local_")}
+                        entries.append(entry)
+                    for model in old_config.models:
+                        if model.manifest_path in current_paths:
+                            continue
+                        old_manifest = ModelManifest.load(model.manifest_path)
+                        if current_selectors.intersection(
+                            s.casefold() for s in (old_manifest.name, *old_manifest.aliases)
+                        ):
+                            continue
+                        # Exact older/user-added manifests stay explicit choices,
+                        # but leave automatic selection and contribution approval.
+                        entries.append(old_entries[model.manifest_path])
+                    previous["models"] = entries
+                    for field in (
+                        "auto_model_priority",
+                        "route_demand_authority_roots",
+                        "catalog_path",
+                        "catalog_bootstrap_path",
+                    ):
+                        previous[field] = generated[field]
+                    NodeConfig.from_dict(previous, base_dir=self.config_path.parent)
+                    config_text = json.dumps(previous, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+                _atomic_write(self.config_path, config_text, overwrite=refresh)
         except NodeConfigWriteLockError as exc:
             raise CatalogBootstrapError("Another node configuration writer is active") from exc
         return CatalogBootstrapResult(
@@ -627,6 +731,37 @@ class CatalogBootstrapInstaller:
             source=source,
             created=True,
         )
+
+    def refresh(self) -> CatalogBootstrapResult:
+        """Authenticate a newer sequence while preserving user policy and local settings."""
+        if not self.config_path.is_file() or self.config_path.is_symlink():
+            raise CatalogBootstrapError("Catalog refresh requires a safe existing node configuration")
+        with _catalog_bootstrap_lock(self.lock_path):
+            guard = CatalogRollbackGuard.load(self.rollback_path)
+            existing = NodeConfig.load(self.config_path)
+            current = None
+            if existing.catalog_path is not None:
+                installed_bootstrap = CatalogBootstrapConfig.load(existing.catalog_bootstrap_path)
+                if not self.bootstrap.permits_replacement_of(installed_bootstrap):
+                    raise CatalogBootstrapError(
+                        "The supplied application bootstrap does not authorize this trust-root replacement"
+                    )
+                # Its identity is only an optimization. A newly fetched candidate
+                # must still pass current-time signature and rollback validation;
+                # an expired installed catalog must not prevent renewal.
+                current = SignedModelCatalog.from_json(existing.catalog_path.read_text(encoding="utf-8")).signed
+            errors = []
+            for url in self.bootstrap.catalog_mirrors:
+                try:
+                    rendered = self.fetch_text(url, MAX_CATALOG_BYTES)
+                    candidate = self._load_catalog(url, rendered, CatalogRollbackGuard.from_dict(guard.to_dict()))
+                    if current is not None and candidate.digest == current.digest:
+                        return self._existing_result()
+                    return self._try_candidate(url, rendered, guard, refresh=True)
+                except (CatalogBootstrapError, ModelCatalogError, ManifestError, OSError) as exc:
+                    errors.append(str(exc))
+                    guard = CatalogRollbackGuard.load(self.rollback_path)
+            raise CatalogBootstrapError("No trusted catalog update could be activated: " + "; ".join(errors))
 
     def install(self) -> CatalogBootstrapResult:
         if self.config_path.is_symlink():

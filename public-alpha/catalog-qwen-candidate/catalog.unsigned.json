@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "signatures": [],
+  "signed": {
+    "catalog_id": "communityai-public-alpha-v1",
+    "expires_at_ms": 1790624119369,
+    "issued_at_ms": 1788654808765,
+    "models": [
+      {
+        "active_parameters": 800000000,
+        "execution": "local",
+        "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+        "manifest_urls": [
+          "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-v1/manifests/e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0.json"
+        ],
+        "role": "primary",
+        "rung": "local-qwen",
+        "total_parameters": 800000000,
+        "weight_bytes": 1746942600
+      },
+      {
+        "active_parameters": 27000000000,
+        "execution": "distributed",
+        "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+        "manifest_urls": [
+          "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-v1/manifests/c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4.json"
+        ],
+        "role": "primary",
+        "rung": "community-qwen",
+        "total_parameters": 27000000000,
+        "weight_bytes": 30866866928
+      }
+    ],
+    "rungs": [
+      {
+        "id": "local-qwen",
+        "maximum_observation_age_seconds": 30,
+        "maximum_p95_first_token_ms": 60000,
+        "minimum_independent_routes": 1,
+        "minimum_replicas": 1,
+        "minimum_soak_seconds": 60,
+        "minimum_surviving_replicas": 0,
+        "minimum_tokens_per_minute": 1,
+        "order": 1
+      },
+      {
+        "id": "community-qwen",
+        "maximum_observation_age_seconds": 30,
+        "maximum_p95_first_token_ms": 60000,
+        "minimum_independent_routes": 1,
+        "minimum_replicas": 1,
+        "minimum_soak_seconds": 60,
+        "minimum_surviving_replicas": 0,
+        "minimum_tokens_per_minute": 1,
+        "order": 2
+      }
+    ],
+    "sequence": 2
+  }
+}

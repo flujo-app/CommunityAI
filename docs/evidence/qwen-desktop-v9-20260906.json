@@ -1,0 +1,161 @@
+{
+  "result": "passed",
+  "scope": "Windows-v9-build-local-GPU-chat-and-resource-admission",
+  "packaged": true,
+  "hardware": "NVIDIA RTX 2070 SUPER, 8 GB VRAM",
+  "install_archive": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "ddc74b7aef1e29615458b930a03c8393a90dd5ec36ebed19528df2f7081d28a3",
+    "size_bytes": 2692402624
+  },
+  "node_sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45",
+  "source_commit": null,
+  "source_scope": "Exact build input inventory and tar snapshot retained; later working-tree changes excluded",
+  "ui_smoke_passed": true,
+  "onboarding_ui_smoke_passed": true,
+  "local_completion_seconds": 11.51600000000326,
+  "short_chat": {
+    "id": "chatcmpl-4d67d2824cfa4eefbe3e7bcf",
+    "object": "chat.completion",
+    "created": 1788676224,
+    "model": "Qwen3.5-0.8B-Local",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Paris\n"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 31,
+      "completion_tokens": 4,
+      "total_tokens": 35
+    }
+  },
+  "token_budget_rejected": true,
+  "local_only_persisted": true,
+  "stream_cancel_released_lease": true,
+  "resource_admission": {
+    "schedule": {
+      "state": "paused",
+      "pid": null,
+      "policy_admitted": true,
+      "policy_reason": null,
+      "resource_admitted": true,
+      "resource_reason": null,
+      "schedule_admitted": false,
+      "schedule_reason": "outside the configured contribution schedule",
+      "current_bandwidth_mbps": null,
+      "current_power_watts": null,
+      "max_disk_space_bytes": null,
+      "max_vram_bytes": 2147483648,
+      "local_tokens": 3
+    },
+    "power": {
+      "state": "paused",
+      "pid": null,
+      "policy_admitted": true,
+      "policy_reason": null,
+      "resource_admitted": false,
+      "resource_reason": "power usage 58.14 W exceeds the 1.00 W contribution budget",
+      "schedule_admitted": true,
+      "schedule_reason": null,
+      "current_bandwidth_mbps": null,
+      "current_power_watts": 58.138,
+      "max_disk_space_bytes": null,
+      "max_vram_bytes": 2147483648,
+      "local_tokens": 3
+    },
+    "bandwidth": {
+      "state": "paused",
+      "pid": null,
+      "policy_admitted": true,
+      "policy_reason": null,
+      "resource_admitted": false,
+      "resource_reason": "bandwidth usage 10.57 Mbps exceeds the 0.00 Mbps contribution budget",
+      "schedule_admitted": true,
+      "schedule_reason": null,
+      "current_bandwidth_mbps": 10.566464,
+      "current_power_watts": null,
+      "max_disk_space_bytes": null,
+      "max_vram_bytes": 2147483648,
+      "local_tokens": 3
+    },
+    "storage": {
+      "state": "paused",
+      "pid": null,
+      "policy_admitted": false,
+      "policy_reason": "Qwen3.8 27B FP8 Dequant: exact block artifact planning failed: ManifestError",
+      "resource_admitted": true,
+      "resource_reason": null,
+      "schedule_admitted": true,
+      "schedule_reason": null,
+      "current_bandwidth_mbps": null,
+      "current_power_watts": null,
+      "max_disk_space_bytes": null,
+      "max_vram_bytes": 2147483648,
+      "local_tokens": 3
+    }
+  },
+  "node_stopped": true,
+  "cache_accounting": {
+    "included_in_package": true,
+    "source_tests_passed": 69,
+    "scope": "Owned manifest snapshots and partials plus legacy Hub cache; hardlinks deduplicated; only remaining transfer bytes reserved",
+    "packaged_cache_eviction_qualification": false
+  },
+  "limits": [
+    "Unsigned engineering package; no commit-bound release attestation",
+    "Community inference remains unqualified",
+    "Resource checks prove admission, not sustained load, overshoot, resumption or OS hard caps",
+    "No Linux or unobserved RTX 30/40/50 hardware claim"
+  ],
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-build-v9/desktop-metrics.json",
+      "sha256": "2660bad7d4a76e5582d50c138d4e463e0f49fa0710cc113051f66fe5370718ee"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-build-v9/CommunityAI/node/CommunityAI-Node.exe",
+      "sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v9-source.json",
+      "sha256": "4566fd0c2dfeb18d3ef4945705ca672d6ff6df492ed4880edda775d51367645a"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v9-source.tar.gz",
+      "sha256": "c76e426f65e946b1c69649797bdc05ba1879094ab9ea429aaa2e064db9ad4604"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v9-succeeded.json",
+      "sha256": "c2887b6b8a39c507f26e8f6828207e68e692cc6cbe47d00d41680dcbd3ce1f77"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/local-packaged-v9/result.json",
+      "sha256": "258608f2c0ac83009ab65db083abf44481ae114bff34e4849ccbeeba0072a788"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/resource-controls-v9/result.json",
+      "sha256": "1535ffd2deab9648178a04e3f2ed988d8722e8c05f3b8491bf862388c9580555"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/manifest-cache-budget-repro.log",
+      "sha256": "06290cc9c3cb46df7d566996f50872fbaaaf2fd9fcb0f4045954eb3494e1b677"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/manifest-cache-budget-tests-r2.log",
+      "sha256": "922b0c23e2a0e883e9402e914953c1670b4daf49ade0a2cabbb3b6d4127002e1"
+    }
+  ]
+}

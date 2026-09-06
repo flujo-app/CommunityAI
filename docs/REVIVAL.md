@@ -1,5 +1,14 @@
 # Petals revival: public inference alpha roadmap
 
+Current release status and execution order are maintained in
+[RELEASE_READINESS.md](RELEASE_READINESS.md), reviewed 2026-09-06. The Qwen3.8
+64-block route, same-session replacement, reference comparison and Windows
+packaged short chat, worker-loss recovery and HTTP-blocked cache restart passed
+on assigned cloud routes. Autonomous desktop formation and broader release
+qualification remain open. The
+[model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
+candidate lists in historical implementation snapshots below.
+
 This repository starts from DRIFT-LLM, the most practical maintained continuation
 of Petals found during the August 2026 fork audit. It preserves the parts that are
 most valuable for a revival: transformer-block sharding, Hivemind DHT discovery,
@@ -48,18 +57,18 @@ agent:
 - The first supported desktop and qualification matrix is Windows and Linux. macOS is
   explicitly deferred and must not be claimed as supported until later tests on real
   Apple devices pass.
-- Qwen3.5 2B is the first-rung primary candidate and Gemma 4 E2B is its standby.
+- Qwen3.8-27B FP8 is the first community-model release target, with a qualified
+  local Qwen3.5 fallback. Qwen3.5 2B and Gemma 4 E2B remain historical qualification
+  fixtures. DeepSeek-V4-Flash and GLM-5.3-Flash are the later community targets.
 - GCP and Fly Machines are authorized for bounded qualification and public-alpha
   infrastructure. GCP/local hosts cover the Windows/Linux CPU/CUDA platform matrix.
   As of 2026-08-27, Fly is authorized only for the existing **CPU-only** Linux
   separate-machine recovery adapter; Fly supplies no GPU qualification capacity, and a
   Fly recovery result must never be presented as CUDA or GPU-performance evidence.
-- After the first-rung alpha is stable, do not climb every intermediate model size merely
-  to prove that block sharding scales. Use the accumulated Petals and
-  TinyLlama/Qwen/Gemma implementation evidence to attempt a real 27-32B split route
-  directly, then attempt roughly 70B if that passes. This is permission to test those
-  sizes, not permission to claim that an exact larger checkpoint works before its own
-  model-specific evidence passes.
+- Complete the useful Qwen desktop path before implementing the larger model
+  adapters. Do not qualify arbitrary intermediate sizes merely to demonstrate
+  sharding. Each actual ladder entry needs its own correctness, memory, recovery,
+  packaged-delivery, and performance evidence before activation.
 - New temporary GCP and Fly test resources share one live owner-authorized combined
   ceiling. The baseline is USD 100; on 2026-08-31 the owner raised the current accounting
   epoch to **USD 500 maximum**. The already committed USD 52 maximum remains charged to
@@ -93,8 +102,9 @@ The public alpha still requires:
 - the client automatically selects an eligible catalog model, while an opted-in
   contributor automatically selects a model and block range within the user's VRAM,
   storage, bandwidth, power, schedule, and model-policy limits;
-- Qwen3.5 2B and Gemma 4 E2B pass the declared Windows/Linux CPU/CUDA qualification and
-  real CPU-only separate-machine recovery gates before they are advertised as qualified;
+- Qwen3.8 and the selected local Qwen fallback pass their declared product
+  qualification before being advertised; preserve the prior Qwen3.5/Gemma results
+  without treating them as qualification for a different model or package;
 - an alpha catalog is authenticated by at least one pinned CommunityAI release key,
   manifests and artifacts are content-verified, peer announcements are authenticated,
   public requests have finite admission/time limits, and operators can disable a bad
@@ -141,18 +151,23 @@ shard granularity limit are recorded in
 
 ### Non-negotiable launch sequence
 
-The signed catalog and product-node Gate 11 route have passed. Gate 9 is the immediate
-critical path:
+Gate V and Gates 1-13 passed for their recorded scopes. The immediate sequence is
+the remaining **Q3.8 product outcomes → Gates 14/15 → canary (16) → release (17)**:
 
-1. split each Windows/Linux edge measurement into resumable direct-Hub acquisition and a
-   supervised steady-state benchmark from the verified persistent cache;
-2. publish the four Qwen/Gemma Windows/Linux client envelopes without building or pulling a
-   model-specific image;
-3. pass clean packaged install and inference against a product-node route, including cache
-   reuse, restart, manual upgrade/reinstall, uninstall, and retained-data choice;
-4. prove automatic contribution and resource controls on real packaged Windows/Linux
-   hardware; and
-5. run the bounded public canary and publish the explicitly best-effort alpha.
+1. finish packaged recovery/cache restart and representative consumer GPU/client
+   measurements; reference correctness, cold acquisition and one packaged short
+   conversation already passed their bounded scopes;
+2. finish qualification of local Qwen, automatic Qwen3.8 formation,
+   measured promotion for new requests, and downgrade/rejoin;
+3. prove automatic contribution and resource limits on Windows/Linux (Gate 14),
+   alongside final-package install/reinstall/uninstall/retained-data checks (15);
+4. finish the ordinary-user application lifecycle around the already published
+   signed catalog and tested bootstrap/root migration, preserving settings; and
+5. run the bounded public canary and release the best-effort Qwen alpha.
+
+Combine overlapping product checks in the same real desktop sessions. The full
+Qwen runtime and tested same-session recovery already passed; repeat them only
+where new source/profile changes or product integration require verification.
 
 Do not resume post-alpha redundancy, publisher-signing/updater, independent-governance, or
 exhaustive hostile-network programs while an earlier alpha outcome is unfinished. Preserve
@@ -168,10 +183,9 @@ temporary host. Native `gcloud`,
 `flyctl`, and `gh` authentication is currently available; re-check it immediately before
 use rather than relying on an older evidence note.
 
-The next external deliverable is not another image, mirror, harness, or unit-test expansion.
-It is the four real Gate 9 client envelopes using the product artifact path. Supporting code
-is justified only when it implements the bounded acquisition record, process-supervised
-cleanup, or another concrete gap exposed by that real run.
+The next external deliverable is the usable Qwen3.8 desktop/local-fallback path.
+Supporting code must address a concrete product or observed-run gap; the existing
+one-click runners and evidence machinery are the starting point.
 
 ### Execution loop
 
@@ -596,41 +610,32 @@ and then delegates block placement to the existing algorithm.
 
 ### Elastic model ladder
 
-Small checkpoints are bootstrap and test rungs, not the distributed network's product
-ceiling. Community `auto` selection should move monotonically toward larger qualified
-models as measured capacity grows: approximately 1-2B, 3-4B, 8B, 27-32B, 70B, and
-400B-plus. Each rung approves exactly one primary and at least one standby so the
-catalog can replace a model without requiring both alternatives to fragment live VRAM.
+The product progression is **local Qwen3.5 → community Qwen3.8-27B →
+DeepSeek-V4-Flash → GLM-5.3-Flash**, as recorded in
+[COMMUNITY_AI_MODEL_LADDER.md](COMMUNITY_AI_MODEL_LADDER.md). The first Qwen3.8
+full-route and tested worker-replacement results passed on 2026-09-05. DeepSeek
+and GLM require their own adapters and qualification before activation.
 
-These are catalog capacity classes, not a mandatory sequential qualification staircase.
-The original Petals demonstrations and successful TinyLlama, Qwen, and Gemma bring-up
-make larger block-sharded inference plausible enough to test directly. They do **not**
-prove that an exact 30B or 70B checkpoint is compatible, fits the intended worker/client
-memory envelopes, recovers correctly, or performs well enough to use.
+Growth is measured by complete, reachable, sufficiently stable and useful model
+routes, not connected-PC count or summed advertised VRAM. Actual per-block
+memory, client tensors, context/cache, and migration headroom must fit the
+contributors' budgets. Total MoE weights remain relevant even when only a small
+subset of experts computes each token.
 
-The first post-alpha scaling experiment should therefore use an exact 27-32B candidate
-split across independent workers, with no worker required to hold the full model. If one
-complete block fits the target worker envelope and that run passes manifest/artifact
-checks, stock parity, two complete routes, selected-worker interruption, client and
-worker memory limits, TTFT, and decode throughput, proceed directly to an exact roughly
-70B candidate. Test a smaller intermediate rung only when it is a useful product fallback
-or helps diagnose a concrete failure; do not spend milestones on 4B -> 8B -> 12B merely
-as confidence-building prerequisites.
+The node must keep local fallback useful while opted-in workers stage missing
+community spans. After measured readiness, eligible new `auto` requests may move
+up; explicit selections and active generations stay pinned. Existing chat text
+must be retokenized/prefilled when a later turn changes model. When capacity
+falls, selection may move down. Retain lower-route capacity during larger-rung
+migration and prevent repeated switching/download storms.
 
-At INT8, two complete weight replicas require roughly two bytes of aggregate usable
-VRAM per parameter: 10 GB for a 5B model, 60 GB for a 30B model, 140 GB for 70B, and
-810 GB for 405B before KV-cache, activation, framework, churn, and migration headroom.
-Promotion is never inferred from that aggregate alone. The selector requires minimum
-per-block replica coverage, independent complete routes, survival after the largest
-peer loss, a stability soak, fresh observations, and measured latency and throughput
-limits. Total parameters determine MoE storage; active parameters describe per-token
-compute and do not make the other expert weights disappear.
-
-The first candidate ladder and the implemented signed format are specified in
-[`MODEL_CATALOG_V1.md`](MODEL_CATALOG_V1.md). The local selector may resolve an `auto`
-request to the highest eligible exact manifest, but it never changes an explicit model
-selection or an in-flight request. Catalog fetching, DHT-derived observations, staged
-worker migration, fallback, and automatic alias updates remain integration work.
+The working-tree catalog permits one primary and optional standbys per rung.
+Measured catalog eligibility is now wired into the desktop node. Verified local
+Qwen3.5-0.8B fallback, local-only preference, cancellation and periodic authenticated
+catalog refresh are implemented; offline source and packaged Windows GPU inference
+passed. Real automatic formation, promotion/downgrade and shared resource-limit
+qualification remain open. See [MODEL_CATALOG_V1.md](MODEL_CATALOG_V1.md) and
+[QWEN_DESKTOP_PRODUCT_RESULTS.md](QWEN_DESKTOP_PRODUCT_RESULTS.md) for current evidence.
 
 ### Canonical model manifest
 

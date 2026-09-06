@@ -17,6 +17,7 @@ honored but may still appear in *streamed* output (the non-streaming path trims 
 import asyncio
 import json
 import secrets
+import threading
 import time
 import uuid
 from queue import Empty
@@ -26,8 +27,8 @@ import torch
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from hivemind.utils.logging import get_logger
-from pydantic import BaseModel
-from transformers import TextIteratorStreamer
+from pydantic import BaseModel, StrictBool
+from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer
 
 from drift.node.model_manager import (
     AmbiguousModelError,
@@ -37,6 +38,15 @@ from drift.node.model_manager import (
     ModelManagerClosedError,
     ModelNotFoundError,
 )
+
+
+class _RequestCancelled(StoppingCriteria):
+    def __init__(self):
+        self.event = threading.Event()
+
+    def __call__(self, input_ids, scores, **kwargs):
+        return self.event.is_set()
+
 
 logger = get_logger(__name__)
 
@@ -76,6 +86,9 @@ class ChatCompletionRequest(BaseModel):
     stop: Optional[Union[str, List[str]]] = None
     stream: bool = False
     n: int = 1
+    # Optional extension for verified templates that expose a reasoning switch.
+    # Omission preserves the model's own template default.
+    enable_thinking: Optional[StrictBool] = None
 
 
 class CompletionRequest(BaseModel):
@@ -264,6 +277,19 @@ def create_app(
         )
         return output_ids
 
+    def validate_generation(loaded, input_ids, gen_kwargs):
+        validator = getattr(loaded.runtime.model, "validate_generation", None)
+        if validator is not None:
+            try:
+                validator(input_ids, gen_kwargs)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def request_cancellation(gen_kwargs):
+        cancelled = _RequestCancelled()
+        gen_kwargs["stopping_criteria"] = StoppingCriteriaList([cancelled])
+        return cancelled
+
     def usage(input_ids: torch.Tensor, output_ids: torch.Tensor) -> Dict[str, int]:
         prompt_tokens = input_ids.shape[1]
         completion_tokens = output_ids.shape[1] - prompt_tokens
@@ -293,6 +319,7 @@ def create_app(
 
         future = None
         release_deferred = False
+        cancelled = request_cancellation(gen_kwargs)
         try:
             async with semaphore:
                 loop = asyncio.get_running_loop()
@@ -323,6 +350,7 @@ def create_app(
                 yield chunk({"delta": {}} if chat else {"text": ""}, reason)
                 yield "data: [DONE]\n\n"
         finally:
+            cancelled.event.set()
             # Cancelling an HTTP stream does not stop model.generate() in its executor
             # thread. Keep the residency lease until that thread really exits so an
             # unload or LRU eviction cannot close the runtime underneath generation.
@@ -370,16 +398,20 @@ def create_app(
         selected_tokenizer = loaded.runtime.tokenizer
         try:
             messages = [{"role": m.role, "content": message_text(m.content)} for m in body.messages]
+            template_options = {} if body.enable_thinking is None else {"enable_thinking": body.enable_thinking}
             input_ids = selected_tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, return_dict=True, return_tensors="pt"
+                messages, add_generation_prompt=True, return_dict=True, return_tensors="pt", **template_options
             )["input_ids"]
             gen_kwargs = build_generate_kwargs(
                 max_tokens=body.max_tokens if body.max_tokens is not None else body.max_completion_tokens,
                 temperature=body.temperature,
                 top_p=body.top_p,
                 stop=body.stop,
-                default_max_tokens=default_max_tokens,
+                default_max_tokens=min(
+                    default_max_tokens, getattr(loaded.runtime.model, "generation_token_limit", default_max_tokens)
+                ),
             )
+            validate_generation(loaded, input_ids, gen_kwargs)
         except BaseException:
             loaded.release()
             raise
@@ -391,12 +423,14 @@ def create_app(
 
         future = None
         release_deferred = False
+        cancelled = request_cancellation(gen_kwargs)
         try:
             async with semaphore:
                 loop = asyncio.get_running_loop()
                 future = loop.run_in_executor(None, lambda: generate_sync(loaded, input_ids, gen_kwargs))
                 output_ids = await asyncio.shield(future)
         finally:
+            cancelled.event.set()
             if future is not None and not future.done():
                 future.add_done_callback(lambda _: loaded.release())
                 release_deferred = True
@@ -438,8 +472,11 @@ def create_app(
                 temperature=body.temperature,
                 top_p=body.top_p,
                 stop=body.stop,
-                default_max_tokens=default_max_tokens,
+                default_max_tokens=min(
+                    default_max_tokens, getattr(loaded.runtime.model, "generation_token_limit", default_max_tokens)
+                ),
             )
+            validate_generation(loaded, input_ids, gen_kwargs)
         except BaseException:
             loaded.release()
             raise
@@ -451,12 +488,14 @@ def create_app(
 
         future = None
         release_deferred = False
+        cancelled = request_cancellation(gen_kwargs)
         try:
             async with semaphore:
                 loop = asyncio.get_running_loop()
                 future = loop.run_in_executor(None, lambda: generate_sync(loaded, input_ids, gen_kwargs))
                 output_ids = await asyncio.shield(future)
         finally:
+            cancelled.event.set()
             if future is not None and not future.done():
                 future.add_done_callback(lambda _: loaded.release())
                 release_deferred = True

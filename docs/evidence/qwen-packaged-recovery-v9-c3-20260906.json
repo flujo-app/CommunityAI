@@ -1,0 +1,623 @@
+{
+  "result": "passed",
+  "scope": "Windows v9 packaged public-policy recovery, local preference and HTTP-blocked cache restart on a C3 remainder route",
+  "run_id": "q38pm-20260906-091609-4351",
+  "packaged": true,
+  "source_commit": null,
+  "cpu_remainder_machine_type": "c3-highmem-4",
+  "gcp_instances": [
+    {
+      "name": "q38pm-20260906-091609-4351-c",
+      "machine_type": "e2-standard-4"
+    },
+    {
+      "name": "q38pm-20260906-091609-4351-w0",
+      "machine_type": "g2-standard-8"
+    },
+    {
+      "name": "q38pm-20260906-091609-4351-w2",
+      "machine_type": "c3-highmem-4"
+    },
+    {
+      "name": "q38pm-20260906-091609-4351-w3",
+      "machine_type": "c3-highmem-4"
+    }
+  ],
+  "cpu_hardware": {
+    "lscpu": [
+      {
+        "field": "Architecture:",
+        "data": "x86_64"
+      },
+      {
+        "field": "CPU op-mode(s):",
+        "data": "32-bit, 64-bit"
+      },
+      {
+        "field": "Address sizes:",
+        "data": "52 bits physical, 57 bits virtual"
+      },
+      {
+        "field": "Byte Order:",
+        "data": "Little Endian"
+      },
+      {
+        "field": "CPU(s):",
+        "data": "4"
+      },
+      {
+        "field": "On-line CPU(s) list:",
+        "data": "0-3"
+      },
+      {
+        "field": "Vendor ID:",
+        "data": "GenuineIntel"
+      },
+      {
+        "field": "Model name:",
+        "data": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz"
+      },
+      {
+        "field": "CPU family:",
+        "data": "6"
+      },
+      {
+        "field": "Model:",
+        "data": "143"
+      },
+      {
+        "field": "Thread(s) per core:",
+        "data": "2"
+      },
+      {
+        "field": "Core(s) per socket:",
+        "data": "2"
+      },
+      {
+        "field": "Socket(s):",
+        "data": "1"
+      },
+      {
+        "field": "Stepping:",
+        "data": "8"
+      },
+      {
+        "field": "BogoMIPS:",
+        "data": "5399.99"
+      },
+      {
+        "field": "Flags:",
+        "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch ssbd ibrs ibpb stibp ibrs_enhanced fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rtm avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 arat avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq la57 rdpid cldemote movdiri movdir64b fsrm md_clear serialize tsxldtrk amx_bf16 avx512_fp16 amx_tile amx_int8 arch_capabilities"
+      },
+      {
+        "field": "Hypervisor vendor:",
+        "data": "KVM"
+      },
+      {
+        "field": "Virtualization type:",
+        "data": "full"
+      },
+      {
+        "field": "L1d cache:",
+        "data": "96 KiB (2 instances)"
+      },
+      {
+        "field": "L1i cache:",
+        "data": "64 KiB (2 instances)"
+      },
+      {
+        "field": "L2 cache:",
+        "data": "4 MiB (2 instances)"
+      },
+      {
+        "field": "L3 cache:",
+        "data": "105 MiB (1 instance)"
+      },
+      {
+        "field": "NUMA node(s):",
+        "data": "1"
+      },
+      {
+        "field": "NUMA node0 CPU(s):",
+        "data": "0-3"
+      },
+      {
+        "field": "Vulnerability Gather data sampling:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Ghostwrite:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Indirect target selection:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Itlb multihit:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability L1tf:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Mds:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Meltdown:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Mmio stale data:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Old microcode:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Reg file data sampling:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Retbleed:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Spec rstack overflow:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Spec store bypass:",
+        "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+      },
+      {
+        "field": "Vulnerability Spectre v1:",
+        "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+      },
+      {
+        "field": "Vulnerability Spectre v2:",
+        "data": "Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S"
+      },
+      {
+        "field": "Vulnerability Srbds:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Tsa:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Tsx async abort:",
+        "data": "Not affected"
+      },
+      {
+        "field": "Vulnerability Vmscape:",
+        "data": "Not affected"
+      }
+    ]
+  },
+  "catalog_scope": "staged signed public sequence 2, explicit test configuration",
+  "node_sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45",
+  "remote_cache_source": "explicitly seeded cache",
+  "cold_acquisition_evidence": "qwen-packaged-cold-acquisition-20260906.json",
+  "phases": [
+    {
+      "hub_offline": false,
+      "node_sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45",
+      "application_replaced": false,
+      "community_completion": {
+        "response": {
+          "id": "cmpl-ec6f81e2e62945819299931e",
+          "object": "text_completion",
+          "created": 1788688250,
+          "model": "Qwen3.8 27B FP8 Dequant",
+          "choices": [
+            {
+              "index": 0,
+              "text": " Paris.\n",
+              "finish_reason": "length"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8
+          }
+        },
+        "seconds": 12.25
+      },
+      "community_chat": {
+        "response": {
+          "id": "chatcmpl-f43b08322cb840db9ae33718",
+          "object": "chat.completion",
+          "created": 1788688269,
+          "model": "Qwen3.8 27B FP8 Dequant",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "Paris\n"
+              },
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 31,
+            "completion_tokens": 4,
+            "total_tokens": 35
+          }
+        },
+        "seconds": 19.35899999999674
+      },
+      "local_only_completion": {
+        "response": {
+          "id": "cmpl-4293a41fda5c411a9b2bf811",
+          "object": "text_completion",
+          "created": 1788688464,
+          "model": "Qwen3.5-0.8B-Local",
+          "choices": [
+            {
+              "index": 0,
+              "text": " Paris.\n",
+              "finish_reason": "length"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8
+          }
+        },
+        "seconds": 0.3909999999887077
+      },
+      "intervening_local_fallbacks": [],
+      "peak_observed_process_tree_rss_bytes": 4973985792,
+      "node_stopped": true,
+      "worker_outage": {
+        "scope": "CPU worker service stop and same-identity restart",
+        "stop": {
+          "instance": "q38pm-20260906-091609-4351-w2",
+          "action": "stop",
+          "before": "MainPID=4405\nKillMode=control-group\nActiveState=active\n",
+          "after": "MainPID=0\nKillMode=control-group\nActiveState=failed\n",
+          "observed_at_unix": 1788688318.311622
+        },
+        "local_completion": {
+          "response": {
+            "id": "cmpl-9f63c3db4ae548a494769c1a",
+            "object": "text_completion",
+            "created": 1788688343,
+            "model": "Qwen3.5-0.8B-Local",
+            "choices": [
+              {
+                "index": 0,
+                "text": " Paris.\n",
+                "finish_reason": "length"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 5,
+              "completion_tokens": 3,
+              "total_tokens": 8
+            }
+          },
+          "seconds": 21.0
+        },
+        "restart": {
+          "instance": "q38pm-20260906-091609-4351-w2",
+          "action": "start",
+          "before": "MainPID=0\nKillMode=control-group\nActiveState=failed\n",
+          "after": "MainPID=5222\nKillMode=control-group\nActiveState=active\n",
+          "observed_at_unix": 1788688360.6170838
+        },
+        "community_after_rejoin": {
+          "response": {
+            "id": "cmpl-fd780559bd7d439b8756c7e1",
+            "object": "text_completion",
+            "created": 1788688464,
+            "model": "Qwen3.8 27B FP8 Dequant",
+            "choices": [
+              {
+                "index": 0,
+                "text": " Paris.\n",
+                "finish_reason": "length"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 5,
+              "completion_tokens": 3,
+              "total_tokens": 8
+            }
+          },
+          "seconds": 13.672000000005937
+        },
+        "selected_before_stop": {
+          "selector": "auto",
+          "status": "selected",
+          "model": "Qwen3.8 27B FP8 Dequant",
+          "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+          "reason": "Selected catalog priority 1: live discovery reports a complete 64/64-block route from 4 verified peers.",
+          "covered_blocks": 64,
+          "total_blocks": 64,
+          "peer_count": 4,
+          "source": "runtime"
+        },
+        "fallback": {
+          "selector": "auto",
+          "status": "selected",
+          "model": "Qwen3.5-0.8B-Local",
+          "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+          "reason": "Selected a verified standalone model on this computer.",
+          "covered_blocks": 24,
+          "total_blocks": 24,
+          "peer_count": 0,
+          "source": "local"
+        },
+        "reselected_after_rejoin": {
+          "selector": "auto",
+          "status": "selected",
+          "model": "Qwen3.8 27B FP8 Dequant",
+          "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+          "reason": "Selected catalog priority 1: live discovery reports a complete 64/64-block route from 4 verified peers.",
+          "covered_blocks": 64,
+          "total_blocks": 64,
+          "peer_count": 4,
+          "source": "runtime"
+        }
+      }
+    },
+    {
+      "hub_offline": true,
+      "node_sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45",
+      "application_replaced": false,
+      "community_completion": {
+        "response": {
+          "id": "cmpl-bd9ec9a7ed0a487e9cd271cc",
+          "object": "text_completion",
+          "created": 1788688551,
+          "model": "Qwen3.8 27B FP8 Dequant",
+          "choices": [
+            {
+              "index": 0,
+              "text": " Paris.\n",
+              "finish_reason": "length"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8
+          }
+        },
+        "seconds": 12.438000000009197
+      },
+      "community_chat": {
+        "response": {
+          "id": "chatcmpl-ee98be1744b74d0882f16052",
+          "object": "chat.completion",
+          "created": 1788688573,
+          "model": "Qwen3.8 27B FP8 Dequant",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "Paris\n"
+              },
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 31,
+            "completion_tokens": 4,
+            "total_tokens": 35
+          }
+        },
+        "seconds": 21.625
+      },
+      "local_only_completion": {
+        "response": {
+          "id": "cmpl-76a778e75e9c4013b6a02dcc",
+          "object": "text_completion",
+          "created": 1788688584,
+          "model": "Qwen3.5-0.8B-Local",
+          "choices": [
+            {
+              "index": 0,
+              "text": " Paris.\n",
+              "finish_reason": "length"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8
+          }
+        },
+        "seconds": 10.719000000011874
+      },
+      "intervening_local_fallbacks": [],
+      "peak_observed_process_tree_rss_bytes": 4758171648,
+      "node_stopped": true,
+      "http_downloads_blocked": true,
+      "denied_http_requests": 0
+    }
+  ],
+  "node_stopped": true,
+  "overall_runner_result": "passed",
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "source_product_result": "passed",
+  "source_product_observations": {
+    "all_blocks": 64,
+    "qwen38_baseline": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788687918,
+        "id": "cmpl-42f968502f1e4f188a43ff5b",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 14.249802970000019
+    },
+    "active_answer_after_mode_change": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788687932,
+        "id": "cmpl-8605c987da5d4b6784ade5ca",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 14.145367668000063
+    },
+    "local_after_worker_loss": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788688005,
+        "id": "cmpl-b5c3a7bbee374c61a4c5f273",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 4.1058418729999175
+    },
+    "qwen38_after_replacement": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788688140,
+        "id": "cmpl-d1d81417877f4e67abc3535d",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 13.707472945000063
+    },
+    "worker_stopped_acknowledgement": {
+      "observed_at_unix": 1788687963.1939743,
+      "peer_id": "QmVJ8ycdNxBLRATLzyTCSjXYUc134GMhVmBajueEdJhJ8W",
+      "recovery_nonce": "9836f8404554f429b220b3bca96a7dfd"
+    },
+    "worker_replaced_acknowledgement": {
+      "observed_at_unix": 1788688057.1014302,
+      "peer_id": "QmVMkBdTZsvRYDegZqUV78A6Po2gR8DbkiwhHb6vsmYnq6",
+      "recovery_nonce": "9836f8404554f429b220b3bca96a7dfd"
+    }
+  },
+  "source_bundle_sha256": "c4da1feb23d17fc4412d683d473548b547c3c739e75e5f40046095f06a9b2ea1",
+  "limits": [
+    "Four assigned cloud spans and explicit owned bootstrap seeds; not autonomous desktop formation",
+    "Packaged recovery stops a CPU worker between requests and restarts its same identity",
+    "Active generation replay after VM replacement is separately evidenced by the original CPU test",
+    "Hub-offline restart keeps the swarm network online; it proves reuse of cached model artifacts",
+    "Unsigned engineering package, frozen node/controller checks; ordinary-user UI lifecycle remains open",
+    "Single bounded Windows hardware case, not RTX 30/40/50 or Linux GPU qualification"
+  ],
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/result.json",
+      "sha256": "b4cb4d2a5d96dd4f2d4bd6eaec8116ac36bc386ccf40416871059a39ccc367d8"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/remote-packaged-v9-c3/result.json",
+      "sha256": "8856a5c562b8129d26a9318e0de7e9b01e67ab6fbdd12dd72481720079c93665"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/source-inventory.json",
+      "sha256": "9326ac45612b789913dea8f2a262fbd878d4521a44336f6228bf647b42d90700"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/packaged-harness-final-source.json",
+      "sha256": "5a56822a18b6da373bf954ef23700e15c2c6549218277b4ac9a396025ef76a89"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v9-source.json",
+      "sha256": "4566fd0c2dfeb18d3ef4945705ca672d6ff6df492ed4880edda775d51367645a"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-build-v9/desktop-metrics.json",
+      "sha256": "2660bad7d4a76e5582d50c138d4e463e0f49fa0710cc113051f66fe5370718ee"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/provider-config.json",
+      "sha256": "b65bea86ea68b20fe6ec87e3dd9875ab1c6414168315462a9355e46fe386ab9d"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/c3-cpu-hardware.json",
+      "sha256": "68dc5d5175d0f739bfe510661892c9e226127521cc7052153bccc82c4ead92c5"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/q38pm-20260906-091609-4351-c-instance.json",
+      "sha256": "df3c2e22da74f0b2678bdeee60e559863b8f86d1ab14e1f4597ebebc65383922"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/q38pm-20260906-091609-4351-w0-instance.json",
+      "sha256": "5f3ce86339d0beede18f99d179062a1f08b75240728c8b8f21e9a3a801280a9e"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/q38pm-20260906-091609-4351-w2-instance.json",
+      "sha256": "2a046485fc70b540508333daa2f09b9ec970f3052b66acecdb3abcbb34febd08"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-091609-4351/q38pm-20260906-091609-4351-w3-instance.json",
+      "sha256": "e4df29c15e28956de4e7cd6de724251b0768180157fb54b1ef7960c106fa33bf"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate13_gcp_provider as gcp
-from gate13_cloud_orchestrator import PackageArtifact
+from gate13_cloud_orchestrator import Gate13CloudOrchestrator, PackageArtifact
 from gate13_gcp_provider import GcpConfig, GcpProvider, GitHubPackageSource, LoggedRunner
 
 RUN_ID = "g13-20260902-000000-abcd"
@@ -306,7 +307,160 @@ def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
         assert hashlib.sha256(payload).hexdigest() == digest
 
 
-def test_route_preparation_waits_five_minutes_and_for_ubuntu_installer(tmp_path, monkeypatch):
+@pytest.mark.parametrize("platform", ["windows", "linux"])
+def test_route_fencing_uses_1200_second_readiness_timeout(tmp_path, monkeypatch, platform):
+    item = provider(tmp_path, object())
+    result = {"result": "passed", "target": platform}
+    calls = []
+
+    def ssh(resource, command, **kwargs):
+        calls.append((resource, command, kwargs))
+        return subprocess.CompletedProcess([], 0, json.dumps(result), "")
+
+    monkeypatch.setattr(item, "_ssh", ssh)
+
+    assert item.fence_route(platform) == result
+    assert calls == [
+        (
+            item.route,
+            "sudo /opt/communityai/venv/bin/python "
+            f"/tmp/gate13_route_fence.py --target {platform} --timeout-seconds 1200 --settle-seconds 30",
+            {"action": f"Fencing the route for {platform}", "timeout": 2_100, "check": False},
+        )
+    ]
+
+
+@pytest.mark.parametrize("platform", ["windows", "linux"])
+@pytest.mark.parametrize("failure", ["rejected", "malformed", "timeout"])
+def test_route_failure_logs_are_saved_before_cleanup_and_survive_it(tmp_path, monkeypatch, platform, failure):
+    item = provider(tmp_path, object())
+    stage = f"{platform}-fence"
+    logs = tmp_path / "route-diagnostics" / stage
+    events = []
+    command_output = "\n".join(f"fence output line {number}" for number in range(1_000))
+
+    def ssh(instance, command, **kwargs):
+        assert instance == item.route
+        if "gate13_route_fence.py" in command:
+            if f"--target {platform}" not in command:
+                return subprocess.CompletedProcess([], 0, '{"result":"passed","target":"windows"}', "")
+            events.append("fence-failed")
+            if failure == "timeout":
+                cause = subprocess.TimeoutExpired(
+                    "ssh", 2_100, output=command_output.encode(), stderr=b"partial transport error"
+                )
+                raise gcp.CommandError("Fencing could not run") from cause
+            payload = (
+                '{"result":"failed","failure_code":"route did not become ready before the deadline"}'
+                if failure == "rejected"
+                else "this is not JSON"
+            )
+            return subprocess.CompletedProcess([], 1, command_output + "\n" + payload, "actual fence stderr")
+        assert (logs / "command.log").is_file()
+        assert kwargs["check"] is False
+        assert kwargs["timeout"] == 90
+        if "systemctl show" in command:
+            events.append("services-saved")
+            return subprocess.CompletedProcess([], 0, "ActiveState=failed\nExecMainStatus=1\n", "")
+        assert "journalctl -b" in command
+        assert "-u communityai-qwen.service -u communityai-gemma.service" in command
+        assert "-n " not in command and "tail" not in command
+        events.append("journal-saved")
+        return subprocess.CompletedProcess(
+            [], 0, "early worker error\n" + "download progress\n" * 1_000, "journal warning"
+        )
+
+    def cleanup():
+        assert "early worker error" in (logs / "journal.log").read_text()
+        assert "ExecMainStatus=1" in (logs / "services.log").read_text()
+        events.append("cleanup")
+        return {"result": "passed"}
+
+    monkeypatch.setattr(item, "_ssh", ssh)
+    monkeypatch.setattr(item, "preflight", lambda: {"result": "passed"})
+    monkeypatch.setattr(item, "create_route", lambda: None)
+    monkeypatch.setattr(item, "prepare_route", lambda: {"result": "passed"})
+    monkeypatch.setattr(item, "create_client", lambda *_args: None)
+    monkeypatch.setattr(item, "prepare_client", lambda *_args: {"result": "passed"})
+    monkeypatch.setattr(item, "run_client", lambda *_args: b'{"result":"passed"}')
+    monkeypatch.setattr(item, "delete_client", lambda *_args: None)
+    monkeypatch.setattr(item, "cleanup_all", cleanup)
+    monkeypatch.setattr(item, "verify_cleanup", lambda: {"result": "passed"})
+
+    result = Gate13CloudOrchestrator(
+        run_id=RUN_ID,
+        package_source=SimpleNamespace(prepare=lambda: {target: artifact(target) for target in ("windows", "linux")}),
+        provider=item,
+        output_root=tmp_path,
+        evidence_validator=lambda _platform, payload, _package: json.loads(payload),
+    ).run()
+
+    assert result["result"] == "failed"
+    assert result["cleanup"]["result"] == "passed"
+    assert str(logs) in result["failure_reason"]
+    assert events == ["fence-failed", "services-saved", "journal-saved", "cleanup"]
+    assert command_output in (logs / "command.log").read_text()
+    assert "journal warning" in (logs / "journal.log").read_text()
+    assert (logs / "collection.log").read_text() == "Collection completed\n"
+    if failure == "timeout":
+        assert "partial transport error" in (logs / "command.log").read_text()
+        assert "Fencing could not run" in result["failure_reason"]
+    else:
+        assert "actual fence stderr" in (logs / "command.log").read_text()
+
+
+@pytest.mark.parametrize("read_failure", ["timeout", "exit"])
+def test_route_log_collection_failure_keeps_other_logs_and_original_error(tmp_path, monkeypatch, read_failure):
+    item = provider(tmp_path, object())
+    logs = tmp_path / "route-diagnostics" / "linux-fence"
+
+    def ssh(_instance, command, **_kwargs):
+        if "gate13_route_fence.py" in command:
+            return subprocess.CompletedProcess([], 1, '{"result":"failed","failure_code":"original failure"}', "")
+        if "systemctl show" in command:
+            if read_failure == "timeout":
+                raise subprocess.TimeoutExpired("ssh", 90, output=b"partial service status")
+            return subprocess.CompletedProcess([], 1, "", "service status unavailable")
+        return subprocess.CompletedProcess([], 0, "worker traceback", "")
+
+    monkeypatch.setattr(item, "_ssh", ssh)
+    with pytest.raises(gcp.Gate13CloudError, match="original failure"):
+        item.fence_route("linux")
+    assert "worker traceback" in (logs / "journal.log").read_text()
+    assert "Collection incomplete: services:" in (logs / "collection.log").read_text()
+    assert (logs / "command.log").is_file()
+
+
+def test_route_log_disk_failure_does_not_replace_original_fence_error(tmp_path, monkeypatch):
+    item = provider(tmp_path, object())
+
+    def fail(_platform):
+        raise gcp.Gate13CloudError("original route failure")
+
+    def write(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(item, "_fence_route", fail)
+    monkeypatch.setattr(item, "_write_route_log", write)
+    with pytest.raises(gcp.Gate13CloudError, match="original route failure; route diagnostic collection failed"):
+        item.fence_route("windows")
+
+
+def test_route_logs_redact_download_urls_and_bearer_tokens(tmp_path):
+    item = provider(tmp_path, object())
+    path = item._write_route_log(
+        "setup",
+        "command",
+        "download failed https://example.invalid/file?signature=secret\nAuthorization: Bearer secret",
+    )
+    content = path.read_text()
+    assert "secret" not in content
+    assert "download failed <redacted-url>" in content
+    assert "Bearer <redacted>" in content
+
+
+@pytest.mark.parametrize("setup_failed", [False, True])
+def test_route_preparation_waits_five_minutes_and_for_ubuntu_installer(tmp_path, monkeypatch, setup_failed):
     item = provider(
         tmp_path,
         LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
@@ -331,10 +485,22 @@ def test_route_preparation_waits_five_minutes_and_for_ubuntu_installer(tmp_path,
 
     def ssh(_name, command, **_kwargs):
         ssh_commands.append(command)
+        if "gate13_route_setup.sh" in command:
+            return subprocess.CompletedProcess(
+                [], 1 if setup_failed else 0, "full setup output\n" * 1_000, "setup stderr"
+            )
         return subprocess.CompletedProcess([], 0, "", "")
 
     monkeypatch.setattr(item, "_ssh", ssh)
 
+    if setup_failed:
+        with pytest.raises(gcp.Gate13CloudError, match="route services failed with exit code 1"):
+            item.prepare_route()
+        logs = tmp_path / "route-diagnostics" / "setup"
+        assert "full setup output\n" * 1_000 in (logs / "command.log").read_text()
+        assert "setup stderr" in (logs / "command.log").read_text()
+        assert (logs / "journal.log").is_file()
+        return
     result = item.prepare_route()
 
     assert len(waits) == 1

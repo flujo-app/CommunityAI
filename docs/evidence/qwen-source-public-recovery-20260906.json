@@ -1,0 +1,545 @@
+{
+  "run_id": "q38pm-20260906-081449-5fdb",
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "overall_runner_result": "failed",
+  "topology": "GCP L4 + Azure T4 + two E2 CPU workers; assigned 16-block spans",
+  "source_commit": null,
+  "result": "passed",
+  "scope": "Source node, signed public sequence 2: promotion, local preference and controlled new-peer recovery",
+  "evidence": {
+    "active_answer_after_mode_change": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788684186,
+        "id": "cmpl-ca236b868be8471482212708",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 70.55240217200003
+    },
+    "all_blocks": 64,
+    "catalog_scope": "staged signed public sequence 2; explicit owned test seed configuration",
+    "local_after_worker_loss": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788684241,
+        "id": "cmpl-b15b76e124ef443cbe325082",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 7.647138679999898
+    },
+    "local_before_growth": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788683035,
+        "id": "cmpl-2ff8051b73d8489487ede33a",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 70.13827751600002
+    },
+    "local_fallbacks_before_active_transition": [],
+    "local_only_next_request": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788684192,
+        "id": "cmpl-2c4aba86f32746daa4ee64d3",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 5.893289684000138
+    },
+    "manifest_digests": [
+      "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+      "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4"
+    ],
+    "observed_at_unix": 1788684541.5637813,
+    "packaged": false,
+    "promoted_status": {
+      "api_version": 1,
+      "auto_selection": {
+        "covered_blocks": 64,
+        "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "peer_count": 4,
+        "reason": "Selected catalog priority 1: live discovery reports a complete 64/64-block route from 4 verified peers.",
+        "selector": "auto",
+        "source": "runtime",
+        "status": "selected",
+        "total_blocks": 64
+      },
+      "contribution": {
+        "configured": true,
+        "editable": true,
+        "policy": {
+          "config_revision": "sha256:55af22e166beb11b7a689cc8eddaad64e0e8bc3aaa0f593d2b42f3a334036447",
+          "policy": {
+            "allowed_models": [],
+            "denied_models": [],
+            "max_bandwidth_mbps": null,
+            "max_disk_space": null,
+            "max_power_watts": null,
+            "max_vram": null,
+            "pause_timeout": 10.0,
+            "preferred_models": [],
+            "schedule": null,
+            "sharing_enabled": false
+          },
+          "schema_version": 1
+        },
+        "schema_version": 3,
+        "workers": []
+      },
+      "inference_mode": "auto",
+      "inference_mode_editable": true,
+      "models": [
+        {
+          "active_requests": 0,
+          "aliases": [
+            "local-qwen",
+            "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0"
+          ],
+          "download": {
+            "schema_version": 1,
+            "selected_whole_shard_bytes": 1769904871
+          },
+          "id": "Qwen3.5-0.8B-Local",
+          "last_error": null,
+          "last_used_at": 1788683035.732954,
+          "loaded_at": 1788683031.4489868,
+          "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+          "repository": "Qwen/Qwen3.5-0.8B",
+          "route": {
+            "covered_blocks": 24,
+            "device": "cpu",
+            "last_updated_age": 0.0,
+            "peer_count": 0,
+            "source": "local",
+            "status": "complete",
+            "total_blocks": 24
+          },
+          "state": "ready"
+        },
+        {
+          "active_requests": 0,
+          "aliases": [
+            "qwen3.8-27b",
+            "qwen3.8-27b-fp8",
+            "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4"
+          ],
+          "download": {
+            "schema_version": 1,
+            "selected_whole_shard_bytes": null
+          },
+          "id": "Qwen3.8 27B FP8 Dequant",
+          "last_error": null,
+          "last_used_at": 1788684040.266354,
+          "loaded_at": 1788683960.5176191,
+          "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+          "repository": "Qwen/Qwen3.8-27B-FP8",
+          "route": {
+            "coverage_fingerprint": "bf9da8e3f6d55ec05438014daf9f8447a5d09da03b56e6fe489caa1e7aba3996",
+            "covered_blocks": 64,
+            "independent_routes": 1,
+            "last_error": null,
+            "last_updated_age": 19.786563946999877,
+            "minimum_replicas": 1,
+            "missing_blocks": [],
+            "peer_count": 4,
+            "replica_counts": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "replicas_after_largest_peer_loss": 0,
+            "source": "runtime",
+            "status": "complete",
+            "total_blocks": 64
+          },
+          "state": "ready"
+        }
+      ],
+      "openai_base_url": "http://127.0.0.1:8080/v1",
+      "runtime_budget": {
+        "max_loaded_models": 2,
+        "resident_models": 2
+      },
+      "started_at": 1788682964,
+      "status": "running",
+      "workers": []
+    },
+    "qwen38_after_replacement": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788684540,
+        "id": "cmpl-23cbf3d822184f8b84dbf62b",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 103.85260538699981
+    },
+    "qwen38_baseline": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788684115,
+        "id": "cmpl-8259351fac53465690cafa66",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 74.09326549599996
+    },
+    "recovered_status": {
+      "api_version": 1,
+      "auto_selection": {
+        "covered_blocks": 64,
+        "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "peer_count": 4,
+        "reason": "Selected catalog priority 1: live discovery reports a complete 64/64-block route from 4 verified peers.",
+        "selector": "auto",
+        "source": "runtime",
+        "status": "selected",
+        "total_blocks": 64
+      },
+      "contribution": {
+        "configured": true,
+        "editable": true,
+        "policy": {
+          "config_revision": "sha256:ffff58b75e962183b07f14a4d6ea30ed461d62d32e1cbc2d1cce605a43d5462a",
+          "policy": {
+            "allowed_models": [],
+            "denied_models": [],
+            "max_bandwidth_mbps": null,
+            "max_disk_space": null,
+            "max_power_watts": null,
+            "max_vram": null,
+            "pause_timeout": 10.0,
+            "preferred_models": [],
+            "schedule": null,
+            "sharing_enabled": false
+          },
+          "schema_version": 1
+        },
+        "schema_version": 3,
+        "workers": []
+      },
+      "inference_mode": "auto",
+      "inference_mode_editable": true,
+      "models": [
+        {
+          "active_requests": 0,
+          "aliases": [
+            "local-qwen",
+            "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0"
+          ],
+          "download": {
+            "schema_version": 1,
+            "selected_whole_shard_bytes": 1769904871
+          },
+          "id": "Qwen3.5-0.8B-Local",
+          "last_error": null,
+          "last_used_at": 1788684241.140227,
+          "loaded_at": 1788683031.4489868,
+          "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+          "repository": "Qwen/Qwen3.5-0.8B",
+          "route": {
+            "covered_blocks": 24,
+            "device": "cpu",
+            "last_updated_age": 0.0,
+            "peer_count": 0,
+            "source": "local",
+            "status": "complete",
+            "total_blocks": 24
+          },
+          "state": "ready"
+        },
+        {
+          "active_requests": 0,
+          "aliases": [
+            "qwen3.8-27b",
+            "qwen3.8-27b-fp8",
+            "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4"
+          ],
+          "download": {
+            "schema_version": 1,
+            "selected_whole_shard_bytes": null
+          },
+          "id": "Qwen3.8 27B FP8 Dequant",
+          "last_error": null,
+          "last_used_at": 1788684434.2402947,
+          "loaded_at": 1788683960.5176191,
+          "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+          "repository": "Qwen/Qwen3.8-27B-FP8",
+          "route": {
+            "coverage_fingerprint": "25d10f64d8cb92deccb7a153242033b9f8b60eb1c269bba3e047824dca1124c9",
+            "covered_blocks": 64,
+            "independent_routes": 1,
+            "last_error": null,
+            "last_updated_age": 50.24731808399997,
+            "minimum_replicas": 1,
+            "missing_blocks": [],
+            "peer_count": 4,
+            "replica_counts": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "replicas_after_largest_peer_loss": 0,
+            "source": "runtime",
+            "status": "complete",
+            "total_blocks": 64
+          },
+          "state": "ready"
+        }
+      ],
+      "openai_base_url": "http://127.0.0.1:8080/v1",
+      "runtime_budget": {
+        "max_loaded_models": 2,
+        "resident_models": 2
+      },
+      "started_at": 1788682964,
+      "status": "running",
+      "workers": []
+    },
+    "result": "passed",
+    "worker_replaced_acknowledgement": {
+      "observed_at_unix": 1788684268.2183309,
+      "peer_id": "QmaCwR4NFyCwv6BnTMF2wT14vS5RuWcRtQnfjfNhBup2GK",
+      "recovery_nonce": "8c3adcd409112258e03c5d80a922563c"
+    },
+    "worker_stopped_acknowledgement": {
+      "observed_at_unix": 1788684204.9745443,
+      "peer_id": "QmfLeev8xgZwZ7P392q5VHgd89MrPTy9JQJgzHWYYrYjPh",
+      "recovery_nonce": "8c3adcd409112258e03c5d80a922563c"
+    }
+  },
+  "replacement_peer_ids": {
+    "before": "QmfLeev8xgZwZ7P392q5VHgd89MrPTy9JQJgzHWYYrYjPh",
+    "after": "QmaCwR4NFyCwv6BnTMF2wT14vS5RuWcRtQnfjfNhBup2GK"
+  },
+  "limits": [
+    "Explicit owned bootstrap seeds and assigned spans; not autonomous desktop formation",
+    "Source node, not a Windows packaged recovery qualification",
+    "Bounded short synthetic prompts; no broader performance claim"
+  ],
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-081449-5fdb/product-result.json",
+      "sha256": "2a1eead36018c54a9666b2658b05a5f3a509dda2dbe343f35c67568d6b839739"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-081449-5fdb/result.json",
+      "sha256": "21c01588085064e6c95ead6e4d49b30b26a4697bbda5c8a48bd99a302bee9104"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-081449-5fdb/events.jsonl",
+      "sha256": "4e92a8b7445e1f419997b8416817d7d6cd1a1bededbce7d08f42fef47cdba153"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-081449-5fdb/source-inventory.json",
+      "sha256": "bacb551ad5bcea4ec2e27fd4f5dbdcd597e54992191c7584f64c52db7f22b180"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "duration_seconds": 1835.5582807064056,
+  "error": "RuntimeError: q38pm-20260906-025141-96fa-w3 worker failed: {'error': 'ManifestTransferInterrupted', 'message': 'Interrupted download of layers-60.safetensors at byte 0: ConnectionError', 'observed_at_unix': 1788664443.8187575}",
+  "hardware_qualification": false,
+  "packaged_qualification": false,
+  "result": "failed",
+  "run_id": "q38pm-20260906-025141-96fa",
+  "scope": "production-node-model-transitions",
+  "topology": "gcp-l4-azure-t4-cpu",
+  "failure_analysis": "A Hub TCP connection reset interrupted the first finite range of layers-60.safetensors. The run failed before full-route product inference; automatic cleanup was verified. Downloader now retries transient range transfers up to three times with backoff, retaining strict size/range/hash verification.",
+  "files": {
+    "source-inventory.json": "6c01d0d3ddc7db06b2bbae075ec363256882985312cd768b19b2c9acbe1eeeef",
+    "result.json": "85a959cda02568f85d63f004dfe760fecbc894d423f6fb6c67defee14c625d82",
+    "cleanup.json": "2590118322c53b1b505e856e38f36f70cf507af37873c18d5f058eb0e092d600",
+    "q38pm-20260906-025141-96fa-w3-diagnostics.txt": "fab86097d56b6b1ad6222f6ac6440fbcaf8e0cd307dc49ac4a58f0c5da8242d0"
+  }
+}

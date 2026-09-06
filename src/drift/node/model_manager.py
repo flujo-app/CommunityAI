@@ -78,8 +78,11 @@ class ModelDescriptor:
     repository: Optional[str] = None
     name: Optional[str] = None
     selected_whole_shard_bytes: Optional[int] = None
+    execution: str = "distributed"
 
     def __post_init__(self) -> None:
+        if self.execution not in ("distributed", "local"):
+            raise ValueError("execution must be distributed or local")
         identifiers = (self.model_id, *self.aliases)
         if any(not isinstance(value, str) or not value.strip() for value in identifiers):
             raise ValueError("model identifiers must be non-empty strings")
@@ -213,7 +216,44 @@ class ModelManager:
         self._max_loaded_models = max_loaded_models
         self._shutdown_callbacks: list[Callable[[], None]] = []
         self._auto_priority: Tuple[str, ...] = ()
+        self._local_only = False
+        self._selection_policy: Optional[Callable[[ModelDescriptor, Dict[str, Any]], bool]] = None
         self._closed = False
+        self._draining = False
+        self._catalog_models: Optional[frozenset[str]] = None
+
+    def set_catalog_models(self, digests: Iterable[str]) -> None:
+        with self._lock:
+            self._catalog_models = frozenset(digests)
+
+    @property
+    def inference_mode(self) -> str:
+        with self._lock:
+            return "local_only" if self._local_only else "auto"
+
+    def set_inference_mode(self, mode: str) -> None:
+        if mode not in ("auto", "local_only"):
+            raise ValueError("inference mode must be auto or local_only")
+        with self._lock:
+            self._local_only = mode == "local_only"
+
+    def catalog_allows_contribution(self, digest: str) -> bool:
+        with self._lock:
+            return self._catalog_models is None or digest in self._catalog_models
+
+    def begin_idle_restart(self) -> bool:
+        """Atomically stop admission only after existing leases and loads finish."""
+        with self._capacity_changed:
+            if self._closed or self._draining:
+                return False
+            if any(
+                record.active_requests or record.state in (ModelState.LOADING, ModelState.UNLOADING)
+                for record in self._records.values()
+            ):
+                return False
+            self._draining = True
+            self._capacity_changed.notify_all()
+            return True
 
     def register(
         self,
@@ -261,10 +301,13 @@ class ModelManager:
                 raise ModelManagerClosedError("model manager is shutting down")
             self._shutdown_callbacks.append(callback)
 
-    def configure_auto_selection(self, identifiers: Iterable[str]) -> None:
+    def configure_auto_selection(self, identifiers: Iterable[str], *, local_only: bool = False) -> None:
         """Bind auto to catalog priority while keeping exact selectors unchanged."""
         requested = tuple(identifiers)
+        if not isinstance(local_only, bool):
+            raise ValueError("local_only must be boolean")
         with self._lock:
+            self._local_only = local_only
             if self._closed:
                 raise ModelManagerClosedError("model manager is shutting down")
             if not requested:
@@ -284,6 +327,11 @@ class ModelManager:
                 raise ValueError("auto model priority must not select the same model more than once")
             self._auto_priority = tuple(resolved)
 
+    def set_selection_policy(self, policy: Optional[Callable[[ModelDescriptor, Dict[str, Any]], bool]]) -> None:
+        """Install the catalog eligibility gate; status reads never run network probes."""
+        with self._lock:
+            self._selection_policy = policy
+
     def register_loaded(
         self, model_id: str, model: Any, tokenizer: Any, *, aliases: Iterable[str] = ()
     ) -> ModelDescriptor:
@@ -302,7 +350,7 @@ class ModelManager:
 
     def _record_for(self, identifier: Optional[str]) -> _ModelRecord:
         with self._lock:
-            if self._closed:
+            if self._closed or self._draining:
                 raise ModelManagerClosedError("model manager is shutting down")
             if identifier is None:
                 if len(self._records) == 1:
@@ -340,7 +388,7 @@ class ModelManager:
             candidate: Optional[_ModelRecord] = None
             candidate_runtime: Optional[ModelRuntime] = None
             with self._capacity_changed:
-                if self._closed:
+                if self._closed or self._draining:
                     raise ModelManagerClosedError("model manager is shutting down")
                 if self._max_loaded_models is None or self._resident_count_locked() < self._max_loaded_models:
                     target.state = ModelState.LOADING
@@ -425,9 +473,11 @@ class ModelManager:
         The returned lease must be released when the request finishes.
         """
         record = self._record_for(identifier)
+        if self._local_only and record.descriptor.execution != "local":
+            raise AutoModelUnavailableError("This installation is configured for local-only inference")
         with record.load_lock:
             with self._lock:
-                if self._closed:
+                if self._closed or self._draining:
                     raise ModelManagerClosedError("model manager is shutting down")
                 if record.runtime is not None:
                     if record.close_failed:
@@ -544,8 +594,15 @@ class ModelManager:
                 "peer_count": None,
                 "source": None,
             }
-        for priority, model_id in enumerate(self._auto_priority, start=1):
+        # A standalone fallback is always considered after the community candidates.
+        priorities = sorted(
+            self._auto_priority, key=lambda model_id: self._records[model_id].descriptor.execution == "local"
+        )
+        for priority, model_id in enumerate(priorities, start=1):
             record = self._records[model_id]
+            local = record.descriptor.execution == "local"
+            if self._local_only and not local:
+                continue
             route = self._read_route(record)
             if route is None:
                 continue
@@ -562,8 +619,10 @@ class ModelManager:
                 and covered == total
                 and isinstance(peers, int)
                 and not isinstance(peers, bool)
-                and peers > 0
+                and (peers == 0 if local else peers > 0)
             )
+            if complete and not local and self._selection_policy is not None:
+                complete = self._selection_policy(record.descriptor, route)
             if complete:
                 peer_label = "peer" if peers == 1 else "peers"
                 return {
@@ -571,7 +630,9 @@ class ModelManager:
                     "status": "selected",
                     "model": model_id,
                     "manifest_digest": record.descriptor.manifest_digest,
-                    "reason": (
+                    "reason": "Selected a verified standalone model on this computer."
+                    if local
+                    else (
                         f"Selected catalog priority {priority}: live discovery reports a complete "
                         f"{covered}/{total}-block route from {peers} verified {peer_label}."
                     ),
