@@ -102,5 +102,6 @@ progress are included in these packages; their detailed
 [display/integrity tests](desktop-health-downloads-20260907.md) remain the evidence
 for all display states. Remote download percentages and unreported spare capacity
 are not inferred. Installer lifecycle is Gate 15; Windows's fully frozen
-[installation result](gate15-20260907-frozen-windows-installer.json) is separate.
+[installation result](gate15-20260907-frozen-windows-installer.json) and the
+[corrected Debian lifecycle](gate15-20260907-frozen-debian-installer.json) are separate.
 The canary and public release remain later gates. Signing is owner-deferred.

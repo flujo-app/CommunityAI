@@ -73,7 +73,7 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
 | Q3.8 | **IN PROGRESS; runtime, packaged and bounded formation milestones passed** | Carry the formation fixes into final packages; finish representative consumer GPU/client and conversation measurements and the ordinary-user update path for the signed Qwen catalog. |
 | 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
-| 15 | **IN PROGRESS; engineering installers** | **“Install it, replace it, remove it.”** Working Inno Setup Windows installer and `.deb`; unsigned alpha is owner-authorized. Verify ordinary-user install, safe node/worker shutdown during upgrade, settings/cache preservation, reinstall, uninstall and retain/delete cache choices. Windows signing, Store submission, hosted signed APT and automatic application updates follow after alpha. |
+| 15 | **IN PROGRESS; Windows/Debian lifecycle passed** | **“Install it, replace it, remove it.”** The final Inno setup passed ordinary-user install, active upgrade, removal and reinstall. The corrected `.deb` passed ordinary-user frozen-app launches around root package replacement/removal/reinstall, including independent process/credential cleanup. Ubuntu lifecycle and explicit retained-data/login-entry choices remain. Unsigned alpha is owner-authorized; Windows signing, Store, hosted signed APT and automatic updates follow after alpha. |
 | 16 | **WAITING** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
 
@@ -114,6 +114,23 @@ credentials survived replacement/removal. A redundant test-driver cleanup call
 failed after the final successful uninstall; the subsequent independent cleanup
 audit passed. [Full evidence](evidence/gate15-20260907-frozen-windows-installer.json).
 
+The final Debian installer at `0.1.0~alpha.20260907.4` also passed initial
+installation, active same-version replacement, removal, reinstall and final
+removal with the actual ordinary-user frozen GUI/node. Local Qwen tokens and
+verified sharing artifacts passed on all three launches. Settings/cache and
+credentials survived maintenance, and the independent final audit found no
+installed runtime/DHT processes or test credential. This is Debian 12/Xvfb with
+CUDA passthrough, not a physical Ubuntu desktop or different-version upgrade.
+[Final Debian evidence](evidence/gate15-20260907-frozen-debian-installer.json).
+
+The Debian run exposed two shutdown defects: unreadable process ownership was
+silently skipped, and a fixed process snapshot missed helpers born during shutdown.
+Maintenance now refuses insufficient inspection permissions and continually
+discovers owned processes until repeated observations are quiet. Both failures,
+targeted cleanup and the old-fails/new-passes regression are retained. Installer
+scripts come from `61ab7b1`; the independently verified `bf67f0d` runtime payload
+was preserved byte-for-byte while the Debian control archive was replaced.
+
 Functional/style checks and both production package/installer jobs passed. The
 two high-severity CodeQL findings were reviewed against their exact source-to-sink
 paths and [dismissed as false positives](evidence/gate14-20260907-codeql-triage.md),
@@ -121,8 +138,8 @@ with scanning still enabled. Public-key metadata is distinct from private materi
 and generated API bearer keys are distinct from human passwords; advanced imports
 still require operator-supplied strong tokens.
 
-1. **Finish Gate 15 on the proven runtime.** Complete the Linux installer lifecycle,
-   remaining target-distribution checks and the explicit retained-data/login-entry
+1. **Finish Gate 15 on the proven runtime.** Complete the remaining Ubuntu
+   installation checks and the explicit retained-data/login-entry
    choices. Windows signing is owner-deferred; unsigned direct-download setup and
    a directly installable `.deb` are the alpha distribution targets.
 2. **Complete remaining Q3.8 product measurements.** Preserve the bounded formation,

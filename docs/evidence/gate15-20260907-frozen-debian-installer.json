@@ -1,0 +1,73 @@
+{
+  "result": "passed",
+  "frozen_gui_and_node": true,
+  "ordinary_uid": 1000,
+  "scope": "Debian 12 same-version package replacement, removal and reinstall",
+  "full_gate15": false,
+  "phases": [
+    {
+      "phase": "initial-installation",
+      "verified_download_bytes": 384054157,
+      "block_indices": "60:61",
+      "owned_process_count": 11,
+      "local_tokens": 3
+    },
+    {
+      "phase": "replaced-installation",
+      "verified_download_bytes": 384054157,
+      "block_indices": "36:37",
+      "owned_process_count": 11,
+      "local_tokens": 3
+    },
+    {
+      "phase": "reinstalled",
+      "verified_download_bytes": 384054157,
+      "block_indices": "60:61",
+      "owned_process_count": 11,
+      "local_tokens": 3
+    }
+  ],
+  "replacement_stopped_owned_tree_and_retained_state": true,
+  "removal_stopped_owned_tree_and_retained_state": true,
+  "reinstall_with_retained_settings_cache_and_credentials": true,
+  "native_qualification_credential_removed": true,
+  "installer_sha256": "a2cc0548cd51f98ed7a9c208be18b53a701a9317cbc63293d4bf7d1e14151517",
+  "installer_version": "0.1.0~alpha.20260907.4",
+  "source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+  "installer_builder_source_commit": "61ab7b1df61c82c5a306cefaf4e14b56356f5feb",
+  "installed_executable_removed": true,
+  "post_run_cleanup_audit": {
+    "result": "passed",
+    "lifecycle_result": "passed",
+    "package_not_installed": true,
+    "installed_executable_absent": true,
+    "native_credential_absent": true,
+    "frozen_runtime_processes_absent": true,
+    "dht_processes_absent": true,
+    "external_cache_sentinel_preserved": true
+  },
+  "date": "2026-09-07",
+  "qualification_root_capability": "SYS_PTRACE; permits cross-user executable inspection",
+  "previous_failure_records": [
+    "gate15-20260907-debian-replacement-failure.json",
+    "gate15-20260907-debian-late-helper-failure.json"
+  ],
+  "installer_packaging": {
+    "method": "Replace only Debian control archive; compressed runtime payload copied unchanged",
+    "source_installer_sha256": "27408b573e0c17d4c218f72becaa2f0869a581ebfc367bfb8ede27c6c18fc29a",
+    "installer_source_commit": "61ab7b1df61c82c5a306cefaf4e14b56356f5feb",
+    "maintenance_sha256": "4841b09a2a0c60f9e7def7cff7f081da5b82c139d3dbf49363d6e611e7f65fd1",
+    "compressed_payload_sha256": "ee091347be36af6fb723d364e6f073f43cd8b7d696deb4299d00bb087e956e7f",
+    "installer_sha256": "a2cc0548cd51f98ed7a9c208be18b53a701a9317cbc63293d4bf7d1e14151517",
+    "installer_bytes": 3781591484,
+    "version": "0.1.0~alpha.20260907.4"
+  },
+  "environment": "Debian 12 in WSL2 Docker; ordinary UID 1000; X11/Xvfb and native Secret Service; RTX 2070 SUPER 8 GiB CUDA passthrough",
+  "build_environment": "Ubuntu 22.04, Python 3.12.14; complete independently verified frozen bundle",
+  "limitations": [
+    "Package maintenance used root dpkg; the installed GUI and node ran as an ordinary user.",
+    "Replacement used the same version and exact package, exercising active-process shutdown and file replacement; this is not a different-version upgrade claim.",
+    "The test began with existing model caches and a private loopback DHT. It generated three local Qwen tokens and verified all artifacts for one real Qwen3.8 sharing block after install, replacement and reinstall. Automatic placement can select a different block; each observed range is recorded.",
+    "Ubuntu installation lifecycle, physical desktop coverage, explicit cache deletion/login-entry cleanup, canary and publication remain separate. Signing is owner-deferred."
+  ]
+}
