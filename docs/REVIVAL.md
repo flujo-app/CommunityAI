@@ -1,11 +1,12 @@
 # Petals revival: public inference alpha roadmap
 
 Current release status and execution order are maintained in
-[RELEASE_READINESS.md](RELEASE_READINESS.md), reviewed 2026-09-06. The Qwen3.8
+[RELEASE_READINESS.md](RELEASE_READINESS.md), reviewed 2026-09-07. The Qwen3.8
 64-block route, same-session replacement, reference comparison and Windows
 packaged short chat, worker-loss recovery and HTTP-blocked cache restart passed
-on assigned cloud routes. Autonomous desktop formation and broader release
-qualification remain open. The
+on assigned cloud routes. Bounded autonomous CPU desktop formation and recovery
+also passed on September 7. The owner selected Gate 14's desktop resource controls
+as the next priority, followed by installers and release qualification. The
 [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
 candidate lists in historical implementation snapshots below.
 
@@ -121,7 +122,7 @@ The following are post-alpha hardening, not reasons to delay first public use:
   seed/mirror operators, and multi-provider outage survival;
 - independent threshold catalog key holders, key-compromise/rotation drills, and
   interchangeable-mirror governance beyond the alpha's pinned signed catalog;
-- operating-system publisher signing/notarization, an authenticated automatic updater,
+- macOS notarization, an authenticated automatic updater,
   automatic rollback, and polished retained-data migration beyond the alpha's manual path;
 - exhaustive malicious-load, Sybil/collusion, partition, herd-switching, long-soak, and
   production-style evidence-retention programs; and
@@ -151,25 +152,29 @@ shard granularity limit are recorded in
 
 ### Non-negotiable launch sequence
 
-Gate V and Gates 1-13 passed for their recorded scopes. The immediate sequence is
-the remaining **Q3.8 product outcomes → Gates 14/15 → canary (16) → release (17)**:
+Gate V and Gates 1-13 passed for their recorded scopes. On September 7 the owner
+selected **Gate 14 resource sliders → installers/lifecycle (15) → canary (16) →
+release (17)** as the next product sequence:
 
-1. finish packaged recovery/cache restart and representative consumer GPU/client
-   measurements; reference correctness, cold acquisition and one packaged short
-   conversation already passed their bounded scopes;
-2. finish qualification of local Qwen, automatic Qwen3.8 formation,
-   measured promotion for new requests, and downgrade/rejoin;
-3. prove automatic contribution and resource limits on Windows/Linux (Gate 14),
-   alongside final-package install/reinstall/uninstall/retained-data checks (15);
-4. finish the ordinary-user application lifecycle around the already published
-   signed catalog and tested bootstrap/root migration, preserving settings; and
-5. run the bounded public canary and release the best-effort Qwen alpha.
+1. deliver two desktop sliders: VRAM and processing usage, both defaulting to
+   100% on a new installation. Sharing stays opt-in. Verify lower limits under
+   load, persistence, live changes, and complete worker shutdown on Pause.
+   VRAM controls the contribution allocator budget, preserving local-inference
+   reservations; processing controls contribution compute duty cycle, with
+   explicit per-step bursts rather than an instantaneous whole-device guarantee.
+2. build the Windows and Linux setup artifacts described below with the proven
+   formation fixes. Verify ordinary startup, upgrade/reinstall, catalog migration,
+   uninstall, and retain/delete-cache choices. Upgrades must stop the node and
+   its complete worker trees before replacing files and preserve settings/cache.
+3. complete remaining Qwen and resource-control observations on those packages,
+   declaring only tested hardware and conversation limits; and
+4. run the bounded public canary and publish the best-effort Qwen alpha.
 
 Combine overlapping product checks in the same real desktop sessions. The full
 Qwen runtime and tested same-session recovery already passed; repeat them only
 where new source/profile changes or product integration require verification.
 
-Do not resume post-alpha redundancy, publisher-signing/updater, independent-governance, or
+Do not resume post-alpha redundancy, automatic-updater, independent-governance, or
 exhaustive hostile-network programs while an earlier alpha outcome is unfinished. Preserve
 completed foundations for those programs, but do not polish them ahead of the usable path.
 
@@ -186,6 +191,29 @@ use rather than relying on an older evidence note.
 The next external deliverable is the usable Qwen3.8 desktop/local-fallback path.
 Supporting code must address a concrete product or observed-run gap; the existing
 one-click runners and evidence machinery are the starting point.
+
+### Distribution decision, September 7
+
+The owner's selected distribution paths supersede the earlier deferral of Windows
+publisher signing. Existing unsigned engineering packages remain unsigned evidence.
+
+| Channel | Deliverable |
+| --- | --- |
+| Windows download | Inno Setup, ordinary-user installation, signed `setup.exe` and uninstaller. [Inno Setup capabilities](https://jrsoftware.org/isinfo.php). |
+| Microsoft Store | Submit the same installer through the MSI/EXE route. Provide a standalone offline, silent-capable installer at an immutable versioned HTTPS URL; sign installer and PE payloads with a trusted code-signing identity. This route does not provide Store-managed updates. [Package requirements](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/upload-app-packages), [distribution/signing requirements](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/choose-distribution-path). |
+| Ubuntu/Debian | Build a `.deb` and publish a signed HTTPS APT repository, with its key scoped using `Signed-By`. After repository setup, install with `sudo apt install communityai`. [Debian repository guidance](https://wiki.debian.org/DebianRepository/UseThirdParty). |
+
+Signing identity, Store account/certification and APT hosting are real release
+inputs; a generated installer script alone does not satisfy them. Model weights
+remain verified on-demand data, separate from the bundled executable runtime.
+
+The owner also requested an effort estimate for a block-health grid resembling a
+GitHub activity grid or defragmenter, richer peer lifecycle/capacity information,
+and a prominent view of the user's own download. Preserve this desktop follow-up:
+show observed coverage/replicas separately from reservations, joining, download,
+loading and failure states. Remote progress must remain unknown until authenticated
+telemetry supports it. Local progress must distinguish received bytes from verified
+artifacts and reusable cache. This is not an additional release gate.
 
 ### Execution loop
 

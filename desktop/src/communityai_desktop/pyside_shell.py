@@ -220,6 +220,8 @@ def run(
         QWidget,
     )
 
+    from communityai_desktop.resource_controls import ResourceControls
+
     def label(text: str = "", name: str | None = None) -> QLabel:
         item = QLabel(text)
         if name:
@@ -263,9 +265,17 @@ def run(
         @Slot()
         def run(self):
             try:
-                self.signals.result.emit(self.operation())
+                result = self.operation()
             except Exception as exc:  # GUI boundary: show a friendly state and remain responsive.
-                self.signals.error.emit(str(exc))
+                signal, result = self.signals.error, str(exc)
+            else:
+                signal = self.signals.result
+            try:
+                signal.emit(result)
+            except RuntimeError as exc:
+                # A bounded node request may finish after the user has closed Qt.
+                if "deleted" not in str(exc):
+                    raise
 
     class MainWindow(QMainWindow):
         def __init__(self):
@@ -276,6 +286,7 @@ def run(
             self._pool = QThreadPool.globalInstance()
             self._tasks = set()
             self._busy = 0
+            self._closing = False
             self._controller = controller
             self._snapshot: Dict[str, Any] = {
                 "models": [],
@@ -547,8 +558,8 @@ def run(
             memory_header = QHBoxLayout()
             memory_header.addLayout(
                 self._section_header(
-                    "Configured GPU memory budget",
-                    "Read from the node's enforced policy; unavailable data never becomes an invented default.",
+                    "Resources for sharing",
+                    "Choose how much this computer contributes. Both budgets default to 100%.",
                 ),
                 1,
             )
@@ -558,12 +569,9 @@ def run(
             memory_layout.addLayout(memory_header)
             self.memory_detail = label("No accelerator budget is reported.", "bodyMuted")
             memory_layout.addWidget(self.memory_detail)
-            self.memory_bar = QProgressBar()
-            self.memory_bar.setRange(0, 100)
-            self.memory_bar.setValue(0)
-            self.memory_bar.setTextVisible(False)
-            self.memory_bar.setAccessibleName("Configured GPU memory budget")
-            memory_layout.addWidget(self.memory_bar)
+            self.resource_controls = ResourceControls()
+            self.resource_controls.apply_requested.connect(self._apply_resource_limits)
+            memory_layout.addWidget(self.resource_controls)
             layout.addWidget(memory_card)
 
             policy_card, policy_layout = card()
@@ -708,6 +716,7 @@ def run(
             self.retry_button.setDisabled(busy)
             self.create_key_button.setDisabled(busy or self._controller is None)
             contribution = self._snapshot.get("contribution", {})
+            self.resource_controls.set_state(contribution, busy=busy)
             self.edit_policy_button.setDisabled(
                 busy
                 or self._controller is None
@@ -727,17 +736,23 @@ def run(
             on_result: Callable[[Any], None],
             on_error: Callable[[str], None] | None = None,
         ) -> None:
+            if self._closing:
+                return
             self._set_busy(1)
             task = Task(operation)
             self._tasks.add(task)
 
             def finish(result: Any) -> None:
                 self._tasks.discard(task)
+                if self._closing:
+                    return
                 self._set_busy(-1)
                 on_result(result)
 
             def fail(message: str) -> None:
                 self._tasks.discard(task)
+                if self._closing:
+                    return
                 self._set_busy(-1)
                 (on_error or self._connection_failed)(message)
 
@@ -908,21 +923,18 @@ def run(
             self.master_share_button.style().polish(self.master_share_button)
 
             vram_status = contribution["vram_status"]
+            self.resource_controls.set_state(contribution, busy=self._busy > 0)
             if vram_status == "configured":
-                percent = contribution["vram_percent"]
                 shared = _gib_text(contribution["vram_bytes"])
                 pool = _gib_text(contribution["vram_pool_bytes"])
-                self.memory_value.setText(f"{percent}%")
-                self.memory_detail.setText(f"{shared} of {pool} is reserved per configured worker.")
-                self.memory_bar.setValue(percent)
+                self.memory_value.setText(pool)
+                self.memory_detail.setText(f"Effective sharing memory: {pool}; up to {shared} per worker.")
             elif vram_status == "varies":
                 self.memory_value.setText("Varies")
                 self.memory_detail.setText("Configured accelerator limits differ between workers.")
-                self.memory_bar.setValue(0)
             else:
                 self.memory_value.setText("Unavailable")
                 self.memory_detail.setText("No accelerator budget is reported; no default is assumed.")
-                self.memory_bar.setValue(0)
 
             def limit_summary(key: str, unit: str, *, byte_size: bool = False) -> str:
                 values = [worker["limits"][key] for worker in workers]
@@ -1059,6 +1071,24 @@ def run(
                 return
             self.login_startup_detail.setText("Enabled for this user" if enabled else "Off")
 
+        def _apply_resource_limits(self, changes, revision) -> None:
+            if self._controller is None or self._busy:
+                return
+
+            def applied(result):
+                self.resource_controls.applied(result)
+                self.refresh()
+
+            def failed(message):
+                self.resource_controls.failed(message)
+                self.refresh()
+
+            self._submit(
+                lambda: self._controller.update_resource_limits(changes, expected_revision=revision),
+                applied,
+                failed,
+            )
+
         def _edit_contribution_policy(self) -> None:
             contribution = self._snapshot.get("contribution", {})
             policy = contribution.get("policy")
@@ -1150,6 +1180,7 @@ def run(
 
             try:
                 updated = {
+                    **policy,
                     "sharing_enabled": sharing_enabled.isChecked(),
                     **{
                         field: [line for line in editor.toPlainText().splitlines() if line.strip()]
@@ -1337,6 +1368,12 @@ def run(
             raise SingleInstanceError(f"could not establish the per-user CommunityAI instance endpoint: {error}")
 
     window = MainWindow()
+
+    def stop_window_refreshes():
+        window._closing = True
+        window._timer.stop()
+
+    application.aboutToQuit.connect(stop_window_refreshes)
     window._show_page(max(0, min(3, screenshot_page)))
     if start_minimized:
         window.showMinimized()

@@ -331,6 +331,7 @@ class ContributionPolicyConfig:
     max_vram: Optional[str] = None
     max_vram_bytes: Optional[int] = None
     max_vram_fraction: Optional[float] = None
+    max_processing_percent: float = 100.0
     max_bandwidth_mbps: Optional[float] = None
     max_power_watts: Optional[float] = None
     pause_timeout: float = 10.0
@@ -350,6 +351,7 @@ class ContributionPolicyConfig:
                 "denied_models",
                 "max_disk_space",
                 "max_vram",
+                "max_processing_percent",
                 "max_bandwidth_mbps",
                 "max_power_watts",
                 "pause_timeout",
@@ -379,6 +381,14 @@ class ContributionPolicyConfig:
         else:
             max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
         sharing_enabled = _require_bool(source["sharing_enabled"], f"{field}.sharing_enabled")
+        processing = source.get("max_processing_percent", 100.0)
+        if (
+            isinstance(processing, bool)
+            or not isinstance(processing, (int, float))
+            or not math.isfinite(processing)
+            or not 1 <= processing <= 100
+        ):
+            raise NodeConfigError(f"{field}.max_processing_percent must be between 1 and 100")
         if sharing_enabled and max_disk_bytes is None:
             raise NodeConfigError(f"{field}.max_disk_space is required when sharing_enabled is true")
         return cls(
@@ -391,6 +401,7 @@ class ContributionPolicyConfig:
             max_vram=max_vram,
             max_vram_bytes=max_vram_bytes,
             max_vram_fraction=max_vram_fraction,
+            max_processing_percent=float(processing),
             max_bandwidth_mbps=(
                 None
                 if source.get("max_bandwidth_mbps") is None
@@ -416,6 +427,7 @@ class ContributionPolicyConfig:
             "denied_models": list(self.denied_models),
             "max_disk_space": self.max_disk_space,
             "max_vram": self.max_vram,
+            "max_processing_percent": self.max_processing_percent,
             "max_bandwidth_mbps": self.max_bandwidth_mbps,
             "max_power_watts": self.max_power_watts,
             "pause_timeout": self.pause_timeout,

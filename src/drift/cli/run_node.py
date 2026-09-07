@@ -16,12 +16,7 @@ from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 from hivemind.utils.timed_storage import get_dht_time
 
 import drift
-from drift.model_manifest import (
-    ManifestArtifactVerifier,
-    ManifestError,
-    ModelManifest,
-    select_manifest_block_artifacts,
-)
+from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest, select_manifest_block_artifacts
 from drift.node.catalog_refresh import CatalogRefreshService, load_configured_catalog
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
 from drift.node.contribution_planner import (
@@ -710,6 +705,14 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--max_disk_space", effective_disk_space))
         if effective_vram_bytes is not None:
             command.extend(("--max_device_memory", str(effective_vram_bytes)))
+        command.extend(("--max_processing_percent", str(policy.max_processing_percent)))
+        if policy.max_processing_percent < 100:
+            # One stable lock for all this node's workers, across model/device
+            # changes. Never remove a live lock file during a policy update.
+            budget_path = config.workers[0].identity_path.with_name(
+                f".{config.workers[0].identity_path.name}.processing-budget"
+            )
+            command.extend(("--processing_budget_path", str(budget_path)))
         if worker.port is not None:
             command.extend(("--port", str(worker.port)))
         if worker.public_ip is not None:

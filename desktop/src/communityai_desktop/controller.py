@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from communityai_desktop.client import NodeClient
+from communityai_desktop.client import NodeClient, NodeClientError
 
 
 def _download_storage_estimate(size_bytes: int | None) -> str:
@@ -218,6 +218,47 @@ class DesktopController:
 
     def update_contribution_policy(self, policy: Dict[str, Any], *, expected_revision: str) -> Dict[str, Any]:
         return self.client.update_contribution_policy(policy, expected_revision=expected_revision)
+
+    def update_resource_limits(self, changes: Dict[str, Any], *, expected_revision: str) -> Dict[str, Any]:
+        if not changes or set(changes) - {"max_vram", "max_processing_percent"}:
+            raise ValueError("Only VRAM and processing percentages can change here")
+        for field, value in changes.items():
+            if field == "max_vram":
+                if not isinstance(value, str) or not value.endswith("%") or not value[:-1].isdigit():
+                    raise ValueError("VRAM must be a whole percentage")
+                value = int(value[:-1])
+            if type(value) is not int or not 1 <= value <= 100:
+                raise ValueError("Resource percentages must be whole numbers from 1 to 100")
+        current = self.client.status()["contribution"]
+        saved = current["policy"]
+        if saved["config_revision"] != expected_revision:
+            raise NodeClientError("Settings changed elsewhere. Refresh before applying limits.")
+        if not current["editable"] or "max_processing_percent" not in saved["policy"]:
+            raise NodeClientError("Update the local node to use these resource controls.")
+        resume = [worker["id"] for worker in current["workers"] if worker["desired_running"]]
+        # Pause all configured workers, including automatic workers with no current
+        # process. This prevents the placement service racing the policy transaction.
+        for worker in current["workers"]:
+            self.client.worker_action(worker["id"], "pause")
+        result = self.client.update_contribution_policy(
+            {**saved["policy"], **changes}, expected_revision=expected_revision
+        )
+        # Failed persistence deliberately leaves workers stopped. Never restart a
+        # worker with an old, more permissive limit after a rejected save.
+        errors = []
+        for worker_id in resume:
+            try:
+                self.client.worker_action(worker_id, "start")
+            except NodeClientError as exc:
+                errors.append(str(exc))
+        result["message"] = (
+            "Limits saved. Sharing is waiting: " + "; ".join(errors)[:200]
+            if errors
+            else "Limits saved. Previously selected sharing resumed."
+            if resume
+            else "Limits saved. Sharing remains paused."
+        )
+        return result
 
     def set_workers_enabled(self, worker_ids: list[str], enabled: bool) -> list[Dict[str, Any]]:
         action = "start" if enabled else "pause"

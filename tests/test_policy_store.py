@@ -106,6 +106,7 @@ def _complete_policy(**overrides):
         "denied_models": [],
         "max_disk_space": "12GiB",
         "max_vram": "50%",
+        "max_processing_percent": 100.0,
         "max_bandwidth_mbps": 25.0,
         "max_power_watts": 150.0,
         "pause_timeout": 7.0,

@@ -139,6 +139,9 @@ def test_bootstrap_installs_verified_manifests_and_atomic_node_config(tmp_path):
     assert automatic.model == "auto"
     assert automatic.num_blocks == 1
     assert automatic.enabled is True
+    assert config.contribution_policy.sharing_enabled is False
+    assert config.contribution_policy.max_vram == "100%"
+    assert config.contribution_policy.max_processing_percent == 100
     assert automatic.identity_path == (data_dir / "worker-identities" / "automatic.key").resolve()
     assert all(model.initial_peers == (PEER,) for model in config.models)
     assert all(model.manifest_path.parent == (data_dir / "manifests").resolve() for model in config.models)

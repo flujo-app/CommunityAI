@@ -610,7 +610,10 @@ class Gate13Playthrough:
                     self._state = "wait_resumed"
             elif self._state == "wait_policy":
                 contribution = self._window._snapshot.get("contribution", {})
-                if not self._window._busy and contribution.get("policy") == self.plan.policy:
+                observed_policy = dict(contribution.get("policy") or {})
+                if observed_policy.get("max_processing_percent") == 100:
+                    observed_policy.pop("max_processing_percent")
+                if not self._window._busy and observed_policy == self.plan.policy:
                     self._ui["policy_dialog_saved"] = True
                     # The manual Windows run toggled the selected model before
                     # using the master Start control.  Automatic placement can

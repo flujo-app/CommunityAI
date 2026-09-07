@@ -1211,6 +1211,7 @@ def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tm
                 "sharing_enabled": True,
                 "max_disk_space": "1GiB",
                 "max_vram": "75%",
+                "max_processing_percent": 25,
             },
         ),
         base_dir=tmp_path,
@@ -1223,6 +1224,10 @@ def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tm
     assert launch.vram_pool_bytes == 12 * 1024**3
     assert launch.vram_device == "cuda:0"
     assert launch.command[launch.command.index("--max_device_memory") + 1] == str(8 * 1024**3)
+    assert launch.command[launch.command.index("--max_processing_percent") + 1] == "25.0"
+    assert launch.command[launch.command.index("--processing_budget_path") + 1] == str(
+        tmp_path / ".worker.key.processing-budget"
+    )
     assert supervisor.snapshot("gpu-worker")["max_vram_bytes"] == 8 * 1024**3
 
     supervisor.shutdown()

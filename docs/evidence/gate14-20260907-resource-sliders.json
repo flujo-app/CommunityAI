@@ -1,0 +1,105 @@
+{
+  "date": "2026-09-07",
+  "scope": "source-slider-controls-and-native-windows-synthetic-runtime-probes",
+  "complete_gate14": false,
+  "base_commit": "16043d8a69edc1dede7b5b080098e104cebd968e",
+  "source_sha256": {
+    "desktop/src/communityai_desktop/client.py": "294acbad74eedafa02910f4120ac670a8cf2ad21e57f0d47ee350daa611fc541",
+    "desktop/src/communityai_desktop/controller.py": "72400b074609ddc3028879412e0cebee534627c8f6dc381cf58b2b350ef7ea1a",
+    "desktop/src/communityai_desktop/pyside_shell.py": "c5095911841216d8faa512d8b187a9eb7869477349c0d031d4df6c86b4736078",
+    "desktop/src/communityai_desktop/resource_controls.py": "0ea3ecaeeb64de3ccfa7b9aa902cc68d2f378530d6fcd267f57237def0143b0e",
+    "desktop/src/communityai_desktop/gate13_playthrough.py": "13b1c00c822ab89ee715e87510572b832703d6e830380d475f067b6c4aba29d0",
+    "src/drift/node/config.py": "4da68e1c78c8a4109edaa034bebffe5b97bf309adf2ce1ce0fce513c18b6133a",
+    "src/drift/node/catalog_bootstrap.py": "f9983e74b4f14ee78250eca3276c47534ae93f1a35eed6cf5c1d956af7c63677",
+    "src/drift/cli/run_node.py": "fbff54f30906e4481db578cc826bc1e236c9fa2f52438c1c01bd8ed4759c2f7c",
+    "src/drift/cli/run_server.py": "246131a5517ee9a7e8005d9de44be850cb9d12814034f65b49c52da2aeffe79f",
+    "src/drift/server/server.py": "ef3a2730a88683c7bde54e81e15cf082322eef90ca2eb898871698707585f2f4",
+    "src/drift/server/processing_budget.py": "5fda1f6131ab0c48410a9ec750c2da77a5e81e39b07f521c65f3dea1178f5426",
+    "scripts/qualify_resource_processing.py": "4b115e5118f99836ff53f18f27f5dde9fb0d541a9234cfa75565cb44c34626d6"
+  },
+  "cpu": {
+    "scope": "synthetic-production-runtime-processing-budget",
+    "device": "cpu",
+    "complete_gate14": false,
+    "runs": [
+      {
+        "requested_percent": 100,
+        "measured_compute_duty_percent": 100.0,
+        "wall_seconds": 4.0,
+        "compute_seconds": 4.0,
+        "steps": 128
+      },
+      {
+        "requested_percent": 50,
+        "measured_compute_duty_percent": 49.59999998100102,
+        "wall_seconds": 4.0,
+        "compute_seconds": 1.9839999992400408,
+        "steps": 64
+      },
+      {
+        "requested_percent": 25,
+        "measured_compute_duty_percent": 24.79999999050051,
+        "wall_seconds": 4.0,
+        "compute_seconds": 0.9919999996200204,
+        "steps": 32
+      }
+    ],
+    "result": "passed",
+    "limitations": [
+      "Compute duty cycle, not an instantaneous whole-device utilization guarantee",
+      "No Qwen model, download, cold startup or final-package lifecycle exercised",
+      "Local inference, downloads and other applications are outside the sharing compute budget"
+    ]
+  },
+  "cuda": {
+    "scope": "synthetic-production-runtime-processing-budget",
+    "device": "cuda:0",
+    "complete_gate14": false,
+    "runs": [
+      {
+        "requested_percent": 100,
+        "measured_compute_duty_percent": 98.42500000013388,
+        "wall_seconds": 4.0,
+        "compute_seconds": 3.937000000005355,
+        "steps": 126
+      },
+      {
+        "requested_percent": 50,
+        "measured_compute_duty_percent": 49.59999998100102,
+        "wall_seconds": 4.0,
+        "compute_seconds": 1.9839999992400408,
+        "steps": 64
+      },
+      {
+        "requested_percent": 25,
+        "measured_compute_duty_percent": 24.79999999050051,
+        "wall_seconds": 4.0,
+        "compute_seconds": 0.9919999996200204,
+        "steps": 32
+      }
+    ],
+    "hardware": "NVIDIA GeForce RTX 2070 SUPER",
+    "memory_allocator": {
+      "cap_bytes": 268435456,
+      "under_limit_succeeded": true,
+      "over_limit_rejected": true,
+      "device_total_bytes": 8589606912
+    },
+    "result": "passed",
+    "limitations": [
+      "Compute duty cycle, not an instantaneous whole-device utilization guarantee",
+      "No Qwen model, download, cold startup or final-package lifecycle exercised",
+      "Local inference, downloads and other applications are outside the sharing compute budget"
+    ]
+  },
+  "validation": {
+    "related_tests_passed": 278,
+    "platform_skips": 2,
+    "black": "passed",
+    "isort": "passed",
+    "ui_preview": "inspected using synthetic acceptance server"
+  },
+  "cloud_resources_created": false,
+  "downloads_started": false,
+  "result": "checkpoint-passed"
+}

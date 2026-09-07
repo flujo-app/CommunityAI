@@ -217,6 +217,10 @@ def build_parser(*, bound_worker: bool = False) -> configargparse.ArgParser:
     parser.add_argument("--max_device_memory", type=str, default=None,
                         help="Hard per-accelerator memory ceiling. Example: 8GiB. "
                              "The node resolves percentage contribution limits to bytes before launch.")
+    parser.add_argument("--max_processing_percent", type=float, default=100,
+                        help="Contribution compute time percentage (1-100); paced between synchronized steps.")
+    parser.add_argument("--processing_budget_path", type=str, default=None,
+                        help="Local shared processing-budget lock identity, supplied by the node.")
 
     parser.add_argument('--device', type=str, default=None, required=False,
                         help='all blocks will use this device in torch notation; '

@@ -19,8 +19,10 @@ Keep exact signed catalogs/manifests, verified partial artifact downloads,
 authenticated discovery/transport, finite admission/timeouts, local resource
 limits, prompt-visibility disclosure, and a working route/catalog disable path.
 A one-route alpha must say that availability is best effort. macOS, credits,
-payments/payouts, automatic software updates, publisher signing, and exhaustive
-hostile-network/long-soak qualification remain outside this alpha.
+payments/payouts, automatic software updates, and exhaustive
+hostile-network/long-soak qualification remain outside this alpha. The owner now
+plans signed Inno Setup installers, Store MSI/EXE distribution, and a signed APT
+repository; current engineering package evidence remains unsigned.
 
 ## Qwen3.8 results: bounded tests passed, release checks open
 
@@ -68,8 +70,8 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | --- | --- | --- |
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
 | Q3.8 | **IN PROGRESS; runtime, packaged and bounded formation milestones passed** | Carry the formation fixes into final packages; finish representative consumer GPU/client and conversation measurements and the ordinary-user update path for the signed Qwen catalog. |
-| 14 | **IN PROGRESS** | **“Sharing obeys my limits.”** On real packaged Windows/Linux hardware, automatic sharing picks an affordable span; memory/storage/bandwidth/schedule controls and Pause work. Power limits must be measured where available and explicitly handled where unsupported. [Operations](PACKAGED_ALPHA_OPERATIONS.md). |
-| 15 | **WAITING on the final package** | **“Install it, replace it, remove it.”** Verified release artifacts; ordinary-user clean install, manual upgrade/reinstall, uninstall, retain/delete cache choice, retained-data reinstall, and recovery instructions on Windows/Linux. Automatic updater and publisher signing remain later work. |
+| 14 | **IN PROGRESS — current priority** | **“Sharing obeys my limits.”** Two desktop sliders, VRAM and processing usage, default to 100% on fresh installs; contribution remains opt-in. Prove lower budgets under load, safe stop/save/resume, persistence and Pause, alongside existing storage/bandwidth/schedule/power controls on real Windows/Linux packages. Processing is paced compute time, not an instantaneous whole-device cap. [Operations](PACKAGED_ALPHA_OPERATIONS.md). |
+| 15 | **WAITING on the final package** | **“Install it, replace it, remove it.”** Signed Inno Setup Windows installer, Store MSI/EXE submission, `.deb` and signed APT repository. Verify ordinary-user install, safe node/worker shutdown during upgrade, settings/cache preservation, reinstall, uninstall and retain/delete cache choices. Automatic application updater remains later work. |
 | 16 | **WAITING** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
 
@@ -81,19 +83,26 @@ public safety check; exhaustive hardening is deferred.
 
 ## Next work, in useful product order
 
-1. **Broaden Qwen desktop qualification.** Reference comparison, packaged short
-   chat, cold acquisition, recovery and HTTP-blocked cache restart have passed in
-   their bounded cases. Measure useful conversations, context/concurrency limits,
-   client RAM and target consumer hardware. Keep failed attempts visible.
-2. **Carry the proven formation path into final packages.** The CPU/source-UI
+The [September 7 slider checkpoint](evidence/gate14-20260907-resource-sliders.md)
+adds both real Qt controls, atomic stop/save/resume behavior and runtime compute
+pacing. Bounded Windows CPU/RTX 2070 SUPER tensor probes matched 100/50/25% duty
+budgets and verified CUDA allocator rejection. These are source/synthetic probes;
+the current packaged Windows/Linux Qwen-sharing acceptance remains open.
+
+1. **Finish Gate 14's two resource sliders.** The owner selected VRAM and
+   processing usage, each defaulting to 100%, as the immediate focus. Verify
+   actual enforcement, live changes, persistence and complete Pause cleanup.
+2. **Create setup files containing the proven formation path.** The CPU/source-UI
    one-click test passed local → community → local → community with actual
    desktop controls and unattended recovery. Include the committed placement and
    discovery fixes in the final builds; qualify the frozen UI and ordinary
    startup alongside the installation lifecycle. This result does not cover
    simultaneous cold joins or consumer GPU contribution.
 3. **Close Gates 14 and 15 on that product.** Exercise automatic assignment,
-   resource limits, Pause, restart, replacement, and uninstall on Windows/Linux.
-   Record RTX 30/40/50 observations before claiming those profiles supported.
+   limits, Pause, upgrades that stop complete worker trees, settings/cache
+   preservation, reinstall and uninstall on Windows/Linux. Include remaining
+   Qwen conversation/client measurements in these sessions, and record hardware
+   observations before claiming additional profiles supported.
 4. **Finish migration lifecycle and run the canary.** Sequence 2 is published at
    its separate qualification path. Clean HTTPS catalog installation and explicit
    old-root migration passed through the current Windows packaged bootstrap,
@@ -127,7 +136,7 @@ Purchases/payouts add marketplace work. See the [credit audit](COMMUNITY_AI_MODE
 and [existing design](REVIVAL.md#identity-keys-accounting-and-credits).
 
 Also deferred: DeepSeek/GLM activation, independent seed/route/mirror redundancy,
-independent key-holder governance, publisher signing/authenticated software updater,
+independent key-holder governance, authenticated automatic software updater,
 macOS, and exhaustive malicious-load/Sybil/partition/long-soak campaigns. Preserve
 their existing foundations; prioritize the usable Qwen path.
 

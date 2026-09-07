@@ -215,8 +215,18 @@ def _normalize_policy(value: Any) -> Dict[str, Any]:
         "pause_timeout",
         "schedule",
     }
-    if not isinstance(value, dict) or set(value) != fields or not isinstance(value["sharing_enabled"], bool):
+    if (
+        not isinstance(value, dict)
+        or set(value) not in (fields, fields | {"max_processing_percent"})
+        or not isinstance(value["sharing_enabled"], bool)
+    ):
         raise NodeClientError("Local node contribution policy is malformed")
+    processing = {}
+    if "max_processing_percent" in value:
+        percent = _optional_number(value["max_processing_percent"], "processing percentage", positive=True)
+        if percent is None or not 1 <= percent <= 100:
+            raise NodeClientError("Local node has invalid processing percentage")
+        processing["max_processing_percent"] = percent
     allowed = _normalize_model_selectors(value["allowed_models"], "allowed models")
     preferred = _normalize_model_selectors(value["preferred_models"], "preferred models")
     denied = _normalize_model_selectors(value["denied_models"], "denied models")
@@ -275,6 +285,7 @@ def _normalize_policy(value: Any) -> Dict[str, Any]:
         clean_schedule = {"timezone": timezone, "windows": clean_windows}
     return {
         "sharing_enabled": value["sharing_enabled"],
+        **processing,
         "allowed_models": allowed,
         "preferred_models": preferred,
         "denied_models": denied,

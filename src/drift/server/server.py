@@ -46,6 +46,7 @@ from drift.server.health import (
     write_public_worker_health,
 )
 from drift.server.memory_cache import MemoryCache
+from drift.server.processing_budget import ProcessingBudget
 from drift.server.reachability import ReachabilityProtocol, check_direct_reachability
 from drift.server.throughput import get_dtype_name, get_server_throughput
 from drift.utils.auto_config import AutoDistributedConfig
@@ -256,6 +257,8 @@ class Server:
         cache_dir: Optional[str] = None,
         max_disk_space: Optional[int] = None,
         max_device_memory: Optional[int] = None,
+        max_processing_percent: float = 100,
+        processing_budget_path: Optional[str] = None,
         device: Optional[Union[str, torch.device]] = None,
         compression=CompressionType.NONE,
         stats_report_interval: Optional[int] = None,
@@ -287,6 +290,7 @@ class Server:
         self.converted_model_name_or_path = converted_model_name_or_path
 
         self.num_handlers = num_handlers
+        self.processing_budget = ProcessingBudget(max_processing_percent, path=processing_budget_path)
         self.compression = compression
         self.stats_report_interval, self.update_period = stats_report_interval, update_period
         self.prefetch_batches, self.sender_threads = prefetch_batches, sender_threads
@@ -726,6 +730,8 @@ class Server:
             model_info=self.model_info,
             block_indices=block_indices,
             num_handlers=self.num_handlers,
+            max_processing_percent=self.processing_budget.percent,
+            processing_budget_path=self.processing_budget.path,
             min_batch_size=self.min_batch_size,
             max_batch_size=self.max_batch_size,
             max_chunk_size_bytes=self.max_chunk_size_bytes,
@@ -1398,9 +1404,28 @@ class ModuleAnnouncerThread(threading.Thread):
 class RuntimeWithDeduplicatedPools(Runtime):
     """A version of hivemind.moe.server.runtime.Runtime that allows multiple backends to reuse a task pool"""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, max_processing_percent=100, processing_budget_path=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.pools = tuple(set(self.pools))
+        self.processing_budget = ProcessingBudget(
+            max_processing_percent, path=processing_budget_path, stop=self.shutdown_trigger
+        )
+
+    def process_batch(self, pool, batch_index, *batch):
+        def synchronize():
+            devices = {device for backend in self.module_backends.values() for device in backend.module.devices}
+            for device in devices:
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                elif device.type == "xpu":
+                    torch.xpu.synchronize(device)
+                elif device.type == "mps":
+                    torch.mps.synchronize()
+
+        return self.processing_budget.run(
+            lambda: super(RuntimeWithDeduplicatedPools, self).process_batch(pool, batch_index, *batch),
+            synchronize=synchronize,
+        )
 
     def iterate_minibatches_from_pools(self, timeout=None):
         # multiprocessing.connection.wait() delegates to WaitForMultipleObjects on Windows, which

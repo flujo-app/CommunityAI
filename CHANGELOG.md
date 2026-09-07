@@ -7,6 +7,13 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Desktop sharing now has separate VRAM and processing-usage sliders, defaulting
+  to 100% on fresh installs while sharing stays opt-in. Applying limits pauses
+  workers before persistence and resumes only previously selected workers. Failed
+  saves leave sharing paused. Processing limits pace contribution compute between
+  steps and share a budget across workers; brief bursts, downloads, model loading
+  and local inference are outside an instantaneous usage guarantee.
+
 - Verified standalone Qwen3.5-0.8B inference now provides local fallback for
   `auto` requests, with local-only preferences, token/context budgets and stream
   cancellation. Packaged offline inference passed on Windows GPU and Linux CPU.

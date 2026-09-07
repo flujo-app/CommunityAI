@@ -121,6 +121,7 @@ def test_node_status_requires_auth_and_reports_lazy_model():
                     "denied_models": [],
                     "max_disk_space": None,
                     "max_vram": None,
+                    "max_processing_percent": 100.0,
                     "max_bandwidth_mbps": None,
                     "max_power_watts": None,
                     "pause_timeout": 10.0,
