@@ -233,9 +233,21 @@ class AutomaticContributionPlanner:
             if set(artifact_plans) != expected_ranges:
                 return None, f"exact artifact plans are unavailable for every {self.num_blocks}-block span"
 
-        # Find the least-covered contiguous window in one bounded pass. Equal
-        # windows use a node-specific rendezvous rank instead of numeric start, so
-        # a cohort sharing one snapshot does not all announce range zero.
+        # Break equal-coverage ties by how many workers of this capacity would
+        # still be needed to fill the remaining gaps. Random interior windows
+        # can strand short gaps, preventing four 16-block workers from covering
+        # 64 blocks despite having enough total capacity. Prefix/suffix costs
+        # keep this bounded scan linear; rendezvous still disperses equal fits.
+        prefix_cost = [0] * (len(counts) + 1)
+        suffix_cost = [0] * (len(counts) + 1)
+        gap = 0
+        for index, count in enumerate(counts):
+            gap = gap + 1 if count == 0 else 0
+            prefix_cost[index + 1] = prefix_cost[index] + int(gap > 0 and (gap - 1) % self.num_blocks == 0)
+        gap = 0
+        for index in range(len(counts) - 1, -1, -1):
+            gap = gap + 1 if counts[index] == 0 else 0
+            suffix_cost[index] = suffix_cost[index + 1] + int(gap > 0 and (gap - 1) % self.num_blocks == 0)
         maxima: deque[int] = deque()
         window_sum = 0
         best_key = None
@@ -264,6 +276,7 @@ class AutomaticContributionPlanner:
             key = (
                 counts[maxima[0]],
                 window_sum,
+                prefix_cost[start] + suffix_cost[end],
                 self._range_jitter(candidate.manifest_digest, start, end),
                 start,
             )
@@ -394,6 +407,16 @@ class AutomaticContributionPlanner:
                 best = self._current
             elif best.manifest_digest != current.manifest_digest and best.score < current.score + self._switch_margin:
                 best = self._current
+            elif best.manifest_digest == self._current.manifest_digest:
+                counts = current_candidate.health["replica_counts"]
+                old_start, old_end = map(int, self._current.block_indices.split(":"))
+                new_start, new_end = map(int, best.block_indices.split(":"))
+                # Moving the only provider of a block must not tear a complete
+                # route apart merely because another range won a random tie.
+                if all(counts) and any(
+                    counts[index] == 1 and not new_start <= index < new_end for index in range(old_start, old_end)
+                ):
+                    best = self._current
 
         return PlacementPlan(best, best.reason, len(candidates))
 

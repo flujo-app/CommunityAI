@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "recorded_date_utc": "2026-09-07",
+  "scope": "automatic-formation-fixes-local-desktop-preflight-and-blocked-cloud-attempt",
+  "distributed_formation_result": "not_proved",
+  "cloud_attempt": {
+    "run_id": "q38af-20260907-050021-e76861",
+    "result": "failed",
+    "phase": "preflight",
+    "reason": "GCP token refresh requires owner reauthentication",
+    "cloud_resources_created": false,
+    "raw_result_sha256": "35bd7fba930cee91d2412b1b4a65d5f368e5eeaf67a0b2bc2fd6ea6c404bb5b6"
+  },
+  "placement_regressions": {
+    "before_fix_four_16_block_allocations": [
+      "44:60",
+      "2:18",
+      "22:38",
+      "29:45"
+    ],
+    "before_fix_covered_blocks": 54,
+    "before_fix_total_blocks": 64,
+    "complete_route_before_fix_moved_from": "0:16",
+    "complete_route_before_fix_moved_to": "21:37",
+    "fixes": [
+      "Prefer equally useful ranges that leave fillable gaps",
+      "Retain sole-provider blocks on an already complete route",
+      "Disperse by persistent public identity instead of installation path"
+    ],
+    "regression_suite": {
+      "passed": 111,
+      "failed": 0,
+      "files": [
+        "tests/test_qwen_formation_runner.py",
+        "tests/test_automatic_formation.py",
+        "tests/test_contribution_planner.py",
+        "tests/test_automatic_placement_convergence.py",
+        "tests/test_node_config.py"
+      ]
+    }
+  },
+  "local_desktop_preflight": {
+    "run_id": "q38local-20260907-050558-e510c5",
+    "result": "passed",
+    "node": "hash-verified Windows v9 package",
+    "node_sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45",
+    "ui": "production Qt source with real controls",
+    "fake_node": false,
+    "empty_local_dht": true,
+    "configured_local_device": "cuda:0",
+    "model": "Qwen3.5-0.8B-Local",
+    "text": " Paris.\n",
+    "completion_tokens": 3,
+    "seconds_including_initial_model_load": 14.856259107589722,
+    "local_only_button_clicked_and_mode_verified": true,
+    "auto_button_clicked_and_mode_verified": true,
+    "local_process_cleanup_verified": true,
+    "raw_result_sha256": "93e955391645e35b57d9e54473609226a3b46cd9b6bdc8ed86c7548860b4d2d3",
+    "source_inventory_sha256": "d7c9c16d82c102b4e5903aa82407985e42ac2b9407fbcc342d6908baf635e27d",
+    "source_bundle_sha256": "ce1dcc58d8a33e77257b665fb2facac92b9303821b10dc4e0183d6623237e71b"
+  },
+  "remaining": [
+    "Run the full cloud formation/promotion/loss/rejoin experiment after native GCP auth works",
+    "This runner uses staggered source-node CPU contributors; simultaneous cold join and GPU contributor formation are separate",
+    "The Windows UI is real Qt source, not a freshly built frozen installer"
+  ],
+  "one_click": "Run Qwen Formation.cmd"
+}

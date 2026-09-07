@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import secrets
 import sys
 import time
 from dataclasses import replace
@@ -15,7 +16,12 @@ from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 from hivemind.utils.timed_storage import get_dht_time
 
 import drift
-from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest, select_manifest_block_artifacts
+from drift.model_manifest import (
+    ManifestArtifactVerifier,
+    ManifestError,
+    ModelManifest,
+    select_manifest_block_artifacts,
+)
 from drift.node.catalog_refresh import CatalogRefreshService, load_configured_catalog
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
 from drift.node.contribution_planner import (
@@ -888,6 +894,17 @@ def _recent_gap_preserves_artifact_claim(candidate, decision, num_blocks, *, max
     )
 
 
+def _automatic_placement_seed(worker) -> str:
+    try:
+        return NodeIdentity.ensure(worker.identity_path).key_id
+    except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
+        # A temporarily unavailable contribution key must not stop local
+        # inference. Intent publication still denies worker admission until the
+        # key is usable; an ephemeral seed keeps this session independently
+        # dispersed if permissions recover before the node is restarted.
+        return secrets.token_hex(32)
+
+
 def _build_automatic_placement_service(
     config: NodeConfig,
     manager: ModelManager,
@@ -907,7 +924,9 @@ def _build_automatic_placement_service(
     planners = {
         worker.worker_id.casefold(): AutomaticContributionPlanner(
             num_blocks=worker.num_blocks,
-            jitter_seed=str(worker.identity_path),
+            # Installation paths are identical on many machines. Disperse by
+            # the persistent public identity, not by the key's filename.
+            jitter_seed=_automatic_placement_seed(worker),
             maximum_observation_age_seconds=max(90.0, config.discovery_update_period * 3),
         )
         for worker in automatic_workers

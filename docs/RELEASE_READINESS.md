@@ -1,6 +1,6 @@
 # Public inference alpha release readiness
 
-Last reviewed: **2026-09-06**. This is the current release checklist. The former
+Last reviewed: **2026-09-07**. This is the current release checklist. The former
 checkpoint narratives, completed-gate detail, failed attempts, old model inventory,
 and budget history are preserved in [RELEASE_READINESS_HISTORY.md](RELEASE_READINESS_HISTORY.md).
 Implementation details belong in their linked runbooks and evidence records.
@@ -42,7 +42,7 @@ with FP8 weights converted to BF16 and eager attention.
 | Automatic promotion, preference and loss/rejoin | **PASSED through the source node under signed public sequence 2 on an assigned mixed route.** Local before growth; Qwen3.8 after measured readiness; active answer preserved when switching to local-only; local after confirmed T4 loss; Qwen3.8 after its replacement joined with a new peer identity. [Source product evidence](evidence/qwen-source-public-recovery-20260906.json). This does not prove autonomous desktop formation. |
 | Packaged Qwen3.8 | **PASSED on the assigned L4/T4/C3 route under signed public sequence 2.** Windows v9 generated three tokens in 12.250 seconds; a 31-token chat prompt answered `Paris` in 19.359 seconds. Peak sampled client process-tree RSS was 4.97 GB. [Evidence](evidence/qwen-packaged-recovery-v9-c3-20260906.json). |
 | Packaged worker outage and cache reuse | **PASSED on that C3 route.** Confirmed worker stop → automatic local answer → same-identity restart → Qwen answer in 13.672 seconds. A new node process repeated community completion/chat and local-only inference with HTTP downloads blocked, making zero download attempts. Owned cloud cleanup passed. The earlier [E2 rejoin timeout](evidence/qwen-packaged-rejoin-timeout-v9-20260906.json) remains a failed attempt. |
-| Autonomous desktop formation | **OPEN.** Assigned cloud spans do not prove that ordinary joining desktops assemble the complete model themselves. |
+| Autonomous desktop formation | **OPEN; live attempt blocked at GCP authentication before provisioning.** The new [formation runner](QWEN_FORMATION_TEST.md) supplies capacity only. Regression tests reproduced and fixed placement gaps and complete-route churn; its local packaged-node/real-Qt preflight passed. [Checkpoint](evidence/qwen-formation-checkpoint-20260907.json). No distributed formation pass is claimed. |
 | Consumer GPU and chat performance | **OPEN beyond the bounded observations above.** No RTX 30/40/50, broader conversation, context or concurrency qualification is claimed. The short C3 result is not a general performance qualification. |
 
 The complete [experiment report](QWEN_FULL_INFERENCE_RESULTS.md) preserves timing,

@@ -1,0 +1,94 @@
+"""Real Qt window attached to the formation test's isolated packaged node.
+
+Uses the same Qt automation hook as Gate 13. It observes live selections and
+clicks the production local-only control; no fake node or mocked controller.
+"""
+
+import argparse
+import json
+import time
+from pathlib import Path
+
+from communityai_desktop.client import NodeClient
+from communityai_desktop.controller import DesktopController
+from communityai_desktop.pyside_shell import run
+from qwen_formation_node import selected, write
+
+
+class FormationDesktop:
+    def __init__(self, root):
+        self.root = root
+        self.completed = set()
+        self.clicked = set()
+
+    def install(self, window, application, qt):
+        self.window, self.application = window, application
+        self.timer = qt["QTimer"](window)
+        self.timer.setInterval(500)
+        self.timer.timeout.connect(self.tick)
+        self.timer.start()
+
+    def tick(self):
+        try:
+            if (self.root / "desktop-stop").exists():
+                self.application.quit()
+                return
+            window = self.window
+            if window._controller is None or window._busy:
+                return
+            path = self.root / "desktop-command.json"
+            if not path.exists():
+                return
+            action = json.loads(path.read_text())
+            identity = action["id"]
+            if identity in self.completed:
+                return
+            if action["action"] == "toggle" and identity not in self.clicked:
+                if not window.inference_mode_button.isEnabled():
+                    return
+                window.inference_mode_button.click()
+                self.clicked.add(identity)
+                return
+            if not selected(window._snapshot, action["source"]):
+                return
+            if action.get("inference_mode") and window._snapshot.get("inference_mode") != action["inference_mode"]:
+                return
+            window._show_page(1)
+            screenshot = self.root / ("desktop-" + identity + ".png")
+            if not window.grab().save(str(screenshot)):
+                raise RuntimeError("Could not capture the real desktop window")
+            write(
+                self.root / ("desktop-response-" + identity + ".json"),
+                {
+                    "result": "passed",
+                    "id": identity,
+                    "source": action["source"],
+                    "real_window_visible": window.isVisible(),
+                    "button_clicked": identity in self.clicked,
+                    "selection": window._snapshot["auto_selection"],
+                    "inference_mode": window._snapshot["inference_mode"],
+                    "title": window.auto_selection_title.text(),
+                    "detail": window.auto_selection_detail.text(),
+                    "screenshot": screenshot.name,
+                    "ui_runtime": "production Qt source",
+                    "fake_node": False,
+                },
+            )
+            self.completed.add(identity)
+        except BaseException as exc:
+            write(self.root / "desktop-error.json", {"error": f"{type(exc).__name__}: {exc}"})
+            self.application.exit(1)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True)
+    args = parser.parse_args()
+    config = json.loads((args.root / "config.json").read_text())
+    key_path = args.root / "node/control-api.key"
+    while not key_path.exists() and time.time() < config["expires_at_unix"]:
+        time.sleep(1)
+    client = NodeClient(f"http://127.0.0.1:{config['api_port']}", key_path.read_text().strip())
+    raise SystemExit(
+        run(DesktopController(client), single_instance=False, qualification_automation=FormationDesktop(args.root)) or 0
+    )
