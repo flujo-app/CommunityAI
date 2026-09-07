@@ -94,6 +94,18 @@ class PortSequence:
 
 
 class NodeLifecycleTests(unittest.TestCase):
+    def test_failed_owned_shutdown_prevents_installation_acknowledgement(self):
+        with TemporaryDirectory() as directory:
+            supervisor = self._supervisor(directory, FakeStore())
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.wait.side_effect = lifecycle.subprocess.TimeoutExpired("owned node", 1)
+            supervisor._process = process
+            with self.assertRaises(NodeLifecycleError):
+                supervisor.close()
+            self.assertIs(supervisor._process, process)
+            process.kill.assert_called_once()
+
     def test_frozen_desktop_resolves_nested_node_sidecar(self):
         executable = Path.cwd() / "product" / ("CommunityAI.exe" if lifecycle.os.name == "nt" else "CommunityAI")
         suffix = ".exe" if lifecycle.os.name == "nt" else ""

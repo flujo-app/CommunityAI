@@ -10,7 +10,9 @@ The desktop currently provides the promoted milestone-5 vertical slice:
 - a modern Home, Models, Sharing, and API-access experience;
 - available models, total peers, optional peer-region counts, and current contribution status;
 - one-click model selection plus start and pause controls for contribution workers;
-- a persistent GPU-memory target slider ready for node-side budget enforcement;
+- separate VRAM and processing sliders, both initially 100%, with stop/save/resume
+  application and contribution-side enforcement;
+- block-health grids, available peer details and verified local download progress;
 - create, relabel, and revoke controls for OpenAI client keys;
 - one-time display and clipboard copy for newly created client-key secrets; and
 - native credential ownership with verified generation or automatic import of an existing headless-node key;
@@ -63,6 +65,10 @@ single-instance/login-startup behavior, contribution budgets, accessibility vali
 signed installers, and update/rollback behavior remain later milestone-5 gates.
 
 ## Development
+
+Inno Setup and Debian engineering installers are built after archive verification.
+See [installer commands and lifecycle limits](installers/README.md) and the
+[free-signing application draft](../docs/WINDOWS_SIGNING.md).
 
 Create a disposable environment and install the package:
 

@@ -1309,6 +1309,7 @@ def run(
     instance_server = None
     instance_lock = None
     instance_server_name = None
+    shutdown_sockets = []
     if single_instance:
         data_location = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
         if not data_location:
@@ -1401,6 +1402,7 @@ def run(
 
         def activate_window() -> None:
             should_activate = False
+            should_shutdown = False
             while instance_server.hasPendingConnections():
                 socket = instance_server.nextPendingConnection()
                 socket.setReadBufferSize(64)
@@ -1408,8 +1410,15 @@ def run(
                 raw_message = bytes(socket.read(64))
                 message = raw_message.strip() if len(raw_message) <= 32 and socket.bytesAvailable() == 0 else b""
                 should_activate = should_activate or message == b"activate"
-                socket.abort()
-                socket.deleteLater()
+                if message == b"shutdown":
+                    shutdown_sockets.append(socket)
+                    should_shutdown = True
+                else:
+                    socket.abort()
+                    socket.deleteLater()
+            if should_shutdown:
+                application.quit()
+                return
             if should_activate:
                 window.showNormal()
                 window.raise_()
@@ -1423,7 +1432,6 @@ def run(
                 instance_lock.unlock()
 
         instance_server.newConnection.connect(activate_window)
-        application.aboutToQuit.connect(close_instance_server)
         if instance_server.hasPendingConnections():
             QTimer.singleShot(0, activate_window)
 
@@ -1439,8 +1447,24 @@ def run(
     if auto_close_seconds is not None:
         QTimer.singleShot(max(1, int(float(auto_close_seconds) * 1000)), application.quit)
     restore_termination_handlers = _install_posix_termination_bridge(application, QTimer)
+
+    def finish_desktop_cleanup():
+        response = b"failed\n"
+        try:
+            if before_termination_restore is not None:
+                before_termination_restore()
+            response = b"stopped\n"
+        finally:
+            for socket in shutdown_sockets:
+                socket.write(response)
+                socket.flush()
+                socket.waitForBytesWritten(1000)
+                socket.disconnectFromServer()
+            if instance_server is not None:
+                close_instance_server()
+
     return _exec_with_termination_cleanup(
         application,
         restore_termination_handlers,
-        before_termination_restore,
+        finish_desktop_cleanup,
     )

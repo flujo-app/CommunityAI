@@ -1,0 +1,1 @@
+CommunityAI installer-managed application files. User settings and model cache are stored separately.

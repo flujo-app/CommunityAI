@@ -222,6 +222,14 @@ Foundation eligibility, particularly the bundled CUDA runtime; no application,
 approval or trusted signing identity has been obtained yet. Continue building and
 testing unsigned engineering installers while preparing the signing integration.
 
+The [installer checkpoint](evidence/desktop-installers-20260907.md) adds Inno Setup
+and Debian builders after the existing CI package verification. Bounded Windows
+install/running-Qt upgrade/uninstall and Linux process-tree/package probes passed.
+The Windows probe uses a GUI/runtime filename fixture, not a real Qwen worker.
+The [free-signing application draft](WINDOWS_SIGNING.md) is prepared but not sent.
+Final package/Qwen lifecycle, signing, Store submission and signed APT hosting
+remain open; neither Gate 14 nor Gate 15 is complete from these probes.
+
 ### Execution loop
 
 On every implementation run:

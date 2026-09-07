@@ -21,7 +21,7 @@ jobs:
       matrix:
         # Public-alpha packaging is Windows/Linux only; macOS is explicitly deferred.
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             platform: linux
             install_archive: communityai-desktop-linux.tar.gz
           - os: windows-latest
@@ -98,6 +98,36 @@ jobs:
         run: >-
           python ../scripts/smoke_desktop_managed_node.py
           --node-command dist/desktop/CommunityAI/node/CommunityAI-Node.exe
+      - name: Build unsigned Windows engineering installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $innoInstaller = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+          $innoDirectory = Join-Path $env:RUNNER_TEMP 'inno-compiler'
+          Invoke-WebRequest -Uri 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $innoInstaller
+          $signature = Get-AuthenticodeSignature -LiteralPath $innoInstaller
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys') {
+            throw 'Unexpected Inno Setup publisher signature'
+          }
+          $process = Start-Process -FilePath $innoInstaller -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/NOICONS',"/DIR=$innoDirectory") -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Inno Setup compiler installation failed' }
+          ./installers/build_windows_installer.ps1 -Bundle dist/desktop/CommunityAI -OutputDirectory dist/installers -Version '0.1.0-alpha.${{ github.run_number }}' -Compiler (Join-Path $innoDirectory 'ISCC.exe') -UnsignedEngineering
+      - name: Build Debian engineering package
+        if: runner.os == 'Linux'
+        run: >-
+          python installers/build_deb.py
+          --bundle dist/desktop/CommunityAI
+          --output dist/installers
+          --version '0.1.0~alpha.${{ github.run_number }}'
+          --maintainer 'CommunityAI engineering <engineering@example.invalid>'
+      - name: Upload engineering setup artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: communityai-setup-${{ matrix.platform }}
+          path: desktop/dist/installers/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
       - name: Upload self-contained install archive
         uses: actions/upload-artifact@v6
         with:

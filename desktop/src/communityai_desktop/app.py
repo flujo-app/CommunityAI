@@ -55,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--onboarding-ui-self-test", action="store_true", help=argparse.SUPPRESS)
     action.add_argument("--capture-ui", type=Path, help=argparse.SUPPRESS)
     action.add_argument("--probe-only", action="store_true", help=argparse.SUPPRESS)
+    action.add_argument(
+        "--prepare-update", action="store_true", help="Stop this user's desktop and owned node for installation"
+    )
     action.add_argument("--gate13-ui-playthrough", type=Path, help=argparse.SUPPRESS)
     return parser
 
@@ -78,6 +81,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     elif args.gate13_ui_evidence is None:
         parser.error("--gate13-ui-playthrough requires --gate13-ui-evidence")
     try:
+        if args.prepare_update:
+            try:
+                from communityai_desktop.maintenance import prepare_update
+
+                return prepare_update()
+            except Exception as exc:
+                # A windowed PyInstaller traceback dialog would hold the installer
+                # indefinitely if, for example, the installed Qt runtime is broken.
+                parser.exit(2, f"CommunityAI shutdown failed: {exc}\n")
         if args.self_test:
             _write_json(run_self_test())
             return 0

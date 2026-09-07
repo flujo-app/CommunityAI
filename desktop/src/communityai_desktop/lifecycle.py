@@ -273,8 +273,9 @@ class NodeLifecycleSupervisor:
             raise NodeLifecycleError(f"Could not start the bundled local node: {exc}") from exc
 
     def _stop_owned_process(self) -> None:
-        process, self._process = self._process, None
+        process = self._process
         if process is None or process.poll() is not None:
+            self._process = None
             return
         try:
             process.terminate()
@@ -283,10 +284,13 @@ class NodeLifecycleSupervisor:
             try:
                 process.kill()
                 process.wait(timeout=5)
-            except OSError:
+            except (OSError, subprocess.TimeoutExpired):
                 pass
         except OSError:
             pass
+        if process.poll() is None:
+            raise NodeLifecycleError("The owned node did not stop; application files must not be replaced")
+        self._process = None
 
     def _wait_until_ready(self, client: NodeClient) -> None:
         deadline = self._clock() + self.startup_timeout

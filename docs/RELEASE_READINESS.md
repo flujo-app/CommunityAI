@@ -71,7 +71,7 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
 | Q3.8 | **IN PROGRESS; runtime, packaged and bounded formation milestones passed** | Carry the formation fixes into final packages; finish representative consumer GPU/client and conversation measurements and the ordinary-user update path for the signed Qwen catalog. |
 | 14 | **IN PROGRESS — current priority** | **“Sharing obeys my limits.”** Two desktop sliders, VRAM and processing usage, default to 100% on fresh installs; contribution remains opt-in. Prove lower budgets under load, safe stop/save/resume, persistence and Pause, alongside existing storage/bandwidth/schedule/power controls on real Windows/Linux packages. Processing is paced compute time, not an instantaneous whole-device cap. [Operations](PACKAGED_ALPHA_OPERATIONS.md). |
-| 15 | **WAITING on the final package** | **“Install it, replace it, remove it.”** Signed Inno Setup Windows installer, Store MSI/EXE submission, `.deb` and signed APT repository. Verify ordinary-user install, safe node/worker shutdown during upgrade, settings/cache preservation, reinstall, uninstall and retain/delete cache choices. Automatic application updater remains later work. |
+| 15 | **IN PROGRESS; engineering installers** | **“Install it, replace it, remove it.”** Signed Inno Setup Windows installer, Store MSI/EXE submission, `.deb` and signed APT repository. Verify ordinary-user install, safe node/worker shutdown during upgrade, settings/cache preservation, reinstall, uninstall and retain/delete cache choices. Automatic application updater remains later work. |
 | 16 | **WAITING** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
 
@@ -92,9 +92,12 @@ the current packaged Windows/Linux Qwen-sharing acceptance remains open.
 The [desktop health/download checkpoint](evidence/desktop-health-downloads-20260907.md)
 adds the block grid, observed peer metadata, expiring signed reservations and local
 client/worker download progress. Bounded HTTP integrity/resume, supervised-process
-and Qt tests passed. Both Windows/Linux engineering package builds at `5d9eec9`
-passed before these display additions; final packages must include the additions.
-Free Windows signing is preferred; SignPath Foundation eligibility remains open.
+and Qt tests passed. Both Windows/Linux engineering package builds at `b09aa2d`
+passed with these display additions. The [installer checkpoint](evidence/desktop-installers-20260907.md)
+adds Inno/Debian builders and bounded installation/shutdown probes; complete
+packaged Qwen lifecycle qualification remains open. Free Windows signing is
+preferred; [SignPath eligibility/application materials](WINDOWS_SIGNING.md) are
+prepared, with no application or approval yet.
 
 1. **Finish Gate 14's two resource sliders.** The owner selected VRAM and
    processing usage, each defaulting to 100%, as the immediate focus. Verify

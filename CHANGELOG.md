@@ -7,6 +7,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Windows Inno Setup and Debian engineering package builders now package the
+  verified desktop runtime. Windows upgrade/removal requests same-user desktop
+  shutdown and waits for owned-node cleanup; Linux package maintenance stops the
+  installed process tree. Settings/cache remain outside installer ownership.
+  Trusted signing, full installer qualification and repository publication remain open.
+
 - Model health now shows a clickable block grid with serving replicas, joining
   announcements, signed reservations, offline announcements and local worker
   failures. Peer details show observed block ranges and reported runtime metadata.
