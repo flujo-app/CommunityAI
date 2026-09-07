@@ -45,6 +45,9 @@ attempts were cleaned up. The bounded profile also permits the original C3 worke
 and zones `c`/`f` for fresh retries. Both worker types have four vCPUs and 32 GB RAM.
 
 Each cloud participant first generates a real local Qwen3.5 answer. Contributors
+must also expose a fresh discovery observation before their initial answer check;
+an unknown route cannot pass this checkpoint, which has a 180-second timeout.
+Contributors
 then enable sharing one at a time, waiting for fresh coverage before the next
 join. The production planner selects their exact ranges and publishes signed
 intents. The runner requires successive 16/32/48/64-block coverage, automatic
@@ -103,6 +106,19 @@ checks and the first 16-block automatic join. It exposed a further slow-growth
 defect live: after 15 minutes, the first worker abandoned unique blocks 0–15 for
 16–31 while the route was incomplete. Commit `f496b8d` requires net coverage gain
 before abandoning unique blocks. The new slow-growth regression failed before
-the fix; 56 related tests passed afterward. A fresh cloud replay is required.
+the fix; 56 related tests passed afterward.
 [Slow-growth evidence](evidence/qwen-formation-slow-growth-20260907.json).
+
+The actual `.cmd` replay `q38af-20260907-064802-b6b85b` passed all six local
+answers/UI checks and reached 32/64 blocks, automatically choosing `48:64` and
+`0:16`. The first worker retained its unique span after 915 seconds, confirming
+the slow-growth fix in this live case. The third participant still had unknown
+discovery coverage; the runner crashed when comparing `null` with 32. Its live
+parent stack showed an unbounded DHT readiness wait. Commit `17ffeb2` bounds that
+parent wait, cleans unsuccessful starts for retry, handles unknown coverage,
+and requires early discovery evidence. Both regressions failed before the fix;
+72 related tests passed afterward. No runtime changes preceded this failure;
+py-spy was installed afterward only for diagnosis. All owned resources and local
+processes were verified cleaned. A fresh wrapper replay is in progress.
+[Discovery evidence](evidence/qwen-formation-discovery-startup-20260907.json).
 **Full distributed formation remains open.**
