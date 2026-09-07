@@ -98,4 +98,11 @@ The local desktop harness passed. Regression tests exposed and fixed fragmented 
 sole-provider movement on an already complete route, and placement seeds based
 on installation paths rather than persistent public identities.
 See [the checkpoint](evidence/qwen-formation-checkpoint-20260907.json).
+The GCP N2 run `q38af-20260907-060309-6fc196` then passed all six local-answer/UI
+checks and the first 16-block automatic join. It exposed a further slow-growth
+defect live: after 15 minutes, the first worker abandoned unique blocks 0–15 for
+16–31 while the route was incomplete. Commit `f496b8d` requires net coverage gain
+before abandoning unique blocks. The new slow-growth regression failed before
+the fix; 56 related tests passed afterward. A fresh cloud replay is required.
+[Slow-growth evidence](evidence/qwen-formation-slow-growth-20260907.json).
 **Full distributed formation remains open.**
