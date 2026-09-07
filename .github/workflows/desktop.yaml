@@ -52,7 +52,7 @@ jobs:
           sudo apt-get install --no-install-recommends --yes \
             libdbus-1-3 libegl1 libgl1 libglib2.0-0 libfontconfig1 libfreetype6 \
             libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
-            libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libwayland-cursor0
+            libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libwayland-cursor0 xvfb xauth
       - name: Build patched Windows Hivemind runtime
         if: runner.os == 'Windows'
         run: |
@@ -93,6 +93,13 @@ jobs:
           --source-commit "${{ github.sha }}"
           --build-workflow "${{ github.workflow_ref }}"
           --verify-build-environment
+      - name: Exercise frozen desktop through X11
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: xcb
+        run: |
+          xvfb-run --auto-servernum dist/desktop/CommunityAI/CommunityAI --ui-self-test
+          xvfb-run --auto-servernum dist/desktop/CommunityAI/CommunityAI --onboarding-ui-self-test
       - name: Exercise packaged node, native credentials, and public seed
         if: runner.os == 'Windows'
         run: >-

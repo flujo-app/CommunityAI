@@ -157,6 +157,12 @@ duplicate manifest paths, empty peer sets, and invalid resource limits. Every
 manifest is loaded and runtime-validated at startup. Names, aliases, and manifest
 digests must be unique case-insensitively across the entire node.
 
+Ordinary desktop API keys and bootstrap/control credentials are generated from
+32 cryptographically random bytes. When importing an advanced headless
+`--api-key`, supply an independently generated token of at least that entropy;
+do not use a human password or a short memorable string. The API-key store
+hashes opaque bearer tokens, and hashing cannot strengthen a weak imported key.
+
 Provider tokens, local API keys, control credentials, and identity private material
 are deliberately absent from this format. A Hugging Face token may currently be
 supplied with the process secret mechanism or the existing `--token` compatibility

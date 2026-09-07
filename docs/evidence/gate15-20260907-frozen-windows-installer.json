@@ -1,0 +1,54 @@
+{
+  "result": "passed",
+  "frozen_gui_and_node": true,
+  "full_gate15": false,
+  "old_installer_sha256": "95b2d70382ed91b61079581e3fed0c3b12364ebe70576a25eee3231460f8e4d8",
+  "installer_sha256": "c4e8df599f3a6118eab5718a5ad50655b0e07fd6c270aacf7dbb0b3065c5c399",
+  "phases": [
+    {
+      "phase": "old-installation",
+      "verified_download_bytes": 384054157,
+      "block_indices": "60:61",
+      "owned_process_count": 9,
+      "local_tokens": 3
+    },
+    {
+      "phase": "upgraded-installation",
+      "verified_download_bytes": 384054157,
+      "block_indices": "60:61",
+      "owned_process_count": 9,
+      "local_tokens": 3
+    },
+    {
+      "phase": "reinstalled",
+      "verified_download_bytes": 384054157,
+      "block_indices": "60:61",
+      "owned_process_count": 9,
+      "local_tokens": 3
+    }
+  ],
+  "upgrade_stopped_owned_tree_and_retained_state": true,
+  "uninstall_stopped_owned_tree_and_retained_state": true,
+  "reinstall_with_retained_settings_cache_and_credentials": true,
+  "native_qualification_credential_removed": true,
+  "installer_registration_removed": true,
+  "date": "2026-09-07",
+  "source_commit": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+  "environment": "Windows 10 Pro 10.0.19045; non-elevated ordinary user; RTX 2070 SUPER 8 GiB",
+  "installer_version": "0.1.0-alpha.20260907.2",
+  "installer_app_identifier": "CommunityAI.Desktop",
+  "authenticode_status": "NotSigned; owner-authorized for alpha",
+  "post_run_cleanup_audit": {
+    "result": "passed",
+    "installation_directory_absent": true,
+    "registration_absent": true,
+    "native_credential_absent": true,
+    "installation_executables_absent": true,
+    "external_cache_sentinel_preserved": true
+  },
+  "harness_limitations": [
+    "All product-phase assertions passed. The original driver exited 1 after it attempted a redundant uninstall while Inno was deleting its own executable. The final-uninstall log independently reports success and all removed; the subsequent native credential/registry/process/filesystem audit passed.",
+    "The driver now checks remaining installer registration before cleanup; no installer product change was needed. Raw failed-driver output is retained.",
+    "This is Windows installation lifecycle evidence; Linux, explicit cache deletion/login-entry cleanup, canary and publication remain separate."
+  ]
+}

@@ -47,7 +47,7 @@ def build(bundle, output, version, maintainer):
             "Section: science\nPriority: optional\nPre-Depends: python3 (>= 3.9)\n"
             "Depends: libc6 (>= 2.35), libstdc++6, libdbus-1-3, libegl1, libgl1, libglib2.0-0, "
             "libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libxcb-cursor0, "
-            "libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libwayland-cursor0\n"
+            "libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libxcb-shape0, libwayland-cursor0\n"
             "Recommends: gnome-keyring\nHomepage: https://github.com/flujo-app/CommunityAI\n"
             "Description: CommunityAI public inference alpha\n"
             " Local OpenAI-compatible inference with optional community model sharing.\n"
