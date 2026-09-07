@@ -77,6 +77,10 @@ jobs:
         run: |
           python -m unittest discover -s desktop/tests -v
           communityai-desktop --self-test
+      - name: Verify Linux installer process ownership as package-maintenance user
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: sudo "$(command -v python)" -m unittest discover -s desktop/tests -p test_installers.py -v
       - name: Reverify qualified CUDA runtime before bundling
         run: python -c "import torch; assert torch.__version__ == '2.6.0+cu124'"
       - name: Build and smoke unsigned public-alpha bundle

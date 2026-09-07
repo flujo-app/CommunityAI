@@ -1,5 +1,7 @@
 import importlib.util
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,7 @@ class LinuxInstallerTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
+    @unittest.skipUnless(hasattr(os, "geteuid") and os.geteuid() == 0, "dpkg maintenance runs as root")
     def test_stop_owned_tree_preserves_unrelated_process_and_user_data(self):
         maintenance = self.maintenance()
         with tempfile.TemporaryDirectory() as directory:
@@ -35,18 +38,27 @@ class LinuxInstallerTests(unittest.TestCase):
                 [str(executable), "-c", 'sleep 60 & echo $! > "$1"; wait', "probe", str(child_pid)]
             )
             unrelated = subprocess.Popen(["sleep", "60"])
+            child_descriptor = None
             try:
                 deadline = time.monotonic() + 5
                 while not child_pid.exists() and time.monotonic() < deadline:
                     time.sleep(0.01)
                 self.assertTrue(child_pid.exists())
                 descendant = int(child_pid.read_text())
+                child_descriptor = os.pidfd_open(descendant)
                 maintenance.stop_installation(installation, timeout=2)
                 self.assertIsNotNone(process.poll())
                 self.assertNotIn(descendant, maintenance.process_snapshot())
                 self.assertIsNone(unrelated.poll())
                 self.assertEqual(state.read_bytes(), b"retained verified data")
             finally:
+                if child_descriptor is not None:
+                    try:
+                        signal.pidfd_send_signal(child_descriptor, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    finally:
+                        os.close(child_descriptor)
                 for candidate in (process, unrelated):
                     if candidate.poll() is None:
                         candidate.kill()
