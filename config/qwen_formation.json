@@ -1,7 +1,7 @@
 {
   "project": "community-ai-506321",
   "region": "us-central1",
-  "zone": "us-central1-b",
+  "zone": "us-central1-c",
   "network": "communityai-discovery",
   "subnet": "communityai-us-central1",
   "image": "ubuntu-2404-noble-amd64-v20260826",

@@ -33,6 +33,7 @@ def test_formation_configuration_only_supplies_capacity(tmp_path):
         ("block_indices", "0:16"),
         ("worker_machine_type", "e2-highmem-4"),
         ("max_duration_seconds", 86400),
+        ("zone", "europe-west1-b"),
     ],
 )
 def test_formation_rejects_assignments_or_unbounded_topology(field, value):
@@ -45,6 +46,13 @@ def test_formation_rejects_assignments_or_unbounded_topology(field, value):
 def test_host_configuration_cannot_smuggle_an_assignment(tmp_path):
     with pytest.raises(ValueError, match="assigned"):
         node_config(ROOT, tmp_path, {"span": "0:16"})
+
+
+@pytest.mark.parametrize("zone", ["us-central1-b", "us-central1-c", "us-central1-f"])
+def test_capacity_retry_can_use_another_approved_zone(zone):
+    proposed = config()
+    proposed["zone"] = zone
+    validate_config(proposed)
 
 
 def test_exact_manifest_selection_is_required():

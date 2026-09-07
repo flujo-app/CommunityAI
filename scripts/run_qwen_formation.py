@@ -33,7 +33,6 @@ def validate_config(config):
         raise ValueError("Formation rejects operator-assigned spans")
     expected = {
         "project": "community-ai-506321",
-        "zone": "us-central1-b",
         "region": "us-central1",
         "worker_machine_type": "c3-highmem-4",
         "client_machine_type": "e2-standard-4",
@@ -42,6 +41,8 @@ def validate_config(config):
     }
     if any(config.get(key) != value for key, value in expected.items()):
         raise ValueError("Formation configuration differs from the bounded five-VM CPU topology")
+    if config.get("zone") not in {"us-central1-b", "us-central1-c", "us-central1-f"}:
+        raise ValueError("Formation zone must remain in the approved us-central1 test zones")
     if not 1800 <= config["max_duration_seconds"] <= 21600:
         raise ValueError("Formation lifetime must be bounded between 30 minutes and six hours")
 

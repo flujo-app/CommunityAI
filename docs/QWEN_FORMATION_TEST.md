@@ -11,6 +11,9 @@ worker. An `e2-standard-4` coordinator provides the isolated discovery seed and
 another client. This needs 20 GCP vCPUs; preflight checks existing quotas and does
 not request increases. Hosts have an automatic deletion deadline within six hours.
 The standing bootstrap VM is not a target.
+The current zone is `us-central1-c`: the first authenticated live attempt hit a
+C3 stockout in `us-central1-b`. The bounded zone allowlist also permits `b` and `f`
+for fresh retries after prior resources have been cleaned up.
 
 Each cloud participant first generates a real local Qwen3.5 answer. Contributors
 then enable sharing one at a time, waiting for fresh coverage before the next
