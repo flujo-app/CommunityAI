@@ -11,7 +11,8 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   avoid initializing the optional Triton compiler for the approved eager/native
   inference profiles, allowing GPU sharing without a development toolchain.
   Installer maintenance refuses replacement when process ownership cannot be
-  inspected, preventing active workers from being silently skipped.
+  inspected, and continues discovering helpers created during shutdown until the
+  installed process tree stays stopped.
 
 - A sharing worker whose selected blocks exceed the VRAM budget now waits with
   a clear explanation instead of repeatedly restarting. Raising the resource

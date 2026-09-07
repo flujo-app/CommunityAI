@@ -74,6 +74,53 @@ class LinuxInstallerTests(unittest.TestCase):
                 maintenance.stop_installation(root)
             self.assertEqual(preserved.read_text(), "preserved")
 
+    @unittest.skipUnless(hasattr(os, "geteuid") and os.geteuid() == 0, "dpkg maintenance runs as root")
+    def test_helper_started_during_shutdown_is_stopped_after_parent_exits(self):
+        maintenance = self.maintenance()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".communityai-installation").write_text("CommunityAI installer-managed fixture\n")
+            executable, helper = root / "CommunityAI", root / "helper"
+            shutil.copy2("/bin/sh", executable)
+            shutil.copy2("/bin/sleep", helper)
+            child_pid, ready = root / "child-pid", root / "ready"
+            process = subprocess.Popen(
+                [
+                    str(executable),
+                    "-c",
+                    'trap \'"$1" 60 & echo $! > "$2"; exit 0\' TERM; echo ready > "$3"; while :; do sleep 0.05; done',
+                    "probe",
+                    str(helper),
+                    str(child_pid),
+                    str(ready),
+                ]
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(ready.exists())
+                maintenance.stop_installation(root, timeout=2)
+                process.wait(timeout=5)
+                self.assertTrue(child_pid.exists())
+                self.assertNotIn(int(child_pid.read_text()), maintenance.process_snapshot())
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+                if child_pid.exists():
+                    pid = int(child_pid.read_text())
+                    snapshot = maintenance.process_snapshot()
+                    if pid in snapshot and snapshot[pid][2] == helper:
+                        descriptor = os.pidfd_open(pid)
+                        try:
+                            if maintenance.process_snapshot().get(pid) == snapshot[pid]:
+                                signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        finally:
+                            os.close(descriptor)
+
     def test_inaccessible_process_refuses_replacement_without_sending_signals(self):
         maintenance = self.maintenance()
         with tempfile.TemporaryDirectory() as directory:

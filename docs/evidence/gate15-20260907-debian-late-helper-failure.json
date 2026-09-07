@@ -1,0 +1,18 @@
+{
+  "date": "2026-09-07",
+  "result": "failed independent cleanup audit after passing product-phase assertions",
+  "runtime_source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+  "installer_source_commit": "03169d5bc548f7f5dd0e2e7999499774a2d8fb7a",
+  "installer_version": "0.1.0~alpha.20260907.3",
+  "installer_sha256": "27408b573e0c17d4c218f72becaa2f0869a581ebfc367bfb8ede27c6c18fc29a",
+  "installer_bytes": 3781591288,
+  "environment": "Debian 12 Docker with SYS_PTRACE for root package maintenance; ordinary-user X11 frozen GUI and native Secret Service",
+  "product_phase_assertions": "Install, active replacement, removal, reinstall and final removal passed. Each launch generated three local Qwen tokens and verified one sharing block; all 11 initially recorded processes stopped, with settings/cache/credential retained.",
+  "independent_failure": "A newly created installed node helper and its p2pd child survived final removal. The fixed initial process snapshot did not discover them during shutdown.",
+  "remaining_installed_processes": 2,
+  "correction": "Continuously discover installed executables and descendants during shutdown, signal newly observed identities, and require repeated quiet observations before replacement/removal can proceed.",
+  "regression": "A real shell fixture forks an installed helper on SIGTERM and exits. The old implementation fails the no-helper-left assertion; the corrected implementation passes all four installer tests.",
+  "operator_cleanup": "The two exact process identities/executable paths were verified and stopped using kernel PID handles. The subsequent independent audit passed for native credentials, installed runtime/DHT processes, package removal and retained cache sentinel.",
+  "private_raw_logs_retained": true,
+  "gate14_resource_acceptance_unchanged": true
+}
