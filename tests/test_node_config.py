@@ -321,7 +321,8 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
     manager.shutdown()
 
 
-def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch, tmp_path):
+@pytest.mark.parametrize("public_port", [None, 43210])
+def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch, tmp_path, public_port):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
@@ -340,6 +341,9 @@ def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch,
                 identity_path=tmp_path / "worker.key",
                 num_blocks=2,
                 throughput=1.25,
+                port=31330,
+                public_ip="203.0.113.4",
+                public_port=public_port,
             ),
         ),
     )
@@ -354,6 +358,13 @@ def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch,
     assert str(manifest_path) in launch.command
     assert launch.command[launch.command.index("--num_blocks") + 1] == "2"
     assert launch.command[launch.command.index("--throughput") + 1] == "1.25"
+    assert launch.command[launch.command.index("--port") + 1] == "31330"
+    if public_port is None:
+        assert launch.command[launch.command.index("--public_ip") + 1] == "203.0.113.4"
+        assert "--announce_maddrs" not in launch.command
+    else:
+        assert launch.command[launch.command.index("--announce_maddrs") + 1] == "/ip4/203.0.113.4/tcp/43210"
+        assert "--public_ip" not in launch.command
     assert "provider-token" not in launch.command
     assert launch.environment == (("HF_TOKEN", "provider-token"),)
     supervisor.shutdown()

@@ -20,9 +20,11 @@ class FormationDesktop:
         self.root = root
         self.completed = set()
         self.clicked = set()
+        self.policy_opened = set()
 
     def install(self, window, application, qt):
         self.window, self.application = window, application
+        self.qt = qt
         self.timer = qt["QTimer"](window)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.tick)
@@ -43,6 +45,22 @@ class FormationDesktop:
             identity = action["id"]
             if identity in self.completed:
                 return
+            if action["action"] == "start-sharing":
+                if not window._snapshot.get("contribution", {}).get("policy", {}).get("sharing_enabled"):
+                    if identity not in self.policy_opened and window.edit_policy_button.isEnabled():
+                        self.policy_opened.add(identity)
+                        self.qt["QTimer"].singleShot(100, self.enable_policy)
+                        window.edit_policy_button.click()
+                    return
+                if identity not in self.clicked:
+                    if not window.master_share_button.isEnabled():
+                        return
+                    window._page_buttons[2].click()
+                    window.master_share_button.click()
+                    self.clicked.add(identity)
+                    return
+                if not window._snapshot.get("contribution", {}).get("intent_enabled"):
+                    return
             if action["action"] == "toggle" and identity not in self.clicked:
                 if not window.inference_mode_button.isEnabled():
                     return
@@ -79,6 +97,18 @@ class FormationDesktop:
             write(self.root / "desktop-error.json", {"error": f"{type(exc).__name__}: {exc}"})
             self.application.exit(1)
 
+    def enable_policy(self):
+        try:
+            dialog = self.window.findChild(self.qt["QDialog"], "sharingPolicyDialog")
+            if dialog is None:
+                raise RuntimeError("Production sharing policy dialog did not open")
+            dialog.findChild(self.qt["QCheckBox"], "policy_sharing_enabled").setChecked(True)
+            buttons = dialog.findChild(self.qt["QDialogButtonBox"], "sharingPolicyButtons")
+            buttons.button(self.qt["QDialogButtonBox"].StandardButton.Save).click()
+        except BaseException as exc:
+            write(self.root / "desktop-error.json", {"error": f"{type(exc).__name__}: {exc}"})
+            self.application.exit(1)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
@@ -88,7 +118,13 @@ if __name__ == "__main__":
     key_path = args.root / "node/control-api.key"
     while not key_path.exists() and time.time() < config["expires_at_unix"]:
         time.sleep(1)
-    client = NodeClient(f"http://127.0.0.1:{config['api_port']}", key_path.read_text().strip())
-    raise SystemExit(
-        run(DesktopController(client), single_instance=False, qualification_automation=FormationDesktop(args.root)) or 0
-    )
+    client = NodeClient(f"http://127.0.0.1:{config.get('api_port', 8080)}", key_path.read_text().strip())
+    try:
+        code = (
+            run(DesktopController(client), single_instance=False, qualification_automation=FormationDesktop(args.root))
+            or 0
+        )
+    except BaseException as exc:
+        write(args.root / "desktop-error.json", {"error": f"{type(exc).__name__}: {exc}"})
+        raise
+    raise SystemExit(code)

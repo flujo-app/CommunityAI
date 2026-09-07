@@ -48,10 +48,52 @@ def test_host_configuration_cannot_smuggle_an_assignment(tmp_path):
         node_config(ROOT, tmp_path, {"span": "0:16"})
 
 
+def test_desktop_driven_contributor_stays_paused_until_start(tmp_path):
+    value = node_config(
+        ROOT,
+        tmp_path,
+        {
+            "peers": ["/ip4/127.0.0.1/tcp/31330"],
+            "capacity_blocks": 16,
+            "ip": "203.0.113.4",
+            "public_port": 43210,
+            "desktop_driven_sharing": True,
+        },
+    )
+    worker = NodeConfig.from_dict(value, base_dir=ROOT).workers[0]
+    assert worker.enabled is False
+    assert worker.block_indices is None
+    assert worker.port == 31330
+    assert worker.public_port == 43210
+
+
+@pytest.mark.parametrize(
+    "patch", [{"public_port": 0}, {"public_port": 65536}, {"public_port": True}, {"port": None}, {"public_ip": None}]
+)
+def test_public_tunnel_configuration_rejects_unusable_endpoints(tmp_path, patch):
+    from drift.node.config import NodeConfigError
+
+    value = node_config(
+        ROOT,
+        tmp_path,
+        {"peers": ["/ip4/127.0.0.1/tcp/31330"], "capacity_blocks": 16, "ip": "203.0.113.4", "public_port": 43210},
+    )
+    value["workers"][0].update(patch)
+    with pytest.raises(NodeConfigError):
+        NodeConfig.from_dict(value, base_dir=ROOT)
+
+
 @pytest.mark.parametrize("zone", ["us-central1-b", "us-central1-c", "us-central1-f"])
 def test_capacity_retry_can_use_another_approved_zone(zone):
     proposed = config()
     proposed["zone"] = zone
+    validate_config(proposed)
+
+
+@pytest.mark.parametrize("machine", ["c3-highmem-4", "n2-highmem-4"])
+def test_capacity_retry_keeps_the_same_cpu_and_memory_profile(machine):
+    proposed = config()
+    proposed["worker_machine_type"] = machine
     validate_config(proposed)
 
 

@@ -447,6 +447,7 @@ class WorkerConfig:
     throughput: float | str = "auto"
     port: Optional[int] = None
     public_ip: Optional[str] = None
+    public_port: Optional[int] = None
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any], *, base_dir: Path, index: int) -> "WorkerConfig":
@@ -471,6 +472,7 @@ class WorkerConfig:
                 "throughput",
                 "port",
                 "public_ip",
+                "public_port",
             ),
         )
         worker_id = _require_string(source["id"], f"{field}.id")
@@ -506,6 +508,12 @@ class WorkerConfig:
         port = None if port_value is None else _require_positive_int(port_value, f"{field}.port")
         if port is not None and port > 65535:
             raise NodeConfigError(f"{field}.port must be <= 65535")
+        public_port_value = source.get("public_port")
+        public_port = (
+            None if public_port_value is None else _require_positive_int(public_port_value, f"{field}.public_port")
+        )
+        if public_port is not None and (public_port > 65535 or port is None or source.get("public_ip") is None):
+            raise NodeConfigError(f"{field}.public_port requires port, public_ip and a value <= 65535")
 
         def optional_string(name: str) -> Optional[str]:
             value = source.get(name)
@@ -554,6 +562,7 @@ class WorkerConfig:
             throughput=throughput,
             port=port,
             public_ip=optional_string("public_ip"),
+            public_port=public_port,
         )
 
 

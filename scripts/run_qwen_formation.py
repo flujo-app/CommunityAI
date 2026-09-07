@@ -34,7 +34,6 @@ def validate_config(config):
     expected = {
         "project": "community-ai-506321",
         "region": "us-central1",
-        "worker_machine_type": "c3-highmem-4",
         "client_machine_type": "e2-standard-4",
         "capacity_blocks": 16,
         "disk_gb": 80,
@@ -43,6 +42,8 @@ def validate_config(config):
         raise ValueError("Formation configuration differs from the bounded five-VM CPU topology")
     if config.get("zone") not in {"us-central1-b", "us-central1-c", "us-central1-f"}:
         raise ValueError("Formation zone must remain in the approved us-central1 test zones")
+    if config.get("worker_machine_type") not in {"c3-highmem-4", "n2-highmem-4"}:
+        raise ValueError("Formation contributors must retain the four-vCPU, 32-GB CPU profile")
     if not 1800 <= config["max_duration_seconds"] <= 21600:
         raise ValueError("Formation lifetime must be bounded between 30 minutes and six hours")
 
@@ -78,13 +79,12 @@ class FormationRun(ProductRun):
         project = self.cloud_json(["compute", "project-info", "describe"])
         quotas = {q["metric"]: q for q in region["quotas"] + project["quotas"]}
         required = {
-            "C3_CPUS": 16,
+            "C3_CPUS" if self.config["worker_machine_type"] == "c3-highmem-4" else "N2_CPUS": 16,
             "E2_CPUS": 4,
             "CPUS_ALL_REGIONS": 20,
             "INSTANCES": 5,
             "IN_USE_ADDRESSES": 5,
-            "DISKS_TOTAL_GB": 80,
-            "SSD_TOTAL_GB": 320,
+            "SSD_TOTAL_GB": 400,
         }
         for metric, amount in required.items():
             if quotas[metric]["limit"] - quotas[metric]["usage"] < amount:
@@ -188,9 +188,7 @@ class FormationRun(ProductRun):
             if fresh and predicate(value):
                 _write_json(self.path / (name + "-" + filename), value)
                 return value
-            for error_file in (
-                ("formation-error.json", "desktop-error.json") if name == "desktop" else ("formation-error.json",)
-            ):
+            for error_file in ("formation-error.json", "desktop-error.json"):
                 error = self.read_participant(name, error_file)
                 if error:
                     raise RuntimeError(name + ": " + str(error))
@@ -222,23 +220,34 @@ class FormationRun(ProductRun):
             raise RuntimeError("Participant command failed: " + str(reply))
         return reply
 
-    def desktop(self, source, *, toggle=False, inference_mode=None):
+    def desktop(self, source, *, toggle=False, inference_mode=None, name="desktop", action=None):
         identity = secrets.token_hex(12)
         if toggle and inference_mode is None:
             inference_mode = "local_only" if source == "local" else "auto"
-        _write_json(
-            self.local_root / "desktop-command.json",
-            {
-                "id": identity,
-                "action": "toggle" if toggle else "observe",
-                "source": source,
-                "inference_mode": inference_mode,
-            },
-        )
-        value = self.wait("desktop", "desktop-response-" + identity + ".json", timeout=1800)
-        if not value.get("real_window_visible") or (toggle and not value.get("button_clicked")):
+        request = {
+            "id": identity,
+            "action": action or ("toggle" if toggle else "observe"),
+            "source": source,
+            "inference_mode": inference_mode,
+        }
+        if name == "desktop":
+            _write_json(self.local_root / "desktop-command.json", request)
+        else:
+            self.write_remote(name, "desktop-command.json", request)
+        value = self.wait(name, "desktop-response-" + identity + ".json", timeout=1800)
+        if not value.get("real_window_visible") or (
+            (toggle or action == "start-sharing") and not value.get("button_clicked")
+        ):
             raise RuntimeError("Real desktop control evidence is missing")
         return value
+
+    def enable_contributor(self, name):
+        return self.command(name, "sharing", enabled=True)
+
+    def observe_remote_desktop(self, name, source):
+        if getattr(self, "remote_desktops", False) and name != "desktop":
+            return self.desktop(source, name=name)
+        return None
 
     def start_desktop(self, peers):
         self.local_root.mkdir()
@@ -258,7 +267,12 @@ class FormationRun(ProductRun):
             self.logs.append(log)
             self.processes.append(
                 subprocess.Popen(
-                    [sys.executable, str(ROOT / "scripts" / script), "--root", str(self.local_root)],
+                    [
+                        str(getattr(self, "desktop_python", sys.executable)),
+                        str(ROOT / "scripts" / script),
+                        "--root",
+                        str(self.local_root),
+                    ],
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     env=dict(os.environ, PYTHONPATH=str(ROOT / "desktop/src")),
@@ -273,11 +287,12 @@ class FormationRun(ProductRun):
         for name in clients:
             self.wait(name, "formation-status.json", lambda value: selected(value, "local"))
             evidence["local_before_growth"][name] = self.command(name, "infer", source="local")
+            self.observe_remote_desktop(name, "local")
         evidence["desktop_initial"] = self.desktop("local")
         for index, name in enumerate(self.names[1:]):
             self.phase("join-automatic-contributor", instance=name, capacity_blocks=16)
             self.wait(name, "formation-status.json", lambda value: coverage(value) >= index * 16)
-            self.command(name, "sharing", enabled=True)
+            self.enable_contributor(name)
             ready = self.wait(name, "formation-status.json", ready_worker, timeout=2700)
             complete = self.wait(
                 self.names[0], "formation-status.json", lambda value: coverage(value) == (index + 1) * 16
@@ -292,6 +307,7 @@ class FormationRun(ProductRun):
                 name, "formation-status.json", lambda value: selected(value, "community") and coverage(value) == 64
             )
             evidence["promoted"][name] = {
+                "desktop": self.observe_remote_desktop(name, "community"),
                 "selection": status["auto_selection"],
                 "inference": self.command(name, "infer", source="community"),
             }
@@ -302,30 +318,39 @@ class FormationRun(ProductRun):
         lost = self.names[2]
         original = self.read(lost, "formation-process.json")
         self.phase("kill-participant", instance=lost)
-        self.ssh(lost, "sudo systemctl kill --kill-whom=all --signal=SIGKILL q38-formation")
-        self.ssh(lost, "sudo systemctl stop q38-formation")
-        state = self.ssh(lost, "systemctl show q38-formation --property=ActiveState --property=MainPID").stdout
-        if "MainPID=0" not in state or not any(s in state for s in ("ActiveState=failed", "ActiveState=inactive")):
-            raise RuntimeError("Participant loss was not confirmed")
+        state = self.stop_participant(lost)
         evidence["loss"] = {"instance": lost, "before": original, "stopped_service": state}
         for name in [n for n in clients if n != lost]:
             self.wait(name, "formation-status.json", lambda value: selected(value, "local") and coverage(value) < 64)
             evidence["after_loss"][name] = self.command(name, "infer", source="local")
+            self.observe_remote_desktop(name, "local")
         evidence["desktop_after_loss"] = self.desktop("local")
         self.phase("restore-participant-without-assigning-blocks", instance=lost)
-        self.ssh(lost, "sudo systemctl restart q38-formation")
+        self.restart_participant(lost)
         self.wait(lost, "formation-process.json", lambda value: value["started"] > original["started"])
         for name in clients:
             status = self.wait(
                 name, "formation-status.json", lambda value: selected(value, "community") and coverage(value) == 64
             )
             evidence["recovered"][name] = {
+                "desktop": self.observe_remote_desktop(name, "community"),
                 "selection": status["auto_selection"],
                 "inference": self.command(name, "infer", source="community"),
             }
         evidence["desktop_recovered"] = self.desktop("community")
         _write_json(self.path / "formation-checkpoints.json", evidence)
         return evidence
+
+    def stop_participant(self, name):
+        self.ssh(name, "sudo systemctl kill --kill-whom=all --signal=SIGKILL q38-formation")
+        self.ssh(name, "sudo systemctl stop q38-formation")
+        state = self.ssh(name, "systemctl show q38-formation --property=ActiveState --property=MainPID").stdout
+        if "MainPID=0" not in state or not any(s in state for s in ("ActiveState=failed", "ActiveState=inactive")):
+            raise RuntimeError("Participant loss was not confirmed")
+        return state
+
+    def restart_participant(self, name):
+        self.ssh(name, "sudo systemctl restart q38-formation")
 
     def stop_desktop(self):
         if self.local_root.exists():
@@ -390,6 +415,7 @@ class FormationRun(ProductRun):
                     self,
                     name,
                     self.config["client_machine_type"] if name == self.names[0] else self.config["worker_machine_type"],
+                    boot_disk_type="pd-balanced",
                 )
             self.cloud(
                 [

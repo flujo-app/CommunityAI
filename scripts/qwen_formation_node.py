@@ -73,13 +73,14 @@ def node_config(source, root, host):
                 "id": "automatic",
                 "model": "auto",
                 "num_blocks": capacity,
-                "enabled": True,
+                "enabled": not host.get("desktop_driven_sharing", False),
                 "identity_path": str(root / "worker-identity.key"),
                 "device": "cpu",
                 "cache_dir": str(root / "worker-cache"),
                 "throughput": "auto",
                 "port": 31330,
                 "public_ip": host["ip"],
+                **({"public_port": host["public_port"]} if host.get("public_port") else {}),
             }
         ],
     }

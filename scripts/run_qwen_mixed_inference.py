@@ -144,9 +144,12 @@ class MixedRun(SwarmRun):
             },
         )
 
-    def create_gcp(self, name, machine, *, gpu=False):
+    def create_gcp(self, name, machine, *, gpu=False, boot_disk_type=None):
         c = self.config
         c3 = machine == "c3-highmem-4"
+        disk_type = boot_disk_type or ("pd-balanced" if gpu or c3 else "pd-standard")
+        if disk_type not in {"pd-balanced", "pd-standard"} or (c3 and disk_type != "pd-balanced"):
+            raise ValueError("Unsupported boot disk type for the selected machine")
         args = [
             "compute",
             "instances",
@@ -163,7 +166,7 @@ class MixedRun(SwarmRun):
             *(["--network-interface", "nic-type=GVNIC,subnet=" + c["subnet"]] if c3 else ["--subnet", c["subnet"]]),
             "--boot-disk-size",
             "100" if gpu else str(c["disk_gb"]),
-            "--boot-disk-type=" + ("pd-balanced" if gpu or c3 else "pd-standard"),
+            "--boot-disk-type=" + disk_type,
             "--tags",
             self.run_id,
             "--labels",

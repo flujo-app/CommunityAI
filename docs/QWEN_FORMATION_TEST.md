@@ -1,19 +1,40 @@
 # Automatic Qwen formation test
 
+**Modal alternative:** run **`Run Qwen Formation Modal.cmd`** from the same C:
+checkout. It reuses the acceptance flow below and needs an already authenticated
+Modal Python (override with `COMMUNITYAI_MODAL_PYTHON`). Four CPU contributors
+have 32 GiB each; a fifth client/seed has 16 GiB. Each gets two physical cores
+(four vCPU threads). All five run the production Qt desktop on Xvfb. The runner
+clicks the real sharing-policy Save and Start sharing controls, observes every
+remote window at each model transition, and retains screenshots. Windows uses
+the retained frozen node with the source Qt UI. This is not a frozen Linux
+installer qualification. Raw TCP tunnels carry libp2p's own TLS; worker
+`public_port` advertises the external port while its listener remains on 31330.
+Only capacity and reachable endpoints are supplied, never block ranges.
+
+Modal loss kills the complete contributor node and desktop process trees, verifies
+they stopped, and restarts them on the same sandbox disk with the persisted
+identity and policy. It does not claim destruction/replacement of that sandbox.
+All five sandboxes have a six-hour maximum lifetime and are explicitly terminated
+after diagnostic capture. Cleanup checks both sandbox exit and the app's stopped,
+zero-task state. No named persistent volumes or deployed endpoints are created.
+Evidence is under `.gate13-runs/qwen-formation-modal/q38mf-.../`.
+
 Run **`Run Qwen Formation.cmd`** from the C: checkout. It accepts no arguments and
 uses `config/qwen_formation.json`. It follows the Gate 13 lifecycle: new run folder,
 lock, preflight, source snapshot, owned cloud resources, desktop observations,
 worker loss/recovery, diagnostic capture, verified cleanup, durable result.
 
-This test supplies **capacity, never block assignments**. Four `c3-highmem-4`
+This test supplies **capacity, never block assignments**. Four `n2-highmem-4`
 contributors each offer 16 blocks through the production node's `model: auto`
 worker. An `e2-standard-4` coordinator provides the isolated discovery seed and
 another client. This needs 20 GCP vCPUs; preflight checks existing quotas and does
 not request increases. Hosts have an automatic deletion deadline within six hours.
 The standing bootstrap VM is not a target.
-The current zone is `us-central1-c`: the first authenticated live attempt hit a
-C3 stockout in `us-central1-b`. The bounded zone allowlist also permits `b` and `f`
-for fresh retries after prior resources have been cleaned up.
+The current profile uses N2 workers in `us-central1-b`, with 80 GB balanced disks.
+C3 workers in `b`/`c` and an E2 coordinator in `f` encountered stockouts. All partial
+attempts were cleaned up. The bounded profile also permits the original C3 workers
+and zones `c`/`f` for fresh retries. Both worker types have four vCPUs and 32 GB RAM.
 
 Each cloud participant first generates a real local Qwen3.5 answer. Contributors
 then enable sharing one at a time, waiting for fresh coverage before the next
@@ -51,9 +72,17 @@ and real Qt controls against an empty local DHT. Its evidence explicitly says
 
 ## Current evidence
 
-On 2026-09-07 UTC, the cloud attempt stopped before provisioning because native
-GCP token refresh required owner reauthentication. The local desktop harness
-passed. The new regression tests exposed and fixed fragmented placement,
+On 2026-09-07 UTC, the first cloud attempt stopped before provisioning because native
+GCP token refresh required owner reauthentication. After the owner renewed auth,
+three attempts encountered regional stockouts; each verified complete cleanup.
+The user requested Modal as the alternative. Its live raw-TCP nonce and cleanup
+probe passed (`q38mt-20260907-053914-147072`). The first full Modal attempt
+(`q38mf-20260907-054234-8995de`) was stopped after Qt reported a missing GLib
+library; all five sandboxes and local processes were cleaned. The dependency and
+a real-window image-build check are persisted in the runner. A fresh replay is
+required; this setup failure is not a formation pass.
+
+The local desktop harness passed. Regression tests exposed and fixed fragmented placement,
 sole-provider movement on an already complete route, and placement seeds based
 on installation paths rather than persistent public identities.
 See [the checkpoint](evidence/qwen-formation-checkpoint-20260907.json).

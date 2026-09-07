@@ -29,7 +29,7 @@ def bootstrap(config):
     dht = DHT(
         initial_peers=[],
         host_maddrs=["/ip4/0.0.0.0/tcp/31330"],
-        announce_maddrs=[f"/ip4/{config['ip']}/tcp/31330"],
+        announce_maddrs=[f"/ip4/{config['ip']}/tcp/{config.get('public_port', 31330)}"],
         client_mode=False,
         start=True,
         tls=True,

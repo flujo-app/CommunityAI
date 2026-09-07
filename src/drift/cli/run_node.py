@@ -560,6 +560,8 @@ def _prepare_worker_supervisor_settings(
             )
         if worker.public_ip is not None and worker.port is None:
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
+        if worker.public_port is not None and (worker.port is None or worker.public_ip is None):
+            raise NodeConfigError(f"worker {worker.worker_id!r} public_port requires port and public_ip")
 
         resolved_model = _model_key(descriptor)
         intent_published = bool(automatic and placement is not None and placement.intent_published)
@@ -711,7 +713,10 @@ def _prepare_worker_supervisor_settings(
         if worker.port is not None:
             command.extend(("--port", str(worker.port)))
         if worker.public_ip is not None:
-            command.extend(("--public_ip", worker.public_ip))
+            if worker.public_port is None:
+                command.extend(("--public_ip", worker.public_ip))
+            else:
+                command.extend(("--announce_maddrs", f"/ip4/{worker.public_ip}/tcp/{worker.public_port}"))
         for revocation_file in model_config.revocation_files:
             command.extend(("--revocation_file", str(revocation_file)))
         placement_binding = decision if decision is not None and decision.artifact_set_digest is not None else None
