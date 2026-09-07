@@ -41,7 +41,7 @@ with FP8 weights converted to BF16 and eager attention.
 | Cleanup | **PASSED.** Both passing runs' owned cloud resources were verified absent. No quota increases requested. |
 | Local fallback | **PASSED, bounded Windows GPU/Linux CPU scope.** Exact Qwen3.5-0.8B produced real tokens offline through packaged nodes; token limits, local-only persistence and stream cancellation passed. Windows used an 8 GB RTX 2070 SUPER. [Linux package evidence](evidence/qwen-linux-v9-20260906.json) and [product limits](QWEN_DESKTOP_PRODUCT_RESULTS.md). |
 | Local inference plus automatic sharing | **PASSED, one Windows case.** The current package automatically selected one Qwen3.8 block under a 2 GiB worker budget alongside local Qwen's 3 GiB budget. Pause removed the entire worker process tree in 0.110 seconds; restart and concurrent local tokens passed. Public bootstrap startup retries remain a limitation. [Sharing evidence](evidence/qwen-sharing-packaged-20260906.json). |
-| Resource controls and power recovery | **PASSED, bounded Windows cases.** Independent schedule/power/bandwidth/storage admission checks; a real 25-second GPU load triggered power pause and automatic resumption without policy edits. [Power evidence](evidence/qwen-power-recovery-20260906.json). Other Gate 14 outcomes remain open. |
+| Resource controls and power recovery | **PASSED, bounded Windows cases.** Independent schedule/power/bandwidth/storage admission checks; a real 25-second GPU load triggered power pause and automatic resumption without policy edits. [Power evidence](evidence/qwen-power-recovery-20260906.json). The final Windows/Linux resource-control matrix also passed; see Gate 14 below. |
 | Packaged cold client acquisition | **PASSED.** Eight direct-Hub artifacts, 6.03 GB, verified from an empty cache; the large shard resumed three times. Approximately two hours on the tested connection. [Acquisition evidence](evidence/qwen-packaged-cold-acquisition-20260906.json). This does not establish generation. |
 | Stock/reference correctness | **PASSED, declared bounded scope.** Three prompts × prefill and two cached decode positions; all vocabulary logits within predeclared `atol=0.5`, `rtol=0.01`, and all nine greedy tokens match stock Transformers' independent FP8 dequantizer. Four RPC workers on one CPU host; separate from cross-cloud qualification. [Reference evidence](evidence/qwen-reference-parity-20260906.json). |
 | Automatic promotion, preference and loss/rejoin | **PASSED through the source node under signed public sequence 2 on an assigned mixed route.** Local before growth; Qwen3.8 after measured readiness; active answer preserved when switching to local-only; local after confirmed T4 loss; Qwen3.8 after its replacement joined with a new peer identity. [Source product evidence](evidence/qwen-source-public-recovery-20260906.json). This does not prove autonomous desktop formation. |
@@ -72,7 +72,7 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | --- | --- | --- |
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
 | Q3.8 | **IN PROGRESS; runtime, packaged and bounded formation milestones passed** | Carry the formation fixes into final packages; finish representative consumer GPU/client and conversation measurements and the ordinary-user update path for the signed Qwen catalog. |
-| 14 | **IN PROGRESS — current priority** | **“Sharing obeys my limits.”** Two desktop sliders, VRAM and processing usage, default to 100% on fresh installs; contribution remains opt-in. Prove lower budgets under load, safe stop/save/resume, persistence and Pause, alongside existing storage/bandwidth/schedule/power controls on real Windows/Linux packages. Processing is paced compute time, not an instantaneous whole-device cap. [Operations](PACKAGED_ALPHA_OPERATIONS.md). |
+| 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
 | 15 | **IN PROGRESS; engineering installers** | **“Install it, replace it, remove it.”** Working Inno Setup Windows installer and `.deb`; unsigned alpha is owner-authorized. Verify ordinary-user install, safe node/worker shutdown during upgrade, settings/cache preservation, reinstall, uninstall and retain/delete cache choices. Windows signing, Store submission, hosted signed APT and automatic application updates follow after alpha. |
 | 16 | **WAITING** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
@@ -85,68 +85,55 @@ public safety check; exhaustive hardening is deferred.
 
 ## Next work, in useful product order
 
-The [September 7 slider checkpoint](evidence/gate14-20260907-resource-sliders.md)
-adds both real Qt controls, atomic stop/save/resume behavior and runtime compute
-pacing. Bounded Windows CPU/RTX 2070 SUPER tensor probes matched 100/50/25% duty
-budgets and verified CUDA allocator rejection. A fresh Windows frozen node then
-passed real Qwen policy changes at 20% VRAM/50% processing and 25%/100%, persisted
-both settings, restarted ready workers, reported verified downloads and removed
-worker trees on Pause while local inference continued. The source controller
-drove these changes; actual remote-Qwen processing load and the complete frozen
-Windows/Linux UI matrix remain open. [Package evidence](evidence/qwen-windows-installers-20260907.json).
+Gate 14 is complete for the declared Windows/Linux alpha scope. The
+[final acceptance](evidence/gate14-20260907-final-resource-acceptance.md) used complete
+catalog-bearing frozen desktop/node packages at `76b6d84` (Windows) and
+`bf67f0d` (Linux, with packaging fixes and unchanged application/catalog source), real Qwen block load,
+literal Qt sliders, explicit opt-in, independent admission guards and native
+credential stores. Both platforms passed all 11 checkpoints and cleanup.
+Processing limits pace sharing compute; brief bursts, loading/downloads and
+local inference remain separate. Linux used Debian 12/Xvfb with CUDA passthrough,
+so this is not a physical Ubuntu/Wayland or broad GPU qualification.
 
-A later [real-Qwen Windows slider run](evidence/gate14-20260907-real-qwen-windows.json)
-passed all 11 frozen-UI checkpoints: defaults, live limits, verified worker cache,
-Pause/Start, low-VRAM rejection and recovery, persistence after desktop restart,
-and local inference throughout. Real block-request medians were 62/156/250 ms at
-100/50/25% processing, with identical outputs and falling measured GPU activity.
-The low-budget check exposed a restart loop; a distinct memory-budget exit signal
-now leaves that worker waiting until its launch configuration changes. These
-GUI/node components were staged for the check; final clean package and Linux
-acceptance remain before Gate 14 closes.
+Acceptance found and fixed product defects: insufficient VRAM no longer
+causes an endless worker restart loop, and migration of an identical signed
+manifest into managed storage now preserves per-model cache/resource preferences.
+Linux declares its missing X11 shape-library dependency and excludes optional
+Triton JIT initialization that otherwise required a compiler inside the frozen app.
+The block-health grid, observed peer details and local client/worker download
+progress are included in both packages. The [display checkpoint](evidence/desktop-health-downloads-20260907.md)
+records their state/integrity tests; remote download percentages and unreported
+spare capacity are not invented.
 
-The complete catalog-bearing Windows package then exposed a migration defect:
-moving an identical manifest into the managed directory discarded its per-model
-cache/resource settings and started an unnecessary download. Refresh now matches
-the verified manifest digest, preserves those settings, and points to the managed
-manifest. A different digest with the same name does not inherit them. The final
-package matrix must include this fix; catalog migration regression checks passed.
+The final Windows setup at `0.1.0-alpha.20260907.2`, using the stable public
+application ID, passed non-elevated installation, upgrade from the earlier full
+setup while Qwen sharing was active, removal, reinstall and final removal. The
+actual installed frozen GUI and node returned local tokens and verified the
+worker cache in each launch. Complete owned trees stopped and settings/cache/
+credentials survived replacement/removal. A redundant test-driver cleanup call
+failed after the final successful uninstall; the subsequent independent cleanup
+audit passed. [Full evidence](evidence/gate15-20260907-frozen-windows-installer.json).
 
-The [desktop health/download checkpoint](evidence/desktop-health-downloads-20260907.md)
-adds the block grid, observed peer metadata, expiring signed reservations and local
-client/worker download progress. Bounded HTTP integrity/resume, supervised-process
-and Qt tests passed. Both Windows/Linux engineering package builds at `b09aa2d`
-passed with these display additions. The [installer checkpoint](evidence/desktop-installers-20260907.md)
-adds Inno/Debian builders; both complete CI installer builds passed at `0b875c1`.
-The full Windows setup passed install, upgrade with an active packaged Qwen
-worker, complete owned-tree shutdown and uninstall with external settings/cache
-preserved. This used source Qt with the production lifecycle supervisor. Signed
-APT index acceptance, package retrieval and tamper rejection passed with a
-disposable test key; production publication remains open. Free Windows signing
-is preferred; the owner-authorized [SignPath eligibility inquiry](WINDOWS_SIGNING.md)
-was sent September 7. No enrollment or approval exists yet.
+Functional/style checks and both production package/installer jobs passed. The
+two high-severity CodeQL findings were reviewed against their exact source-to-sink
+paths and [dismissed as false positives](evidence/gate14-20260907-codeql-triage.md),
+with scanning still enabled. Public-key metadata is distinct from private material,
+and generated API bearer keys are distinct from human passwords; advanced imports
+still require operator-supplied strong tokens.
 
-1. **Finish Gate 14's two resource sliders.** The owner selected VRAM and
-   processing usage, each defaulting to 100%, as the immediate focus. Verify
-   actual enforcement, live changes, persistence and complete Pause cleanup.
-2. **Create setup files containing the proven formation path.** The CPU/source-UI
-   one-click test passed local → community → local → community with actual
-   desktop controls and unattended recovery. Include the committed placement and
-   discovery fixes in the final builds; qualify the frozen UI and ordinary
-   startup alongside the installation lifecycle. This result does not cover
-   simultaneous cold joins or consumer GPU contribution.
-3. **Close Gates 14 and 15 on that product.** Exercise automatic assignment,
-   limits, Pause, upgrades that stop complete worker trees, settings/cache
-   preservation, reinstall and uninstall on Windows/Linux. Include remaining
-   Qwen conversation/client measurements in these sessions, and record hardware
-   observations before claiming additional profiles supported.
-4. **Finish migration lifecycle and run the canary.** Sequence 2 is published at
-   its separate qualification path. Clean HTTPS catalog installation and explicit
-   old-root migration passed through the current Windows packaged bootstrap,
-   preserving test preferences and cache data. The ordinary-user desktop lifecycle
-   and canary disable/recovery remain. [Online evidence](evidence/qwen-catalog-online-20260906.json).
-5. **Release the Qwen alpha, then add larger adapters and shadow credits.**
-   DeepSeek/GLM are not prerequisites for a useful first release.
+1. **Finish Gate 15 on the proven runtime.** Complete the Linux installer lifecycle,
+   remaining target-distribution checks and the explicit retained-data/login-entry
+   choices. Windows signing is owner-deferred; unsigned direct-download setup and
+   a directly installable `.deb` are the alpha distribution targets.
+2. **Complete remaining Q3.8 product measurements.** Preserve the bounded formation,
+   full-route and recovery results while recording the remaining conversation,
+   representative client/hardware and ordinary-user catalog-update observations.
+3. **Run Gate 16's bounded canary.** Exercise finite admission/timeouts, malformed
+   peers, health reconstruction, disclosure, route/catalog disable and clean
+   rollback through the packaged product.
+4. **Publish and observe the best-effort alpha.** Publish only the qualified setup
+   and `.deb` with checksums/provenance after the preceding outcomes pass. Store,
+   trusted Windows signing, hosted signed APT, larger adapters and credits follow.
 
 The [model ladder audit](COMMUNITY_AI_MODEL_LADDER.md) and
 [product results](QWEN_DESKTOP_PRODUCT_RESULTS.md) separate implemented behavior
@@ -158,8 +145,9 @@ and the Windows packaged community/recovery/cache path have passed on the assign
 C3 route. [Complete packaged result](evidence/qwen-packaged-recovery-v9-c3-20260906.json).
 Bounded autonomous CPU desktop formation and recovery passed; earlier failures
 are retained separately in the [formation runbook](QWEN_FORMATION_TEST.md).
-The Linux CUDA package passed verification and offline local CPU chat; native
-desktop lifecycle and Linux GPU qualification remain open.
+The Linux CUDA package passed verification, offline local CPU chat and the
+final ordinary-user frozen Qt/GPU resource-control matrix described above.
+Broader hardware, physical desktop and installer qualification remain distinct.
 The [catalog signer and three backups](CATALOG_SIGNING_KEY.md) are documented.
 Headcount or advertised VRAM alone cannot trigger a safe upgrade.
 

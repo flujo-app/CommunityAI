@@ -5,16 +5,19 @@ Current release status and execution order are maintained in
 64-block route, same-session replacement, reference comparison and Windows
 packaged short chat, worker-loss recovery and HTTP-blocked cache restart passed
 on assigned cloud routes. Bounded autonomous CPU desktop formation and recovery
-also passed on September 7. The owner selected Gate 14's desktop resource controls
-as the next priority, followed by installers and release qualification. The
-[model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
+also passed on September 7. Gate 14 resource controls now pass the bounded
+Windows/Linux frozen-package acceptance. Installer completion and release
+qualification are next. The [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
 candidate lists in historical implementation snapshots below.
 
-September 7 Gate 14 update: the [real-Qwen Windows frozen slider run](evidence/gate14-20260907-real-qwen-windows.json)
-passed defaults, live limits, low-memory rejection/recovery, repeated Pause/Start,
-restart persistence and local inference. A worker rejected for insufficient VRAM
-now waits with an explanation instead of restarting indefinitely. Final clean
-package and Linux acceptance remain open; this checkpoint does not close the gate.
+September 7 Gate 14 update: **PASSED for the bounded alpha scope.** The
+[final Windows/Linux acceptance](evidence/gate14-20260907-final-resource-acceptance.md)
+used complete frozen packages and real Qwen load. Both sliders default to 100%,
+sharing remains opt-in, lower limits are enforced, Pause removes worker trees,
+and settings persist across restart. Low-VRAM rejection now waits without a
+restart loop; signed-manifest migration retains cache/resource preferences.
+Windows ran non-elevated; Linux used an ordinary Debian/Xvfb session with CUDA
+passthrough. Broader hardware and physical desktop coverage are not implied.
 
 This repository starts from DRIFT-LLM, the most practical maintained continuation
 of Petals found during the August 2026 fork audit. It preserves the parts that are
@@ -225,27 +228,26 @@ offline/failure states remain separate. Remote download percentages and unused
 capacity are unreported. Local progress separates transferred/cached bytes from
 verified artifacts and model loading. This is not an additional release gate.
 
-The owner prefers free Windows signing and would otherwise publish as Mario
-Andreschak, an individual based in Colombia. Azure Artifact Signing Public Trust
-does not currently support that individual location. Investigate SignPath
-Foundation eligibility, particularly the bundled CUDA runtime. An owner-authorized
-eligibility inquiry was sent September 7; no enrollment, approval or trusted
-signing identity has been obtained yet. Continue building and
-testing unsigned engineering installers while preparing the signing integration.
+The owner explicitly deferred Windows publisher signing until after alpha.
+Working unsigned direct-download setup files with checksums/provenance are
+accepted. Mario Andreschak is an individual based in Colombia; Azure Artifact
+Signing Public Trust does not currently support that individual location.
+The authorized SignPath eligibility inquiry was sent September 7, with no
+enrollment or approval yet. See [signing status](WINDOWS_SIGNING.md). Store and
+hosted signed APT distribution follow after alpha; signing does not block Gate 14.
 
-The [installer checkpoint](evidence/desktop-installers-20260907.md) adds Inno Setup
-and Debian builders after the existing CI package verification; both complete
-CI installer builds passed at `0b875c1`. A fresh Windows package also passed
-[real Qwen slider/Pause and installed-worker upgrade/removal checks](evidence/qwen-windows-installers-20260907.json),
-including settings/cache preservation and removal of the seven-process owned
-tree. The source Qt/controller drove the frozen node; fully frozen UI and Linux
-Qwen lifecycle acceptance remain open. A disposable-key APT test passed signed
-index/package acceptance and tamper rejection. The
-[free-signing inquiry](WINDOWS_SIGNING.md) awaits SignPath's eligibility response.
-Actual Qwen processing-load measurements and final cross-platform lifecycle
-remain alpha work; trusted signing, Store submission and production signed APT
-hosting are subsequent distribution work;
-neither Gate 14 nor Gate 15 is complete from these probes.
+The final [Gate 14 package matrix](evidence/gate14-20260907-final-resource-acceptance.md)
+passed at `76b6d84` on Windows and `bf67f0d` on Linux, with Linux packaging
+fixes and unchanged application/catalog source. Acceptance included real Qwen processing load,
+both literal sliders, persistence, repeated Pause/Start, four independent
+admission guards, local inference and complete owned-process/native-key cleanup.
+The [fully frozen Windows installer lifecycle](evidence/gate15-20260907-frozen-windows-installer.json)
+also passed product install/upgrade/removal/reinstall assertions and an independent
+cleanup audit; its redundant final test-cleanup error is retained explicitly.
+Gate 15 still needs the remaining Linux/distribution and retained-data choices.
+The earlier [installer checkpoint](evidence/desktop-installers-20260907.md) includes
+the disposable-key APT acceptance/tamper test. No public installer release, Store
+submission or production signed APT repository has been published.
 
 ### Execution loop
 
