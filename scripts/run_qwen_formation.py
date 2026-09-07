@@ -49,6 +49,8 @@ def validate_config(config):
 
 
 class FormationRun(ProductRun):
+    remote_desktops = True
+
     def __init__(self, path, config):
         super().__init__(path, config)
         self.public_ips = {}
@@ -117,6 +119,7 @@ class FormationRun(ProductRun):
             "scripts/run_qwen_formation.py",
             "scripts/qwen_formation_node.py",
             "scripts/qwen_formation_desktop.py",
+            "scripts/qwen_formation_platform_probe.py",
             "scripts/qualify_qwen_formation_local.py",
             "config/qwen_formation.json",
         }
@@ -137,7 +140,14 @@ class FormationRun(ProductRun):
                 "touch /srv/q38/setup-ready",
                 "/opt/q38/venv/bin/pip install --no-cache-dir '/opt/q38/source[api]'\ntouch /srv/q38/setup-ready",
             )
-        return source
+        source = source.replace(
+            "python3-venv python3-pip",
+            "python3-venv python3-pip xvfb xauth libgl1 libegl1 libglib2.0-0 libdbus-1-3 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render-util0",
+        )
+        return source.replace(
+            "touch /srv/q38/setup-ready",
+            "/opt/q38/venv/bin/pip install --no-cache-dir 'PySide6==6.11.2'\nxvfb-run -a /opt/q38/venv/bin/python /opt/q38/source/scripts/qwen_formation_platform_probe.py\ntouch /srv/q38/setup-ready",
+        )
 
     def host_config(self, name, span, peers):
         if span is not None:
@@ -147,6 +157,7 @@ class FormationRun(ProductRun):
             "peers": list(peers),
             "expires_at_unix": self.deadline,
             "capacity_blocks": 0 if name == self.names[0] else self.config["capacity_blocks"],
+            "desktop_driven_sharing": True,
         }
 
     def write_remote(self, name, filename, value):
@@ -168,6 +179,14 @@ class FormationRun(ProductRun):
             "--property=StandardError=append:/srv/q38/formation.log "
             "--setenv=OMP_NUM_THREADS=4 --setenv=MKL_NUM_THREADS=4 "
             "/opt/q38/venv/bin/python /opt/q38/source/scripts/qwen_formation_node.py",
+        )
+        self.ssh(
+            name,
+            "sudo systemd-run --unit=q38-desktop --uid=q38 --property=KillMode=control-group "
+            "--property=TimeoutStopSec=45 --property=StandardOutput=append:/srv/q38/desktop.log "
+            "--property=StandardError=append:/srv/q38/desktop.log "
+            "--setenv=PYTHONPATH=/opt/q38/source/desktop/src "
+            "/usr/bin/xvfb-run -a /opt/q38/venv/bin/python /opt/q38/source/scripts/qwen_formation_desktop.py --root /srv/q38",
         )
 
     def read_participant(self, name, filename):
@@ -242,7 +261,7 @@ class FormationRun(ProductRun):
         return value
 
     def enable_contributor(self, name):
-        return self.command(name, "sharing", enabled=True)
+        return self.desktop("local", name=name, action="start-sharing")
 
     def observe_remote_desktop(self, name, source):
         if getattr(self, "remote_desktops", False) and name != "desktop":
@@ -342,15 +361,46 @@ class FormationRun(ProductRun):
         return evidence
 
     def stop_participant(self, name):
-        self.ssh(name, "sudo systemctl kill --kill-whom=all --signal=SIGKILL q38-formation")
-        self.ssh(name, "sudo systemctl stop q38-formation")
-        state = self.ssh(name, "systemctl show q38-formation --property=ActiveState --property=MainPID").stdout
-        if "MainPID=0" not in state or not any(s in state for s in ("ActiveState=failed", "ActiveState=inactive")):
-            raise RuntimeError("Participant loss was not confirmed")
-        return state
+        states = {}
+        for unit in ("q38-desktop", "q38-formation"):
+            self.ssh(name, "sudo systemctl kill --kill-whom=all --signal=SIGKILL " + unit)
+            self.ssh(name, "sudo systemctl stop " + unit)
+            state = self.ssh(name, "systemctl show " + unit + " --property=ActiveState --property=MainPID").stdout
+            if "MainPID=0" not in state or not any(s in state for s in ("ActiveState=failed", "ActiveState=inactive")):
+                raise RuntimeError("Participant loss was not confirmed: " + unit)
+            states[unit] = state
+        return states
 
     def restart_participant(self, name):
         self.ssh(name, "sudo systemctl restart q38-formation")
+        self.ssh(name, "sudo systemctl restart q38-desktop")
+
+    def capture(self):
+        super().capture()
+        for name in self.names:
+            archived = self.ssh(
+                name,
+                "sudo /opt/q38/venv/bin/python -c "
+                + shlex.quote(
+                    "from pathlib import Path; import tarfile; root=Path('/srv/q38'); "
+                    "t=tarfile.open('/tmp/formation-evidence.tar.gz','w:gz'); "
+                    "[t.add(p,arcname=p.name) for p in root.iterdir() if p.is_file() and p.suffix in {'.json','.log','.png'}]; t.close()"
+                ),
+                check=False,
+            )
+            if not archived.returncode:
+                self.cloud(
+                    [
+                        "compute",
+                        "scp",
+                        name + ":/tmp/formation-evidence.tar.gz",
+                        str(self.path / (name + "-evidence.tar.gz")),
+                        "--zone",
+                        self.config["zone"],
+                        "--tunnel-through-iap",
+                    ],
+                    check=False,
+                )
 
     def stop_desktop(self):
         if self.local_root.exists():
@@ -399,6 +449,7 @@ class FormationRun(ProductRun):
             "cloud_runtime": "production source node",
             "desktop_node": "retained Windows package",
             "desktop_ui": "production Qt source",
+            "remote_ui": "production Qt on Xvfb, actual Save and Start sharing clicks",
             "isolated_test_seed": True,
             "simultaneous_cold_join_proved": False,
             "consumer_gpu_formation_proved": False,

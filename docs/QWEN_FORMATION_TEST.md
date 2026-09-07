@@ -1,6 +1,14 @@
 # Automatic Qwen formation test
 
-**Modal alternative:** run **`Run Qwen Formation Modal.cmd`** from the same C:
+**Modal currently cannot complete this test:** its sandbox filesystem rejected
+the atomic settings exchange required by the production node. The real desktop's
+policy Save returned HTTP 503; sharing remained disabled. All six clients had
+already passed local inference and real-window selection checks. Both full Modal
+attempts were cleaned. [Evidence](evidence/qwen-modal-formation-blocker-20260907.json).
+The runner now checks this filesystem capability during image setup. The active
+fallback is GCP N2 with actual remote Qt desktops as well.
+
+The retained **`Run Qwen Formation Modal.cmd`** runs from the same C:
 checkout. It reuses the acceptance flow below and needs an already authenticated
 Modal Python (override with `COMMUNITYAI_MODAL_PYTHON`). Four CPU contributors
 have 32 GiB each; a fifth client/seed has 16 GiB. Each gets two physical cores
@@ -51,7 +59,9 @@ The Windows session uses the retained hash-verified v9 node, existing verified
 model caches, and the **real production Qt window run from source**. Qt automation
 uses Gate 13's existing hook to observe selection and click the actual local-only
 button. It records the resulting mode, displayed selection, and screenshots.
-The cloud participants run production node source, with local inference on CPU.
+The cloud participants run production node source and the real Qt desktop on
+Xvfb, with local inference on CPU. The runner clicks policy Save and Start
+sharing, observes all five remote desktops, and retains their screenshots.
 The Windows local model uses the configured RTX 2070 SUPER device.
 
 This is a **staggered formation** test. It does not certify a simultaneous cold
@@ -79,8 +89,10 @@ The user requested Modal as the alternative. Its live raw-TCP nonce and cleanup
 probe passed (`q38mt-20260907-053914-147072`). The first full Modal attempt
 (`q38mf-20260907-054234-8995de`) was stopped after Qt reported a missing GLib
 library; all five sandboxes and local processes were cleaned. The dependency and
-a real-window image-build check are persisted in the runner. A fresh replay is
-required; this setup failure is not a formation pass.
+a real-window image-build check are persisted in the runner. Its next replay,
+`q38mf-20260907-054716-44636d`, passed all six local answers and UI observations,
+then exposed the filesystem incompatibility described above. A new GCP N2 replay
+uses the same remote desktop controls. Neither Modal attempt is a formation pass.
 
 The local desktop harness passed. Regression tests exposed and fixed fragmented placement,
 sole-provider movement on an already complete route, and placement seeds based

@@ -103,7 +103,7 @@ class ModalFormationRun(FormationRun):
                 "mkdir -p /opt/q38/source /srv/q38",
                 "tar -xzf /tmp/source.tar.gz -C /opt/q38/source",
                 "pip install --no-cache-dir '/opt/q38/source[api]' 'PySide6==6.11.2'",
-                "xvfb-run -a python -c 'from PySide6.QtWidgets import QApplication,QWidget; a=QApplication([]); w=QWidget(); w.show(); a.processEvents(); assert w.isVisible()'",
+                "xvfb-run -a python /opt/q38/source/scripts/qwen_formation_platform_probe.py",
             )
             .env(
                 {

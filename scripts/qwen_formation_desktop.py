@@ -25,6 +25,13 @@ class FormationDesktop:
     def install(self, window, application, qt):
         self.window, self.application = window, application
         self.qt = qt
+        original_failure = window._sharing_action_failed
+
+        def sharing_failed(message):
+            write(self.root / "desktop-error.json", {"error": "Production desktop rejected sharing: " + str(message)})
+            original_failure(message)
+
+        window._sharing_action_failed = sharing_failed
         self.timer = qt["QTimer"](window)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.tick)
@@ -46,6 +53,7 @@ class FormationDesktop:
             if identity in self.completed:
                 return
             if action["action"] == "start-sharing":
+                window._page_buttons[2].click()
                 if not window._snapshot.get("contribution", {}).get("policy", {}).get("sharing_enabled"):
                     if identity not in self.policy_opened and window.edit_policy_button.isEnabled():
                         self.policy_opened.add(identity)
