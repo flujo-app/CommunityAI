@@ -105,6 +105,13 @@ now leaves that worker waiting until its launch configuration changes. These
 GUI/node components were staged for the check; final clean package and Linux
 acceptance remain before Gate 14 closes.
 
+The complete catalog-bearing Windows package then exposed a migration defect:
+moving an identical manifest into the managed directory discarded its per-model
+cache/resource settings and started an unnecessary download. Refresh now matches
+the verified manifest digest, preserves those settings, and points to the managed
+manifest. A different digest with the same name does not inherit them. The final
+package matrix must include this fix; catalog migration regression checks passed.
+
 The [desktop health/download checkpoint](evidence/desktop-health-downloads-20260907.md)
 adds the block grid, observed peer metadata, expiring signed reservations and local
 client/worker download progress. Bounded HTTP integrity/resume, supervised-process

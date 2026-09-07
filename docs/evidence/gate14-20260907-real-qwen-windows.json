@@ -196,7 +196,7 @@
   "date": "2026-09-07",
   "complete_gate14": false,
   "same_Qwen_outputs_at_all_processing_limits": true,
-  "hardware": "Windows 11, RTX 2070 SUPER 8 GiB",
+  "hardware": "Windows 10 Pro 10.0.19045, RTX 2070 SUPER 8 GiB",
   "packaging": "New frozen node and frozen GUI staged together for the bounded check; final clean release archive qualification follows.",
   "limitations": [
     "One real Qwen block (60:61), repeated 128-token prefill in one admitted session; not a full 64-block conversation.",

@@ -11,6 +11,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
   a clear explanation instead of repeatedly restarting. Raising the resource
   limit can resume the previously selected worker; Pause remains authoritative.
 
+- Catalog migration keeps per-model cache and resource preferences when the same
+  verified manifest moves to the application's managed directory. A different
+  manifest identity does not inherit those settings through a reused model name.
+
 - Windows Inno Setup and Debian engineering package builders now package the
   verified desktop runtime. Windows upgrade/removal requests same-user desktop
   shutdown and waits for owned-node cleanup; Linux package maintenance stops the

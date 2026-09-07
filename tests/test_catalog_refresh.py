@@ -5,6 +5,7 @@ import pytest
 from test_catalog_bootstrap import NOW, _release_documents
 
 from drift.model_catalog import CatalogSigningKey, SignedModelCatalog
+from drift.model_manifest import ModelManifest
 from drift.node.catalog_bootstrap import CatalogBootstrapConfig, CatalogBootstrapError, CatalogBootstrapInstaller
 from drift.node.catalog_refresh import load_configured_catalog
 from drift.node.config import NodeConfig
@@ -51,6 +52,38 @@ def test_signed_refresh_preserves_user_policy_and_supports_existing_installation
     assert after.catalog_path != before.catalog_path
     assert before.catalog_path.is_file()
     assert not installer.refresh().created
+
+
+@pytest.mark.parametrize("same_identity", [True, False])
+def test_catalog_migration_preserves_preferences_by_exact_manifest_identity(tmp_path, same_identity):
+    installer, path, released, key = installation(tmp_path)
+    original = json.loads(path.read_text())
+    manifest = ModelManifest.load(original["models"][0]["manifest"])
+    if not same_identity:
+        source = manifest.to_dict()
+        source["source"]["revision"] = "f" * 40
+        manifest = ModelManifest.from_dict(source)
+    old_path = tmp_path / "custom-manifest.json"
+    old_path.write_text(manifest.canonical_json())
+    cache = tmp_path / "retained-cache"
+    cache.mkdir()
+    (cache / "sentinel").write_bytes(b"retained")
+    original["models"][0].update(manifest=str(old_path), cache_dir=str(cache), request_timeout=47)
+    original["auto_model_priority"][0] = manifest.digest_id
+    original.pop("catalog_path")
+    original.pop("catalog_bootstrap_path")
+    path.write_text(json.dumps(original))
+
+    assert installer.refresh().created
+    migrated = NodeConfig.load(path)
+    assert migrated.models[0].manifest_path != old_path
+    assert (migrated.models[0].cache_dir == cache) is same_identity
+    assert (migrated.models[0].request_timeout == 47) is same_identity
+    assert (cache / "sentinel").read_bytes() == b"retained"
+    old_path.unlink()
+    assert (
+        ModelManifest.load(migrated.models[0].manifest_path).digest_id == released[0].signed.models[0].manifest_digest
+    )
 
 
 def test_refresh_rejects_tamper_rollback_and_equivocation_without_changing_active_config(tmp_path):

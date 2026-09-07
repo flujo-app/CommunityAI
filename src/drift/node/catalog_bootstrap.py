@@ -687,6 +687,12 @@ class CatalogBootstrapInstaller:
                     old_entries = {
                         model.manifest_path: entry for model, entry in zip(old_config.models, previous["models"])
                     }
+                    old_by_digest = {}
+                    for model in old_config.models:
+                        digest = ModelManifest.load(model.manifest_path).digest_id
+                        if digest in old_by_digest:
+                            raise CatalogBootstrapError("Existing models have ambiguous duplicate manifest identities")
+                        old_by_digest[digest] = old_entries[model.manifest_path]
                     entries = []
                     current_paths = set()
                     current_selectors = set()
@@ -695,11 +701,11 @@ class CatalogBootstrapInstaller:
                         current_paths.add(path)
                         manifest = ModelManifest.load(path)
                         current_selectors.update(s.casefold() for s in (manifest.name, *manifest.aliases))
-                        prior = old_entries.get(path)
+                        prior = old_by_digest.get(manifest.digest_id)
                         # Preserve explicit per-model resource/cache preferences;
                         # execution mode itself remains a signed catalog choice.
                         if prior is not None:
-                            entry = dict(prior, execution=entry.get("execution", "distributed"))
+                            entry = dict(prior, manifest=str(path), execution=entry.get("execution", "distributed"))
                             if entry["execution"] != "local":
                                 entry = {k: v for k, v in entry.items() if not k.startswith("local_")}
                         entries.append(entry)

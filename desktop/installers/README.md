@@ -32,11 +32,13 @@ outside this directory and are retained. Explicit cache deletion and login-entry
 cleanup are not implemented by this installer yet.
 
 `-AppIdentifier` exists for isolated engineering installations. Keep the default
-`CommunityAI.Desktop` stable for public upgrades. Production builds must supply
-an approved publisher/signing command instead of `-UnsignedEngineering`; Inno
-uses the command for setup and uninstaller signing. See the
+`CommunityAI.Desktop` stable for public upgrades. The owner has approved unsigned
+direct-download installers for the alpha, labelled accordingly and accompanied
+by verified checksums/provenance. Later signed builds supply an approved
+publisher/signing command instead of `-UnsignedEngineering`; Inno uses the
+command for setup and uninstaller signing. See the
 [signing decision/application draft](../../docs/WINDOWS_SIGNING.md). Payload
-signing and provider enrollment remain required before publication.
+signing and provider enrollment remain required before Store submission.
 
 ## Ubuntu/Debian
 
