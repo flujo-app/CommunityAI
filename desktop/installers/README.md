@@ -61,6 +61,10 @@ required; the supported baseline is Ubuntu 22.04+/Debian 12+ on amd64.
 The declared Qt/X11 dependencies include `libxcb-shape0`; omitting it prevented
 the frozen desktop opening on a minimal Debian host even though offscreen tests
 passed. CI now also opens the frozen UI and onboarding through X11/Xvfb.
+Frozen Linux packages use the approved eager/native inference kernels and exclude
+the optional Triton JIT, so importing adapter support does not require a compiler
+or Python development headers on contributors' computers. Source deployments can
+install Triton separately for execution profiles that need it.
 
 CI's maintainer address is explicitly an engineering placeholder. Replace it
 before publication. A real package must pass installation/upgrade/removal with

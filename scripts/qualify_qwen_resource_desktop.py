@@ -257,10 +257,15 @@ def run(args):
                         result["_worker_tree"] = []
                     should_run = stage == "initial" and index in (2, 3, 4, 6, 8)
                     until = min(deadline, time.monotonic() + (900 if index == 2 else 240))
+                    restart_baseline = None
                     while time.monotonic() < until:
                         worker = client.list_workers()[0]
                         write_json(root / "latest-worker.json", worker)
                         if should_run:
+                            if restart_baseline is None:
+                                restart_baseline = worker["restart_count"]
+                            if worker["restart_count"] >= restart_baseline + 3:
+                                raise RuntimeError("Worker repeatedly exited before readiness; see latest-worker.json")
                             if (
                                 worker["state"] == "running"
                                 and worker["download_progress"]
@@ -395,7 +400,17 @@ def run(args):
                         process.kill()
                 except psutil.NoSuchProcess:
                     pass
-            wait_tree_gone(owned)
+            # Reap our direct child before checking PID disappearance on Linux.
+            # A killed but unreaped GUI is still visible as a zombie process.
+            if gui is not None:
+                try:
+                    gui.wait(timeout=30)
+                except Exception as exc:
+                    cleanup_errors.append(f"GUI reap: {type(exc).__name__}")
+            try:
+                wait_tree_gone(owned)
+            except Exception as exc:
+                cleanup_errors.append(f"Owned tree cleanup: {type(exc).__name__}")
         finally:
             try:
                 store.delete()

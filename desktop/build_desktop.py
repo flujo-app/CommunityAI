@@ -1370,6 +1370,13 @@ def main() -> int:
         "--exclude-module",
         "PySide6",
     ]
+    if platform.system() == "Linux":
+        # Approved desktop profiles use eager/native kernels. Optional PEFT/bitsandbytes
+        # imports otherwise initialize Triton's JIT on GPU hosts, requiring a compiler
+        # and Python development headers that ordinary frozen-app users do not have.
+        # Retain PyTorch and bitsandbytes native kernels; source deployments can opt
+        # into Triton separately when their execution profile requires it.
+        node_args.extend(("--exclude-module", "triton"))
     credential_backend = {
         "Windows": "keyring.backends.Windows",
         "Darwin": "keyring.backends.macOS",
