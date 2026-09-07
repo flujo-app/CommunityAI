@@ -782,6 +782,12 @@ class Server:
                 logger.warning("Public worker failed its initial aggregate health check")
                 return False
 
+            from drift.utils.download_progress import current_progress
+
+            progress = current_progress()
+            if progress is not None:
+                progress.finish("ready")
+
             while True:
                 timeout = random.random() * 2 * self.mean_balance_check_period
                 if self.stop.wait(timeout):

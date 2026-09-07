@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from communityai_desktop.client import NodeClient, NodeClientError
+from communityai_desktop.telemetry import route_view
 
 
 def _download_storage_estimate(size_bytes: int | None) -> str:
@@ -67,6 +68,8 @@ class DesktopController:
             "download_storage_estimate": _download_storage_estimate(selected_whole_shard_bytes),
             "active_requests": model.get("active_requests", 0),
             "last_error": model.get("last_error"),
+            "health": route_view(route),
+            "download_progress": model["download"].get("progress"),
         }
 
     @staticmethod
@@ -135,6 +138,8 @@ class DesktopController:
             "resource_suspended": resources["suspended"],
             "limits": resources["limits"],
             "measurements": resources["measurements"],
+            "placement": worker.get("placement", {}),
+            "download_progress": worker.get("download_progress"),
         }
 
     @staticmethod

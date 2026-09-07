@@ -7,6 +7,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Model health now shows a clickable block grid with serving replicas, joining
+  announcements, signed reservations, offline announcements and local worker
+  failures. Peer details show observed block ranges and reported runtime metadata.
+  Local client and sharing-worker downloads show file progress, verified bytes,
+  transfer speed, retries and resumed bytes, separately from model loading.
+
 - Desktop sharing now has separate VRAM and processing-usage sliders, defaulting
   to 100% on fresh installs while sharing stays opt-in. Applying limits pauses
   workers before persistence and resumes only previously selected workers. Failed

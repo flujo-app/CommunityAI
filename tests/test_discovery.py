@@ -122,6 +122,24 @@ def test_intent_publication_requires_a_remote_dht_store(tmp_path):
     assert call["expiration_time"] == record.payload["expires_at_ms"] / 1000
     assert call["value"] == record.to_dict()
 
+    observed_dht = SimpleNamespace(
+        get=lambda *args, **kwargs: SimpleNamespace(
+            value={
+                record.key_id: SimpleNamespace(value=record.to_dict()),
+                "wrong-key": SimpleNamespace(value=record.to_dict()),
+                "malformed": SimpleNamespace(value={"payload": "not a signed record"}),
+            }
+        )
+    )
+    state = discovery._states[manifest.digest_id]
+    reservations = discovery._read_intents(state, observed_dht)
+    assert len(reservations) == 1
+    assert reservations[0]["peer_id"] == identity.peer_id.to_base58()
+    assert reservations[0]["start_block"] == 1
+    health = {"status": "incomplete", "reservations": [dict(reservations[0], expires_at=now - 1)]}
+    discovery._set_success(state, health)
+    assert discovery.snapshot(manifest.digest_id)["reservations"] == []
+
     dht.store_result = False
     record = create_intent_lease(
         identity,

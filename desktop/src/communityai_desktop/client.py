@@ -12,6 +12,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from communityai_desktop.telemetry import download_view
+
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SUPPORTED_CONTROL_API_VERSION = 1
 CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
@@ -78,7 +80,7 @@ def normalize_loopback_url(value: str) -> str:
 
 def _normalize_model_download(value: Any) -> Dict[str, Any]:
     expected_keys = {"schema_version", "selected_whole_shard_bytes"}
-    if not isinstance(value, dict) or set(value) != expected_keys:
+    if not isinstance(value, dict) or set(value) - {"progress"} != expected_keys:
         raise NodeClientError("Local node model download estimate has an invalid schema")
     if type(value["schema_version"]) is not int or value["schema_version"] != MODEL_DOWNLOAD_SCHEMA_VERSION:
         raise NodeClientError("Local node model download estimate has an unsupported schema version")
@@ -90,6 +92,7 @@ def _normalize_model_download(value: Any) -> Dict[str, Any]:
     return {
         "schema_version": MODEL_DOWNLOAD_SCHEMA_VERSION,
         "selected_whole_shard_bytes": size,
+        **({"progress": download_view(value["progress"])} if "progress" in value else {}),
     }
 
 
@@ -399,6 +402,7 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
                 "policy": policy,
                 "schedule": schedule,
                 "resources": resources,
+                "download_progress": download_view(worker.get("download_progress")),
             }
         )
     if not configured and normalized_workers:

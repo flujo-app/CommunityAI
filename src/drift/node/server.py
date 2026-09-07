@@ -33,6 +33,7 @@ from drift.node.worker_supervisor import (
     WorkerReconfigurationBusyError,
     WorkerSupervisor,
 )
+from drift.utils.download_progress import public_progress
 
 CONTROL_API_VERSION = 1
 CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
@@ -93,6 +94,7 @@ def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, 
                     else "unknown"
                 ),
                 "desired_running": snapshot.get("desired_running") is True,
+                "download_progress": public_progress(snapshot.get("download_progress")),
                 "placement": {
                     "automatic": snapshot.get("automatic") is True,
                     "block_indices": (

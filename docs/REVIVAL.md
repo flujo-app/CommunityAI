@@ -207,13 +207,20 @@ Signing identity, Store account/certification and APT hosting are real release
 inputs; a generated installer script alone does not satisfy them. Model weights
 remain verified on-demand data, separate from the bundled executable runtime.
 
-The owner also requested an effort estimate for a block-health grid resembling a
-GitHub activity grid or defragmenter, richer peer lifecycle/capacity information,
-and a prominent view of the user's own download. Preserve this desktop follow-up:
-show observed coverage/replicas separately from reservations, joining, download,
-loading and failure states. Remote progress must remain unknown until authenticated
-telemetry supports it. Local progress must distinguish received bytes from verified
-artifacts and reusable cache. This is not an additional release gate.
+The owner authorized the block-health grid, available peer details and the user's
+own download progress on September 7. The source implementation and bounded
+[HTTP/process/Qt checks](evidence/desktop-health-downloads-20260907.md) are complete;
+carry this into final packages. Coverage/replicas, signed reservations, joining and
+offline/failure states remain separate. Remote download percentages and unused
+capacity are unreported. Local progress separates transferred/cached bytes from
+verified artifacts and model loading. This is not an additional release gate.
+
+The owner prefers free Windows signing and would otherwise publish as Mario
+Andreschak, an individual based in Colombia. Azure Artifact Signing Public Trust
+does not currently support that individual location. Investigate SignPath
+Foundation eligibility, particularly the bundled CUDA runtime; no application,
+approval or trusted signing identity has been obtained yet. Continue building and
+testing unsigned engineering installers while preparing the signing integration.
 
 ### Execution loop
 

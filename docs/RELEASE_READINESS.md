@@ -89,6 +89,13 @@ pacing. Bounded Windows CPU/RTX 2070 SUPER tensor probes matched 100/50/25% duty
 budgets and verified CUDA allocator rejection. These are source/synthetic probes;
 the current packaged Windows/Linux Qwen-sharing acceptance remains open.
 
+The [desktop health/download checkpoint](evidence/desktop-health-downloads-20260907.md)
+adds the block grid, observed peer metadata, expiring signed reservations and local
+client/worker download progress. Bounded HTTP integrity/resume, supervised-process
+and Qt tests passed. Both Windows/Linux engineering package builds at `5d9eec9`
+passed before these display additions; final packages must include the additions.
+Free Windows signing is preferred; SignPath Foundation eligibility remains open.
+
 1. **Finish Gate 14's two resource sliders.** The owner selected VRAM and
    processing usage, each defaulting to 100%, as the immediate focus. Verify
    actual enforcement, live changes, persistence and complete Pause cleanup.

@@ -76,7 +76,35 @@ def module_infos_route_health(module_infos: Sequence[RemoteModuleInfo]) -> Dict[
         {peer_id for peer_id, server_info in module_info.servers.items() if server_info.state is ServerState.ONLINE}
         for module_info in module_infos
     ]
-    return _coverage_health(replica_sets, updated_age=0.0)
+    return {**_coverage_health(replica_sets, updated_age=0.0), **_peer_details(module_infos)}
+
+
+def _peer_details(module_infos):
+    peers = {}
+    joining = [0] * len(module_infos)
+    offline = [0] * len(module_infos)
+    for index, module in enumerate(module_infos):
+        for peer_id, info in module.servers.items():
+            state = info.state.name.lower()
+            if state == "joining":
+                joining[index] += 1
+            elif state == "offline":
+                offline[index] += 1
+            peer = peers.setdefault(
+                str(peer_id),
+                {"peer_id": str(peer_id), "online_blocks": [], "joining_blocks": [], "offline_blocks": []},
+            )
+            peer[f"{state}_blocks"].append(index)
+            for field in ("public_name", "version", "torch_dtype", "quant_type"):
+                value = getattr(info, field, None)
+                peer[field] = " ".join(value.split())[:128] if isinstance(value, str) else None
+            peer["using_relay"] = getattr(info, "using_relay", None)
+    return {
+        "peers": [peers[key] for key in sorted(peers)[:256]],
+        "peer_details_truncated": len(peers) > 256,
+        "joining_counts": joining,
+        "offline_counts": offline,
+    }
 
 
 def sequence_manager_route_health(sequence_manager) -> Dict[str, Any]:
@@ -102,4 +130,7 @@ def sequence_manager_route_health(sequence_manager) -> Dict[str, Any]:
             }
 
         replica_sets = [{span.peer_id for span in spans} for spans in sequence_info.spans_containing_block]
-        return _coverage_health(replica_sets, updated_age=time.perf_counter() - sequence_info.last_updated_time)
+        result = _coverage_health(replica_sets, updated_age=time.perf_counter() - sequence_info.last_updated_time)
+        if hasattr(sequence_info, "block_infos"):
+            result.update(_peer_details(sequence_info.block_infos))
+        return result

@@ -676,8 +676,12 @@ class ManifestArtifactVerifier:
     _snapshot_root: Optional[Path] = field(default=None, init=False, repr=False)
     _weight_map: Optional[Mapping[str, str]] = field(default=None, init=False, repr=False)
     _weight_map_loaded: bool = field(default=False, init=False, repr=False)
+    _progress: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        from drift.utils.download_progress import current_progress
+
+        self._progress = current_progress()
         if self.repository != self.manifest.source.repository:
             raise ManifestError(
                 f"Artifact verifier repository is {self.repository!r}, expected {self.manifest.source.repository!r}"
@@ -816,6 +820,22 @@ class ManifestArtifactVerifier:
     def ensure_path(self, path: str, *, allowed_roles: Optional[Iterable[str]] = None) -> Path:
         artifact = self.manifest.get_artifact(path)
         self._require_allowed(artifact)
+        self._report(artifact, "checking")
+        try:
+            candidate = self._ensure_path(path, allowed_roles=allowed_roles)
+        except Exception:
+            self._report(artifact, "failed")
+            raise
+        self._report(artifact, "verified")
+        return candidate
+
+    def _report(self, artifact, state, **values):
+        if self._progress is not None:
+            self._progress.event(self.manifest, artifact, state, **values)
+
+    def _ensure_path(self, path: str, *, allowed_roles: Optional[Iterable[str]] = None) -> Path:
+        artifact = self.manifest.get_artifact(path)
+        self._require_allowed(artifact)
         if allowed_roles is not None and artifact.role not in set(allowed_roles):
             raise ManifestError(
                 f"Artifact {artifact.path!r} has role {artifact.role!r}, expected one of {sorted(set(allowed_roles))}"
@@ -872,6 +892,7 @@ class ManifestArtifactVerifier:
                 if resolved_candidate != candidate:
                     self._promote_cached_artifact(artifact, resolved_candidate, candidate)
 
+        self._report(artifact, "verifying", received=artifact.size)
         self._verify(artifact, candidate)
         return candidate
 
@@ -952,6 +973,7 @@ class ManifestArtifactVerifier:
             if partial.exists() and partial.stat().st_size > artifact.size:
                 partial.unlink()
             offset = partial.stat().st_size if partial.exists() else 0
+            self._report(artifact, "downloading", received=offset, resumed=offset)
             if offset == artifact.size:
                 try:
                     _verify_artifact_file(artifact, partial)
@@ -968,7 +990,15 @@ class ManifestArtifactVerifier:
 
             if artifact.size > RANGE_BYTES:
                 try:
-                    download_ranges(url, headers, partial, size=artifact.size, offset=offset)
+                    download_ranges(
+                        url,
+                        headers,
+                        partial,
+                        size=artifact.size,
+                        offset=offset,
+                        progress=lambda state, **values: self._report(artifact, state, **values),
+                    )
+                    self._report(artifact, "verifying", received=artifact.size)
                     _verify_artifact_file(artifact, partial)
                 except (OSError, requests.RequestException) as exc:
                     raise ManifestTransferInterrupted(
@@ -999,9 +1029,12 @@ class ManifestArtifactVerifier:
                     mode = "wb"
 
                 with partial.open(mode) as stream:
+                    received = offset
                     for chunk in response.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             stream.write(chunk)
+                            received += len(chunk)
+                            self._report(artifact, "downloading", received=received, transferred=len(chunk))
                     stream.flush()
                     os.fsync(stream.fileno())
             except (OSError, requests.RequestException) as exc:

@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 from drift.model_manifest import ModelManifest
+from drift.utils.download_progress import DownloadProgress
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,7 @@ class ModelSnapshot:
     last_used_at: Optional[float]
     active_requests: int
     route: Optional[Dict[str, Any]]
+    progress: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -144,6 +146,7 @@ class ModelSnapshot:
             "download": {
                 "schema_version": MODEL_DOWNLOAD_SCHEMA_VERSION,
                 "selected_whole_shard_bytes": self.selected_whole_shard_bytes,
+                **({"progress": self.progress} if self.progress is not None else {}),
             },
             "state": self.state.value,
             "last_error": self.last_error,
@@ -199,6 +202,7 @@ class _ModelRecord:
     active_requests: int = 0
     close_failed: bool = False
     load_lock: threading.Lock = field(default_factory=threading.Lock)
+    progress: Optional[DownloadProgress] = None
 
 
 class ModelManager:
@@ -486,16 +490,20 @@ class ModelManager:
                         )
                     return self._lease_locked(record, record.runtime)
             self._reserve_runtime_slot(record)
+            record.progress = DownloadProgress()
             try:
-                runtime = record.loader()
+                with record.progress.observe():
+                    runtime = record.loader()
                 if not isinstance(runtime, ModelRuntime):
                     raise TypeError("model loader must return ModelRuntime")
             except BaseException as exc:
+                record.progress.finish("failed")
                 with self._lock:
                     record.state = ModelState.STOPPING if self._closed else ModelState.UNAVAILABLE
                     record.last_error = f"{type(exc).__name__}: {exc}"
                     self._capacity_changed.notify_all()
                 raise
+            record.progress.finish("ready")
             with self._lock:
                 if self._closed:
                     record.state = ModelState.STOPPING
@@ -576,6 +584,15 @@ class ModelManager:
             route = reader()
             if not isinstance(route, dict):
                 raise TypeError("route health reader must return a dictionary")
+            if record.runtime is not None and record.route_health is not None and reader is not record.route_health:
+                try:
+                    discovery = record.route_health()
+                except Exception:
+                    discovery = None
+                if isinstance(discovery, dict):
+                    route = {**route, "reservations": discovery.get("reservations")}
+                    if "peers" not in route:
+                        route["peers"] = discovery.get("peers", [])
             return dict(route)
         except Exception:
             logger.exception("Failed to read route health for model %r", record.descriptor.model_id)
@@ -679,6 +696,7 @@ class ModelManager:
                         last_used_at=record.last_used_at,
                         active_requests=record.active_requests,
                         route=route,
+                        progress=None if record.progress is None else record.progress.snapshot(),
                     )
                 )
             return tuple(snapshots)

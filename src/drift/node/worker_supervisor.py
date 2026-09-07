@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import collections
+import json
 import logging
 import math
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -311,6 +314,7 @@ class WorkerSupervisorSettings:
 
 @dataclass
 class _WorkerRecord:
+    progress_directory: Any = field(default=None, init=False, repr=False)
     launch: WorkerLaunch
     state: WorkerState = WorkerState.PAUSED
     desired_running: bool = False
@@ -490,6 +494,15 @@ class WorkerSupervisor:
         environment = os.environ.copy()
         environment.update(record.launch.environment)
         environment["PYTHONUNBUFFERED"] = "1"
+        environment.pop("DRIFT_DOWNLOAD_PROGRESS", None)
+        try:
+            if record.progress_directory is not None:
+                record.progress_directory.cleanup()
+            record.progress_directory = tempfile.TemporaryDirectory(prefix="communityai-download-")
+            environment["DRIFT_DOWNLOAD_PROGRESS"] = str(Path(record.progress_directory.name) / "progress.json")
+        except OSError:
+            record.progress_directory = None
+            logger.warning("Local download progress is unavailable for worker %s", record.launch.worker_id)
         try:
             process = self._popen(
                 list(record.launch.command),
@@ -779,6 +792,7 @@ class WorkerSupervisor:
                         "id": record.launch.worker_id,
                         "model": record.launch.model_id,
                         "state": record.state.value,
+                        "download_progress": self._download_snapshot(record),
                         "desired_running": record.desired_running,
                         "operator_paused": record.operator_paused,
                         "auto_restart": record.launch.auto_restart,
@@ -811,7 +825,31 @@ class WorkerSupervisor:
                         "recent_logs": list(record.recent_logs),
                     }
                 )
-            return tuple(result)
+        return tuple(result)
+
+    @staticmethod
+    def _download_snapshot(record):
+        from drift.utils.download_progress import public_progress
+
+        if record.progress_directory is None:
+            return None
+        try:
+            with (Path(record.progress_directory.name) / "progress.json").open("rb") as stream:
+                payload = stream.read(16385)
+            if len(payload) > 16384:
+                return None
+            result = json.loads(payload)
+            if not isinstance(result, dict) or result.get("schema_version") != 1:
+                return None
+            # The fresh per-launch directory binds this report to the worker.
+            # Windows venv launchers may write from a child PID, and frozen
+            # workers may use their own PID; neither changes that ownership.
+            if record.state in (WorkerState.PAUSED, WorkerState.CRASHED, WorkerState.STOPPING):
+                result["state"] = "failed" if record.state is WorkerState.CRASHED else "paused"
+                result["bytes_per_second"] = 0
+            return public_progress(result)
+        except (OSError, ValueError):
+            return None
 
     def snapshot(self, worker_id: str) -> Dict[str, Any]:
         record = self._record(worker_id)
@@ -944,3 +982,6 @@ class WorkerSupervisor:
                         record.state = WorkerState.PAUSED
         if monitor is not None:
             monitor.join(timeout=5)
+        for record in records:
+            if record.process is None and record.progress_directory is not None:
+                record.progress_directory.cleanup()

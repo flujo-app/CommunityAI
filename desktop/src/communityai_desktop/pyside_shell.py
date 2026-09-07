@@ -193,6 +193,7 @@ def run(
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
 
+    from communityai_desktop.model_health import DownloadsPanel, ModelHealthCard
     from communityai_desktop.resource_controls import ResourceControls
     from PySide6.QtCore import QLockFile, QObject, QRunnable, QStandardPaths, Qt, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
@@ -474,6 +475,8 @@ def run(
             metrics.addWidget(peer_metric)
             metrics.addWidget(region_metric)
             layout.addLayout(metrics)
+            self.downloads_panel = DownloadsPanel()
+            layout.addWidget(self.downloads_panel)
 
             lower = QHBoxLayout()
             models_card, models_layout = card()
@@ -503,15 +506,10 @@ def run(
 
         def _build_models_page(self) -> QScrollArea:
             page, layout = self._scroll_page(
-                "Models", "Pick a model in your AI app. CommunityAI connects you automatically."
+                "Models", "Live block health, peer contributions, and your model downloads."
             )
             info, info_layout = card("heroCard")
             info_layout.addWidget(label("COMMUNITY LIBRARY", "eyebrow"))
-            info_layout.addWidget(label("One place. Every available model.", "sectionTitle"))
-            info_layout.addWidget(
-                label("Models appear here when enough community computers are online to run them.", "sectionSubtitle")
-            )
-            info_layout.addSpacing(8)
             self.auto_selection_title = label("auto is waiting for a complete route", "bodyStrong")
             self.auto_selection_title.setAccessibleName("Automatic model selection")
             self.auto_selection_detail = label("CommunityAI checks live route coverage before choosing.", "bodyMuted")
@@ -529,6 +527,7 @@ def run(
             )
             layout.addWidget(info)
             self.models_list_layout = QVBoxLayout()
+            self.model_health_cards = {}
             self.models_list_layout.setSpacing(10)
             layout.addLayout(self.models_list_layout)
             layout.addStretch(1)
@@ -809,6 +808,7 @@ def run(
             self.peers_metric.setText(str(network["peer_count"]))
             self.regions_metric.setText(str(len(network["regions"])))
             self._render_home_models(snapshot["models"])
+            self.downloads_panel.set_state(snapshot)
             self._render_regions(network["regions"])
             self._render_models(snapshot["models"])
             self._render_sharing(snapshot)
@@ -858,12 +858,16 @@ def run(
                 self.home_models_layout.addWidget(self._model_row(model))
 
         def _render_models(self, models: list[Dict[str, Any]]) -> None:
-            clear_layout(self.models_list_layout)
-            if not models:
-                self.models_list_layout.addWidget(label("No models are available yet.", "bodyMuted"))
-                return
+            keys = {model["id"] for model in models}
+            for key in list(self.model_health_cards):
+                if key not in keys:
+                    self.models_list_layout.removeWidget(self.model_health_cards[key])
+                    self.model_health_cards.pop(key).deleteLater()
             for model in models:
-                self.models_list_layout.addWidget(self._model_row(model))
+                if model["id"] not in self.model_health_cards:
+                    self.model_health_cards[model["id"]] = ModelHealthCard()
+                    self.models_list_layout.addWidget(self.model_health_cards[model["id"]])
+                self.model_health_cards[model["id"]].set_state(model, self._snapshot["workers"])
 
         def _render_regions(self, regions: list[Dict[str, Any]]) -> None:
             clear_layout(self.region_layout)

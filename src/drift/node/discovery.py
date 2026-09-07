@@ -422,6 +422,8 @@ class ModelCoverageDiscovery:
                     result["status"] = "unknown"
             result["source"] = "discovery"
             result["last_error"] = state.last_error
+            if isinstance(result.get("reservations"), list):
+                result["reservations"] = [r for r in result["reservations"] if r["expires_at"] > time.time()]
             return result
 
     def register_local_route_demand_key(self, key_id: str) -> None:
@@ -571,7 +573,14 @@ class ModelCoverageDiscovery:
                                 self._shutdown_dht_once(dht)
                                 dht = None
                                 break
-                        self._set_success(state, module_infos_route_health(module_infos))
+                        health = module_infos_route_health(module_infos)
+                        if callable(getattr(dht, "get", None)):
+                            try:
+                                with self._group_io_locks[initial_peers]:
+                                    health["reservations"] = self._read_intents(state, dht)
+                            except Exception:
+                                health["reservations"] = None
+                        self._set_success(state, health)
                         any_success = True
                         if callable(getattr(dht, "get", None)):
                             try:
@@ -603,6 +612,38 @@ class ModelCoverageDiscovery:
                     self._shutdown_dht_once(dht)
                 except Exception:
                     logger.exception("Failed to close a coverage-discovery DHT")
+
+    def _read_intents(self, state, dht):
+        wrapped = dht.get(f"{state.target.manifest.dht_prefix}.intent-v1", latest=True)
+        container = getattr(wrapped, "value", wrapped)
+        if container is None:
+            return []
+        if not isinstance(container, Mapping) or len(container) > 256:
+            return None
+        reservations = []
+        for subkey, value in container.items():
+            source = getattr(value, "value", value)
+            try:
+                if not isinstance(source, Mapping) or not _bounded_route_demand_source(source):
+                    continue
+                record = verify_intent_lease(
+                    source, expected_manifest_digest=state.target.manifest.digest, revocations=state.revocations
+                )
+                payload = record.payload
+                if subkey != record.key_id or payload["end_block"] > state.target.manifest.model.num_blocks:
+                    continue
+                reservations.append(
+                    {
+                        "peer_id": payload["peer_id"],
+                        "start_block": payload["start_block"],
+                        "end_block": payload["end_block"],
+                        "expires_at": payload["expires_at_ms"] / 1000,
+                        "artifact_bytes": payload["resource_claims"]["artifact_bytes"],
+                    }
+                )
+            except (ProtocolSecurityError, TypeError, ValueError):
+                continue
+        return reservations
 
     def publish_intent(self, digest_id: str, source: Mapping[str, Any]) -> bool:
         """Publish one verified, expiring intent to at least one remote DHT peer."""

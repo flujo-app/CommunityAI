@@ -10,7 +10,7 @@ RANGE_BYTES = 8 * 1024**2
 RANGE_WORKERS = 4
 
 
-def download_ranges(url, headers, partial, *, size, offset):
+def download_ranges(url, headers, partial, *, size, offset, progress=None):
     """Append contiguous bytes only; the caller verifies SHA-256 before promotion.
 
     A first 200 response safely falls back to a complete sequential download.
@@ -20,6 +20,10 @@ def download_ranges(url, headers, partial, *, size, offset):
     from drift.model_manifest import ManifestError
 
     started = time.monotonic()
+
+    def report(state, **values):
+        if progress is not None:
+            progress(state, **values)
 
     def retry_transfer(operation):
         for attempt in range(3):
@@ -33,6 +37,7 @@ def download_ranges(url, headers, partial, *, size, offset):
                     or (status is not None and status < 500 and status != 429)
                 ):
                     raise
+                report("retrying")
                 time.sleep(0.5 * 2**attempt)
 
     def open_range(start, end):
@@ -65,6 +70,7 @@ def download_ranges(url, headers, partial, *, size, offset):
             if len(body) + len(chunk) > length:
                 raise ManifestError("Hub returned more bytes than the declared range")
             body.extend(chunk)
+            report("downloading", transferred=len(chunk))
         if len(body) != length:
             raise requests.ConnectionError("Hub ended a bounded artifact range early")
         return body
@@ -103,6 +109,7 @@ def download_ranges(url, headers, partial, *, size, offset):
                             raise ManifestError("Hub returned more bytes than the manifested artifact")
                         stream.write(chunk)
                         written += len(chunk)
+                        report("downloading", received=written, transferred=len(chunk))
                     stream.flush()
                     os.fsync(stream.fileno())
                 if written != size:
@@ -120,6 +127,7 @@ def download_ranges(url, headers, partial, *, size, offset):
         stream.flush()
         os.fsync(stream.fileno())
         offset = end + 1
+        report("downloading", received=offset)
         with ThreadPoolExecutor(max_workers=RANGE_WORKERS, thread_name_prefix="drift-artifact-range") as pool:
             while offset < size:
                 if time.monotonic() - started > 3600:
@@ -138,6 +146,7 @@ def download_ranges(url, headers, partial, *, size, offset):
                         stream.flush()
                         os.fsync(stream.fileno())
                         offset = end + 1
+                        report("downloading", received=offset)
                 finally:
                     for future in futures:
                         future.cancel()
