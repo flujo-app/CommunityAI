@@ -411,11 +411,16 @@ class AutomaticContributionPlanner:
                 counts = current_candidate.health["replica_counts"]
                 old_start, old_end = map(int, self._current.block_indices.split(":"))
                 new_start, new_end = map(int, best.block_indices.split(":"))
-                # Moving the only provider of a block must not tear a complete
-                # route apart merely because another range won a random tie.
-                if all(counts) and any(
+                # Slow joins must not move a coverage gap around the model.
+                # Permit abandoning unique blocks only for a net coverage gain;
+                # redundant overlapping workers can still move to fill a gap.
+                lost = sum(
                     counts[index] == 1 and not new_start <= index < new_end for index in range(old_start, old_end)
-                ):
+                )
+                gained = sum(
+                    counts[index] == 0 for index in range(new_start, new_end) if not old_start <= index < old_end
+                )
+                if lost and gained <= lost:
                     best = self._current
 
         return PlacementPlan(best, best.reason, len(candidates))

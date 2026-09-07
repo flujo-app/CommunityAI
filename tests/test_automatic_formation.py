@@ -41,3 +41,30 @@ def test_complete_route_does_not_move_a_sole_provider_after_residency():
     counts[:] = [1] * 64
     later = planner.plan((candidate(counts),), sharing_enabled=True, now=1800).decision
     assert later.block_indices == original.block_indices
+
+
+def test_slow_growth_does_not_move_existing_unique_blocks_after_residency():
+    planners = []
+    counts = [0] * 64
+    for index in range(4):
+        now = index * 1800
+        for planner, original in planners:
+            later = planner.plan((candidate(counts),), sharing_enabled=True, now=now).decision
+            assert later.block_indices == original.block_indices
+        planner = AutomaticContributionPlanner(num_blocks=16, jitter_seed=f"slow-{index}")
+        original = planner.plan((candidate(counts),), sharing_enabled=True, now=now).decision
+        start, end = map(int, original.block_indices.split(":"))
+        for block in range(start, end):
+            counts[block] += 1
+        planners.append((planner, original))
+    assert counts == [1] * 64
+
+
+def test_partial_overlap_may_move_when_it_increases_total_coverage():
+    planner = AutomaticContributionPlanner(num_blocks=16, jitter_seed="overlap")
+    counts = [0] * 16 + [2] * 48
+    original = planner.plan((candidate(counts),), sharing_enabled=True, now=0).decision
+    assert original.block_indices == "0:16"
+    counts = [2] * 8 + [1] * 8 + [0] * 48
+    later = planner.plan((candidate(counts),), sharing_enabled=True, now=1800).decision
+    assert later.block_indices != original.block_indices
