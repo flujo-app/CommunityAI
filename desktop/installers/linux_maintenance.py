@@ -17,6 +17,11 @@ def process_snapshot():
             fields = (directory / "stat").read_text().rsplit(")", 1)[1].split()
             executable = Path(os.readlink(directory / "exe").removesuffix(" (deleted)"))
             result[int(directory.name)] = (int(fields[1]), fields[19], executable)
+        except PermissionError as exc:
+            raise RuntimeError(
+                "Cannot inspect process ownership; package replacement is refused. "
+                "Package maintenance needs permission to inspect all processes."
+            ) from exc
         except (OSError, ValueError, IndexError):
             continue
     return result

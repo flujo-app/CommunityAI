@@ -55,7 +55,10 @@ sudo apt install ./desktop/dist/installers/communityai_0.1.0~alpha.1_amd64.deb
 The package owns `/opt/communityai`, `/usr/bin/communityai` and the system menu
 entry. `preinst`/`prerm` stop processes whose executables belong to the marked
 installation and their observed descendants, using kernel PID handles and
-process start times. They fail if matching processes remain. They never enumerate
+process start times. They fail if matching processes remain or process ownership
+cannot be inspected. Container qualification must grant root `SYS_PTRACE` so it
+can inspect ordinary-user executables through `/proc`, as on the target desktop
+systems; missing permission must not silently skip a running installation. They never enumerate
 or remove home-directory settings/cache. Python 3.9+ and Linux PID handles are
 required; the supported baseline is Ubuntu 22.04+/Debian 12+ on amd64.
 The declared Qt/X11 dependencies include `libxcb-shape0`; omitting it prevented

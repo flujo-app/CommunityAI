@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Linux installer process ownership")
@@ -60,6 +61,17 @@ class LinuxInstallerTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 maintenance.stop_installation(root)
             self.assertEqual(preserved.read_text(), "preserved")
+
+    def test_inaccessible_process_refuses_replacement_without_sending_signals(self):
+        maintenance = self.maintenance()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".communityai-installation").write_text("CommunityAI installer-managed fixture\n")
+            with patch.object(maintenance.os, "readlink", side_effect=PermissionError("restricted procfs")):
+                with patch.object(maintenance.signal, "pidfd_send_signal") as send:
+                    with self.assertRaisesRegex(RuntimeError, "Cannot inspect process ownership"):
+                        maintenance.stop_installation(root)
+                    send.assert_not_called()
 
 
 if __name__ == "__main__":

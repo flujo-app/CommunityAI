@@ -7,6 +7,12 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Linux desktop packages include the required X11 shape-library dependency and
+  avoid initializing the optional Triton compiler for the approved eager/native
+  inference profiles, allowing GPU sharing without a development toolchain.
+  Installer maintenance refuses replacement when process ownership cannot be
+  inspected, preventing active workers from being silently skipped.
+
 - A sharing worker whose selected blocks exceed the VRAM budget now waits with
   a clear explanation instead of repeatedly restarting. Raising the resource
   limit can resume the previously selected worker; Pause remains authoritative.
