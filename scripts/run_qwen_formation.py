@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 from gate13_cloud_orchestrator import RunRecorder
-from qwen_formation_node import coverage, ready_worker, selected
+from qwen_formation_node import coverage, coverage_observed, ready_worker, selected
 from run_qwen_full_inference_gcp import ROOT, LauncherLock, _write_json
 from run_qwen_mixed_inference import MixedRun
 from run_qwen_product_gcp import ProductRun
@@ -304,7 +304,12 @@ class FormationRun(ProductRun):
         evidence = {"local_before_growth": {}, "joins": [], "promoted": {}, "after_loss": {}, "recovered": {}}
         self.phase("prove-local-on-all-participants")
         for name in clients:
-            self.wait(name, "formation-status.json", lambda value: selected(value, "local"))
+            self.wait(
+                name,
+                "formation-status.json",
+                lambda value: selected(value, "local") and coverage_observed(value),
+                timeout=180,
+            )
             evidence["local_before_growth"][name] = self.command(name, "infer", source="local")
             self.observe_remote_desktop(name, "local")
         evidence["desktop_initial"] = self.desktop("local")

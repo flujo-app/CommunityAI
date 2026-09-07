@@ -15,6 +15,7 @@ from drift.node.discovery import (
     ModelCoverageDiscovery,
     PeerCache,
     _connected_peer_addresses,
+    _default_dht_factory,
 )
 from drift.protocol_identity import NodeIdentity, create_intent_lease, create_route_demand
 
@@ -24,6 +25,33 @@ DNS_PEER = "/dns4/seed.example.com/tcp/31337/p2p/Qm" + "B" * 44
 PRIVATE_PEER = "/ip4/10.0.0.4/tcp/31337/p2p/Qm" + "C" * 44
 INVALID_PEER_ID = "/ip4/8.8.4.4/tcp/31337/p2p/" + "0" * 20
 CACHE_SCOPE = ("shipped-seed",)
+
+
+def test_stalled_dht_startup_has_a_parent_timeout_and_cleans_the_child(monkeypatch):
+    import hivemind
+
+    instances = []
+
+    class StalledDHT:
+        def __init__(self, *, start, **kwargs):
+            instances.append(self)
+            self.stopped = False
+            if start:
+                self.run_in_background()
+
+        def run_in_background(self, *, timeout=None):
+            if timeout is None:
+                raise AssertionError("DHT constructor waits forever without a parent timeout")
+            assert timeout == 0.01
+            raise TimeoutError("startup readiness never arrived")
+
+        def shutdown(self):
+            self.stopped = True
+
+    monkeypatch.setattr(hivemind, "DHT", StalledDHT)
+    with pytest.raises(TimeoutError, match="readiness never arrived"):
+        _default_dht_factory(start=True, startup_timeout=0.01, initial_peers=[])
+    assert instances[0].stopped
 
 
 class FakeDHT:

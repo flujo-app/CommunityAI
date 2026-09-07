@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from qwen_formation_node import LOCAL, REMOTE, node_config, selected
+from qwen_formation_node import LOCAL, REMOTE, coverage, coverage_observed, node_config, selected
 from run_qwen_formation import ROOT, FormationRun, validate_config
 from drift.node.config import NodeConfig
 
@@ -101,6 +101,20 @@ def test_exact_manifest_selection_is_required():
     assert selected({"auto_selection": {"status": "selected", "manifest_digest": LOCAL}}, "local")
     assert not selected({"auto_selection": {"status": "selected", "manifest_digest": REMOTE}}, "local")
     assert not selected({"auto_selection": {"status": "waiting", "manifest_digest": REMOTE}}, "community")
+
+
+def test_unknown_discovery_cannot_satisfy_a_positive_coverage_checkpoint():
+    snapshot = {"models": [{"manifest_digest": REMOTE, "route": {"status": "unknown", "covered_blocks": None}}]}
+    assert not coverage(snapshot) >= 32
+    assert not coverage_observed(snapshot)
+
+
+def test_initial_discovery_requires_a_fresh_observation_even_with_no_workers():
+    route = {"status": "incomplete", "covered_blocks": 0, "last_updated_age": 1}
+    snapshot = {"models": [{"manifest_digest": REMOTE, "route": route}]}
+    assert coverage_observed(snapshot)
+    route["last_updated_age"] = 61
+    assert not coverage_observed(snapshot)
 
 
 @pytest.mark.parametrize(

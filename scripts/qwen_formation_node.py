@@ -109,7 +109,19 @@ def ready_worker(snapshot):
 
 def coverage(snapshot):
     model = next((m for m in snapshot.get("models", []) if m.get("manifest_digest") == REMOTE), {})
-    return model.get("route", {}).get("covered_blocks", 0)
+    return model.get("route", {}).get("covered_blocks") or 0
+
+
+def coverage_observed(snapshot):
+    model = next((m for m in snapshot.get("models", []) if m.get("manifest_digest") == REMOTE), {})
+    route = model.get("route", {})
+    age = route.get("last_updated_age")
+    return (
+        route.get("status") in {"complete", "incomplete"}
+        and type(route.get("covered_blocks")) is int
+        and isinstance(age, (int, float))
+        and 0 <= age <= 60
+    )
 
 
 def serve(root, source):

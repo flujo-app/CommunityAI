@@ -285,10 +285,22 @@ class _TargetState:
     remote_route_updated: Optional[float] = None
 
 
-def _default_dht_factory(**kwargs):
+def _default_dht_factory(*, start=True, startup_timeout=15.0, **kwargs):
     from hivemind import DHT
 
-    return DHT(**kwargs)
+    # P2P's startup_timeout does not bound the parent's readiness future.
+    # Keep the child handle so an unresponsive startup can be cleaned and retried.
+    dht = DHT(start=False, startup_timeout=startup_timeout, **kwargs)
+    if start:
+        try:
+            dht.run_in_background(timeout=startup_timeout)
+        except BaseException:
+            try:
+                dht.shutdown()
+            except Exception:
+                logger.exception("Failed to clean an unsuccessful discovery startup")
+            raise
+    return dht
 
 
 class ModelCoverageDiscovery:
