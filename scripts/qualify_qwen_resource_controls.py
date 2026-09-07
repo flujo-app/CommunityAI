@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import httpx
-from communityai_desktop.client import NodeClient
+from communityai_desktop.client import NodeClient, NodeClientError
 
 
 def run(args):
@@ -109,6 +109,13 @@ def run(args):
                         time.sleep(2)
                     else:
                         raise TimeoutError(name + " guard did not pause the worker")
+                    try:
+                        client.worker_action(worker["id"], "start")
+                    except NodeClientError:
+                        pass
+                    else:
+                        raise AssertionError(name + " guard admitted a forbidden start")
+                    assert client.list_workers()[0]["pid"] is None
                     result["checks"][name] = {
                         k: worker.get(k)
                         for k in (
@@ -126,6 +133,7 @@ def run(args):
                             "max_vram_bytes",
                         )
                     }
+                    result["checks"][name]["start_rejected"] = True
                     response = api.post(
                         "/v1/completions",
                         json={"model": "auto", "prompt": "The capital of France is", "max_tokens": 3, "temperature": 0},
@@ -149,8 +157,9 @@ def run(args):
                     "Power and bandwidth are sampled host telemetry pause guards, not OS hard caps or traffic shapers.",
                     "Tiny thresholds prove blocked admission; sustained load, overshoot and automatic resumption are separate checks.",
                     "Storage checks declared manifested artifact admission, not total disk-cache quota.",
-                    "Windows control API test; no Linux or literal desktop UI acceptance.",
+                    "Control API admission test; literal desktop slider acceptance is recorded separately.",
                 ]
+                result["platform"] = os.name
                 result["result"] = "passed"
     except BaseException as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"

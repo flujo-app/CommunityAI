@@ -4,6 +4,17 @@ Status, September 7, 2026: **no enrollment, trusted certificate or signing
 approval exists**. The owner prefers a free solution and would otherwise publish
 as Mario Andreschak, an individual based in Colombia.
 
+Later September 7 decision: publisher signing is **post-alpha**. Working unsigned
+Windows setup and Debian installers are acceptable for the alpha, with explicit
+unsigned labelling and checksums/provenance. Store submission follows signing.
+The owner suggested Azure as a possible paid fallback, but its individual-country
+restriction still excludes Colombia. Basic is currently $9.99 per month; deleting
+the signing account does not affect certificates already used, although future
+builds require signing again. Billing is by full month, not prorated. See
+[Microsoft pricing](https://learn.microsoft.com/en-us/azure/artifact-signing/how-to-change-sku)
+and [unenrollment/billing](https://learn.microsoft.com/en-us/azure/artifact-signing/faq).
+No signing account or paid enrollment has been created.
+
 With the owner's explicit authorization, an eligibility inquiry was sent from
 their Gmail account to SignPath's published contact, `info@signpath.io`, on
 September 7 at 12:08 Colombia time. Gmail's Sent folder confirmed the message was

@@ -18,6 +18,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Sequence, Tuple
 
+from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE
+
 logger = logging.getLogger(__name__)
 
 
@@ -327,6 +329,7 @@ class _WorkerRecord:
     next_restart_at: float = 0.0
     schedule_suspended: bool = False
     resource_suspended: bool = False
+    memory_rejected_command: Optional[Tuple[str, ...]] = None
     last_power_watts: Optional[float] = None
     suspension_stop_thread: Optional[threading.Thread] = field(default=None, repr=False)
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
@@ -430,6 +433,8 @@ class WorkerSupervisor:
 
     def _resource_status_locked(self, record: _WorkerRecord) -> Tuple[bool, Optional[str]]:
         launch = record.launch
+        if record.memory_rejected_command == launch.command:
+            return False, "selected blocks exceed the VRAM budget; increase VRAM or contribute fewer blocks"
         if launch.max_vram_bytes is not None:
             reserved = sum(
                 other.launch.max_vram_bytes
@@ -567,7 +572,12 @@ class WorkerSupervisor:
         self._kill_linux_worker_group(process)
         record.process = None
         record.last_exit_code = exit_code
-        if record.desired_running:
+        if exit_code == DEVICE_MEMORY_BUDGET_EXIT_CODE:
+            record.memory_rejected_command = record.launch.command
+            record.state = WorkerState.PAUSED
+            record.resource_suspended = record.desired_running
+            record.last_error = self._resource_status_locked(record)[1]
+        elif record.desired_running:
             record.state = WorkerState.CRASHED
             record.last_error = f"worker exited with code {exit_code}"
             record.next_restart_at = time.monotonic() + record.launch.restart_backoff

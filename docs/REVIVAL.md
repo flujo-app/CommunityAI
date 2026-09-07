@@ -10,6 +10,12 @@ as the next priority, followed by installers and release qualification. The
 [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
 candidate lists in historical implementation snapshots below.
 
+September 7 Gate 14 update: the [real-Qwen Windows frozen slider run](evidence/gate14-20260907-real-qwen-windows.json)
+passed defaults, live limits, low-memory rejection/recovery, repeated Pause/Start,
+restart persistence and local inference. A worker rejected for insufficient VRAM
+now waits with an explanation instead of restarting indefinitely. Final clean
+package and Linux acceptance remain open; this checkpoint does not close the gate.
+
 This repository starts from DRIFT-LLM, the most practical maintained continuation
 of Petals found during the August 2026 fork audit. It preserves the parts that are
 most valuable for a revival: transformer-block sharding, Hivemind DHT discovery,
@@ -194,17 +200,21 @@ one-click runners and evidence machinery are the starting point.
 
 ### Distribution decision, September 7
 
-The owner's selected distribution paths supersede the earlier deferral of Windows
-publisher signing. Existing unsigned engineering packages remain unsigned evidence.
+The owner's latest decision on September 7 makes working Windows/Linux installers
+the alpha requirement and defers Windows publisher signing until after alpha.
+Unsigned setup must be clearly labelled and ship checksums/provenance. Existing
+engineering packages still need the remaining product acceptance before release.
 
 | Channel | Deliverable |
 | --- | --- |
-| Windows download | Inno Setup, ordinary-user installation, signed `setup.exe` and uninstaller. [Inno Setup capabilities](https://jrsoftware.org/isinfo.php). |
+| Windows download | Inno Setup, ordinary-user installation and working upgrade/uninstall. Unsigned alpha is authorized; trusted setup/uninstaller signing follows after alpha. [Inno Setup capabilities](https://jrsoftware.org/isinfo.php). |
 | Microsoft Store | Submit the same installer through the MSI/EXE route. Provide a standalone offline, silent-capable installer at an immutable versioned HTTPS URL; sign installer and PE payloads with a trusted code-signing identity. This route does not provide Store-managed updates. [Package requirements](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/upload-app-packages), [distribution/signing requirements](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/choose-distribution-path). |
 | Ubuntu/Debian | Build a `.deb` and publish a signed HTTPS APT repository, with its key scoped using `Signed-By`. After repository setup, install with `sudo apt install communityai`. [Debian repository guidance](https://wiki.debian.org/DebianRepository/UseThirdParty). |
 
-Signing identity, Store account/certification and APT hosting are real release
-inputs; a generated installer script alone does not satisfy them. Model weights
+Store submission follows trusted signing and is no longer an alpha blocker.
+Direct `.deb` installation can precede the hosted APT channel; APT metadata must
+still be signed before that repository is offered. A generated installer script
+alone does not satisfy install/upgrade/removal acceptance. Model weights
 remain verified on-demand data, separate from the bundled executable runtime.
 
 The owner authorized the block-health grid, available peer details and the user's
@@ -232,8 +242,9 @@ tree. The source Qt/controller drove the frozen node; fully frozen UI and Linux
 Qwen lifecycle acceptance remain open. A disposable-key APT test passed signed
 index/package acceptance and tamper rejection. The
 [free-signing inquiry](WINDOWS_SIGNING.md) awaits SignPath's eligibility response.
-Actual Qwen processing-load measurements, final cross-platform lifecycle,
-trusted signing, Store submission and production signed APT hosting remain open;
+Actual Qwen processing-load measurements and final cross-platform lifecycle
+remain alpha work; trusted signing, Store submission and production signed APT
+hosting are subsequent distribution work;
 neither Gate 14 nor Gate 15 is complete from these probes.
 
 ### Execution loop

@@ -66,6 +66,7 @@ from drift.utils.kv_cache import StandardGQACache
 from drift.utils.misc import format_all_thread_stacks, get_size_in_bytes
 from drift.utils.ping import PingAggregator
 from drift.utils.random import sample_up_to
+from drift.utils.resource_limits import DeviceMemoryBudgetError
 from drift.utils.version import get_compatible_model_repo
 
 logger = get_logger(__name__)
@@ -573,7 +574,7 @@ class Server:
             required_memory = self._estimate_device_memory(num_blocks, block_indices)
             available_memory = min(self.device_memory_limits) * len(self.device_memory_limits)
             if required_memory > available_memory:
-                raise ValueError(
+                raise DeviceMemoryBudgetError(
                     "Configured blocks require an estimated "
                     f"{required_memory / 1024**3:.2f} GiB, exceeding the enforced "
                     f"--max_device_memory budget of {available_memory / 1024**3:.2f} GiB"

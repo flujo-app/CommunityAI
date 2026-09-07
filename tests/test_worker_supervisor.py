@@ -21,6 +21,40 @@ from drift.node.worker_supervisor import (
     WorkerSupervisor,
     WorkerSupervisorSettings,
 )
+from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE
+
+
+def test_memory_budget_rejection_waits_for_changed_configuration():
+    launch = WorkerLaunch(
+        "worker",
+        "model",
+        (sys.executable, "-c", f"raise SystemExit({DEVICE_MEMORY_BUDGET_EXIT_CODE})"),
+        restart_backoff=0.01,
+    )
+    supervisor = WorkerSupervisor([launch], poll_period=0.01, stop_timeout=2)
+    try:
+        supervisor.start_service()
+        supervisor.start_worker("worker")
+        _wait_for(lambda: supervisor.snapshot("worker")["last_exit_code"] == DEVICE_MEMORY_BUDGET_EXIT_CODE, timeout=10)
+        rejected = supervisor.snapshot("worker")
+        assert rejected["state"] == "paused" and rejected["pid"] is None
+        assert rejected["desired_running"] and rejected["resource_suspended"]
+        assert not rejected["resource_admitted"] and "VRAM budget" in rejected["resource_reason"]
+        time.sleep(0.1)  # Several monitor ticks must not retry an unchanged budget.
+        assert supervisor.snapshot("worker")["restart_count"] == rejected["restart_count"]
+        supervisor.pause_worker_for_reconfiguration("worker")
+        supervisor.replace_launch(launch, start=True)
+        assert supervisor.snapshot("worker")["resource_suspended"]
+        supervisor.pause_worker_for_reconfiguration("worker")
+        corrected = replace(launch, command=(sys.executable, "-c", "import time; time.sleep(30)"))
+        supervisor.replace_launch(corrected, start=True)
+        resumed = supervisor.snapshot("worker")
+        assert resumed["state"] == "running" and resumed["resource_admitted"]
+        supervisor.pause_worker("worker")
+        assert supervisor.snapshot("worker")["operator_paused"]
+        assert supervisor.snapshot("worker")["pid"] is None
+    finally:
+        supervisor.shutdown()
 
 
 def _wait_for(predicate, timeout=2):

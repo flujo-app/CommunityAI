@@ -7,6 +7,10 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- A sharing worker whose selected blocks exceed the VRAM budget now waits with
+  a clear explanation instead of repeatedly restarting. Raising the resource
+  limit can resume the previously selected worker; Pause remains authoritative.
+
 - Windows Inno Setup and Debian engineering package builders now package the
   verified desktop runtime. Windows upgrade/removal requests same-user desktop
   shutdown and waits for owned-node cleanup; Linux package maintenance stops the

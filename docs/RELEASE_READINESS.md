@@ -21,8 +21,10 @@ limits, prompt-visibility disclosure, and a working route/catalog disable path.
 A one-route alpha must say that availability is best effort. macOS, credits,
 payments/payouts, automatic software updates, and exhaustive
 hostile-network/long-soak qualification remain outside this alpha. The owner now
-plans signed Inno Setup installers, Store MSI/EXE distribution, and a signed APT
-repository; current engineering package evidence remains unsigned.
+requires working Inno Setup and Debian installers for alpha. On September 7 the
+owner explicitly deferred Windows publisher signing; unsigned alpha setup with
+checksums/provenance is acceptable. Store distribution follows trusted signing;
+a signed APT repository can follow the directly installable `.deb`.
 
 ## Qwen3.8 results: bounded tests passed, release checks open
 
@@ -71,7 +73,7 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
 | Q3.8 | **IN PROGRESS; runtime, packaged and bounded formation milestones passed** | Carry the formation fixes into final packages; finish representative consumer GPU/client and conversation measurements and the ordinary-user update path for the signed Qwen catalog. |
 | 14 | **IN PROGRESS — current priority** | **“Sharing obeys my limits.”** Two desktop sliders, VRAM and processing usage, default to 100% on fresh installs; contribution remains opt-in. Prove lower budgets under load, safe stop/save/resume, persistence and Pause, alongside existing storage/bandwidth/schedule/power controls on real Windows/Linux packages. Processing is paced compute time, not an instantaneous whole-device cap. [Operations](PACKAGED_ALPHA_OPERATIONS.md). |
-| 15 | **IN PROGRESS; engineering installers** | **“Install it, replace it, remove it.”** Signed Inno Setup Windows installer, Store MSI/EXE submission, `.deb` and signed APT repository. Verify ordinary-user install, safe node/worker shutdown during upgrade, settings/cache preservation, reinstall, uninstall and retain/delete cache choices. Automatic application updater remains later work. |
+| 15 | **IN PROGRESS; engineering installers** | **“Install it, replace it, remove it.”** Working Inno Setup Windows installer and `.deb`; unsigned alpha is owner-authorized. Verify ordinary-user install, safe node/worker shutdown during upgrade, settings/cache preservation, reinstall, uninstall and retain/delete cache choices. Windows signing, Store submission, hosted signed APT and automatic application updates follow after alpha. |
 | 16 | **WAITING** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
 
@@ -92,6 +94,16 @@ both settings, restarted ready workers, reported verified downloads and removed
 worker trees on Pause while local inference continued. The source controller
 drove these changes; actual remote-Qwen processing load and the complete frozen
 Windows/Linux UI matrix remain open. [Package evidence](evidence/qwen-windows-installers-20260907.json).
+
+A later [real-Qwen Windows slider run](evidence/gate14-20260907-real-qwen-windows.json)
+passed all 11 frozen-UI checkpoints: defaults, live limits, verified worker cache,
+Pause/Start, low-VRAM rejection and recovery, persistence after desktop restart,
+and local inference throughout. Real block-request medians were 62/156/250 ms at
+100/50/25% processing, with identical outputs and falling measured GPU activity.
+The low-budget check exposed a restart loop; a distinct memory-budget exit signal
+now leaves that worker waiting until its launch configuration changes. These
+GUI/node components were staged for the check; final clean package and Linux
+acceptance remain before Gate 14 closes.
 
 The [desktop health/download checkpoint](evidence/desktop-health-downloads-20260907.md)
 adds the block grid, observed peer metadata, expiring signed reservations and local

@@ -46,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capture-page", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--gate13-ui-evidence", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--gate13-ui-screenshot", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--resource-ui-evidence", type=Path, help=argparse.SUPPRESS)
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--store-control-key", action="store_true")
     action.add_argument("--delete-control-key", action="store_true")
@@ -59,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--prepare-update", action="store_true", help="Stop this user's desktop and owned node for installation"
     )
     action.add_argument("--gate13-ui-playthrough", type=Path, help=argparse.SUPPRESS)
+    action.add_argument("--resource-ui-playthrough", type=Path, help=argparse.SUPPRESS)
     return parser
 
 
@@ -80,6 +82,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             parser.error("Gate 13 evidence options require --gate13-ui-playthrough")
     elif args.gate13_ui_evidence is None:
         parser.error("--gate13-ui-playthrough requires --gate13-ui-evidence")
+    if bool(args.resource_ui_playthrough) != bool(args.resource_ui_evidence):
+        parser.error("Resource UI playthrough requires both plan and evidence paths")
     try:
         if args.prepare_update:
             try:
@@ -179,6 +183,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 args.gate13_ui_evidence,
                 screenshot_path=args.gate13_ui_screenshot,
             )
+        elif args.resource_ui_playthrough is not None:
+            from communityai_desktop.resource_playthrough import ResourcePlaythrough
+
+            qualification_automation = ResourcePlaythrough(args.resource_ui_playthrough, args.resource_ui_evidence)
 
         if args.probe_only:
             try:

@@ -1,3 +1,4 @@
+import argparse
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +7,27 @@ import torch
 from drift.server.block_utils import get_block_size
 from drift.server.server import Server, parse_block_indices
 from drift.utils.convert_block import QuantType
+from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE, DeviceMemoryBudgetError
+
+
+def test_cli_distinguishes_memory_budget_rejection(monkeypatch, capsys):
+    from drift.cli import run_server
+
+    parser = SimpleNamespace(
+        parse_args=lambda: SimpleNamespace(),
+        prog="CommunityAI-Node server",
+    )
+    parser.exit = argparse.ArgumentParser().exit
+    monkeypatch.setattr(run_server, "build_parser", lambda **kwargs: parser)
+
+    def reject(args):
+        raise DeviceMemoryBudgetError("Configured blocks exceed the VRAM budget")
+
+    monkeypatch.setattr(run_server, "server_from_args", reject)
+    with pytest.raises(SystemExit) as stopped:
+        run_server.main()
+    assert stopped.value.code == DEVICE_MEMORY_BUDGET_EXIT_CODE
+    assert "VRAM budget" in capsys.readouterr().err
 
 
 def _budget_server(*, tensor_parallel_devices=(torch.device("cuda:0"),)):

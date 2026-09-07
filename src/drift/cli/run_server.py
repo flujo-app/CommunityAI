@@ -33,6 +33,7 @@ from drift.server.health import validate_health_state_path
 from drift.server.server import Server
 from drift.utils.convert_block import QuantType
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
+from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE, DeviceMemoryBudgetError
 from drift.utils.server_registry import register_server, unregister_server
 from drift.utils.version import log_version
 
@@ -494,6 +495,8 @@ def main():
 
     try:
         server = server_from_args(args)
+    except DeviceMemoryBudgetError as exc:
+        parser.exit(DEVICE_MEMORY_BUDGET_EXIT_CODE, f"{parser.prog}: {exc}\n")
     except (ManifestError, ValueError) as exc:
         parser.error(str(exc))
     serve(server, model=server.converted_model_name_or_path)

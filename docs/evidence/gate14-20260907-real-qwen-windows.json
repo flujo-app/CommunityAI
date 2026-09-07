@@ -1,0 +1,206 @@
+{
+  "scope": "native-packaged-Qwen-resource-controls",
+  "result": "passed",
+  "platform": "nt",
+  "device": "cuda:0",
+  "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+  "desktop_sha256": "85d6a3d693cc5cf4467e20bd8573c5866a46dd18f5f6878bff6d0fafd6dc5bdb",
+  "node_sha256": "7f1aef2f8f3aa43ae577ee520840b750f6949ffbc861fc2c849a4ff1beaa6ab6",
+  "observations": [
+    {
+      "stage": "initial",
+      "step": 0,
+      "action": "observe",
+      "vram_percent": 100,
+      "processing_percent": 100,
+      "worker_state": "paused",
+      "policy_persisted": true,
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 1,
+      "action": "limits",
+      "vram_percent": 25,
+      "processing_percent": 100,
+      "worker_state": "paused",
+      "policy_persisted": true,
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 2,
+      "action": "start",
+      "worker_state": "running",
+      "block_indices": "60:61",
+      "max_vram_bytes": 2147401728,
+      "verified_download_bytes": 384054157,
+      "rpc_load": {
+        "block_indices": "60:61",
+        "tokens_per_request": 128,
+        "pattern": "repeated prefill in one admitted session, rewound before each request",
+        "median_seconds": 0.062000000005355105,
+        "finite_outputs": true,
+        "gpu_utilization": {
+          "scope": "whole GPU; other applications remain untouched",
+          "sample_interval_seconds": 0.2,
+          "workload_mean_percent": 43.59139784946237,
+          "baseline_samples": 15,
+          "baseline_mean_percent": 3.8,
+          "workload_samples": 93
+        },
+        "requests": 300,
+        "mean_seconds": 0.06327666666698253,
+        "unique_output_hashes": [
+          "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+        ]
+      },
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 3,
+      "action": "limits",
+      "vram_percent": 25,
+      "processing_percent": 50,
+      "old_worker_tree_gone": true,
+      "worker_state": "running",
+      "policy_persisted": true,
+      "block_indices": "60:61",
+      "max_vram_bytes": 2147401728,
+      "verified_download_bytes": 384054157,
+      "rpc_load": {
+        "block_indices": "60:61",
+        "tokens_per_request": 128,
+        "pattern": "repeated prefill in one admitted session, rewound before each request",
+        "median_seconds": 0.15599999998812564,
+        "finite_outputs": true,
+        "gpu_utilization": {
+          "scope": "whole GPU; other applications remain untouched",
+          "sample_interval_seconds": 0.2,
+          "workload_mean_percent": 30.72340425531915,
+          "baseline_samples": 15,
+          "baseline_mean_percent": 9.933333333333334,
+          "workload_samples": 94
+        },
+        "requests": 131,
+        "mean_seconds": 0.15040458015273753,
+        "unique_output_hashes": [
+          "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+        ]
+      },
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 4,
+      "action": "limits",
+      "vram_percent": 20,
+      "processing_percent": 25,
+      "old_worker_tree_gone": true,
+      "worker_state": "running",
+      "policy_persisted": true,
+      "block_indices": "60:61",
+      "max_vram_bytes": 1717921382,
+      "verified_download_bytes": 384054157,
+      "rpc_load": {
+        "block_indices": "60:61",
+        "tokens_per_request": 128,
+        "pattern": "repeated prefill in one admitted session, rewound before each request",
+        "median_seconds": 0.25,
+        "finite_outputs": true,
+        "gpu_utilization": {
+          "scope": "whole GPU; other applications remain untouched",
+          "sample_interval_seconds": 0.2,
+          "workload_mean_percent": 23.91578947368421,
+          "baseline_samples": 15,
+          "baseline_mean_percent": 10.533333333333333,
+          "workload_samples": 95
+        },
+        "requests": 67,
+        "mean_seconds": 0.29897014925355414,
+        "unique_output_hashes": [
+          "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+        ]
+      },
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 5,
+      "action": "limits",
+      "vram_percent": 1,
+      "processing_percent": 25,
+      "old_worker_tree_gone": true,
+      "worker_state": "paused",
+      "policy_persisted": true,
+      "low_memory_blocked_without_worker": true,
+      "resource_reason": "selected blocks exceed the VRAM budget; increase VRAM or contribute fewer blocks",
+      "no_restart_loop": true,
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 6,
+      "action": "limits",
+      "vram_percent": 25,
+      "processing_percent": 100,
+      "worker_state": "running",
+      "policy_persisted": true,
+      "block_indices": "60:61",
+      "max_vram_bytes": 2147401728,
+      "verified_download_bytes": 384054157,
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 7,
+      "action": "pause",
+      "old_worker_tree_gone": true,
+      "worker_state": "paused",
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 8,
+      "action": "start",
+      "worker_state": "running",
+      "block_indices": "60:61",
+      "max_vram_bytes": 2147401728,
+      "verified_download_bytes": 384054157,
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "initial",
+      "step": 9,
+      "action": "pause",
+      "old_worker_tree_gone": true,
+      "worker_state": "paused",
+      "local_inference_tokens": 3
+    },
+    {
+      "stage": "restart",
+      "step": 0,
+      "action": "observe",
+      "vram_percent": 25,
+      "processing_percent": 100,
+      "worker_state": "paused",
+      "policy_persisted": true,
+      "local_inference_tokens": 3
+    }
+  ],
+  "initial_owned_tree_gone": true,
+  "restart_owned_tree_gone": true,
+  "test_credential_removed": true,
+  "gui_stopped": true,
+  "date": "2026-09-07",
+  "complete_gate14": false,
+  "same_Qwen_outputs_at_all_processing_limits": true,
+  "hardware": "Windows 11, RTX 2070 SUPER 8 GiB",
+  "packaging": "New frozen node and frozen GUI staged together for the bounded check; final clean release archive qualification follows.",
+  "limitations": [
+    "One real Qwen block (60:61), repeated 128-token prefill in one admitted session; not a full 64-block conversation.",
+    "Whole-GPU activity includes unrelated applications. Processing limits pace contribution compute, not instantaneous whole-device utilization.",
+    "Windows-only checkpoint; Linux and final source-bound archive checks remain."
+  ]
+}
