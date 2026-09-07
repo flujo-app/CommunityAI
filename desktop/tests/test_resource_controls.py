@@ -8,12 +8,11 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
-
 from communityai_desktop.acceptance import fake_node
 from communityai_desktop.client import NodeClient, NodeClientError
 from communityai_desktop.controller import DesktopController
 from communityai_desktop.resource_controls import ResourceControls
+from PySide6.QtWidgets import QApplication
 
 
 class ResourceControlsTests(unittest.TestCase):

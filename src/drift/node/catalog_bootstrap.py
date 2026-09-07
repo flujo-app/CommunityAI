@@ -32,10 +32,12 @@ from drift.model_catalog import (
 )
 from drift.model_manifest import ManifestError, ModelManifest
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError
-from drift.node.config_lock import NodeConfigWriteLockError
-from drift.node.config_lock import _acquire as _acquire_process_lock
-from drift.node.config_lock import _release as _release_process_lock
-from drift.node.config_lock import node_config_write_lock
+from drift.node.config_lock import (
+    NodeConfigWriteLockError,
+    _acquire as _acquire_process_lock,
+    _release as _release_process_lock,
+    node_config_write_lock,
+)
 
 CATALOG_BOOTSTRAP_SCHEMA_VERSION = 1
 MAX_CATALOG_BYTES = 4 * 1024 * 1024

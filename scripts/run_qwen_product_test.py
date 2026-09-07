@@ -207,9 +207,9 @@ def main(argv=None):
     if args.validate_inputs:
         print(json.dumps({"result": "passed", "scope": "local-input-validation-only", **package}))
         return 0
-    from run_qwen_product_mixed import RUNS, MixedProductRun
     from run_qwen_full_inference_gcp import LauncherLock
     from run_qwen_mixed_inference import CPU_RUNS, require_cpu_proof
+    from run_qwen_product_mixed import RUNS, MixedProductRun
 
     proof = args.cpu_proof
     if proof is None:

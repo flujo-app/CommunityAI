@@ -318,8 +318,9 @@ def test_packaged_failure_unblocks_cloud_cleanup(tmp_path, monkeypatch, failure)
 
 
 def test_timeout_cleanup_stops_a_real_owned_process_and_child(tmp_path):
-    import psutil
     import subprocess
+
+    import psutil
 
     pid_file = tmp_path / "child-pid.txt"
     program = (

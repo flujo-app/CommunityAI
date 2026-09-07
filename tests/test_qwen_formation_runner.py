@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from qwen_formation_node import LOCAL, REMOTE, coverage, coverage_observed, node_config, selected
 from run_qwen_formation import ROOT, FormationRun, validate_config
+
 from drift.node.config import NodeConfig
 
 
@@ -244,8 +245,9 @@ def test_diagnostics_failure_cannot_prevent_cloud_cleanup(tmp_path, monkeypatch)
 
 
 def test_assignment_seed_uses_persistent_identity_not_installation_path(tmp_path, monkeypatch):
-    from drift.cli import run_node
     from types import SimpleNamespace
+
+    from drift.cli import run_node
 
     # Same conventional basename on different machines must not be a common seed.
     paths = [tmp_path / name / "worker-identity.key" for name in ("a", "b")]
@@ -262,8 +264,9 @@ def test_assignment_seed_uses_persistent_identity_not_installation_path(tmp_path
 
 
 def test_unavailable_contribution_identity_does_not_abort_local_service(tmp_path, monkeypatch):
-    from drift.cli import run_node
     from types import SimpleNamespace
+
+    from drift.cli import run_node
 
     def unavailable(*args):
         raise PermissionError("key temporarily inaccessible")

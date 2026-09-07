@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from drift.node import worker_supervisor as worker_module
 from drift.node.worker_supervisor import (
     SystemBandwidthMonitor,
     WorkerLaunch,
@@ -20,7 +21,6 @@ from drift.node.worker_supervisor import (
     WorkerSupervisor,
     WorkerSupervisorSettings,
 )
-from drift.node import worker_supervisor as worker_module
 
 
 def _wait_for(predicate, timeout=2):

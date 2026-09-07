@@ -193,6 +193,7 @@ def run(
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
 
+    from communityai_desktop.resource_controls import ResourceControls
     from PySide6.QtCore import QLockFile, QObject, QRunnable, QStandardPaths, Qt, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -219,8 +220,6 @@ def run(
         QVBoxLayout,
         QWidget,
     )
-
-    from communityai_desktop.resource_controls import ResourceControls
 
     def label(text: str = "", name: str | None = None) -> QLabel:
         item = QLabel(text)
