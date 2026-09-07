@@ -218,17 +218,23 @@ verified artifacts and model loading. This is not an additional release gate.
 The owner prefers free Windows signing and would otherwise publish as Mario
 Andreschak, an individual based in Colombia. Azure Artifact Signing Public Trust
 does not currently support that individual location. Investigate SignPath
-Foundation eligibility, particularly the bundled CUDA runtime; no application,
-approval or trusted signing identity has been obtained yet. Continue building and
+Foundation eligibility, particularly the bundled CUDA runtime. An owner-authorized
+eligibility inquiry was sent September 7; no enrollment, approval or trusted
+signing identity has been obtained yet. Continue building and
 testing unsigned engineering installers while preparing the signing integration.
 
 The [installer checkpoint](evidence/desktop-installers-20260907.md) adds Inno Setup
-and Debian builders after the existing CI package verification. Bounded Windows
-install/running-Qt upgrade/uninstall and Linux process-tree/package probes passed.
-The Windows probe uses a GUI/runtime filename fixture, not a real Qwen worker.
-The [free-signing application draft](WINDOWS_SIGNING.md) is prepared but not sent.
-Final package/Qwen lifecycle, signing, Store submission and signed APT hosting
-remain open; neither Gate 14 nor Gate 15 is complete from these probes.
+and Debian builders after the existing CI package verification; both complete
+CI installer builds passed at `0b875c1`. A fresh Windows package also passed
+[real Qwen slider/Pause and installed-worker upgrade/removal checks](evidence/qwen-windows-installers-20260907.json),
+including settings/cache preservation and removal of the seven-process owned
+tree. The source Qt/controller drove the frozen node; fully frozen UI and Linux
+Qwen lifecycle acceptance remain open. A disposable-key APT test passed signed
+index/package acceptance and tamper rejection. The
+[free-signing inquiry](WINDOWS_SIGNING.md) awaits SignPath's eligibility response.
+Actual Qwen processing-load measurements, final cross-platform lifecycle,
+trusted signing, Store submission and production signed APT hosting remain open;
+neither Gate 14 nor Gate 15 is complete from these probes.
 
 ### Execution loop
 

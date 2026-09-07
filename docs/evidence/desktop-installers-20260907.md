@@ -3,7 +3,9 @@
 Date: September 7, 2026. Parent source `b09aa2d67b2789f9fd52c91abdea2b9340bb2fe4`
 passed Tests, Style and Production desktop, including both Windows/Linux builds
 with the new block grid and download reporting. The changes described below are
-the installer slice following that parent; its final production builds are pending.
+the installer slice following that parent. Both complete production installer
+builds passed at `0b875c19efd952342671371ddacebc09ca3a774c` in
+[CI run 34144852840](https://github.com/flujo-app/CommunityAI/actions/runs/34144852840).
 
 ## Implemented
 
@@ -73,14 +75,57 @@ created. GPG repository signing requires no paid certificate.
 CI at `0b875c1` passed style and Linux tests; its macOS standalone image verifier
 hit the pre-existing ten-second subprocess timeout. That test imports the model
 runtime from a fresh Python process. The timeout is raised to 30 seconds while
-retaining the exact verification assertions; the follow-up CI result is pending.
+retaining the exact verification assertions. Tests and Style then passed at
+`40de496cafd2bca9725c1a9a8a04e60dc6fcf199`, including the macOS test.
+Both full Windows/Linux installers also passed at that revision in
+[CI run 34145484606](https://github.com/flujo-app/CommunityAI/actions/runs/34145484606).
+
+## Full Windows runtime follow-up
+
+A clean detached checkout at `0b875c1` produced and verified the complete GUI/node
+bundle: 4,486,446,226 bytes in 4,942 files. The archive is 2,693,786,190 bytes,
+SHA-256 `c5d59f4ae8c057315cb50fb0dadc211e36ec3ea58e2952c4493f9e39c4ce29fb`.
+The explicitly unsigned Inno setup is 2,518,829,949 bytes, SHA-256
+`95b2d70382ed91b61079581e3fed0c3b12364ebe70576a25eee3231460f8e4d8`.
+[Sanitized evidence](qwen-windows-installers-20260907.json) binds the source,
+packages, runtime, probe scripts and observed outcomes.
+
+On Windows 10 with an RTX 2070 SUPER, the source desktop controller drove the
+frozen node and a real automatically assigned Qwen3.8 contribution block. Changes
+to 20% VRAM/50% processing and 25%/100% stopped the old trees, persisted both
+settings and restarted ready workers with the expected allocator ceiling and
+processing argument. All 384,054,157 selected artifact bytes were hash-verified;
+local Qwen inference continued. Pause removed the worker tree in 0.125 seconds;
+restart and the final Pause/cleanup passed.
+
+The first attempt failed a probe assertion that incorrectly multiplied the
+already percentage-limited `vram_pool_bytes` a second time. Correcting the probe
+to compare against physical GPU capacity resolved that assertion; no product
+enforcement change was needed. This preserves the failed attempt as a harness
+error, rather than counting it as a passing product run.
+
+The complete setup then installed into an isolated directory. Source Qt using
+the production `NodeLifecycleSupervisor` started the installed frozen node and
+a ready Qwen3.8 worker for block `3:4`. Re-running setup requested shutdown and
+removed all seven recorded node/worker/transport processes before replacement.
+The settings hash and external cache sentinel were unchanged. Silent uninstall
+removed the application and preserved external state. Owned processes, test
+native credential, installed executable and installer registration were separately
+verified absent afterward. No production credential was changed.
+
+The health/download Qt view was also rendered against the live packaged node and
+inspected. These checks use source Qt/controller integration with frozen runtime;
+they do not claim literal frozen-GUI slider interactions, remote Qwen processing
+duty-cycle measurement under load, Linux Qwen lifecycle or a broader GPU profile.
 
 ## Remaining release outcomes
 
-These are bounded engineering/fixture results, not fresh full-runtime installer
-or Qwen-sharing acceptance. Complete Windows/Linux Qwen resource controls,
-worker-tree shutdown during real upgrades, reinstall/removal, login-entry cleanup,
+These are bounded engineering results, including the real Windows runtime case
+above. Complete Windows/Linux Qwen resource controls under load,
+fully frozen desktop lifecycle, Linux real-worker upgrades/removal, login-entry cleanup,
 explicit cache deletion policy and supported-distribution measurements remain.
 SignPath's CUDA/upstream eligibility, trusted signing, Store account/certification,
-maintainer email and signed HTTPS APT distribution remain unresolved. No signing
-request, Store submission, public installer release or cloud host was created.
+release maintainer address and signed HTTPS APT distribution remain unresolved.
+An explicitly authorized free-program eligibility inquiry was sent to SignPath
+and confirmed in Gmail Sent on September 7; no enrollment, signing approval,
+Store submission, public installer release or cloud host was created.

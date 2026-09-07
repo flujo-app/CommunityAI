@@ -86,18 +86,26 @@ public safety check; exhaustive hardening is deferred.
 The [September 7 slider checkpoint](evidence/gate14-20260907-resource-sliders.md)
 adds both real Qt controls, atomic stop/save/resume behavior and runtime compute
 pacing. Bounded Windows CPU/RTX 2070 SUPER tensor probes matched 100/50/25% duty
-budgets and verified CUDA allocator rejection. These are source/synthetic probes;
-the current packaged Windows/Linux Qwen-sharing acceptance remains open.
+budgets and verified CUDA allocator rejection. A fresh Windows frozen node then
+passed real Qwen policy changes at 20% VRAM/50% processing and 25%/100%, persisted
+both settings, restarted ready workers, reported verified downloads and removed
+worker trees on Pause while local inference continued. The source controller
+drove these changes; actual remote-Qwen processing load and the complete frozen
+Windows/Linux UI matrix remain open. [Package evidence](evidence/qwen-windows-installers-20260907.json).
 
 The [desktop health/download checkpoint](evidence/desktop-health-downloads-20260907.md)
 adds the block grid, observed peer metadata, expiring signed reservations and local
 client/worker download progress. Bounded HTTP integrity/resume, supervised-process
 and Qt tests passed. Both Windows/Linux engineering package builds at `b09aa2d`
 passed with these display additions. The [installer checkpoint](evidence/desktop-installers-20260907.md)
-adds Inno/Debian builders and bounded installation/shutdown probes; complete
-packaged Qwen lifecycle qualification remains open. Free Windows signing is
-preferred; [SignPath eligibility/application materials](WINDOWS_SIGNING.md) are
-prepared, with no application or approval yet.
+adds Inno/Debian builders; both complete CI installer builds passed at `0b875c1`.
+The full Windows setup passed install, upgrade with an active packaged Qwen
+worker, complete owned-tree shutdown and uninstall with external settings/cache
+preserved. This used source Qt with the production lifecycle supervisor. Signed
+APT index acceptance, package retrieval and tamper rejection passed with a
+disposable test key; production publication remains open. Free Windows signing
+is preferred; the owner-authorized [SignPath eligibility inquiry](WINDOWS_SIGNING.md)
+was sent September 7. No enrollment or approval exists yet.
 
 1. **Finish Gate 14's two resource sliders.** The owner selected VRAM and
    processing usage, each defaulting to 100%, as the immediate focus. Verify

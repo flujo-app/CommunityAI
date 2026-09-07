@@ -1,8 +1,16 @@
-# Windows code signing decision and application draft
+# Windows code signing decision and eligibility inquiry
 
 Status, September 7, 2026: **no enrollment, trusted certificate or signing
 approval exists**. The owner prefers a free solution and would otherwise publish
 as Mario Andreschak, an individual based in Colombia.
+
+With the owner's explicit authorization, an eligibility inquiry was sent from
+their Gmail account to SignPath's published contact, `info@signpath.io`, on
+September 7 at 12:08 Colombia time. Gmail's Sent folder confirmed the message was
+sent; receipt or acceptance by SignPath has not been established.
+Subject: **CommunityAI: free OSS signing eligibility for CUDA-enabled Windows
+packages**. The inquiry requests the free program only; no paid service,
+enrollment or signing terms were accepted.
 
 ## Recommendation
 
@@ -26,7 +34,7 @@ publisher for Windows downloads or satisfy the Store's trusted-signing requireme
 The existing catalog key authenticates model catalogs; it is separate from
 Authenticode and must not be reused for it.
 
-## Reviewable application draft — not submitted
+## Project information supplied in the inquiry
 
 Project: **CommunityAI**
 
@@ -35,7 +43,8 @@ Repository and current project documentation:
 
 License: MIT; third-party runtime components retain their respective licenses.
 
-Maintainer: Mario Andreschak, Colombia. Contact email: **owner to supply**.
+Maintainer: Mario Andreschak, Colombia. The owner supplied the reply address;
+it is omitted here to avoid adding personal contact details to public source.
 
 Description: CommunityAI is a Windows/Linux desktop application for local AI
 inference and opt-in community inference sharing. The desktop starts a separate
@@ -52,10 +61,11 @@ the first public installer release and its permanent URL are still pending.
 Eligibility inquiry: Can the Foundation sign our authored executables and Inno
 installer/uninstaller while the package includes the NVIDIA runtime DLLs supplied
 with PyTorch? Which upstream and PyInstaller artifact restrictions apply to this
-build? We will provide the complete dependency/license inventory and proposed
-artifact configuration before requesting signing approval.
+build? What prior-release evidence is acceptable when the first public installer
+is still pending? We offered the dependency/license inventory, workflow and
+proposed signing policy before requesting signing approval.
 
-Outstanding application inputs: maintainer contact, permanent installer download
+Outstanding application inputs: eligibility response, permanent installer download
 page, dependency/license inventory, confirmed MFA, named reviewer/approver roles,
 and a reviewed privacy/code-signing policy. Do not claim sponsorship or display
 the Foundation's attribution as an existing relationship before acceptance.
