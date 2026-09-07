@@ -335,6 +335,7 @@ class FormationRun(ProductRun):
                 "selection": status["auto_selection"],
                 "inference": self.command(name, "infer", source="community"),
             }
+            _write_json(self.path / "formation-checkpoints.json", evidence)
         evidence["desktop_promoted"] = self.desktop("community")
         evidence["desktop_local_button"] = self.desktop("local", toggle=True)
         evidence["desktop_local_request"] = self.command("desktop", "infer", source="local")
@@ -344,10 +345,12 @@ class FormationRun(ProductRun):
         self.phase("kill-participant", instance=lost)
         state = self.stop_participant(lost)
         evidence["loss"] = {"instance": lost, "before": original, "stopped_service": state}
+        _write_json(self.path / "formation-checkpoints.json", evidence)
         for name in [n for n in clients if n != lost]:
             self.wait(name, "formation-status.json", lambda value: selected(value, "local") and coverage(value) < 64)
             evidence["after_loss"][name] = self.command(name, "infer", source="local")
             self.observe_remote_desktop(name, "local")
+            _write_json(self.path / "formation-checkpoints.json", evidence)
         evidence["desktop_after_loss"] = self.desktop("local")
         self.phase("restore-participant-without-assigning-blocks", instance=lost)
         self.restart_participant(lost)
@@ -361,6 +364,7 @@ class FormationRun(ProductRun):
                 "selection": status["auto_selection"],
                 "inference": self.command(name, "infer", source="community"),
             }
+            _write_json(self.path / "formation-checkpoints.json", evidence)
         evidence["desktop_recovered"] = self.desktop("community")
         _write_json(self.path / "formation-checkpoints.json", evidence)
         return evidence

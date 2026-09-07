@@ -73,7 +73,9 @@ def node_config(source, root, host):
                 "id": "automatic",
                 "model": "auto",
                 "num_blocks": capacity,
-                "enabled": not host.get("desktop_driven_sharing", False),
+                # Match Gate 13: policy gates initial startup; the saved worker
+                # remains eligible to auto-start after a whole-node restart.
+                "enabled": True,
                 "identity_path": str(root / "worker-identity.key"),
                 "device": "cpu",
                 "cache_dir": str(root / "worker-cache"),

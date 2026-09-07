@@ -48,7 +48,7 @@ def test_host_configuration_cannot_smuggle_an_assignment(tmp_path):
         node_config(ROOT, tmp_path, {"span": "0:16"})
 
 
-def test_desktop_driven_contributor_stays_paused_until_start(tmp_path):
+def test_desktop_policy_gates_startup_without_disabling_restart(tmp_path):
     value = node_config(
         ROOT,
         tmp_path,
@@ -61,10 +61,63 @@ def test_desktop_driven_contributor_stays_paused_until_start(tmp_path):
         },
     )
     worker = NodeConfig.from_dict(value, base_dir=ROOT).workers[0]
-    assert worker.enabled is False
+    assert worker.enabled is True
+    assert value["contribution_policy"]["sharing_enabled"] is False
     assert worker.block_indices is None
     assert worker.port == 31330
     assert worker.public_port == 43210
+
+
+@pytest.mark.parametrize("automatic_start", [False, True])
+def test_desktop_replays_literal_start_after_policy_save(tmp_path, automatic_start):
+    from types import SimpleNamespace
+
+    sys.path.insert(0, str(ROOT / "desktop/src"))
+    from qwen_formation_desktop import FormationDesktop
+
+    identity = "a" * 24
+    (tmp_path / "desktop-command.json").write_text(
+        json.dumps({"id": identity, "action": "start-sharing", "source": "local"})
+    )
+    calls = []
+    contribution = {"policy": {"sharing_enabled": True}, "intent_enabled": automatic_start}
+
+    def pause():
+        calls.append("model-pause")
+        contribution["intent_enabled"] = False
+
+    def start():
+        calls.append("master-start")
+        contribution["intent_enabled"] = True
+
+    checkbox = SimpleNamespace(
+        accessibleName=lambda: "Share compute with Qwen",
+        isChecked=lambda: contribution["intent_enabled"],
+        isEnabled=lambda: True,
+        click=pause,
+    )
+    window = SimpleNamespace(
+        _controller=object(),
+        _busy=False,
+        _snapshot={"contribution": contribution, "workers": [{"model": "Qwen", "desired_running": True}]},
+        _page_buttons=[None, None, SimpleNamespace(click=lambda: None)],
+        findChildren=lambda kind: [checkbox],
+        master_share_button=SimpleNamespace(
+            isEnabled=lambda: True,
+            text=lambda: "Pause sharing" if contribution["intent_enabled"] else "Start sharing",
+            click=start,
+        ),
+    )
+    automation = FormationDesktop(tmp_path)
+    automation.window = window
+    automation.qt = {"QCheckBox": object}
+    automation.tick()
+    if automatic_start:
+        assert calls == ["model-pause"]
+        assert identity not in automation.clicked
+        automation.tick()
+    assert calls == (["model-pause", "master-start"] if automatic_start else ["master-start"])
+    assert identity in automation.clicked
 
 
 @pytest.mark.parametrize(

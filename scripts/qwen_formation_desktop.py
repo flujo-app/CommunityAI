@@ -21,6 +21,7 @@ class FormationDesktop:
         self.completed = set()
         self.clicked = set()
         self.policy_opened = set()
+        self.baseline_paused = set()
 
     def install(self, window, application, qt):
         self.window, self.application = window, application
@@ -61,7 +62,27 @@ class FormationDesktop:
                         window.edit_policy_button.click()
                     return
                 if identity not in self.clicked:
+                    # Gate 13 saves policy first, then normalizes an automatic
+                    # start through the real per-model Pause control. Keep the
+                    # persistent startup setting intact for restart recovery.
+                    if window._snapshot.get("contribution", {}).get("intent_enabled"):
+                        if identity in self.baseline_paused:
+                            return
+                        desired = {w["model"] for w in window._snapshot.get("workers", []) if w.get("desired_running")}
+                        matches = [
+                            checkbox
+                            for checkbox in window.findChildren(self.qt["QCheckBox"])
+                            if checkbox.accessibleName() in {"Share compute with " + name for name in desired}
+                            and checkbox.isChecked()
+                        ]
+                        if len(matches) != 1 or not matches[0].isEnabled():
+                            return
+                        self.baseline_paused.add(identity)
+                        matches[0].click()
+                        return
                     if not window.master_share_button.isEnabled():
+                        return
+                    if window.master_share_button.text() != "Start sharing":
                         return
                     window._page_buttons[2].click()
                     window.master_share_button.click()
@@ -91,6 +112,7 @@ class FormationDesktop:
                     "source": action["source"],
                     "real_window_visible": window.isVisible(),
                     "button_clicked": identity in self.clicked,
+                    "baseline_pause_clicked": identity in self.baseline_paused,
                     "selection": window._snapshot["auto_selection"],
                     "inference_mode": window._snapshot["inference_mode"],
                     "title": window.auto_selection_title.text(),
