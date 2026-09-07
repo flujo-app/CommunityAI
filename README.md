@@ -7,8 +7,7 @@
 
 **AI powered by people.**
 
-
-![CommunityAI sharing screen](desktop/dist/communityai-sharing-final.png)
+<img width="1200" height="800" alt="image" src="https://github.com/user-attachments/assets/b56c43a1-9bc3-4117-9188-db1aa89b6093" />
 
 ## How it works
 
