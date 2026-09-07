@@ -12,7 +12,8 @@ desktop and localhost OpenAI-compatible API, with optional bounded compute shari
 The intended progression is **local Qwen3.5 → community Qwen3.8-27B →
 DeepSeek-V4-Flash → GLM-5.3-Flash**. The two larger community models are post-alpha
 targets. Local fallback and measured selection are implemented; local offline
-Windows GPU inference passed. Formation by joining desktops remains in qualification.
+Windows GPU inference passed. Staggered desktop formation and recovery passed in
+the bounded GCP CPU test with real source Qt windows.
 
 Keep exact signed catalogs/manifests, verified partial artifact downloads,
 authenticated discovery/transport, finite admission/timeouts, local resource
@@ -42,7 +43,7 @@ with FP8 weights converted to BF16 and eager attention.
 | Automatic promotion, preference and loss/rejoin | **PASSED through the source node under signed public sequence 2 on an assigned mixed route.** Local before growth; Qwen3.8 after measured readiness; active answer preserved when switching to local-only; local after confirmed T4 loss; Qwen3.8 after its replacement joined with a new peer identity. [Source product evidence](evidence/qwen-source-public-recovery-20260906.json). This does not prove autonomous desktop formation. |
 | Packaged Qwen3.8 | **PASSED on the assigned L4/T4/C3 route under signed public sequence 2.** Windows v9 generated three tokens in 12.250 seconds; a 31-token chat prompt answered `Paris` in 19.359 seconds. Peak sampled client process-tree RSS was 4.97 GB. [Evidence](evidence/qwen-packaged-recovery-v9-c3-20260906.json). |
 | Packaged worker outage and cache reuse | **PASSED on that C3 route.** Confirmed worker stop → automatic local answer → same-identity restart → Qwen answer in 13.672 seconds. A new node process repeated community completion/chat and local-only inference with HTTP downloads blocked, making zero download attempts. Owned cloud cleanup passed. The earlier [E2 rejoin timeout](evidence/qwen-packaged-rejoin-timeout-v9-20260906.json) remains a failed attempt. |
-| Autonomous desktop formation | **Formation/promotion/fallback PASSED in the bounded source-UI CPU case; restart replay OPEN.** Four desktops chose all 64 blocks, all six clients automatically promoted and returned real Qwen3.8 answers, and five survivors returned local answers after a whole contributor loss. Restart exposed the runner's disabled startup flag; `8d8fedf` restores Gate 13's policy-gated startup and real Pause/Start sequence, with 60 related tests passed. [Evidence and cleanup](evidence/qwen-formation-restart-config-20260907.json). A fresh [one-click replay](QWEN_FORMATION_TEST.md) is running; no complete unattended recovery pass is claimed. |
+| Autonomous desktop formation and recovery | **PASSED, bounded CPU/source-UI scope.** The actual [one-click runner](QWEN_FORMATION_TEST.md) formed 64/64 blocks from four capacity-only contributors, promoted all six clients and returned real Qwen3.8 answers. Whole-participant loss produced five local answers; unattended same-identity restart restored six Qwen3.8 answers. Real Qt controls/windows passed. No runtime intervention; cleanup verified. Three-token requests took 24–34 seconds. Fallback validation took minutes. [Evidence](evidence/qwen-formation-passed-20260907.json). Fresh installers, fully frozen UI, GPU contributors and simultaneous cold joins are outside this result. |
 | Consumer GPU and chat performance | **OPEN beyond the bounded observations above.** No RTX 30/40/50, broader conversation, context or concurrency qualification is claimed. The short C3 result is not a general performance qualification. |
 
 The complete [experiment report](QWEN_FULL_INFERENCE_RESULTS.md) preserves timing,
@@ -66,7 +67,7 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | Gate | Status | What must be true before it passes |
 | --- | --- | --- |
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
-| Q3.8 | **IN PROGRESS; runtime and packaged milestones passed** | Finish autonomous formation/promotion/downgrade, representative consumer GPU/client and conversation measurements, and the ordinary-user update path for the signed Qwen catalog. |
+| Q3.8 | **IN PROGRESS; runtime, packaged and bounded formation milestones passed** | Carry the formation fixes into final packages; finish representative consumer GPU/client and conversation measurements and the ordinary-user update path for the signed Qwen catalog. |
 | 14 | **IN PROGRESS** | **“Sharing obeys my limits.”** On real packaged Windows/Linux hardware, automatic sharing picks an affordable span; memory/storage/bandwidth/schedule controls and Pause work. Power limits must be measured where available and explicitly handled where unsupported. [Operations](PACKAGED_ALPHA_OPERATIONS.md). |
 | 15 | **WAITING on the final package** | **“Install it, replace it, remove it.”** Verified release artifacts; ordinary-user clean install, manual upgrade/reinstall, uninstall, retain/delete cache choice, retained-data reinstall, and recovery instructions on Windows/Linux. Automatic updater and publisher signing remain later work. |
 | 16 | **WAITING** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. |
@@ -84,12 +85,12 @@ public safety check; exhaustive hardening is deferred.
    chat, cold acquisition, recovery and HTTP-blocked cache restart have passed in
    their bounded cases. Measure useful conversations, context/concurrency limits,
    client RAM and target consumer hardware. Keep failed attempts visible.
-2. **Finish proving local → community → local.** The standalone 0.8B backend,
-   measured eligibility and local-only control are implemented. Add sharing desktops until Qwen3.8 becomes
-   complete and useful; promote new `auto` requests after measured readiness.
-   Remove capacity and verify downgrade/rejoin. Keep active generations pinned,
-   local-only preferences honored, and local inference/contribution within one
-   resource budget. Existing placement and catalog components should be reused.
+2. **Carry the proven formation path into final packages.** The CPU/source-UI
+   one-click test passed local → community → local → community with actual
+   desktop controls and unattended recovery. Include the committed placement and
+   discovery fixes in the final builds; qualify the frozen UI and ordinary
+   startup alongside the installation lifecycle. This result does not cover
+   simultaneous cold joins or consumer GPU contribution.
 3. **Close Gates 14 and 15 on that product.** Exercise automatic assignment,
    resource limits, Pause, restart, replacement, and uninstall on Windows/Linux.
    Record RTX 30/40/50 observations before claiming those profiles supported.
@@ -109,7 +110,8 @@ admission checks, including the new cache-accounting implementation.
 [Package evidence](evidence/qwen-desktop-v9-20260906.json). Direct-Hub cold acquisition
 and the Windows packaged community/recovery/cache path have passed on the assigned
 C3 route. [Complete packaged result](evidence/qwen-packaged-recovery-v9-c3-20260906.json).
-Autonomous desktop formation remains open; earlier failures are retained separately.
+Bounded autonomous CPU desktop formation and recovery passed; earlier failures
+are retained separately in the [formation runbook](QWEN_FORMATION_TEST.md).
 The Linux CUDA package passed verification and offline local CPU chat; native
 desktop lifecycle and Linux GPU qualification remain open.
 The [catalog signer and three backups](CATALOG_SIGNING_KEY.md) are documented.

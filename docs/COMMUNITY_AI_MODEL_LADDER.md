@@ -1,6 +1,6 @@
 # CommunityAI model ladder
 
-Reviewed: 2026-09-06 against this working tree, the publisher configurations, and
+Reviewed: 2026-09-07 against this working tree, the publisher configurations, and
 the owner's [model-ladder discussion](codex://threads/01a06441-735b-74d2-a2c8-273dad789e6e).
 This is the product plan and implementation audit, not a signed model approval.
 
@@ -13,10 +13,10 @@ or too slow. Larger models become candidates only after their exact runtime
 profiles pass qualification and a signed catalog approves them. Increasing the
 number of connected PCs cannot enable an unsupported model.
 
-| Stage | Role | Actual status on 2026-09-06 |
+| Stage | Role | Actual status on 2026-09-07 |
 | --- | --- | --- |
 | Qwen3.5 local | An answer even when the user is alone | Exact 0.8B BF16/eager profile passed real offline inference through source and packaged nodes on an 8 GB RTX 2070 SUPER. Automatic local selection, budgets, local-only preference and cancellation are implemented. Larger local profiles and target RTX 30/40/50 hardware are unqualified. |
-| Qwen3.8-27B FP8 | First community model | Complete 64-block CPU inference, same-session replacement, mixed inference, stock-logit comparison and source-node transitions passed. Windows packaged public-policy completion/chat, loss/rejoin and HTTP-blocked cache restart passed on the assigned L4/T4/C3 route. Autonomous desktop formation and broader consumer GPU envelopes remain open. |
+| Qwen3.8-27B FP8 | First community model | Complete CPU/mixed inference, reference comparison, packaged completion/chat and cache restart passed. The actual one-click CPU test also passed automatic 64-block formation, six-client promotion/inference, five-client local fallback, and unattended recovery using real source Qt windows. [Evidence](evidence/qwen-formation-passed-20260907.json). Final packages and broader consumer GPU envelopes remain open. |
 | DeepSeek-V4-Flash | Next larger community target | No `deepseek_v4` DRIFT adapter or pinned candidate manifest in this checkout. Existing `deepseek_v3` support does not establish V4 support. |
 | GLM-5.3-Flash | Larger frontier target | No `glm5_next`/`glm5_next_text` DRIFT adapter or pinned candidate manifest in this checkout. |
 
@@ -40,9 +40,9 @@ quantized kernel, driver, memory budget, or runtime profile.
 
 | Mechanism | Implemented behavior | Remaining product work |
 | --- | --- | --- |
-| Desktop `auto` | [ModelManager](../src/drift/node/model_manager.py) requires catalog eligibility for community selection and falls back to verified standalone Qwen. Exact selectors and active requests remain pinned; local-only mode blocks new community requests. Source-node transitions and the Windows packaged community/local/rejoin path passed under public policy on assigned mixed routes. HTTP-blocked cache restart also passed. [Evidence](evidence/qwen-packaged-recovery-v9-c3-20260906.json). | Broaden hardware/conversation qualification and prove autonomous desktop formation. |
-| Strict eligibility | [model_selection.py](../src/drift/node/model_selection.py) connects real synthetic generation measurements and authenticated route observations to the strict catalog selector. It enforces freshness, soak, replicas, independent routes, surviving coverage, latency and throughput. | The CPU product test has stable complete coverage but its first measured retry was below the throughput threshold. Do not weaken policy to call that a promotion pass. |
-| Automatic contribution | [contribution_planner.py](../src/drift/node/contribution_planner.py) chooses a configured model and a contiguous under-covered span; it has residency/cooldown, dispersion, demand bounds, and exact artifact-budget checks. [run_node.py](../src/drift/cli/run_node.py) reconciles the proposal with signed intents and worker supervision. | Prove zero-to-complete Qwen3.8 formation on real desktops. Add staged growth that preserves the working lower route instead of scattering scarce workers across every future model. |
+| Desktop `auto` | [ModelManager](../src/drift/node/model_manager.py) requires catalog eligibility for community selection and falls back to verified standalone Qwen. Exact selectors and active requests remain pinned; local-only mode blocks new community requests. Assigned mixed-route packaged tests and the bounded autonomous CPU desktop test passed. | Carry fixes into final packages and broaden hardware/conversation qualification. |
+| Strict eligibility | [model_selection.py](../src/drift/node/model_selection.py) enforces freshness, soak, replicas, independent routes, surviving coverage, latency and throughput using real probes. All six clients promoted under unchanged signed sequence 2 in the passing N2 CPU formation test. | Broader performance qualification. Earlier failed CPU measurements remain historical failures; no thresholds were weakened. |
+| Automatic contribution | [contribution_planner.py](../src/drift/node/contribution_planner.py) chooses a configured model and a contiguous under-covered span with residency/cooldown, dispersion, demand bounds and artifact budgets. Real desktops formed all 64 blocks in the passing staggered CPU test; unique spans stayed in place during slow growth. | Qualify consumer GPU contributors and simultaneous joins. Add staged growth that preserves the working lower route before activating future model families. |
 | Catalog installation | [catalog_bootstrap.py](../src/drift/node/catalog_bootstrap.py) verifies signatures, compatibility, expiry and rollback state; periodic refresh stages immutable files and activates after active requests drain. Packaged HTTPS bootstrap and explicit application root migration passed a bounded live test. | Finish the ordinary-user desktop lifecycle around migration and canary disable/recovery. Network payloads cannot rotate trust roots. |
 | Local fallback | [local_inference.py](../src/drift/node/local_inference.py) loads the exact verified standalone checkpoint, enforces context/token/time and CUDA allocation limits, and supports cancellation. The 0.8B GPU test stayed below its 3 GiB allocation budget. Packaged local inference alongside one automatically placed Qwen3.8 block also passed on the 8 GB card. The v9 package includes the cache-accounting fixes and passed bounded resource checks. | Broaden resource and platform observations. CPU admission estimates are not an OS memory cap. |
 | Recovery | The Qwen3.8 cloud experiment preserved the original client session when one worker was replaced. | That proves recovery within one exact model. Switching model families requires new model state and a new tokenization/prefill; it cannot reuse another model's KV cache. |

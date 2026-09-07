@@ -1,5 +1,24 @@
 # Automatic Qwen formation test
 
+**PASSED on GCP, 2026-09-07:** the actual `Run Qwen Formation.cmd` run
+`q38af-20260907-085527-0e997a` completed all acceptance steps and verified cleanup
+with exit code 0. It formed 64/64 blocks automatically, promoted and generated on
+all six clients, returned local answers on five survivors, then restored all six
+community answers after an unattended same-identity restart. No live code,
+policy, range, catalog or service intervention was needed. Total time including
+setup and cleanup: 95 minutes. [Passing evidence](evidence/qwen-formation-passed-20260907.json).
+
+The four automatic spans were `16:32`, `48:64`, `32:48`, and `0:16`. Each real Qt
+window passed Gate 13's policy Save, per-model Pause normalization and master
+Start controls. Windows community requests took 30.707 seconds before loss and
+29.949 seconds after recovery. The first validated local reply arrived 212.765
+seconds after the kill phase began, and the first validated recovered community
+reply arrived 204.508 seconds after the restart phase began. These sequential
+checkpoint timings include polling and inference; they are not per-client
+detection latency. The scope limits below remain in force.
+
+![Windows desktop after unattended recovery](evidence/qwen-formation-desktop-recovered-20260907.png)
+
 **Modal currently cannot complete this test:** its sandbox filesystem rejected
 the atomic settings exchange required by the production node. The real desktop's
 policy Save returned HTTP 503; sharing remained disabled. All six clients had
@@ -143,4 +162,5 @@ literal UI sequence above. Sixty related tests passed. An explicit failure marke
 ended the wait; no worker was manually started and no live application code or
 policy was changed. Owned resources and local processes were verified cleaned.
 [Full formation/fallback and restart evidence](evidence/qwen-formation-restart-config-20260907.json).
-A fresh wrapper replay is in progress. **Unattended restart recovery remains open.**
+The subsequent clean wrapper replay passed as recorded at the top of this page.
+Keep this failed attempt separate from that unattended passing run.

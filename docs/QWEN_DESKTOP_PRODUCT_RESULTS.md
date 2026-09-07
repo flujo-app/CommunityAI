@@ -377,7 +377,16 @@ The replacement signer has a verified Google Secret Manager recovery copy,
 the retained G: backup, and an owner-restricted gitignored repository backup.
 [Permanent key locator and recovery instructions](CATALOG_SIGNING_KEY.md).
 
-Still required: autonomous desktop formation and its transitions; remaining Gate 14 resource controls
+The 2026-09-07 [one-click formation test](QWEN_FORMATION_TEST.md) also **passed**:
+four capacity-only CPU contributors formed 64 blocks through real Qt controls;
+all six clients promoted and generated, five survivors answered locally after
+whole-participant loss, and unattended same-identity restart restored six
+community answers. Cleanup was verified and no runtime intervention was needed.
+This used source Linux nodes/Qt windows and the retained Windows node with source
+Qt UI; it does not qualify fresh installers, fully frozen UI, GPU contributors,
+simultaneous joins or instant failover. [Evidence](evidence/qwen-formation-passed-20260907.json).
+
+Still required: carry the formation fixes into final packages; remaining Gate 14 resource controls
 and supported-platform coverage; Gate 15 package lifecycle;
 target hardware observations; complete desktop lifecycle around migration; canary.
 The automatic worker default currently assigns one block. CPU memory admission is
