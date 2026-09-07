@@ -59,7 +59,38 @@ required; the supported baseline is Ubuntu 22.04+/Debian 12+ on amd64.
 
 CI's maintainer address is explicitly an engineering placeholder. Replace it
 before publication. A real package must pass installation/upgrade/removal with
-the complete runtime on both target distributions. A signed HTTPS APT repository,
-its separate GPG key and scoped `Signed-By` installation instructions remain
-release work; this builder alone does not provide `apt install communityai`
-without a local filename or configured repository.
+the complete runtime on both target distributions.
+
+## Signed APT repository
+
+APT repository signing uses GPG and does not require a commercial certificate.
+Use a separate protected repository signing key, not the model-catalog key. With
+Python 3.11+, `apt-utils`, GnuPG and the key available in the operator's GPG home:
+
+```sh
+python desktop/installers/build_apt_repository.py \
+  --package desktop/dist/installers/communityai_0.1.0~alpha.1_amd64.deb \
+  --output desktop/dist/apt-release-1 --signing-key FULL_KEY_FINGERPRINT
+```
+
+Repeat `--package` for retained versions. The output directory must be new. The
+builder writes versioned package paths, `Packages`, `Packages.gz`, `Release`,
+`InRelease`, `Release.gpg`, the exported public key and a hash inventory. Both
+signatures are independently checked with `gpgv`. It never publishes output or
+creates a signing key. Repository metadata expires after 30 days; re-sign and
+publish it before expiry even when package versions do not change.
+
+Publish immutable package paths first, then index files, then signed release
+metadata at the chosen HTTPS origin. Preserve existing versioned package URLs.
+Distribute the public key and full fingerprint through the project download
+page; users install it as `/etc/apt/keyrings/communityai.gpg` and use a deb822
+`.sources` entry with `Types: deb`, the actual HTTPS `URIs`, `Suites: alpha`,
+`Components: main`, `Architectures: amd64` and
+`Signed-By: /etc/apt/keyrings/communityai.gpg`. Keep the key readable by APT and
+scope package pinning to this repository and the `communityai` package as in
+[Debian's third-party guidance](https://wiki.debian.org/DebianRepository/UseThirdParty).
+
+Production key custody/backup, a permanent HTTPS origin, final setup commands and
+publication remain open. A disposable container test proved signed index
+acceptance, package candidate/download/hash verification and tampered-signature
+rejection; it created no production key or public repository.

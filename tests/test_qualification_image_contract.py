@@ -239,7 +239,9 @@ def test_standalone_image_verifier_needs_no_prepare_only_helper(tmp_path: Path):
         check=False,
         capture_output=True,
         text=True,
-        timeout=10,
+        # A cold Torch/Transformers import can exceed ten seconds on macOS CI.
+        # This checks standalone verification, not an import-latency target.
+        timeout=30,
     )
 
     assert result.returncode == 0, result.stderr

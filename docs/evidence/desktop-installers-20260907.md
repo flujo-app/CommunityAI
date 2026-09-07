@@ -59,6 +59,22 @@ The final Windows desktop suite passed 101 tests with two Linux-only skips;
 the 12 maintenance/lifecycle tests and both Linux ownership tests also passed
 in their respective environments. Root Black/isort and diff checks passed.
 
+## APT signing follow-up
+
+The repository builder generates a new immutable snapshot directory, validates
+CommunityAI/amd64 package identity, signs release metadata with a supplied full
+GPG fingerprint, exports only the public key and verifies both signatures using
+`gpgv`. A Debian container generated a disposable signing key, accepted the
+result through scoped `Signed-By`, selected the fixture package, downloaded it
+with matching SHA-256, then rejected tampered signed metadata with `BADSIG`.
+The container/private key were removed. No production key or repository was
+created. GPG repository signing requires no paid certificate.
+
+CI at `0b875c1` passed style and Linux tests; its macOS standalone image verifier
+hit the pre-existing ten-second subprocess timeout. That test imports the model
+runtime from a fresh Python process. The timeout is raised to 30 seconds while
+retaining the exact verification assertions; the follow-up CI result is pending.
+
 ## Remaining release outcomes
 
 These are bounded engineering/fixture results, not fresh full-runtime installer
