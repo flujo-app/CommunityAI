@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-09-07",
+  "run_id": "q38af-20260907-073105-de0f20",
+  "run_result": "failed",
+  "entry_point": "Run Qwen Formation.cmd",
+  "wrapper_invoked": true,
+  "source_bundle_sha256": "697e6f133aa690fa47915f7f7988c9906e308d15a269a8f4cd76f16c145cb1a0",
+  "catalog_sequence": 2,
+  "catalog_policy_modified": false,
+  "assigned_spans": false,
+  "scope": "Staggered source Linux desktop/node CPU contributors; retained Windows v9 node and source Qt client; isolated seed",
+  "local_initial_answers_passed": 6,
+  "automatic_joins": [
+    {
+      "participant": "q38af-20260907-073105-de0f20-w0",
+      "block_indices": "32:48",
+      "observed_coverage": 16,
+      "remote_acknowledged": true
+    },
+    {
+      "participant": "q38af-20260907-073105-de0f20-w1",
+      "block_indices": "48:64",
+      "observed_coverage": 32,
+      "remote_acknowledged": true
+    },
+    {
+      "participant": "q38af-20260907-073105-de0f20-w2",
+      "block_indices": "0:16",
+      "observed_coverage": 48,
+      "remote_acknowledged": true
+    },
+    {
+      "participant": "q38af-20260907-073105-de0f20-w3",
+      "block_indices": "16:32",
+      "observed_coverage": 64,
+      "remote_acknowledged": true
+    }
+  ],
+  "automatic_formation_64_blocks_passed": true,
+  "automatic_promotion_and_community_answers": [
+    {
+      "participant": "desktop",
+      "result": "passed",
+      "seconds": 31.216893434524536,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "observed_at_unix": 1788770065.4468749
+    },
+    {
+      "participant": "q38af-20260907-073105-de0f20-c",
+      "result": "passed",
+      "seconds": 33.09199047088623,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "observed_at_unix": 1788769778.153126
+    },
+    {
+      "participant": "q38af-20260907-073105-de0f20-w0",
+      "result": "passed",
+      "seconds": 23.910712718963623,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "observed_at_unix": 1788769851.508694
+    },
+    {
+      "participant": "q38af-20260907-073105-de0f20-w1",
+      "result": "passed",
+      "seconds": 23.782187461853027,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "observed_at_unix": 1788769909.4130518
+    },
+    {
+      "participant": "q38af-20260907-073105-de0f20-w2",
+      "result": "passed",
+      "seconds": 23.636733770370483,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "observed_at_unix": 1788769963.3878212
+    },
+    {
+      "participant": "q38af-20260907-073105-de0f20-w3",
+      "result": "passed",
+      "seconds": 23.60848116874695,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "observed_at_unix": 1788770020.3227925
+    }
+  ],
+  "windows_local_only_and_return_to_auto_passed": true,
+  "loss": {
+    "participant": "q38af-20260907-073105-de0f20-w1",
+    "mechanism": "SIGKILL both complete node and desktop systemd control groups",
+    "phase_started_at_unix": 1788770116.7822592,
+    "verification": "The source runner checked both units had MainPID=0 and inactive/failed state before advancing. This old version did not persist the raw stop output before its later failure; corrected in 8d8fedf.",
+    "survivor_local_answers": [
+      {
+        "participant": "desktop",
+        "result": "passed",
+        "seconds": 0.6811134815216064,
+        "model": "Qwen3.5-0.8B-Local",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "observed_at_unix": 1788770576.6696255
+      },
+      {
+        "participant": "q38af-20260907-073105-de0f20-c",
+        "result": "passed",
+        "seconds": 5.073481321334839,
+        "model": "Qwen3.5-0.8B-Local",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "observed_at_unix": 1788770422.09496
+      },
+      {
+        "participant": "q38af-20260907-073105-de0f20-w0",
+        "result": "passed",
+        "seconds": 0.8178298473358154,
+        "model": "Qwen3.5-0.8B-Local",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "observed_at_unix": 1788770476.7966235
+      },
+      {
+        "participant": "q38af-20260907-073105-de0f20-w2",
+        "result": "passed",
+        "seconds": 0.7940897941589355,
+        "model": "Qwen3.5-0.8B-Local",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "observed_at_unix": 1788770504.5792828
+      },
+      {
+        "participant": "q38af-20260907-073105-de0f20-w3",
+        "result": "passed",
+        "seconds": 0.8545453548431396,
+        "model": "Qwen3.5-0.8B-Local",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "observed_at_unix": 1788770534.4977684
+      }
+    ],
+    "timing_limit": "Replies were checked sequentially. The first validated fallback answer arrived about 305 seconds after the kill phase began; this is not a per-client detection-latency measurement or an instant-fallback claim."
+  },
+  "restart_recovery_passed": false,
+  "restart_diagnosis": {
+    "saved_worker_enabled": false,
+    "saved_sharing_enabled": true,
+    "automatic_range_after_restart": "48:64",
+    "state_after_restart": "paused",
+    "cause": "Runner disabled automatic startup in the saved config to enforce a literal first Start click. This differed from Gate 13 and prevented unattended restart."
+  },
+  "runtime_code_or_policy_changes": [],
+  "operator_intervention": "After observing the recovery mismatch, wrote an explicit error marker to stop waiting and trigger diagnostic capture and cleanup. Did not start the worker manually.",
+  "fix_commit": "8d8fedf",
+  "fix": "Restore policy-gated auto-start, normalize any post-Save automatic start through Gate 13 real per-model Pause then master Start controls, and persist checkpoints after each outcome.",
+  "tests": {
+    "passed": 60,
+    "files": [
+      "tests/test_qwen_formation_runner.py",
+      "tests/test_automatic_formation.py",
+      "tests/test_contribution_planner.py",
+      "tests/test_automatic_placement_convergence.py"
+    ]
+  },
+  "cleanup": {
+    "errors": [],
+    "remaining": {
+      "disks": [],
+      "firewall-rules": [],
+      "instances": []
+    },
+    "verified": true
+  },
+  "local_process_cleanup_verified": true,
+  "evidence_directory": ".gate13-runs/qwen-formation/q38af-20260907-073105-de0f20"
+}

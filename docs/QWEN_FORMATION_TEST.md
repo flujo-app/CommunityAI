@@ -44,10 +44,9 @@ C3 workers in `b`/`c` and an E2 coordinator in `f` encountered stockouts. All pa
 attempts were cleaned up. The bounded profile also permits the original C3 workers
 and zones `c`/`f` for fresh retries. Both worker types have four vCPUs and 32 GB RAM.
 
-Each cloud participant first generates a real local Qwen3.5 answer. Contributors
-must also expose a fresh discovery observation before their initial answer check;
-an unknown route cannot pass this checkpoint, which has a 180-second timeout.
-Contributors
+Each cloud participant must first expose a fresh discovery observation within
+180 seconds, then generate a real local Qwen3.5 answer. Unknown coverage cannot
+pass that checkpoint. Contributors
 then enable sharing one at a time, waiting for fresh coverage before the next
 join. The production planner selects their exact ranges and publishes signed
 intents. The runner requires successive 16/32/48/64-block coverage, automatic
@@ -57,6 +56,13 @@ fallback and real answers on the survivors, restarts that participant with its
 existing identity/policy, then requires full coverage and Qwen3.8 answers again.
 No recovery step assigns a span. Catalog sequence 2 and its measured readiness
 thresholds are unchanged.
+
+Startup follows Gate 13 literally: automatic worker startup stays enabled in the
+saved config, while the initial sharing policy keeps contribution off. The real
+desktop saves the policy. If that starts sharing before the explicit Start check,
+the runner clicks the checked per-model sharing control to pause, waits for the
+paused state, then clicks the actual master Start sharing button. This preserves
+the saved startup behavior required for unattended whole-node recovery.
 
 The Windows session uses the retained hash-verified v9 node, existing verified
 model caches, and the **real production Qt window run from source**. Qt automation
@@ -119,6 +125,22 @@ parent wait, cleans unsuccessful starts for retry, handles unknown coverage,
 and requires early discovery evidence. Both regressions failed before the fix;
 72 related tests passed afterward. No runtime changes preceded this failure;
 py-spy was installed afterward only for diagnosis. All owned resources and local
-processes were verified cleaned. A fresh wrapper replay is in progress.
+processes were verified cleaned.
 [Discovery evidence](evidence/qwen-formation-discovery-startup-20260907.json).
-**Full distributed formation remains open.**
+
+The next actual `.cmd` replay, `q38af-20260907-073105-de0f20`, formed all 64 blocks
+automatically (`32:48`, `48:64`, `0:16`, `16:32`). All six clients promoted under
+unchanged signed sequence 2 and returned real three-token Qwen3.8 answers. Windows
+also passed local-only and return-to-Auto controls. After the complete contributor
+loss, all five survivors returned local answers. The first validated fallback
+answer arrived about five minutes after the kill phase began; sequential checks
+do not establish each client's detection latency or instant fallback.
+
+Restart recovery did not pass: the restored node chose the missing `48:64` span
+but stayed paused because the runner had saved `worker.enabled=false`. This was
+a mismatch with Gate 13's policy-gated startup, corrected in `8d8fedf` using the
+literal UI sequence above. Sixty related tests passed. An explicit failure marker
+ended the wait; no worker was manually started and no live application code or
+policy was changed. Owned resources and local processes were verified cleaned.
+[Full formation/fallback and restart evidence](evidence/qwen-formation-restart-config-20260907.json).
+A fresh wrapper replay is in progress. **Unattended restart recovery remains open.**
