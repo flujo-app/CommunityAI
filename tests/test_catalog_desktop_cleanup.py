@@ -22,6 +22,9 @@ class Process:
     def is_running(self):
         return self.alive
 
+    def status(self):
+        return replay.psutil.STATUS_RUNNING if self.alive else replay.psutil.STATUS_DEAD
+
     def children(self, recursive=False):
         assert recursive
         return self.descendants
@@ -68,3 +71,47 @@ def test_fallback_has_a_finite_deadline_without_signaling_after_expiry(monkeypat
     with pytest.raises(TimeoutError, match="deadline"):
         replay.force_stop_owned_tree([(10, 100)], timeout=15)
     assert owned.signals == []
+
+
+def test_zombie_is_not_signaled_or_treated_as_an_executing_runtime(monkeypatch):
+    zombie = Process(10, 100)
+    monkeypatch.setattr(zombie, "status", lambda: replay.psutil.STATUS_ZOMBIE)
+    monkeypatch.setattr(replay.psutil, "Process", lambda _: zombie)
+    replay.wait_tree_gone([(10, 100)])
+    replay.force_stop_owned_tree([(10, 100)])
+    assert zombie.signals == []
+
+
+def test_status_permission_failure_is_not_misreported_as_gone(monkeypatch):
+    owned = Process(10, 100)
+
+    def denied():
+        raise replay.psutil.AccessDenied()
+
+    monkeypatch.setattr(owned, "status", denied)
+    monkeypatch.setattr(replay.psutil, "Process", lambda _: owned)
+    with pytest.raises(replay.psutil.AccessDenied):
+        replay.wait_tree_gone([(10, 100)])
+
+
+def test_preflight_allows_zombie_but_refuses_live_desktop(monkeypatch):
+    process = Process(10, 100)
+    process.info = {"name": "CommunityAI"}
+    monkeypatch.setattr(replay.psutil, "process_iter", lambda _: [process])
+    with pytest.raises(RuntimeError, match="existing CommunityAI"):
+        replay.require_desktop_stopped()
+    monkeypatch.setattr(process, "status", lambda: replay.psutil.STATUS_ZOMBIE)
+    replay.require_desktop_stopped()
+
+
+def test_preflight_does_not_treat_unreadable_desktop_as_stopped(monkeypatch):
+    process = Process(10, 100)
+    process.info = {"name": "CommunityAI.exe"}
+    monkeypatch.setattr(replay.psutil, "process_iter", lambda _: [process])
+
+    def denied():
+        raise replay.psutil.AccessDenied()
+
+    monkeypatch.setattr(process, "status", denied)
+    with pytest.raises(replay.psutil.AccessDenied):
+        replay.require_desktop_stopped()

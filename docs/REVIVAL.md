@@ -1,7 +1,7 @@
 # Petals revival: public inference alpha roadmap
 
 Current release status and execution order are maintained in
-[RELEASE_READINESS.md](RELEASE_READINESS.md), reviewed 2026-09-07. The Qwen3.8
+[RELEASE_READINESS.md](RELEASE_READINESS.md), reviewed 2026-09-08. The Qwen3.8
 64-block route, same-session replacement, reference comparison and Windows
 packaged short chat, worker-loss recovery and HTTP-blocked cache restart passed
 on assigned cloud routes. Bounded autonomous CPU desktop formation and recovery
@@ -19,10 +19,11 @@ restart loop; signed-manifest migration retains cache/resource preferences.
 Windows ran non-elevated; Linux used an ordinary Debian/Xvfb session with CUDA
 passthrough. Broader hardware and physical desktop coverage are not implied.
 
-September 7 evening release sprint: Windows signed-catalog startup migration,
-manual retained-data choices and local canary prerequisites passed in their
-recorded scope. Ubuntu installation timed out during unpacking and the frozen
-sign-in-toggle attempt was interrupted; neither is marked passed. See the
+September 8 release continuation: Windows, Debian and Ubuntu installed lifecycles
+now pass, along with Linux frozen sign-in controls and normal Windows/Linux
+signed-catalog startup migration. The Windows frozen sign-in checkbox remains
+open. Earlier failed attempts are retained separately; local canary checks do
+not replace the live public route exercise. See the
 [current evidence and remaining work](RELEASE_READINESS.md#next-work-in-useful-product-order).
 
 This repository starts from DRIFT-LLM, the most practical maintained continuation
@@ -250,8 +251,11 @@ admission guards, local inference and complete owned-process/native-key cleanup.
 The [fully frozen Windows installer lifecycle](evidence/gate15-20260907-frozen-windows-installer.json)
 also passed product install/upgrade/removal/reinstall assertions and an independent
 cleanup audit; its redundant final test-cleanup error is retained explicitly.
-The Debian lifecycle also passed. Gate 15 still needs a passing Ubuntu lifecycle
-after its recorded unpack timeout and the frozen sign-in-toggle acceptance.
+The Debian lifecycle and the [Ubuntu retry](evidence/gate15-20260908-frozen-ubuntu-installer.md)
+also passed with the same final `.4` package. The earlier Ubuntu unpack timeout
+remains recorded. The [Linux frozen sign-in checkbox](evidence/gate15-20260908-frozen-linux-login.md)
+passed enable, restart and disable on a private Xvfb display; Gate 15 still needs
+the Windows frozen-control acceptance.
 Manual retained-data choices now have a [runbook](DESKTOP_UNINSTALL.md) and
 bounded Windows evidence.
 The earlier [installer checkpoint](evidence/desktop-installers-20260907.md) includes

@@ -6,6 +6,12 @@ qualification attempt, not evidence that installation completed. The same `.4`
 package has separate passing Debian 12 lifecycle evidence. This note investigates
 the difference without running another installation or changing package bytes.
 
+**September 8 follow-up:** the unchanged `.4` package subsequently passed the
+complete Ubuntu lifecycle with a two-core/6 GiB resource cap and a longer finite
+operation deadline. Initial installation took 329.971 seconds. The earlier
+failure remains recorded; its cause is unconfirmed. The diagnostic proposals
+below are retained as history. [Passing retry](gate15-20260908-frozen-ubuntu-installer.md).
+
 ## Verified package facts
 
 `communityai_0.1.0~alpha.20260907.4_amd64.deb` is 3,781,591,484 bytes, SHA-256

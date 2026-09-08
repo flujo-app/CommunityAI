@@ -49,8 +49,9 @@ PID reuse, unreadable ownership and the finite deadline. This later helper chang
 was validated without launching Qt; it does not change the original replay hash
 or claim that the recorded live run exercised emergency cleanup.
 
-This closes the observed Windows **startup migration** slice. A newer catalog
-arriving during an active generation, idle activation/drain and an ordinary-user
-Linux update replay remain separate observations. Installer replacement is
+This closes the observed Windows **startup migration** slice. The later
+[ordinary-user Linux startup replay](qwen-catalog-linux-startup-20260908.md) is
+recorded separately. A newer catalog arriving during an active generation and
+idle activation/drain remain separate observations. Installer replacement is
 covered by the existing Gate 15 evidence. The complete Q3.8 gate is not closed by
 this replay.

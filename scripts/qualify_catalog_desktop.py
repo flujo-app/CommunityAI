@@ -1,4 +1,4 @@
-"""Replay an ordinary-user frozen Windows desktop's signed catalog migration.
+"""Replay an ordinary-user frozen Windows/Linux desktop's signed catalog migration.
 
 Uses a new private state directory and native credential account. Sharing remains
 off; no inference request, catalog publication, or installer action is performed.
@@ -10,6 +10,7 @@ import ctypes
 import hashlib
 import json
 import os
+import platform
 import subprocess
 import time
 from pathlib import Path
@@ -30,10 +31,36 @@ def build_parser():
     return parser
 
 
-def desktop_environment(visible_ui):
+def desktop_environment(visible_ui, *, system=None):
     environment = os.environ.copy()
+    system = platform.system() if system is None else system
+    if visible_ui and system != "Windows":
+        raise ValueError("Native-window observation currently supports Windows; use offscreen on Linux")
     environment["QT_QPA_PLATFORM"] = "windows" if visible_ui else "offscreen"
     return environment
+
+
+def qualification_platform():
+    system = platform.system()
+    if system == "Windows":
+        if ctypes.windll.shell32.IsUserAnAdmin():
+            raise RuntimeError("Run this acceptance from an ordinary, non-elevated Windows session")
+    elif system == "Linux":
+        if os.geteuid() == 0:
+            raise RuntimeError("Run this acceptance as an ordinary Linux user with a native credential store")
+    else:
+        raise RuntimeError("This acceptance supports Windows and Linux")
+    return system
+
+
+def node_executable(desktop, system):
+    return desktop.parent / "node" / ("CommunityAI-Node.exe" if system == "Windows" else "CommunityAI-Node")
+
+
+def identity_is_live(process, created):
+    # A Linux zombie cannot execute or retain an open model runtime. Its parent
+    # or container init still owns reaping the remaining process-table entry.
+    return process.create_time() == created and process.is_running() and process.status() != psutil.STATUS_ZOMBIE
 
 
 def sha256(path):
@@ -59,7 +86,7 @@ def wait_tree_gone(identities):
         for pid, created in identities:
             try:
                 process = psutil.Process(pid)
-                if process.create_time() == created and process.is_running():
+                if identity_is_live(process, created):
                     remaining.append(pid)
             except psutil.NoSuchProcess:
                 pass
@@ -85,13 +112,14 @@ def force_stop_owned_tree(identities, *, timeout=15):
         for pid, created in tuple(known):
             try:
                 process = psutil.Process(pid)
-                if process.create_time() != created or not process.is_running():
+                if not identity_is_live(process, created):
                     continue
                 live[(pid, created)] = process
                 for child in process.children(recursive=True):
                     identity = (child.pid, child.create_time())
                     known.add(identity)
-                    live[identity] = child
+                    if identity_is_live(child, identity[1]):
+                        live[identity] = child
             except psutil.NoSuchProcess:
                 continue
         identities[:] = sorted(known)
@@ -112,6 +140,8 @@ def force_stop_owned_tree(identities, *, timeout=15):
 
 
 def visible_window(pid):
+    if platform.system() != "Windows":
+        return False
     found = []
     callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
@@ -130,16 +160,24 @@ def visible_window(pid):
     return bool(found)
 
 
-def run(args):
-    if os.name != "nt" or ctypes.windll.shell32.IsUserAnAdmin():
-        raise RuntimeError("Run this acceptance from an ordinary, non-elevated Windows session")
+def require_desktop_stopped():
     for process in psutil.process_iter(("name",)):
-        if (process.info["name"] or "").casefold() == "communityai.exe":
-            raise RuntimeError("Close the existing CommunityAI desktop before this isolated replay")
+        if (process.info["name"] or "").casefold() in ("communityai.exe", "communityai"):
+            try:
+                if process.status() != psutil.STATUS_ZOMBIE:
+                    raise RuntimeError("Close the existing CommunityAI desktop before this isolated replay")
+            except psutil.NoSuchProcess:
+                continue
+
+
+def run(args):
+    system = qualification_platform()
+    environment = desktop_environment(args.visible_ui, system=system)
+    require_desktop_stopped()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     desktop = args.desktop.resolve()
-    node = desktop.parent / "node/CommunityAI-Node.exe"
+    node = node_executable(desktop, system)
     bootstrap = desktop.parent / "_internal/bootstrap/catalog-bootstrap.json"
     assert bootstrap.read_bytes() == (ROOT / "public-alpha/catalog-qwen-v2/catalog-bootstrap.json").read_bytes()
     state = output / "state"
@@ -151,12 +189,13 @@ def run(args):
         pass
     else:
         raise RuntimeError("The private qualification credential already exists")
-    flags = subprocess.CREATE_NO_WINDOW
-    environment = desktop_environment(args.visible_ui)
+    process_options = {"creationflags": subprocess.CREATE_NO_WINDOW} if system == "Windows" else {}
     result = {
         "result": "failed",
-        "scope": "ordinary-user-frozen-Windows-desktop-signed-catalog-startup-migration",
+        "scope": f"ordinary-user-frozen-{system}-desktop-signed-catalog-startup-migration",
+        "platform": system,
         "non_elevated": True,
+        "zombies_treated_as_non_executing": system == "Linux",
         "ui_mode": "visible-native" if args.visible_ui else "offscreen",
         "desktop_sha256": sha256(desktop),
         "node_sha256": sha256(node),
@@ -175,7 +214,7 @@ def run(args):
             if gui.poll() is None:
                 identities.extend(process_tree(gui.pid))
                 subprocess.run(
-                    [str(desktop), "--prepare-update"], check=True, timeout=60, creationflags=flags, env=environment
+                    [str(desktop), "--prepare-update"], check=True, timeout=60, env=environment, **process_options
                 )
             assert gui.wait(timeout=60) == 0
             wait_tree_gone(identities)
@@ -215,8 +254,8 @@ def run(args):
                 ],
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                creationflags=flags,
                 env=environment,
+                **process_options,
             )
         # Record ownership immediately, including failures before authenticated
         # readiness. Later snapshots expand this set with owned descendants.
@@ -261,7 +300,7 @@ def run(args):
             ],
             capture_output=True,
             timeout=300,
-            creationflags=flags,
+            **process_options,
         )
         (output / "legacy-install.log").write_bytes(proc.stdout + proc.stderr)
         assert proc.returncode == 0, "Legacy signed catalog bootstrap failed; see retained log"
@@ -319,7 +358,7 @@ def run(args):
             ],
             capture_output=True,
             timeout=300,
-            creationflags=flags,
+            **process_options,
         )
         (output / "old-root-rejected.log").write_bytes(proc.stdout + proc.stderr)
         assert proc.returncode != 0 and config_path.read_bytes() == before
@@ -361,7 +400,7 @@ def run(args):
                 result["native_qualification_credential_removed"] = False
                 result["credential_preserved_for_cleanup"] = True
             result["limitations"] = [
-                "Windows startup migration and unchanged-catalog restart, not a fresh Linux update observation.",
+                f"{system} startup migration and unchanged-catalog restart only; other platforms require separate replay.",
                 "The legacy state was installed from the actual signed online catalog, with private test preferences/cache marker.",
                 "No inference, worker execution, periodic newer-sequence activation, or active-generation drain was exercised.",
                 "The existing frozen bundle was launched directly; its installer lifecycle has separate evidence.",

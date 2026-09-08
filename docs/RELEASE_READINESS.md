@@ -1,6 +1,6 @@
 # Public inference alpha release readiness
 
-Last reviewed: **2026-09-07 local / 2026-09-08 UTC**. This is the current release checklist. The former
+Last reviewed: **2026-09-08**. This is the current release checklist. The former
 checkpoint narratives, completed-gate detail, failed attempts, old model inventory,
 and budget history are preserved in [RELEASE_READINESS_HISTORY.md](RELEASE_READINESS_HISTORY.md).
 Implementation details belong in their linked runbooks and evidence records.
@@ -71,9 +71,9 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | Gate | Status | What must be true before it passes |
 | --- | --- | --- |
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
-| Q3.8 | **IN PROGRESS; runtime, packaged, bounded formation and Windows startup migration passed** | Finish representative consumer GPU/client and conversation measurements, Linux catalog-update observation and newer-sequence activation/draining. The ordinary-user frozen Windows startup migration from signed sequence 1 to 2 passed with preferences/cache preserved. |
+| Q3.8 | **IN PROGRESS; runtime, packaged, bounded formation and Windows/Linux startup migration passed** | Finish representative consumer GPU/client and conversation measurements and frozen newer-sequence activation/draining. Ordinary-user frozen Windows and Linux startup migration from signed sequence 1 to 2 passed with preferences/cache preserved; the first Linux failure is retained separately. |
 | 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
-| 15 | **IN PROGRESS; Windows/Debian lifecycle and manual data choices passed** | **“Install it, replace it, remove it.”** Windows install/active upgrade/removal/reinstall and Debian active replacement/removal/reinstall passed. The Ubuntu attempt timed out during initial unpacking; the frozen sign-in-toggle attempt was interrupted. Both remain open. Explicit manual cache/reset choices passed on disposable Windows state. Unsigned alpha is owner-authorized; signing, Store, hosted signed APT and automatic updates follow after alpha. |
+| 15 | **IN PROGRESS; Windows/Debian/Ubuntu lifecycle and Linux frozen login controls passed** | **“Install it, replace it, remove it.”** Windows install/active upgrade/removal/reinstall and Debian/Ubuntu active replacement/removal/reinstall passed. Linux frozen sign-in enable/restart/disable passed; the Windows frozen checkbox remains open. Explicit manual cache/reset choices passed on disposable Windows state. Unsigned alpha is owner-authorized; signing, Store, hosted signed APT and automatic updates follow after alpha. |
 | 16 | **WAITING; local prerequisites passed** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. The frozen local API probe and 131 source safety/catalog tests passed; these do not replace the live canary. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
 
@@ -142,6 +142,15 @@ The [unpack diagnosis](evidence/gate15-20260907-ubuntu-unpack-diagnosis.md)
 records the 2,733-block XZ payload, relevant package-manager version differences
 and a bounded profiling/repack plan; it does not claim a confirmed root cause.
 
+The September 8 retry **passed the complete Ubuntu 22.04 lifecycle** with the
+same `.4` installer: initial installation, active replacement, removal,
+reinstallation and final removal. The actual installed GUI/node produced local
+Qwen tokens and verified a sharing block on all three launches. Settings/cache/
+credentials survived maintenance; independent runtime/credential cleanup passed
+and the disposable container was removed. Two CPU cores and a 6 GiB memory cap
+bounded local use. Initial installation took 329.971 seconds; the original timeout
+was not reproduced. [Ubuntu acceptance](evidence/gate15-20260908-frozen-ubuntu-installer.md).
+
 The [manual uninstall choices](DESKTOP_UNINSTALL.md) now explain retaining state,
 deleting only reviewed model caches, resetting the native credential and node
 state, and disabling login startup before removal. Disposable Windows checks
@@ -151,12 +160,32 @@ interrupted before any toggle succeeded; it is not a passing UI acceptance.
 All its owned processes, credential and login entry were confirmed absent.
 [Choice evidence](evidence/gate15-20260908-windows-data-login-choices.json).
 
-The normal frozen Windows desktop independently passed automatic startup
-migration from the real signed catalog sequence 1 to exact sequence 2. Resource
-limits, local-only preference, workers, cache and native credential survived
-restart; the old trust root was rejected. This closes Windows startup migration,
-not Linux refresh or active-generation draining.
-[Catalog acceptance](evidence/qwen-catalog-desktop-20260907.md).
+The unmodified frozen Linux checkbox subsequently passed enable, restart with
+the setting retained, disable, and an explicit login-flag launch through AT-SPI
+on a private Xvfb display. No models loaded; all three normal shutdowns and
+independent credential/process cleanup passed. The initial ambiguous-action
+failure and a separate virtual-display wrapper cleanup error remain recorded.
+[Linux frozen control](evidence/gate15-20260908-frozen-linux-login.md).
+The Windows source Qt/native-registry regression passed while preserving the
+real login entry; actual Windows frozen-control acceptance remains separate.
+[Windows source evidence](evidence/gate15-20260908-source-login-checkbox.md).
+
+The normal frozen Windows and Linux desktops independently passed automatic
+startup migration from real signed catalog sequence 1 to exact sequence 2.
+Resource limits, local-only preference, workers, cache and native credential
+survived restart; the old trust root was rejected. Linux passed on a fresh retry
+after the first bootstrap child returned nonzero and the app retained sequence 1.
+That failure and successful metadata-only diagnostics remain recorded; the
+original child error was not retained, so its cause is unconfirmed.
+[Windows acceptance](evidence/qwen-catalog-desktop-20260907.md),
+[Linux acceptance and retained failure](evidence/qwen-catalog-linux-startup-20260908.md).
+
+Six new source integration cases connect the actual periodic refresh service,
+signed installer and model manager: active leases/loading delay restart,
+admission closes before restart, invalid updates preserve state, and closing the
+service preserves active work. These passed without model loads. The frozen
+newer-sequence/active-generation replay remains open.
+[Source evidence and live replay requirements](evidence/qwen-catalog-periodic-source-20260908.md).
 
 Gate 16 now has a [bounded canary protocol](GATE16_CANARY.md) and a passing local
 preflight: 20 real frozen-node HTTP assertions and 131 source tests, including
@@ -166,6 +195,14 @@ contribution approval while preserving explicit manual selectors; emergency
 route disable must stop the actual owned workers.
 [Local evidence](evidence/gate16-20260907-local-preflight.json).
 
+The prepared live RPC driver now defaults to local preflight and limits an
+explicit worker probe to 20 calls/128 KiB with finite execution and cleanup.
+The separate catalog driver stages an isolated signed withdrawal/restore channel
+locally and observes authenticated runtime configuration after ordinary refresh.
+Twenty-four focused tests passed, including the real handler over loopback TLS
+with no model cache allocation. The live route, HTTPS publication and full canary
+observations remain open. [Driver evidence](evidence/gate16-20260908-driver-preparation.json).
+
 Functional/style checks and both production package/installer jobs passed. The
 two high-severity CodeQL findings were reviewed against their exact source-to-sink
 paths and [dismissed as false positives](evidence/gate14-20260907-codeql-triage.md),
@@ -173,9 +210,9 @@ with scanning still enabled. Public-key metadata is distinct from private materi
 and generated API bearer keys are distinct from human passwords; advanced imports
 still require operator-supplied strong tokens.
 
-1. **Finish Gate 15 on the proven runtime.** Complete the remaining Ubuntu
-   installation checks after diagnosing the unpack timeout, and complete frozen
-   sign-in-toggle enable/restart/disable acceptance. Manual retained-data choices
+1. **Finish Gate 15 on the proven runtime.** Complete Windows frozen
+   sign-in-toggle enable/restart/disable acceptance. Windows, Debian and Ubuntu
+   installation lifecycles and Linux frozen login controls passed. Manual retained-data choices
    are documented and tested in the stated scope. Windows signing is owner-deferred; unsigned direct-download setup and
    a directly installable `.deb` are the alpha distribution targets.
 2. **Complete remaining Q3.8 product measurements.** Preserve the bounded formation,

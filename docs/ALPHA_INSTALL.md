@@ -2,6 +2,8 @@
 
 These instructions describe the qualified September 7 candidates. They are ready
 for release preparation; a public download location has not been published.
+The unchanged Debian package also passed the
+[Ubuntu 22.04 installed lifecycle on September 8](evidence/gate15-20260908-frozen-ubuntu-installer.md).
 Current acceptance and remaining release work are tracked in
 [RELEASE_READINESS.md](RELEASE_READINESS.md).
 

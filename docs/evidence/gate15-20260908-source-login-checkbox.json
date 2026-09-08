@@ -1,0 +1,42 @@
+{
+  "date_utc": "2026-09-08",
+  "result": "passed-source-only",
+  "frozen_gate_passed": false,
+  "environment": "Windows 10 Pro 19045; non-elevated ordinary user; Qt offscreen",
+  "source_head": "23a1f99e81df5f98ee3260b7df2529332547ccca",
+  "startup_and_shell_source_unchanged_from": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+  "helper_sha256": "597231eca8f97dfecc883471679d699de6829f53613d17080fb9322e5c9ced0d",
+  "observations": {
+    "literal_source_qt_checkbox_enabled_native_isolated_registration": true,
+    "recreated_window_read_saved_enabled_state": true,
+    "literal_source_qt_checkbox_disabled_registration": true,
+    "ui_detail_changed_off_enabled_off": true,
+    "qualification_registry_key_removed": true,
+    "real_communityai_login_entry_unchanged": true,
+    "visible_windows": false,
+    "native_credentials_created": false,
+    "nodes_workers_inference_or_fixture_telemetry_started": false
+  },
+  "regression_tests": {
+    "command": "python -m unittest discover -s desktop/tests -p test_login_startup_ui.py -v",
+    "passed": 3,
+    "duration_seconds": 1.018,
+    "checks": [
+      "Literal checkbox state and label persist across source window recreation.",
+      "A failed registration write reverts the checkbox and reports the failure.",
+      "An unreadable registration disables the checkbox."
+    ]
+  },
+  "frozen_read_only_inspection": {
+    "executable_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+    "method": "Read PyInstaller embedded PYZ code objects without executing or modifying them.",
+    "embedded_resource_actions": ["observe", "limits", "start", "pause"],
+    "login_toggle_action_available": false,
+    "frozen_checkbox_exercised": false
+  },
+  "scope_limits": [
+    "Native writes were redirected to a fresh non-autostart HKCU qualification key. The user's actual Run entry was never changed.",
+    "This is source Qt wiring and native registration evidence, not frozen Windows checkbox or OS sign-in acceptance.",
+    "The existing frozen CLI/resource hooks cannot target the sign-in checkbox. No frozen code injection, product modification, rebuild or Computer Use was attempted."
+  ]
+}
