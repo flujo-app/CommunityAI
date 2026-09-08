@@ -1,6 +1,6 @@
 # Public inference alpha release readiness
 
-Last reviewed: **2026-09-07**. This is the current release checklist. The former
+Last reviewed: **2026-09-07 local / 2026-09-08 UTC**. This is the current release checklist. The former
 checkpoint narratives, completed-gate detail, failed attempts, old model inventory,
 and budget history are preserved in [RELEASE_READINESS_HISTORY.md](RELEASE_READINESS_HISTORY.md).
 Implementation details belong in their linked runbooks and evidence records.
@@ -71,10 +71,10 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | Gate | Status | What must be true before it passes |
 | --- | --- | --- |
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
-| Q3.8 | **IN PROGRESS; runtime, packaged and bounded formation milestones passed** | Carry the formation fixes into final packages; finish representative consumer GPU/client and conversation measurements and the ordinary-user update path for the signed Qwen catalog. |
+| Q3.8 | **IN PROGRESS; runtime, packaged, bounded formation and Windows startup migration passed** | Finish representative consumer GPU/client and conversation measurements, Linux catalog-update observation and newer-sequence activation/draining. The ordinary-user frozen Windows startup migration from signed sequence 1 to 2 passed with preferences/cache preserved. |
 | 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
-| 15 | **IN PROGRESS; Windows/Debian lifecycle passed** | **“Install it, replace it, remove it.”** The final Inno setup passed ordinary-user install, active upgrade, removal and reinstall. The corrected `.deb` passed ordinary-user frozen-app launches around root package replacement/removal/reinstall, including independent process/credential cleanup. Ubuntu lifecycle and explicit retained-data/login-entry choices remain. Unsigned alpha is owner-authorized; Windows signing, Store, hosted signed APT and automatic updates follow after alpha. |
-| 16 | **WAITING** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. |
+| 15 | **IN PROGRESS; Windows/Debian lifecycle and manual data choices passed** | **“Install it, replace it, remove it.”** Windows install/active upgrade/removal/reinstall and Debian active replacement/removal/reinstall passed. The Ubuntu attempt timed out during initial unpacking; the frozen sign-in-toggle attempt was interrupted. Both remain open. Explicit manual cache/reset choices passed on disposable Windows state. Unsigned alpha is owner-authorized; signing, Store, hosted signed APT and automatic updates follow after alpha. |
+| 16 | **WAITING; local prerequisites passed** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. The frozen local API probe and 131 source safety/catalog tests passed; these do not replace the live canary. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
 
 Gate 14 protects contributors' PCs and Gate 15 makes distribution usable; retain
@@ -131,6 +131,41 @@ targeted cleanup and the old-fails/new-passes regression are retained. Installer
 scripts come from `61ab7b1`; the independently verified `bf67f0d` runtime payload
 was preserved byte-for-byte while the Debian control archive was replaced.
 
+The subsequent Ubuntu 22.04 attempt **did not pass**: root `dpkg -i` exceeded
+the 540-second harness limit during initial unpacking, with approximately 2.6 GiB
+written. No installed GUI, node or inference launched. Native test credential,
+DHT and display cleanup passed, and the exact disposable container was removed
+with its partial installation. Caches and raw evidence were retained. The
+underlying performance cause remains unconfirmed.
+[Failed Ubuntu attempt](evidence/gate15-20260908-ubuntu-install-timeout.json).
+The [unpack diagnosis](evidence/gate15-20260907-ubuntu-unpack-diagnosis.md)
+records the 2,733-block XZ payload, relevant package-manager version differences
+and a bounded profiling/repack plan; it does not claim a confirmed root cause.
+
+The [manual uninstall choices](DESKTOP_UNINSTALL.md) now explain retaining state,
+deleting only reviewed model caches, resetting the native credential and node
+state, and disabling login startup before removal. Disposable Windows checks
+passed, including the actual frozen credential-deletion command. The attempted
+frozen sign-in-toggle test used explicitly selected mock API data and was
+interrupted before any toggle succeeded; it is not a passing UI acceptance.
+All its owned processes, credential and login entry were confirmed absent.
+[Choice evidence](evidence/gate15-20260908-windows-data-login-choices.json).
+
+The normal frozen Windows desktop independently passed automatic startup
+migration from the real signed catalog sequence 1 to exact sequence 2. Resource
+limits, local-only preference, workers, cache and native credential survived
+restart; the old trust root was rejected. This closes Windows startup migration,
+not Linux refresh or active-generation draining.
+[Catalog acceptance](evidence/qwen-catalog-desktop-20260907.md).
+
+Gate 16 now has a [bounded canary protocol](GATE16_CANARY.md) and a passing local
+preflight: 20 real frozen-node HTTP assertions and 131 source tests, including
+loopback TLS/DHT and signed catalog withdrawal/forward restore. No model loaded
+and no public canary ran. Catalog withdrawal removes automatic selection and
+contribution approval while preserving explicit manual selectors; emergency
+route disable must stop the actual owned workers.
+[Local evidence](evidence/gate16-20260907-local-preflight.json).
+
 Functional/style checks and both production package/installer jobs passed. The
 two high-severity CodeQL findings were reviewed against their exact source-to-sink
 paths and [dismissed as false positives](evidence/gate14-20260907-codeql-triage.md),
@@ -139,8 +174,9 @@ and generated API bearer keys are distinct from human passwords; advanced import
 still require operator-supplied strong tokens.
 
 1. **Finish Gate 15 on the proven runtime.** Complete the remaining Ubuntu
-   installation checks and the explicit retained-data/login-entry
-   choices. Windows signing is owner-deferred; unsigned direct-download setup and
+   installation checks after diagnosing the unpack timeout, and complete frozen
+   sign-in-toggle enable/restart/disable acceptance. Manual retained-data choices
+   are documented and tested in the stated scope. Windows signing is owner-deferred; unsigned direct-download setup and
    a directly installable `.deb` are the alpha distribution targets.
 2. **Complete remaining Q3.8 product measurements.** Preserve the bounded formation,
    full-route and recovery results while recording the remaining conversation,
@@ -151,6 +187,13 @@ still require operator-supplied strong tokens.
 4. **Publish and observe the best-effort alpha.** Publish only the qualified setup
    and `.deb` with checksums/provenance after the preceding outcomes pass. Store,
    trusted Windows signing, hosted signed APT, larger adapters and credits follow.
+
+The [candidate installation/download guide](ALPHA_INSTALL.md) binds the exact
+installer hashes and records a publication constraint: both files exceed GitHub
+Releases' 2 GiB per-asset limit. Their combined 6.3 GB fits the stated R2 Standard
+included storage allowance if available; a bucket/custom domain and anonymous
+download verification remain to be arranged. No hosting account, paid resource
+or public upload was created in this sprint.
 
 The [model ladder audit](COMMUNITY_AI_MODEL_LADDER.md) and
 [product results](QWEN_DESKTOP_PRODUCT_RESULTS.md) separate implemented behavior

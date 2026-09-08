@@ -4,6 +4,16 @@ Updated 2026-09-06. This report separates implemented behavior from live accepta
 The earlier [full Qwen cloud results](QWEN_FULL_INFERENCE_RESULTS.md) remain valid
 for their recorded source/profile and assigned-span topology.
 
+The September 7 [frozen Windows catalog startup replay](evidence/qwen-catalog-desktop-20260907.md)
+now observes automatic signed sequence-1 to sequence-2 migration through the real
+ordinary-user desktop, preserved resource preferences/cache, a normal restart,
+old-root rejection and native-credential/process cleanup. It covers startup
+migration; periodic newer-catalog activation during an active generation and the
+Linux update observation remain separate. The final
+[Gate 14 resource matrix](evidence/gate14-20260907-final-resource-acceptance.md)
+supersedes the earlier resource-control limitations recorded below for its exact
+Windows/Linux runtime and hardware scope.
+
 ## Implemented
 
 - Verified standalone Qwen3.5-0.8B BF16/eager backend, selected by `auto` when the

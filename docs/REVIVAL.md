@@ -19,6 +19,12 @@ restart loop; signed-manifest migration retains cache/resource preferences.
 Windows ran non-elevated; Linux used an ordinary Debian/Xvfb session with CUDA
 passthrough. Broader hardware and physical desktop coverage are not implied.
 
+September 7 evening release sprint: Windows signed-catalog startup migration,
+manual retained-data choices and local canary prerequisites passed in their
+recorded scope. Ubuntu installation timed out during unpacking and the frozen
+sign-in-toggle attempt was interrupted; neither is marked passed. See the
+[current evidence and remaining work](RELEASE_READINESS.md#next-work-in-useful-product-order).
+
 This repository starts from DRIFT-LLM, the most practical maintained continuation
 of Petals found during the August 2026 fork audit. It preserves the parts that are
 most valuable for a revival: transformer-block sharding, Hivemind DHT discovery,
@@ -244,7 +250,10 @@ admission guards, local inference and complete owned-process/native-key cleanup.
 The [fully frozen Windows installer lifecycle](evidence/gate15-20260907-frozen-windows-installer.json)
 also passed product install/upgrade/removal/reinstall assertions and an independent
 cleanup audit; its redundant final test-cleanup error is retained explicitly.
-Gate 15 still needs the remaining Linux/distribution and retained-data choices.
+The Debian lifecycle also passed. Gate 15 still needs a passing Ubuntu lifecycle
+after its recorded unpack timeout and the frozen sign-in-toggle acceptance.
+Manual retained-data choices now have a [runbook](DESKTOP_UNINSTALL.md) and
+bounded Windows evidence.
 The earlier [installer checkpoint](evidence/desktop-installers-20260907.md) includes
 the disposable-key APT acceptance/tamper test. No public installer release, Store
 submission or production signed APT repository has been published.

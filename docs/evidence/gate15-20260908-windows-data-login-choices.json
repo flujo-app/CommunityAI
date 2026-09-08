@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-09-08",
+  "result": "manual_data_choices_passed; frozen_login_ui_acceptance_interrupted",
+  "full_gate15": false,
+  "environment": "Windows 10 Pro 19045, non-elevated ordinary user",
+  "runtime_source_commit": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+  "frozen_gui_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+  "related_installer_sha256": "c4e8df599f3a6118eab5718a5ad50655b0e07fd6c270aacf7dbb0b3065c5c399",
+  "runbook": "docs/DESKTOP_UNINSTALL.md",
+  "manual_data_choices": {
+    "result": "passed",
+    "disposable_state_only": true,
+    "retain_choice_preserves_config_cache_native_credential": true,
+    "cache_only_choice_preserves_settings_credential_and_other_paths": true,
+    "frozen_delete_control_key_removed_native_credential": true,
+    "frozen_delete_control_key_exit_code": 0,
+    "full_reset_removes_only_selected_node_state": true,
+    "unrelated_drift_and_custom_cache_preserved": true,
+    "independent_native_credential_absence": true,
+    "scope": "A newly created, task-owned home/node/cache layout and separate native credential. Filesystem fixtures stand in for model bytes. The actual qualified frozen executable performed credential deletion. No real user cache or credential was deleted. No download, inference or reinstall is claimed by this probe."
+  },
+  "startup_contract_checks": {
+    "result": "passed",
+    "command": "python -m unittest desktop.tests.test_startup.LoginStartupTests -v",
+    "tests": 13,
+    "duration_seconds": 5.644,
+    "scope": "Existing source contract tests cover exact frozen/source command construction, Windows registry roundtrip and errors, Linux XDG autostart files, minimized login launch, and single-instance ownership/activation. These are not an actual Windows sign-out/sign-in test."
+  },
+  "frozen_startup_ui_attempt": {
+    "result": "interrupted; no pass claimed",
+    "actual_frozen_window_opened": true,
+    "fixture_api_explicitly_selected": true,
+    "node_management_disabled_for_fixture": true,
+    "fixture_data_was_not_live_community_telemetry": true,
+    "fixture_source": "desktop/src/communityai_desktop/acceptance.py",
+    "startup_toggle_actions_completed": 0,
+    "login_registration_changed": false,
+    "observations": [
+      "The explicitly configured localhost fixture displayed its demo Llama/Qwen/Mistral models and peer counts. The normal production entrypoint was not exercised by this fixture.",
+      "Computer Use could read the accessibility tree, but its click failed because coordinate input geometry was unavailable. Screenshot capture then failed with E_NOINTERFACE.",
+      "Computer Use reported the user's physical Escape interruption. All further Computer Use stopped. No startup toggle acceptance was claimed.",
+      "The abort cleanup's prepare-update command returned exit 2. The remaining exact owned GUI was independently identified by executable, parent and process creation identity and terminated."
+    ],
+    "cleanup_audit": {
+      "result": "passed",
+      "owned_gui_helper_host_processes_absent": true,
+      "native_test_credential_absent": true,
+      "login_registration_absent": true,
+      "unrelated_processes_targeted": false
+    }
+  },
+  "alpha_policy": {
+    "installer_preserves_settings_cache_and_credentials": true,
+    "data_deletion_is_explicit_manual_choice": true,
+    "disable_sign_in_toggle_before_uninstall": true,
+    "automatic_uninstaller_cache_or_login_entry_removal": false,
+    "custom_cache_paths_require_individual_review": true
+  },
+  "remaining": [
+    "Actual frozen Windows sign-in toggle enable/restart/disable acceptance remains open; the interrupted fixture run does not establish it.",
+    "OS sign-out/sign-in and other hardware/desktop profiles are outside this record.",
+    "Ubuntu installation and per-user cleanup observations are recorded separately."
+  ],
+  "privacy": {
+    "user_data_deleted": false,
+    "credentials_or_private_endpoints_retained": false,
+    "prompt_or_response_content_retained": false
+  }
+}

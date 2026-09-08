@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-09-08",
+  "result": "failed",
+  "full_gate15": false,
+  "phase": "initial Ubuntu package unpacking",
+  "installer_version": "0.1.0~alpha.20260907.4",
+  "installer_sha256": "a2cc0548cd51f98ed7a9c208be18b53a701a9317cbc63293d4bf7d1e14151517",
+  "runtime_source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+  "installer_source_commit": "61ab7b1df61c82c5a306cefaf4e14b56356f5feb",
+  "environment": "Ubuntu 22.04 in WSL2 Docker, amd64; system dpkg 1.21.1; root package operation and planned ordinary UID 1000 GUI; SYS_PTRACE and CUDA passthrough",
+  "command": [
+    "dpkg",
+    "-i",
+    "communityai_0.1.0~alpha.20260907.4_amd64.deb"
+  ],
+  "harness_timeout_seconds": 540,
+  "observed_partial_unpacked_size_approx_gib": 2.6,
+  "cause": "Unpacking exceeded the fixed harness deadline; underlying performance cause has not been established.",
+  "claims": {
+    "installer_success": false,
+    "frozen_gui_or_node_launched": false,
+    "inference_exercised": false,
+    "replacement_or_reinstall_exercised": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "lifecycle_result": "failed",
+    "native_credential_absent": true,
+    "runtime_dht_and_xvfb_absent": true,
+    "no_installed_gui_was_launched": true,
+    "package_state_before_container_removal": "install reinstreq half-installed",
+    "partial_package_requires_owned_container_removal": true,
+    "external_cache_sentinel_preserved": true,
+    "exact_owned_container_stopped_and_removed": true,
+    "partial_installation_removed_with_container_layer": true,
+    "qualification_volume_and_model_caches_preserved": true,
+    "paid_cloud_resources_created": false
+  },
+  "raw_evidence_sha256": {
+    "result.json": "0e5583136eaadc714ef3c6a82595a59bff71ee9a5bdc7f655c40a24e37fcf4c4",
+    "install-dpkg.log": "b31b3be5729728729c3e879e0094119e5d7d44d7c492e821e901a0e7b43104c7",
+    "ordinary-user.log": "6912f6479b94023a0a57b126347c0a3d502ab5f8800368d93ba4ce0f85508849",
+    "timeout-cleanup-audit.json": "f4cafe801ff99c519f556928fc80428708b99060c62e5ce66b50ec7901b4e929"
+  },
+  "root_log_sha256": "94ee852ef1f15587c0a47b290fd6237cea6dbc5cc03653955049d9b71e90025c",
+  "next_step": "Diagnose Ubuntu unpacking speed and use a finite measured installation deadline; rerun the complete ordinary-user installed lifecycle. Do not infer Ubuntu acceptance from the passing Debian run."
+}

@@ -28,8 +28,12 @@ unpacked engineering archive.
 
 The installer removes obsolete `_internal` and `node` files only inside its
 marked installation directory. Settings, credentials and model cache live
-outside this directory and are retained. Explicit cache deletion and login-entry
-cleanup are not implemented by this installer yet.
+outside this directory and are retained. The alpha uses the explicit
+[manual retention and deletion choices](../../docs/DESKTOP_UNINSTALL.md): disable
+the sign-in toggle before uninstalling, keep state for reinstall, remove only
+reviewed model-cache folders to reclaim disk space, or explicitly reset the
+native credential and node state. The installer does not automatically delete
+cache or login entries.
 
 `-AppIdentifier` exists for isolated engineering installations. Keep the default
 `CommunityAI.Desktop` stable for public upgrades. The owner has approved unsigned
@@ -61,7 +65,10 @@ if matching processes remain or process ownership
 cannot be inspected. Container qualification must grant root `SYS_PTRACE` so it
 can inspect ordinary-user executables through `/proc`, as on the target desktop
 systems; missing permission must not silently skip a running installation. They never enumerate
-or remove home-directory settings/cache. Python 3.9+ and Linux PID handles are
+or remove home-directory settings/cache. Per-user login entries and optional
+cache/state deletion follow the same
+[manual choices](../../docs/DESKTOP_UNINSTALL.md), including when using `apt purge`.
+Python 3.9+ and Linux PID handles are
 required; the supported baseline is Ubuntu 22.04+/Debian 12+ on amd64.
 The declared Qt/X11 dependencies include `libxcb-shape0`; omitting it prevented
 the frozen desktop opening on a minimal Debian host even though offscreen tests
