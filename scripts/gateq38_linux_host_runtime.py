@@ -27,8 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Callable, Iterator, Mapping, Sequence
 
-from scripts import gateq38_linux_host_transport as transport
-from scripts import gateq38_route_controller as controller
+from scripts import gateq38_linux_host_transport as transport, gateq38_route_controller as controller
 
 SCHEMA_VERSION = 1
 PREPARED_SCOPE = "qwen3.8-linux-host-runtime-prepared"

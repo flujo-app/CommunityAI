@@ -20,10 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "desktop/src"))
 sys.path.insert(0, str(ROOT / "scripts"))
-from scripts import gate13_linux_packaged_lifecycle as lifecycle
-from scripts import gateq38_linux_host_runtime as host
-
 from desktop import build_desktop as builder
+from scripts import gate13_linux_packaged_lifecycle as lifecycle, gateq38_linux_host_runtime as host
 
 PAYLOAD = b"native runtime library fixture\n" * 7
 A = "CommunityAI/node/_internal/a.so"
