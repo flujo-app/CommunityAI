@@ -59,7 +59,11 @@ jobs:
             tests/test_catalog_publication.py \
             tests/test_catalog_refresh.py \
             desktop/tests/test_build_desktop.py \
+            desktop/tests/test_native_runtime_self_test.py \
+            desktop/tests/test_release_downloads.py \
+            desktop/tests/test_runtime_packaging.py \
             desktop/tests/test_startup.py \
+            desktop/tests/test_windows_online_installer.py \
             tests/test_deepseek_v3.py \
             tests/test_discovery.py \
             tests/test_edge_benchmark.py \
@@ -74,6 +78,7 @@ jobs:
             tests/test_join_token.py \
             tests/test_kv_cache_strategy.py \
             tests/test_loading_diagnostics.py \
+            tests/test_linux_online_installer.py \
             tests/test_login_startup_linux.py \
             tests/test_login_startup_windows_cycle.py \
             tests/test_login_startup_windows_safety.py \
@@ -99,6 +104,7 @@ jobs:
             tests/test_qwen3_5_block.py \
             tests/test_qwen3_5_multimodal_loading.py \
             tests/test_route_health.py \
+            tests/test_runtime_archive_hardlinks.py \
             tests/test_server_registry.py \
             tests/test_startup_guard.py \
             tests/test_tied_embeddings_from_pretrained.py \

@@ -31,6 +31,25 @@ Linux candidate. Allow additional space for the downloaded installer, model
 cache and temporary upgrade files. These are measured runtime sizes, not a
 minimum disk-space guarantee.
 
+The [September 8 size audit](evidence/alpha-installer-size-audit-20260908.md)
+attributes most of this footprint to PyTorch and NVIDIA runtime libraries. It
+also identifies 3.26 GB of duplicate regular-file data in the qualified Linux
+bundle, before compression. Packaging reductions are candidates for a separately
+verified build; the installer sizes and hashes on this page remain unchanged.
+
+The September 8 packaging refresh removes unused bitsandbytes CUDA variants and
+preserves identical Linux native libraries as hardlinks. Its source-level checks
+are recorded in [the reduction evidence](evidence/runtime-packaging-reduction-20260908.md).
+Fresh frozen-runtime and installer checks are required before replacing the
+qualified downloads above.
+
+Small online installers are implemented for
+[Windows](../desktop/installers/ONLINE_WINDOWS.md) and
+[Linux](../desktop/installers/ONLINE_LINUX.md). Each embeds the exact offline
+package URL, SHA-256 and byte size, verifies the download, then runs the ordinary
+installer. This reduces the initial download, not the total runtime download.
+They are not published yet; build fixtures use an intentionally unreachable URL.
+
 ## Windows
 
 In PowerShell, from the folder containing the download:
@@ -120,8 +139,12 @@ Both candidate installers exceed GitHub Releases' **2 GiB per-file limit**.
 GitHub release notes can link to them, but the complete files need a different
 download origin. [GitHub's release limits](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#storage-and-bandwidth-quotas).
 
-For a single-file download, the preferred candidate is **Cloudflare R2 Standard
-storage**, with immutable versioned object paths and a custom download domain.
+For a single-file download, **Cloudflare R2 Standard storage** is configured with
+a dedicated `communityai-releases` bucket. Release objects will use immutable
+versioned paths. The account owner activated R2 on September 8 and authorized a
+personal API token for release storage; CLI access and an anonymous text-object
+download were verified. The credential is encrypted locally outside the repository.
+
 The two installers total **6,300,637,924 bytes** (about 6.3 GB). That fits R2's
 10 GB-month included storage allowance if other account usage and retained
 versions leave enough room. Standard storage includes 1 million Class A and
@@ -129,11 +152,16 @@ versions leave enough room. Standard storage includes 1 million Class A and
 charge. These allowances make a small alpha plausibly free; they are not a
 guarantee of the account's bill. [R2 pricing](https://developers.cloudflare.com/r2/pricing/).
 
-Both files fit the documented 5 GiB single-part object upload limit. Use a custom
-domain for the public release: the supplied `r2.dev` hostname is rate limited
-and intended for development. Account/R2 enablement, domain control, bucket
-configuration and an anonymous download/checksum test are still required; no
-Cloudflare account or hosting setup was inspected or created by this audit.
+Both files fit the documented 5 GiB single-part object upload limit, but
+Wrangler's object uploader has a smaller 300 MiB limit. Large release uploads use
+the S3-compatible CLI with multipart transfer.
+
+This fresh account has no domains. Its initial test origin is
+`https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev`.
+Cloudflare rate-limits the supplied `r2.dev` hostname and intends it for
+development; a custom domain remains appropriate for wider distribution.
+No installer is advertised at this origin yet. A real package download/checksum
+check and online-installer acceptance are still required before publication.
 [R2 limits](https://developers.cloudflare.com/r2/platform/limits/),
 [public bucket domains](https://developers.cloudflare.com/r2/buckets/public-buckets/).
 

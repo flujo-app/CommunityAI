@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import importlib.metadata
 import json
 import os
 import platform
@@ -20,6 +21,11 @@ from typing import BinaryIO, Sequence
 
 from communityai_desktop.acceptance import run_self_test
 from communityai_desktop.pyside_shell import check_runtime
+
+try:  # Direct script execution and repository test imports use different roots.
+    from runtime_packaging import normalize_runtime
+except ModuleNotFoundError:
+    from desktop.runtime_packaging import normalize_runtime
 
 APP_NAME = "CommunityAI"
 NODE_NAME = "CommunityAI-Node"
@@ -43,6 +49,7 @@ _RELEASE_SOURCE_PATHS = (
     ".gitattributes",
     ".github/workflows/desktop.yaml",
     "desktop/build_desktop.py",
+    "desktop/runtime_packaging.py",
     "desktop/launch_desktop.py",
     "desktop/launch_node.py",
     "desktop/pyproject.toml",
@@ -377,6 +384,7 @@ def _normalized_tar_info(name: str, *, mode: int) -> tarfile.TarInfo:
 
 
 def _write_tar_install_archive(archive_path: Path, entries: Sequence[dict[str, object]]) -> None:
+    regular_inodes: dict[tuple[int, int], dict[str, object]] = {}
     with archive_path.open("wb") as raw_stream:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw_stream, compresslevel=9, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
@@ -392,10 +400,23 @@ def _write_tar_install_archive(archive_path: Path, entries: Sequence[dict[str, o
                         archive.addfile(info)
                     elif entry["kind"] == "file":
                         source = Path(entry["_source"])
+                        source_stat = source.lstat()
+                        if not stat.S_ISREG(source_stat.st_mode):
+                            raise RuntimeError("install archive regular source changed type")
+                        identity = source_stat.st_dev, source_stat.st_ino
+                        prior = regular_inodes.get(identity)
+                        if prior is not None:
+                            if any(entry[key] != prior[key] for key in ("sha256", "size_bytes", "mode")):
+                                raise RuntimeError("install archive hardlink identity changed")
+                            info.type = tarfile.LNKTYPE
+                            info.linkname = str(prior["path"])
+                            archive.addfile(info)
+                            continue
                         info.type = tarfile.REGTYPE
                         info.size = int(entry["size_bytes"])
                         with source.open("rb") as source_stream:
                             archive.addfile(info, source_stream)
+                        regular_inodes[identity] = entry
                     else:
                         raise RuntimeError(f"unsupported install archive entry kind: {entry['kind']!r}")
 
@@ -479,8 +500,9 @@ def _verify_tar_install_archive(
                 actual[member_path] = member
             if set(actual) != set(expected):
                 raise RuntimeError("install archive members do not match the release bundle")
-            for member_path, entry in expected.items():
-                member = actual[member_path]
+            verified_regular: set[str] = set()
+            for member_path, member in actual.items():
+                entry = expected[member_path]
                 if entry["kind"] == "directory":
                     if not member.isdir() or stat.S_IMODE(member.mode) != int(entry["mode"]):
                         raise RuntimeError(f"install archive directory mode or type mismatch: {member_path}")
@@ -491,16 +513,32 @@ def _verify_tar_install_archive(
                     if canonical_target != entry["link_target"]:
                         raise RuntimeError(f"install archive symlink target mismatch: {member_path}")
                 elif entry["kind"] == "file":
+                    effective_size = member.size
+                    if member.islnk():
+                        target = _validate_install_member_path(member.linkname)
+                        target_entry = expected.get(target, {})
+                        if (
+                            member.linkname != target
+                            or target not in verified_regular
+                            or member.size != 0
+                            or any(entry[key] != target_entry.get(key) for key in ("sha256", "size_bytes", "mode"))
+                        ):
+                            raise RuntimeError(
+                                "install archive hardlink target is not a verified identical regular file"
+                            )
+                        effective_size = int(target_entry["size_bytes"])
                     if (
-                        not member.isfile()
+                        not (member.isfile() or member.islnk())
                         or member.issparse()
-                        or member.size != int(entry["size_bytes"])
+                        or effective_size != int(entry["size_bytes"])
                         or stat.S_IMODE(member.mode) != int(entry["mode"])
                     ):
                         raise RuntimeError(f"install archive file size, mode, or type mismatch: {member_path}")
                     stream = archive.extractfile(member)
                     if stream is None or _sha256_archive_stream(stream) != entry["sha256"]:
                         raise RuntimeError(f"install archive file digest mismatch: {member_path}")
+                    if member.isfile():
+                        verified_regular.add(member_path)
                 else:
                     raise RuntimeError(f"unsupported install archive entry kind: {entry['kind']!r}")
     except (OSError, tarfile.TarError) as exc:
@@ -1397,6 +1435,11 @@ def main() -> int:
     node_executable = node_root / f"{NODE_NAME}{'.exe' if os.name == 'nt' else ''}"
     if not node_executable.is_file():
         raise RuntimeError(f"packaged node executable was not staged: {node_executable}")
+
+    normalization = normalize_runtime(
+        node_root, target_platform=platform.system(), torch_version=importlib.metadata.version("torch")
+    )
+    (bundle_root / "runtime-packaging.json").write_text(_canonical_json(normalization), encoding="utf-8")
 
     environment = os.environ.copy()
     environment.setdefault("QT_QPA_PLATFORM", "offscreen")

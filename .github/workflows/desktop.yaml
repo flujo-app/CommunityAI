@@ -10,6 +10,9 @@ on:
       - "src/**"
       - "scripts/build_hivemind_windows.py"
       - "scripts/hivemind-win32.patch"
+      - "scripts/gate13_linux_packaged_lifecycle.py"
+      - "scripts/gateq38_linux_host_runtime.py"
+      - "tests/test_runtime_archive_hardlinks.py"
       - "docs/REVIVAL.md"
       - "docs/REVIVAL_TEST_RESULTS.md"
   workflow_dispatch:
@@ -77,6 +80,9 @@ jobs:
         run: |
           python -m unittest discover -s desktop/tests -v
           communityai-desktop --self-test
+      - name: Verify normalized archive consumers
+        working-directory: .
+        run: python -m unittest discover -s tests -p test_runtime_archive_hardlinks.py -v
       - name: Verify Linux installer process ownership as package-maintenance user
         if: runner.os == 'Linux'
         working-directory: .
@@ -97,6 +103,8 @@ jobs:
           --source-commit "${{ github.sha }}"
           --build-workflow "${{ github.workflow_ref }}"
           --verify-build-environment
+      - name: Exercise frozen native CPU runtime without model downloads
+        run: ./dist/desktop/CommunityAI/node/CommunityAI-Node --native-self-test
       - name: Exercise frozen desktop through X11
         if: runner.os == 'Linux'
         env:
@@ -123,6 +131,31 @@ jobs:
           $process = Start-Process -FilePath $innoInstaller -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/NOICONS',"/DIR=$innoDirectory") -WindowStyle Hidden -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Inno Setup compiler installation failed' }
           ./installers/build_windows_installer.ps1 -Bundle dist/desktop/CommunityAI -OutputDirectory dist/installers -Version '0.1.0-alpha.${{ github.run_number }}' -Compiler (Join-Path $innoDirectory 'ISCC.exe') -UnsignedEngineering
+      - name: Compile online downloader with inert fixture metadata
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Compile the Pascal boundary without publishing or running a downloader.
+          # This intentionally unreachable fixture is kept outside uploaded artifacts.
+          $fixtureDirectory = Join-Path $env:RUNNER_TEMP 'communityai-online-compile-fixture'
+          New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+          $fixtureManifest = Join-Path $fixtureDirectory 'release-downloads.json'
+          @{
+            schema_version = 1
+            artifacts = @{
+              'windows-x64' = @{
+                platform = 'windows-x64'
+                kind = 'offline-installer'
+                format = 'exe'
+                version = '0.0.0-test'
+                filename = 'communityai-0.0.0-test-windows-setup.exe'
+                url = 'https://example.invalid/releases/0.0.0-test/communityai-0.0.0-test-windows-setup.exe'
+                sha256 = ('a' * 64)
+                size_bytes = 2519046440
+              }
+            }
+          } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $fixtureManifest -Encoding utf8
+          ./installers/build_windows_online_installer.ps1 -Manifest $fixtureManifest -OutputDirectory (Join-Path $fixtureDirectory 'output') -Compiler (Join-Path $env:RUNNER_TEMP 'inno-compiler/ISCC.exe') -UnsignedAlpha
       - name: Build Debian engineering package
         if: runner.os == 'Linux'
         run: >-

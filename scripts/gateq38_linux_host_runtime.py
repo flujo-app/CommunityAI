@@ -27,7 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Callable, Iterator, Mapping, Sequence
 
-from scripts import gateq38_linux_host_transport as transport, gateq38_route_controller as controller
+from scripts import gateq38_linux_host_transport as transport
+from scripts import gateq38_route_controller as controller
 
 SCHEMA_VERSION = 1
 PREPARED_SCOPE = "qwen3.8-linux-host-runtime-prepared"
@@ -764,18 +765,24 @@ def _audit_members(
             raise Q38LinuxHostRuntimeError("archive contains duplicate members")
         folded_paths.add(folded)
         if (
-            member.islnk()
-            or member.isdev()
+            member.isdev()
             or member.isfifo()
             or getattr(member, "sparse", None)
-            or not (member.isdir() or member.isfile() or member.issym())
+            or not (member.isdir() or member.isfile() or member.issym() or member.islnk())
         ):
             raise Q38LinuxHostRuntimeError("archive member type is unsafe")
         if stat.S_IMODE(member.mode) & 0o7000 or (not member.isfile() and member.size != 0):
             raise Q38LinuxHostRuntimeError("archive member mode or size is unsafe")
+        effective_size = member.size
+        if member.islnk():
+            target = _safe_member_path(member.linkname)
+            prior = members.get(target)
+            if member.linkname != target or prior is None or not prior.isfile():
+                raise Q38LinuxHostRuntimeError("archive hardlink target is not a prior regular member")
+            effective_size = prior.size
         members[path] = member
-        if member.isfile():
-            total_bytes += member.size
+        if member.isfile() or member.islnk():
+            total_bytes += effective_size
             if total_bytes > MAX_EXPANDED_BYTES:
                 raise Q38LinuxHostRuntimeError("archive expanded size exceeded its bound")
     payload_members = {path: member for path, member in members.items() if not member.isdir()}
@@ -783,10 +790,27 @@ def _audit_members(
         raise Q38LinuxHostRuntimeError("archive payload inventory changed")
     if total_bytes != sum(item.size_bytes for item in artifacts if item.kind == "file"):
         raise Q38LinuxHostRuntimeError("archive expanded size changed")
-    for path, artifact in artifact_map.items():
-        member = payload_members[path]
+    verified_regular: set[str] = set()
+    for path, member in payload_members.items():
+        artifact = artifact_map[path]
         if artifact.kind == "file":
-            if not member.isfile() or member.size != artifact.size_bytes or stat.S_IMODE(member.mode) != artifact.mode:
+            effective_size = member.size
+            if member.islnk():
+                target = artifact_map.get(member.linkname)
+                if (
+                    member.linkname not in verified_regular
+                    or target is None
+                    or target.kind != "file"
+                    or (target.sha256, target.size_bytes, target.mode)
+                    != (artifact.sha256, artifact.size_bytes, artifact.mode)
+                ):
+                    raise Q38LinuxHostRuntimeError("archive hardlink target is not a verified identical file")
+                effective_size = target.size_bytes
+            if (
+                not (member.isfile() or member.islnk())
+                or effective_size != artifact.size_bytes
+                or stat.S_IMODE(member.mode) != artifact.mode
+            ):
                 raise Q38LinuxHostRuntimeError("archive file identity changed")
             stream = source.extractfile(member)
             if stream is None:
@@ -796,6 +820,8 @@ def _audit_members(
                 digest.update(chunk)
             if digest.hexdigest() != artifact.sha256:
                 raise Q38LinuxHostRuntimeError("archive file digest changed")
+            if member.isfile():
+                verified_regular.add(path)
         elif not member.issym() or _canonical_link_target(path, member.linkname) != artifact.link_target:
             raise Q38LinuxHostRuntimeError("archive symlink identity changed")
     return members
@@ -856,11 +882,19 @@ def _extract_verified_archive(
                         target = destination.joinpath(*PurePosixPath(path).parts)
                         target.mkdir(mode=0o755, parents=True, exist_ok=True)
                     elif artifact is not None and artifact.kind == "file":
+                        target = destination.joinpath(*PurePosixPath(path).parts)
+                        target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+                        if member.islnk():
+                            if member.linkname not in node_paths:
+                                raise Q38LinuxHostRuntimeError("node hardlink leaves the runtime inventory")
+                            prior = destination.joinpath(*PurePosixPath(member.linkname).parts)
+                            if not stat.S_ISREG(prior.lstat().st_mode):
+                                raise Q38LinuxHostRuntimeError("node hardlink target is not a regular file")
+                            os.link(prior, target, follow_symlinks=False)
+                            continue
                         stream = source.extractfile(member)
                         if stream is None:
                             raise Q38LinuxHostRuntimeError("archive file is unreadable")
-                        target = destination.joinpath(*PurePosixPath(path).parts)
-                        target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
                         with target.open("xb") as output:
                             shutil.copyfileobj(stream, output, length=HASH_CHUNK_BYTES)
                             output.flush()

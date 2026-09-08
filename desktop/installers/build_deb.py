@@ -6,9 +6,43 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
+
+
+def copy_bundle(source, destination):
+    """Preserve runtime hardlink groups, including the cross-device fallback."""
+    copied = {}
+
+    def link_or_copy(source, destination):
+        info = os.stat(source, follow_symlinks=False)
+        identity = info.st_dev, info.st_ino
+        prior = copied.get(identity)
+        if prior is not None:
+            os.link(prior, destination, follow_symlinks=False)
+        else:
+            try:
+                os.link(source, destination, follow_symlinks=False)
+            except OSError as exc:
+                if exc.errno != errno.EXDEV:
+                    raise
+                shutil.copy2(source, destination)
+            copied[identity] = destination
+        return destination
+
+    shutil.copytree(source, destination, symlinks=True, copy_function=link_or_copy)
+
+
+def installed_size_kib(root):
+    """Count each hardlinked payload once; symlinks do not copy target contents."""
+    unique = {}
+    for path in root.rglob("*"):
+        info = path.lstat()
+        if stat.S_ISREG(info.st_mode):
+            unique[(info.st_dev, info.st_ino)] = info.st_size
+    return (sum(unique.values()) + 1023) // 1024
 
 
 def build(bundle, output, version, maintainer):
@@ -22,25 +56,17 @@ def build(bundle, output, version, maintainer):
     output.mkdir(parents=True, exist_ok=True)
     scripts = Path(__file__).resolve().parent
 
-    def link_or_copy(source, destination):
-        try:
-            return os.link(source, destination)
-        except OSError as exc:
-            if exc.errno != errno.EXDEV:
-                raise
-            return shutil.copy2(source, destination)
-
     with tempfile.TemporaryDirectory(prefix="communityai-deb-", dir=bundle.parent) as temporary:
         root = Path(temporary)
         root.chmod(0o755)
         app = root / "opt/communityai"
         # Hardlinks avoid duplicating several GiB of verified CUDA libraries.
-        shutil.copytree(bundle, app, symlinks=True, copy_function=link_or_copy)
+        copy_bundle(bundle, app)
         (app / ".communityai-installation").unlink(missing_ok=True)
         shutil.copyfile(scripts / "installation-marker.txt", app / ".communityai-installation")
         control = root / "DEBIAN"
         control.mkdir()
-        size_kib = sum(path.stat().st_size for path in app.rglob("*") if path.is_file()) // 1024
+        size_kib = installed_size_kib(app)
         (control / "control").write_text(
             f"Package: communityai\nVersion: {version}\nArchitecture: amd64\n"
             f"Maintainer: {maintainer}\nInstalled-Size: {size_kib}\n"

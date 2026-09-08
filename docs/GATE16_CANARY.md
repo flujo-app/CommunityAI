@@ -5,6 +5,15 @@ prerequisites; it does not establish a monitored public canary. Use the qualifie
 installers and exact manifest/catalog identities from
 [release readiness](RELEASE_READINESS.md). Signing is owner-deferred after alpha.
 
+September 8 scope update: the owner deferred additional conversation/performance
+measurements and frozen periodic catalog-update qualification after alpha. The
+catalog withdrawal/restore phases below are retained as beta procedures, not
+current alpha blockers. Existing real worker-loss, fallback, rejoin, formation
+and shutdown evidence must be reused before planning further work. The owner has
+asked what a new integrated run adds; Gate 16's final alpha scope is under review.
+No combined public canary is claimed to have passed. This scope update takes
+precedence over the original full-run acceptance wording below.
+
 ## Reproducible local prerequisites
 
 Run these from the repository root in the maintained Python environment. They do

@@ -7,8 +7,10 @@ packaged short chat, worker-loss recovery and HTTP-blocked cache restart passed
 on assigned cloud routes. Bounded autonomous CPU desktop formation and recovery
 also passed on September 7. Gate 14 resource controls now pass the bounded
 Windows/Linux frozen-package acceptance. Gate 15 installers and login controls
-also pass their bounded Windows/Debian/Ubuntu acceptance. Remaining Qwen product
-measurements, the live canary and publication are next. The [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
+also pass their bounded Windows/Debian/Ubuntu acceptance. The owner accepts the
+existing Qwen conversation proof for alpha; additional measurements and frozen
+periodic catalog-update qualification are deferred. Gate 16 scope review and
+publication preparation are next. The [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
 candidate lists in historical implementation snapshots below.
 
 September 7 Gate 14 update: **PASSED for the bounded alpha scope.** The
@@ -26,6 +28,13 @@ and normal Windows/Linux signed-catalog startup migration passed.
 Earlier failed attempts are retained separately; local canary checks do
 not replace the live public route exercise. See the
 [current evidence and remaining work](RELEASE_READINESS.md#next-work-in-useful-product-order).
+
+September 8 owner scope clarification: additional conversation/performance
+qualification is not required before alpha. Frozen periodic catalog activation
+and active-answer draining tests follow in beta; the owner expects only one or
+two more catalog changes this year. Existing real recovery and safety results
+must be credited when deciding whether Gate 16 adds useful new evidence. Its
+combined public deployment drill remains unexecuted, not passed.
 
 This repository starts from DRIFT-LLM, the most practical maintained continuation
 of Petals found during the August 2026 fork audit. It preserves the parts that are
@@ -87,6 +96,11 @@ agent:
   adapters. Do not qualify arbitrary intermediate sizes merely to demonstrate
   sharding. Each actual ladder entry needs its own correctness, memory, recovery,
   packaged-delivery, and performance evidence before activation.
+- For the September 8 alpha scope, accept the existing packaged Qwen conversation,
+  performance observations and recovery proof. Additional representative chat or
+  hardware measurements and frozen periodic catalog activation/draining are
+  deferred after alpha (catalog-update qualification to beta). Preserve the
+  measured limits and do not reintroduce these deferred checks as release gates.
 - New temporary GCP and Fly test resources share one live owner-authorized combined
   ceiling. The baseline is USD 100; on 2026-08-31 the owner raised the current accounting
   epoch to **USD 500 maximum**. The already committed USD 52 maximum remains charged to
@@ -183,9 +197,13 @@ release (17)** as the next product sequence:
    formation fixes. Verify ordinary startup, upgrade/reinstall, catalog migration,
    uninstall, and retain/delete-cache choices. Upgrades must stop the node and
    its complete worker trees before replacing files and preserve settings/cache.
-3. complete remaining Qwen and resource-control observations on those packages,
-   declaring only tested hardware and conversation limits; and
-4. run the bounded public canary and publish the best-effort Qwen alpha.
+3. retain the passed Qwen/resource-control observations and declare their tested
+   hardware and conversation limits; the September 8 owner decision defers broader
+   measurements and frozen periodic catalog-update qualification; and
+4. resolve Gate 16's remaining deployment scope using the existing recovery/safety
+   evidence, then publish the best-effort Qwen alpha. The owner has asked why a
+   further integrated run is needed; do not repeat proven recovery solely to
+   complete a gate number.
 
 Combine overlapping product checks in the same real desktop sessions. The full
 Qwen runtime and tested same-session recovery already passed; repeat them only

@@ -1386,6 +1386,67 @@ def _validate_desktop_metrics(
     return package_version
 
 
+def _audit_tar_payload(source, artifacts):
+    """Verify ordinary payloads and backward hardlinks before any extraction."""
+    artifact_map = {item["path"]: item for item in artifacts}
+    members = {}
+    folded = set()
+    for member in source.getmembers():
+        path = _safe_member_path(member.name, allow_root=True)
+        if path.casefold() in folded:
+            raise LifecycleRunError("install archive has duplicate members")
+        folded.add(path.casefold())
+        if not (member.isdir() or member.isfile() or member.issym() or member.islnk()) or member.issparse():
+            raise LifecycleRunError("install archive member type is unsafe")
+        if stat.S_IMODE(member.mode) & 0o7000 or (not member.isfile() and member.size != 0):
+            raise LifecycleRunError("install archive member mode or size is unsafe")
+        if member.islnk():
+            target = _safe_member_path(member.linkname)
+            prior = members.get(target)
+            if member.linkname != target or prior is None or not prior.isfile():
+                raise LifecycleRunError("install archive hardlink target is not a prior regular member")
+        members[path] = member
+    artifact_members = {path: member for path, member in members.items() if not member.isdir()}
+    if set(artifact_members) != set(artifact_map):
+        raise LifecycleRunError("install archive artifacts do not match provenance")
+    verified_regular = set()
+    for path, member in artifact_members.items():
+        artifact = artifact_map[path]
+        if artifact["kind"] == "file":
+            effective_size = member.size
+            if member.islnk():
+                prior = artifact_map.get(member.linkname, {})
+                if member.linkname not in verified_regular or any(
+                    artifact[key] != prior.get(key) for key in ("sha256", "size_bytes", "mode")
+                ):
+                    raise LifecycleRunError("install archive hardlink target is not a verified identical file")
+                effective_size = prior["size_bytes"]
+            if (
+                not (member.isfile() or member.islnk())
+                or effective_size != artifact["size_bytes"]
+                or stat.S_IMODE(member.mode) != artifact["mode"]
+            ):
+                raise LifecycleRunError("install archive file identity is invalid")
+            stream = source.extractfile(member)
+            if stream is None:
+                raise LifecycleRunError("install archive file is unreadable")
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+            if digest.hexdigest() != artifact["sha256"]:
+                raise LifecycleRunError("install archive file digest is invalid")
+            if member.isfile():
+                verified_regular.add(path)
+        elif (
+            not member.issym()
+            or _canonical_link_target(path, member.linkname) != artifact["link_target"]
+            or artifact["link_target"] not in artifact_map
+            or artifact_map[artifact["link_target"]]["kind"] != "file"
+        ):
+            raise LifecycleRunError("install archive symlink identity is invalid")
+    return members
+
+
 def _audit_package(root: Path, expected_digest: str, expected_bytes: int) -> PackageAudit:
     archive = root / ARCHIVE_NAME
     metadata_path = root / "release-metadata.json"
@@ -1489,45 +1550,11 @@ def _audit_package(root: Path, expected_digest: str, expected_bytes: int) -> Pac
     if checksums_path.read_bytes() != expected_checksums:
         raise LifecycleRunError("package checksum inventory is invalid")
 
-    members: dict[str, tarfile.TarInfo] = {}
     try:
         with tarfile.open(archive, "r:gz") as source:
-            for member in source.getmembers():
-                path = _safe_member_path(member.name, allow_root=True)
-                if path.casefold() in {candidate.casefold() for candidate in members}:
-                    raise LifecycleRunError("install archive has duplicate members")
-                if not (member.isdir() or member.isfile() or member.issym()) or member.islnk() or member.issparse():
-                    raise LifecycleRunError("install archive member type is unsafe")
-                members[path] = member
+            members = _audit_tar_payload(source, artifacts)
             if len(members) != archive_record["entry_count"]:
                 raise LifecycleRunError("install archive member count is invalid")
-            artifact_members = {path: member for path, member in members.items() if not member.isdir()}
-            if set(artifact_members) != set(artifact_map):
-                raise LifecycleRunError("install archive artifacts do not match provenance")
-            for path, artifact in artifact_map.items():
-                member = artifact_members[path]
-                if artifact["kind"] == "file":
-                    if (
-                        not member.isfile()
-                        or member.size != artifact["size_bytes"]
-                        or stat.S_IMODE(member.mode) != artifact["mode"]
-                    ):
-                        raise LifecycleRunError("install archive file identity is invalid")
-                    stream = source.extractfile(member)
-                    if stream is None:
-                        raise LifecycleRunError("install archive file is unreadable")
-                    digest_stream = hashlib.sha256()
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        digest_stream.update(chunk)
-                    if digest_stream.hexdigest() != artifact["sha256"]:
-                        raise LifecycleRunError("install archive file digest is invalid")
-                elif (
-                    not member.issym()
-                    or _canonical_link_target(path, member.linkname) != artifact["link_target"]
-                    or artifact["link_target"] not in artifact_map
-                    or artifact_map[artifact["link_target"]]["kind"] != "file"
-                ):
-                    raise LifecycleRunError("install archive symlink identity is invalid")
     except (OSError, tarfile.TarError) as exc:
         raise LifecycleRunError("install archive is unreadable") from exc
 
@@ -1578,7 +1605,7 @@ def _extract_package(audit: PackageAudit, install_root: Path) -> Path:
     product_root = install_root / "CommunityAI"
     try:
         with tarfile.open(audit.archive, "r:gz") as source:
-            members = source.getmembers()
+            members = list(_audit_tar_payload(source, audit.artifacts).values())
             for member in members:
                 path = _safe_member_path(member.name, allow_root=True)
                 target = install_root.joinpath(*PurePosixPath(path).parts)
@@ -1598,6 +1625,15 @@ def _extract_package(audit: PackageAudit, install_root: Path) -> Path:
                         destination.flush()
                         os.fsync(destination.fileno())
                     os.chmod(target, stat.S_IMODE(member.mode))
+            for member in members:
+                if member.islnk():
+                    path = _safe_member_path(member.name)
+                    target = install_root.joinpath(*PurePosixPath(path).parts)
+                    prior = install_root.joinpath(*PurePosixPath(member.linkname).parts)
+                    if not stat.S_ISREG(prior.lstat().st_mode):
+                        raise LifecycleRunError("install archive hardlink target is not a regular file")
+                    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    os.link(prior, target, follow_symlinks=False)
             for member in members:
                 if member.issym():
                     path = _safe_member_path(member.name)

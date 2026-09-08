@@ -26,7 +26,15 @@ owner explicitly deferred Windows publisher signing; unsigned alpha setup with
 checksums/provenance is acceptable. Store distribution follows trusted signing;
 a signed APT repository can follow the directly installable `.deb`.
 
-## Qwen3.8 results: bounded tests passed, release checks open
+September 8 owner scope decision: the existing packaged conversation and recovery
+evidence is sufficient for alpha. Additional representative conversation,
+performance and hardware measurements are deferred after alpha. Frozen periodic
+catalog activation and active-answer draining qualification are deferred to beta;
+the owner expects only one or two more catalog changes this year. These are no
+longer release blockers. This decision does not claim the omitted checks passed,
+disable the existing refresh implementation, or relax catalog signature checks.
+
+## Qwen3.8 results: bounded alpha scope accepted
 
 These live Qwen3.8 tests used `Qwen/Qwen3.8-27B-FP8` revision
 `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`, manifest
@@ -48,7 +56,7 @@ with FP8 weights converted to BF16 and eager attention.
 | Packaged Qwen3.8 | **PASSED on the assigned L4/T4/C3 route under signed public sequence 2.** Windows v9 generated three tokens in 12.250 seconds; a 31-token chat prompt answered `Paris` in 19.359 seconds. Peak sampled client process-tree RSS was 4.97 GB. [Evidence](evidence/qwen-packaged-recovery-v9-c3-20260906.json). |
 | Packaged worker outage and cache reuse | **PASSED on that C3 route.** Confirmed worker stop → automatic local answer → same-identity restart → Qwen answer in 13.672 seconds. A new node process repeated community completion/chat and local-only inference with HTTP downloads blocked, making zero download attempts. Owned cloud cleanup passed. The earlier [E2 rejoin timeout](evidence/qwen-packaged-rejoin-timeout-v9-20260906.json) remains a failed attempt. |
 | Autonomous desktop formation and recovery | **PASSED, bounded CPU/source-UI scope.** The actual [one-click runner](QWEN_FORMATION_TEST.md) formed 64/64 blocks from four capacity-only contributors, promoted all six clients and returned real Qwen3.8 answers. Whole-participant loss produced five local answers; unattended same-identity restart restored six Qwen3.8 answers. Real Qt controls/windows passed. No runtime intervention; cleanup verified. Three-token requests took 24–34 seconds. Fallback validation took minutes. [Evidence](evidence/qwen-formation-passed-20260907.json). Fresh installers, fully frozen UI, GPU contributors and simultaneous cold joins are outside this result. |
-| Consumer GPU and chat performance | **OPEN beyond the bounded observations above.** No RTX 30/40/50, broader conversation, context or concurrency qualification is claimed. The short C3 result is not a general performance qualification. |
+| Consumer GPU and chat performance | **DEFERRED after alpha by the owner on September 8.** Existing conversation evidence is accepted for alpha. No RTX 30/40/50, broader conversation, context or concurrency qualification is claimed. |
 
 The complete [experiment report](QWEN_FULL_INFERENCE_RESULTS.md) preserves timing,
 source hashes, routes, recovery limitations, and the earlier failed diagnostic
@@ -71,10 +79,10 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | Gate | Status | What must be true before it passes |
 | --- | --- | --- |
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
-| Q3.8 | **IN PROGRESS; runtime, packaged, bounded formation and Windows/Linux startup migration passed** | Finish representative consumer GPU/client and conversation measurements and frozen newer-sequence activation/draining. Ordinary-user frozen Windows and Linux startup migration from signed sequence 1 to 2 passed with preferences/cache preserved; the first Linux failure is retained separately. |
+| Q3.8 | **PASSED, owner-accepted bounded alpha scope** | Runtime, packaged conversation/recovery, bounded formation and Windows/Linux startup migration passed. On September 8 the owner accepted those results for alpha and deferred additional conversation/hardware measurements and frozen periodic catalog activation/draining. Broader performance and beta update behavior remain unqualified. |
 | 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
 | 15 | **PASSED, bounded Windows/Debian/Ubuntu alpha scope** | **“Install it, replace it, remove it.”** Windows active different-version upgrade and Debian/Ubuntu active same-version replacement/removal/reinstall passed. Both frozen sign-in checkboxes passed enable/restart/disable with native registration and cleanup verified. Manual cache/reset choices passed on disposable Windows state; disable sign-in startup before uninstalling. [Combined acceptance](evidence/gate15-20260908-final-installer-acceptance.md). Unsigned alpha is owner-authorized; signing, Store, hosted signed APT and automatic updates follow after alpha. |
-| 16 | **WAITING; local prerequisites passed** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. The frozen local API probe and 131 source safety/catalog tests passed; these do not replace the live canary. |
+| 16 | **IN PROGRESS; existing recovery/safety evidence under release-scope review** | Real worker-loss/fallback/rejoin, formation, resource shutdown and local safety checks already passed in their recorded scopes. Credit those results before scheduling any new run. The combined public-deployment probe followed by real inference has not run; periodic live catalog withdrawal/restore qualification follows the owner's beta deferral. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
 
 Gate 14 protects contributors' PCs and Gate 15 makes distribution usable; retain
@@ -84,6 +92,17 @@ cloud framework simply to advance gate numbers. Gate 16 provides the bounded
 public safety check; exhaustive hardening is deferred.
 
 ## Next work, in useful product order
+
+September 8 distribution refresh: the owner requested removal of duplicate
+libraries and unused bitsandbytes CUDA variants, plus a small verified downloader
+and the full offline installer. Source changes and focused Windows/Linux checks
+are implemented; replacement frozen bundles and their actual install/download
+acceptance remain pending. The [packaging evidence](evidence/runtime-packaging-reduction-20260908.md)
+distinguishes inventory estimates from measured replacement installer sizes.
+Cloudflare R2 was activated by the owner; a storage-scoped token, CLI access,
+dedicated public bucket and anonymous test-object download are verified. The
+fresh account has no domain; its rate-limited `r2.dev` address is configured for
+initial testing. [Download and hosting status](ALPHA_INSTALL.md).
 
 Gate 14 is complete for the declared Windows/Linux alpha scope. The
 [final acceptance](evidence/gate14-20260907-final-resource-acceptance.md) used complete
@@ -200,7 +219,8 @@ Six new source integration cases connect the actual periodic refresh service,
 signed installer and model manager: active leases/loading delay restart,
 admission closes before restart, invalid updates preserve state, and closing the
 service preserves active work. These passed without model loads. The frozen
-newer-sequence/active-generation replay remains open.
+newer-sequence/active-generation replay is deferred to beta by the September 8
+owner decision and is no longer an alpha blocker.
 [Source evidence and live replay requirements](evidence/qwen-catalog-periodic-source-20260908.md).
 
 Gate 16 now has a [bounded canary protocol](GATE16_CANARY.md) and a passing local
@@ -224,9 +244,10 @@ after observing lease release within timeout bounds and exact admission deltas;
 early resets and malformed-request transport failures still fail the probe.
 [Transport follow-up](evidence/gate16-20260908-linux-idle-transport-fix.md).
 
-At reviewed head `23a1f99`, functional/style checks and both production
-package/installer jobs passed. The subsequent qualification changes have focused
-regression coverage and are now selected by CI; current runs are visible in the PR.
+At reviewed head `076b4b1`, all nine CI checks passed, including Linux/macOS
+functional tests, style/security checks and both complete Windows/Linux production
+package/installer jobs. These rebuilds retain their own provenance; the installed
+acceptance above remains bound to its exact qualified artifacts.
 The
 two high-severity CodeQL findings were reviewed against their exact source-to-sink
 paths and [dismissed as false positives](evidence/gate14-20260907-codeql-triage.md),
@@ -234,12 +255,15 @@ with scanning still enabled. Public-key metadata is distinct from private materi
 and generated API bearer keys are distinct from human passwords; advanced imports
 still require operator-supplied strong tokens.
 
-1. **Complete remaining Q3.8 product measurements.** Preserve the bounded formation,
-   full-route and recovery results while recording the remaining conversation,
-   representative client/hardware and ordinary-user catalog-update observations.
-2. **Run Gate 16's bounded canary.** Exercise finite admission/timeouts, malformed
-   peers, health reconstruction, disclosure, route/catalog disable and clean
-   rollback through the packaged product.
+1. **Reuse the existing evidence when resolving Gate 16.** Worker loss, recovery,
+   fallback, formation, resource shutdown and local malformed/admission checks
+   have already passed in their recorded scopes. The owner asked which genuinely
+   new deployment observations remain; do not launch another full qualification
+   campaign merely to repeat them. The combined live canary remains unexecuted.
+2. **Prepare the public download location.** Arrange access for the exact setup
+   and `.deb`, then verify anonymous downloads and checksums. Additional Q3.8
+   conversations/performance measurements and periodic catalog activation/draining
+   are explicitly deferred and must not be reintroduced through Gate 16.
 3. **Publish and observe the best-effort alpha.** Publish only the qualified setup
    and `.deb` with checksums/provenance after the preceding outcomes pass. Store,
    trusted Windows signing, hosted signed APT, larger adapters and credits follow.
