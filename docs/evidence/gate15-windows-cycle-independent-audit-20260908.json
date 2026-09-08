@@ -1,0 +1,16 @@
+{
+  "date_utc": "2026-09-08T09:49:38.392544+00:00",
+  "scope": "independent-Windows-frozen-login-cycle-cleanup-audit",
+  "source_result_sha256": "0602540f4a5250768df29ebe9760767c674fb6539d357f8edc30d0a05cd66888",
+  "audit_helper_sha256": "7c80eb061e5640ef2ad428dddfdb3dd26c81760246b811a7d8c064f142c6c621",
+  "recorded_identity_count": 18,
+  "recorded_identities_stopped": true,
+  "native_credential_absent": true,
+  "original_run_state_restored": true,
+  "both_phase_jobs_empty_before_close": true,
+  "both_phase_jobs_and_desktops_closed": true,
+  "qualified_artifact_identities_match": true,
+  "separate_gui_launches": true,
+  "no_model_loads_or_model_weight_files": true,
+  "result": "passed"
+}

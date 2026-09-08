@@ -73,7 +73,7 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
 | Q3.8 | **IN PROGRESS; runtime, packaged, bounded formation and Windows/Linux startup migration passed** | Finish representative consumer GPU/client and conversation measurements and frozen newer-sequence activation/draining. Ordinary-user frozen Windows and Linux startup migration from signed sequence 1 to 2 passed with preferences/cache preserved; the first Linux failure is retained separately. |
 | 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
-| 15 | **IN PROGRESS; Windows/Debian/Ubuntu lifecycle and Linux frozen login controls passed** | **“Install it, replace it, remove it.”** Windows install/active upgrade/removal/reinstall and Debian/Ubuntu active replacement/removal/reinstall passed. Linux frozen sign-in enable/restart/disable passed; the Windows frozen checkbox remains open. Explicit manual cache/reset choices passed on disposable Windows state. Unsigned alpha is owner-authorized; signing, Store, hosted signed APT and automatic updates follow after alpha. |
+| 15 | **PASSED, bounded Windows/Debian/Ubuntu alpha scope** | **“Install it, replace it, remove it.”** Windows active different-version upgrade and Debian/Ubuntu active same-version replacement/removal/reinstall passed. Both frozen sign-in checkboxes passed enable/restart/disable with native registration and cleanup verified. Manual cache/reset choices passed on disposable Windows state; disable sign-in startup before uninstalling. [Combined acceptance](evidence/gate15-20260908-final-installer-acceptance.md). Unsigned alpha is owner-authorized; signing, Store, hosted signed APT and automatic updates follow after alpha. |
 | 16 | **WAITING; local prerequisites passed** | Small monitored canary: finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. The frozen local API probe and 131 source safety/catalog tests passed; these do not replace the live canary. |
 | 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
 
@@ -166,9 +166,19 @@ on a private Xvfb display. No models loaded; all three normal shutdowns and
 independent credential/process cleanup passed. The initial ambiguous-action
 failure and a separate virtual-display wrapper cleanup error remain recorded.
 [Linux frozen control](evidence/gate15-20260908-frozen-linux-login.md).
-The Windows source Qt/native-registry regression passed while preserving the
-real login entry; actual Windows frozen-control acceptance remains separate.
-[Windows source evidence](evidence/gate15-20260908-source-login-checkbox.md).
+The Windows source Qt/native-registry regression also passed while preserving
+the real login entry. [Windows source evidence](evidence/gate15-20260908-source-login-checkbox.md).
+
+The unmodified frozen Windows checkbox then **passed enable, normal shutdown,
+restart with enabled state retained, and disable** on unswitched private desktops.
+The exact qualified executable's native `REG_SZ` command was verified. Both
+launches authenticated with sharing paused and no model loads; configuration and
+the native credential survived restart. Both jobs were empty before closure.
+An independent audit found all 18 recorded identities stopped, the test credential
+absent and the original login entry state restored. Earlier reader failures are
+retained as harness findings. [Windows frozen control](evidence/gate15-20260908-frozen-windows-login.md).
+This completes [Gate 15's bounded installer acceptance](evidence/gate15-20260908-final-installer-acceptance.md);
+actual OS sign-out/sign-in and broader physical desktop coverage are not implied.
 
 The normal frozen Windows and Linux desktops independently passed automatic
 startup migration from real signed catalog sequence 1 to exact sequence 2.
@@ -203,25 +213,23 @@ Twenty-four focused tests passed, including the real handler over loopback TLS
 with no model cache allocation. The live route, HTTPS publication and full canary
 observations remain open. [Driver evidence](evidence/gate16-20260908-driver-preparation.json).
 
-Functional/style checks and both production package/installer jobs passed. The
+At reviewed head `23a1f99`, functional/style checks and both production
+package/installer jobs passed. The subsequent qualification changes have focused
+regression coverage and are now selected by CI; current runs are visible in the PR.
+The
 two high-severity CodeQL findings were reviewed against their exact source-to-sink
 paths and [dismissed as false positives](evidence/gate14-20260907-codeql-triage.md),
 with scanning still enabled. Public-key metadata is distinct from private material,
 and generated API bearer keys are distinct from human passwords; advanced imports
 still require operator-supplied strong tokens.
 
-1. **Finish Gate 15 on the proven runtime.** Complete Windows frozen
-   sign-in-toggle enable/restart/disable acceptance. Windows, Debian and Ubuntu
-   installation lifecycles and Linux frozen login controls passed. Manual retained-data choices
-   are documented and tested in the stated scope. Windows signing is owner-deferred; unsigned direct-download setup and
-   a directly installable `.deb` are the alpha distribution targets.
-2. **Complete remaining Q3.8 product measurements.** Preserve the bounded formation,
+1. **Complete remaining Q3.8 product measurements.** Preserve the bounded formation,
    full-route and recovery results while recording the remaining conversation,
    representative client/hardware and ordinary-user catalog-update observations.
-3. **Run Gate 16's bounded canary.** Exercise finite admission/timeouts, malformed
+2. **Run Gate 16's bounded canary.** Exercise finite admission/timeouts, malformed
    peers, health reconstruction, disclosure, route/catalog disable and clean
    rollback through the packaged product.
-4. **Publish and observe the best-effort alpha.** Publish only the qualified setup
+3. **Publish and observe the best-effort alpha.** Publish only the qualified setup
    and `.deb` with checksums/provenance after the preceding outcomes pass. Store,
    trusted Windows signing, hosted signed APT, larger adapters and credits follow.
 

@@ -1,0 +1,43 @@
+{
+  "date_utc": "2026-09-08T09:36:33.542982+00:00",
+  "scope": "independent-read-only-Windows-probe-cleanup-audit",
+  "real_run_entry_absent": true,
+  "runs": [
+    {
+      "run": "gate15-windows-private-read-20260908",
+      "recorded_identity_count": 1,
+      "recorded_identities_stopped": true,
+      "native_credential_absent": true,
+      "saved_job_cleanup_verified": true
+    },
+    {
+      "run": "gate15-windows-private-read-20260908-actor",
+      "recorded_identity_count": 1,
+      "recorded_identities_stopped": true,
+      "native_credential_absent": true,
+      "saved_job_cleanup_verified": true
+    },
+    {
+      "run": "gate15-windows-private-read-20260908-boundary",
+      "recorded_identity_count": 18,
+      "recorded_identities_stopped": true,
+      "native_credential_absent": true,
+      "saved_job_cleanup_verified": true
+    },
+    {
+      "run": "gate15-windows-private-read-20260908-locator",
+      "recorded_identity_count": 9,
+      "recorded_identities_stopped": true,
+      "native_credential_absent": true,
+      "saved_job_cleanup_verified": true
+    },
+    {
+      "run": "gate15-windows-private-read-20260908-retry",
+      "recorded_identity_count": 17,
+      "recorded_identities_stopped": true,
+      "native_credential_absent": true,
+      "saved_job_cleanup_verified": true
+    }
+  ],
+  "result": "passed"
+}

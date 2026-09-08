@@ -6,8 +6,9 @@ Current release status and execution order are maintained in
 packaged short chat, worker-loss recovery and HTTP-blocked cache restart passed
 on assigned cloud routes. Bounded autonomous CPU desktop formation and recovery
 also passed on September 7. Gate 14 resource controls now pass the bounded
-Windows/Linux frozen-package acceptance. Installer completion and release
-qualification are next. The [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
+Windows/Linux frozen-package acceptance. Gate 15 installers and login controls
+also pass their bounded Windows/Debian/Ubuntu acceptance. Remaining Qwen product
+measurements, the live canary and publication are next. The [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
 candidate lists in historical implementation snapshots below.
 
 September 7 Gate 14 update: **PASSED for the bounded alpha scope.** The
@@ -19,10 +20,10 @@ restart loop; signed-manifest migration retains cache/resource preferences.
 Windows ran non-elevated; Linux used an ordinary Debian/Xvfb session with CUDA
 passthrough. Broader hardware and physical desktop coverage are not implied.
 
-September 8 release continuation: Windows, Debian and Ubuntu installed lifecycles
-now pass, along with Linux frozen sign-in controls and normal Windows/Linux
-signed-catalog startup migration. The Windows frozen sign-in checkbox remains
-open. Earlier failed attempts are retained separately; local canary checks do
+September 8 release continuation: **Gate 15 PASSED for the bounded alpha scope.**
+Windows, Debian and Ubuntu installed lifecycles, both frozen sign-in controls,
+and normal Windows/Linux signed-catalog startup migration passed.
+Earlier failed attempts are retained separately; local canary checks do
 not replace the live public route exercise. See the
 [current evidence and remaining work](RELEASE_READINESS.md#next-work-in-useful-product-order).
 
@@ -254,8 +255,12 @@ cleanup audit; its redundant final test-cleanup error is retained explicitly.
 The Debian lifecycle and the [Ubuntu retry](evidence/gate15-20260908-frozen-ubuntu-installer.md)
 also passed with the same final `.4` package. The earlier Ubuntu unpack timeout
 remains recorded. The [Linux frozen sign-in checkbox](evidence/gate15-20260908-frozen-linux-login.md)
-passed enable, restart and disable on a private Xvfb display; Gate 15 still needs
-the Windows frozen-control acceptance.
+passed enable, restart and disable on a private Xvfb display. The
+[Windows frozen checkbox](evidence/gate15-20260908-frozen-windows-login.md) then
+passed the same cycle on unswitched private desktops, with exact native Run
+registration and independent process/credential/original-state cleanup verified.
+The [combined Gate 15 acceptance](evidence/gate15-20260908-final-installer-acceptance.md)
+records the passed scope and remaining platform limits.
 Manual retained-data choices now have a [runbook](DESKTOP_UNINSTALL.md) and
 bounded Windows evidence.
 The earlier [installer checkpoint](evidence/desktop-installers-20260907.md) includes

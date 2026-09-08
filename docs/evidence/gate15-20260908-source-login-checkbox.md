@@ -1,6 +1,8 @@
 # Offscreen sign-in checkbox regression
 
-**Source regression passed; frozen Windows acceptance remains open.** The
+**Source regression passed.** Frozen Windows acceptance was still open when this
+record was made; the later [unmodified frozen cycle](gate15-20260908-frozen-windows-login.md)
+passed separately. The
 [evidence](gate15-20260908-source-login-checkbox.json) preserves that distinction.
 
 The actual source Qt checkbox enabled a registration in a newly created native

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-08",
+  "gate": 15,
+  "result": "passed",
+  "scope": "bounded-Windows-10-Debian-12-Ubuntu-22.04-alpha-installers-and-login-controls",
+  "windows_installer": {
+    "file": "communityai-0.1.0-alpha.20260907.2-windows-setup.exe",
+    "bytes": 2519046440,
+    "sha256": "c4e8df599f3a6118eab5718a5ad50655b0e07fd6c270aacf7dbb0b3065c5c399",
+    "runtime_source": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+    "upgrade_scope": "active different-version upgrade from earlier full installer",
+    "authenticode": "unsigned; owner-deferred after alpha"
+  },
+  "linux_installer": {
+    "file": "communityai_0.1.0~alpha.20260907.4_amd64.deb",
+    "bytes": 3781591484,
+    "sha256": "a2cc0548cd51f98ed7a9c208be18b53a701a9317cbc63293d4bf7d1e14151517",
+    "runtime_source": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+    "installer_control_source": "61ab7b1df61c82c5a306cefaf4e14b56356f5feb",
+    "upgrade_scope": "active same-version replacement on Debian12 and Ubuntu22.04 Xvfb/container sessions"
+  },
+  "component_evidence": {
+    "windows_installer": {
+      "path": "docs/evidence/gate15-20260907-frozen-windows-installer.json",
+      "sha256": "ed422c5a313a3e5330ad236d7e8baed9724ccb552b584cbcd81af24eeb621381"
+    },
+    "debian_installer": {
+      "path": "docs/evidence/gate15-20260907-frozen-debian-installer.json",
+      "sha256": "d721d22f9c03fe0f2020061c13fca12defa39ff491094e7df455a8a0a3848784"
+    },
+    "ubuntu_installer": {
+      "path": "docs/evidence/gate15-20260908-frozen-ubuntu-installer.json",
+      "sha256": "e4074cbbcbc61418cc4656cdcc1147d74c288912cdfba98ccaebabbaa10083e6"
+    },
+    "windows_frozen_login": {
+      "path": "docs/evidence/gate15-20260908-frozen-windows-login.json",
+      "sha256": "1bdfe4cdf70310a6c00e83960823b2fbd68e17e46d8d3d917f662a6b60fbb553"
+    },
+    "linux_frozen_login": {
+      "path": "docs/evidence/gate15-20260908-frozen-linux-login.json",
+      "sha256": "fde0fbd597e7b58faaee9d8f3d7110885db9f2dceef4dfdcc66a84209e44097d"
+    },
+    "manual_data_choices": {
+      "path": "docs/evidence/gate15-20260908-windows-data-login-choices.json",
+      "sha256": "60c1b100e0c6980631dfcc7111d8e2ccd2785b93091bba6ec506190bc9eba6bc"
+    },
+    "windows_catalog_startup": {
+      "path": "docs/evidence/qwen-catalog-desktop-20260907.json",
+      "sha256": "99e41a1993cd5cf08c47ed7f3f60a57af11708aa5dba724e4aa230c8d0f6296e"
+    },
+    "linux_catalog_startup": {
+      "path": "docs/evidence/qwen-catalog-linux-startup-20260908.json",
+      "sha256": "5b7d5a5e0a42f68c87b41552079b0235bdf8564858391318614ba51293fbf2e6"
+    },
+    "windows_login_independent_cleanup": {
+      "path": "docs/evidence/gate15-windows-cycle-independent-audit-20260908.json",
+      "sha256": "dac54963061652544b302d2ee56d58caa1e23668ee527d87b3989e2a544767fd"
+    }
+  },
+  "executed_windows_cycle_helpers_match_workspace": true,
+  "manual_disable_login_before_uninstall_required": true,
+  "automatic_uninstaller_login_or_cache_deletion": false,
+  "actual_os_logout_login_qualified": false,
+  "remaining_separate_work": [
+    "Q3.8 representative conversation/client measurements and frozen periodic catalog activation/draining",
+    "Gate16 monitored public canary",
+    "Gate17 public artifact hosting, publication and observation"
+  ],
+  "retained_failures": "Individual component records preserve failed attempts and later independent cleanup; no failure is replaced."
+}
