@@ -55,28 +55,63 @@ def checkbox_session(read_enabled, write_enabled, *, click=False):
     from communityai_desktop.pyside_shell import run
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QApplication, QMessageBox, QStyle, QStyleOptionButton
 
     application = QApplication.instance() or QApplication([])
     if application.platformName() != "offscreen":
         raise RuntimeError("Source checkbox regression requires an offscreen QApplication")
     observed = {}
     errors = []
+    session_timers = []
 
     class Automation:
         def install(self, window, app, qt):
+            watchdog = qt["QTimer"](window)
+            exercise_timer = qt["QTimer"](window)
+            session_timers.extend((watchdog, exercise_timer))
+            watchdog.setSingleShot(True)
+            exercise_timer.setSingleShot(True)
+
+            def finish(code):
+                for timer in session_timers:
+                    timer.stop()
+                window.close()
+                app.exit(code)
+
+            def expired():
+                errors.append(TimeoutError("Source checkbox callback exceeded its deadline"))
+                finish(1)
+
             def exercise():
                 try:
                     checkbox = window.login_startup_toggle
+                    window.pages.currentWidget().ensureWidgetVisible(checkbox)
+                    app.processEvents()
+                    if not checkbox.isVisible():
+                        raise AssertionError("Sign-in checkbox is not visible on the offscreen Sharing page")
                     observed.update(
                         initial_checked=checkbox.isChecked(),
                         initial_enabled=checkbox.isEnabled(),
                         initial_detail=window.login_startup_detail.text(),
+                        checkbox_visible=checkbox.isVisible(),
                     )
                     if click:
                         if not checkbox.isEnabled():
                             raise AssertionError("Sign-in checkbox is disabled")
-                        QTest.mouseClick(checkbox, Qt.LeftButton)
+                        # Checkbox hit regions differ by style; a stretched
+                        # widget's center can lie outside its clickable label.
+                        option = QStyleOptionButton()
+                        checkbox.initStyleOption(option)
+                        indicator = checkbox.style().subElementRect(QStyle.SE_CheckBoxIndicator, option, checkbox)
+                        hit_region = checkbox.style().subElementRect(QStyle.SE_CheckBoxClickRect, option, checkbox)
+                        position = indicator.center()
+                        if (
+                            not indicator.isValid()
+                            or not checkbox.rect().contains(position)
+                            or not hit_region.contains(position)
+                        ):
+                            raise AssertionError("The checkbox style did not expose a valid indicator click target")
+                        QTest.mouseClick(checkbox, Qt.LeftButton, pos=position)
                     observed.update(
                         final_checked=checkbox.isChecked(),
                         final_detail=window.login_startup_detail.text(),
@@ -85,10 +120,15 @@ def checkbox_session(read_enabled, write_enabled, *, click=False):
                 except BaseException as exc:
                     errors.append(exc)
                 finally:
-                    window.close()
-                    app.exit(0)
+                    finish(0)
 
-            qt["QTimer"].singleShot(50, exercise)
+            # Cancel both timers when this session ends. Static singleShot quit
+            # timers survive a fast run and can interrupt a later QApplication
+            # event loop in the same unittest process.
+            watchdog.timeout.connect(expired)
+            exercise_timer.timeout.connect(exercise)
+            watchdog.start(3_000)
+            exercise_timer.start(50)
 
     def offline():
         raise RuntimeError("Isolated offline UI regression; no node or fixture telemetry")
@@ -98,9 +138,17 @@ def checkbox_session(read_enabled, write_enabled, *, click=False):
         patch("communityai_desktop.pyside_shell.set_login_startup", write_enabled),
         patch.object(QMessageBox, "warning") as warning,
     ):
-        exit_code = run(
-            connect=offline, single_instance=False, auto_close_seconds=3, qualification_automation=Automation()
-        )
+        try:
+            exit_code = run(
+                connect=offline,
+                single_instance=False,
+                screenshot_page=2,
+                qualification_automation=Automation(),
+            )
+        finally:
+            for timer in session_timers:
+                timer.stop()
+                timer.timeout.disconnect()
         observed["warning_count"] = warning.call_count
     if errors:
         raise errors[0]

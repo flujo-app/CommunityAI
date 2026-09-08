@@ -168,6 +168,12 @@ failure and a separate virtual-display wrapper cleanup error remain recorded.
 [Linux frozen control](evidence/gate15-20260908-frozen-linux-login.md).
 The Windows source Qt/native-registry regression also passed while preserving
 the real login entry. [Windows source evidence](evidence/gate15-20260908-source-login-checkbox.md).
+The subsequent Linux CI run exposed a source-test targeting error: the helper
+clicked the hidden checkbox's center outside its style-defined hit region.
+The helper now exposes Sharing offscreen, clicks the actual indicator, and
+cancels its session timers. All 108 Linux desktop tests completed successfully
+with two existing installer-permission skips; no product change was needed.
+[Portability follow-up](evidence/gate15-20260908-source-login-portability.md).
 
 The unmodified frozen Windows checkbox then **passed enable, normal shutdown,
 restart with enabled state retained, and disable** on unswitched private desktops.
@@ -212,6 +218,11 @@ locally and observes authenticated runtime configuration after ordinary refresh.
 Twenty-four focused tests passed, including the real handler over loopback TLS
 with no model cache allocation. The live route, HTTPS publication and full canary
 observations remain open. [Driver evidence](evidence/gate16-20260908-driver-preparation.json).
+Linux CI then exposed an upstream Hivemind reset when the client finishes an
+idle stream after the server timeout. The driver accepts that closure only
+after observing lease release within timeout bounds and exact admission deltas;
+early resets and malformed-request transport failures still fail the probe.
+[Transport follow-up](evidence/gate16-20260908-linux-idle-transport-fix.md).
 
 At reviewed head `23a1f99`, functional/style checks and both production
 package/installer jobs passed. The subsequent qualification changes have focused

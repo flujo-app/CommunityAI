@@ -304,3 +304,98 @@ def test_overload_does_not_count_as_malformed_rejection():
     probe = canary.Probe(Stub(), None, None, 0, None, refill=0, step_timeout=1)
     with pytest.raises(canary.CanaryError, match="unexpected_rpc_rejection"):
         asyncio.run(probe.reject(canary.runtime_pb2.ExpertRequest(), "metadata is invalid"))
+
+
+@pytest.mark.parametrize(
+    "elapsed,rejected,closure,error",
+    [
+        (1.0, 1, ConnectionResetError, None),
+        (1.0, 1, StopAsyncIteration, None),
+        (0.5, 1, ConnectionResetError, "idle_lease_released_before_timeout"),
+        (0.5, 1, StopAsyncIteration, "idle_lease_released_before_timeout"),
+        (1.0, 2, ConnectionResetError, "admission_counters_contaminated_or_missing"),
+        (1.0, 1, "already_reset", "idle_stream_closed_before_producer_release"),
+        (1.0, 1, RuntimeError, RuntimeError),
+    ],
+)
+def test_idle_closure_requires_independent_timeout_and_counter_proof(elapsed, rejected, closure, error, monkeypatch):
+    """A deterministic health clock isolates the proof required before closing the producer."""
+    manifest = ModelManifest.load(MANIFEST)
+    now = [0.0]
+    released = []
+    disconnected = asyncio.Event()
+
+    class Stub:
+        async def rpc_inference(self, requests):
+            async def responses():
+                if closure == "already_reset":
+                    await disconnected.wait()
+                    raise ConnectionResetError("reset before producer release")
+                async for _ in requests:
+                    raise AssertionError("idle producer sent a request")
+                released.append(True)
+                if closure is not StopAsyncIteration:
+                    raise closure("synthetic transport closure")
+                if False:
+                    yield
+
+            return responses()
+
+    class Probe(canary.Probe):
+        observations = 0
+
+        async def info(self):
+            return 256
+
+        async def reject(self, request, expected, **kwargs):
+            return
+
+        async def wait_health(self, predicate, timeout=15):
+            self.observations += 1
+            active = self.observations in (2, 3)
+            if self.observations >= 4:
+                now[0] = elapsed
+                disconnected.set()
+                await asyncio.sleep(0)
+            value = {
+                "admission": {
+                    "active_sessions": int(active),
+                    "pending_pushes": 0,
+                    "accepted_sessions": int(self.observations > 1),
+                    "rejected_sessions": rejected if self.observations >= 4 else 0,
+                }
+            }
+            assert predicate(value)
+            return value
+
+    monkeypatch.setattr(canary, "malformed_cases", lambda *args: [])
+    probe = Probe(Stub(), None, manifest, 0, AdmissionPolicy(), refill=0, step_timeout=1, clock=lambda: now[0])
+    if error is None:
+        result = asyncio.run(probe.run())
+        assert result["checks"][0]["transport_closure"] == (
+            "end_of_stream" if closure is StopAsyncIteration else "connection_reset_after_idle_release"
+        )
+        assert released == [True]
+    elif isinstance(error, str):
+        with pytest.raises(canary.CanaryError, match=error):
+            asyncio.run(probe.run())
+        assert not released and not probe.checks
+    else:
+        with pytest.raises(error, match="synthetic transport closure"):
+            asyncio.run(probe.run())
+        assert not probe.checks
+
+
+@pytest.mark.parametrize("expected", [canary.PUBLIC_OVERLOAD_MESSAGE, "metadata is invalid"])
+def test_reset_during_admission_or_malformed_probe_is_not_accepted(expected):
+    class Stub:
+        async def rpc_inference(self, requests):
+            async def responses():
+                raise ConnectionResetError("unexpected reset")
+                yield
+
+            return responses()
+
+    probe = canary.Probe(Stub(), None, None, 0, None, refill=0, step_timeout=1)
+    with pytest.raises(ConnectionResetError, match="unexpected reset"):
+        asyncio.run(probe.reject(canary.runtime_pb2.ExpertRequest(), expected))

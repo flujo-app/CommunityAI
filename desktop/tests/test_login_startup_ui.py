@@ -31,6 +31,8 @@ class LoginStartupUiTests(unittest.TestCase):
         self.assertEqual(state["writes"], [True, False])
         self.assertEqual(first["qt_platform"], "offscreen")
         self.assertEqual(second["qt_platform"], "offscreen")
+        self.assertTrue(first["checkbox_visible"])
+        self.assertTrue(second["checkbox_visible"])
 
     def test_failed_native_write_reverts_checkbox_and_reports_failure(self):
         def denied(enabled):
@@ -41,6 +43,7 @@ class LoginStartupUiTests(unittest.TestCase):
         self.assertFalse(result["final_checked"])
         self.assertEqual(result["warning_count"], 1)
         self.assertIn("Could not change login startup", result["final_detail"])
+        self.assertTrue(result["checkbox_visible"])
 
     def test_unreadable_startup_registration_disables_the_checkbox(self):
         def denied():
@@ -54,3 +57,4 @@ class LoginStartupUiTests(unittest.TestCase):
         self.assertFalse(result["final_checked"])
         self.assertTrue(result["initial_detail"].startswith("Unavailable:"))
         self.assertEqual(result["warning_count"], 0)
+        self.assertTrue(result["checkbox_visible"])

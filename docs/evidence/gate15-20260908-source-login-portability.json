@@ -1,0 +1,85 @@
+{
+  "result": "passed",
+  "scope": "offscreen-source-Qt-login-checkbox-Linux-portability-and-suite-ordering",
+  "date_utc": "2026-09-08",
+  "source_base_commit": "64e4cf070dd8e5d19b9591e910e654094fa0f60b",
+  "source_helper_sha256_before": "597231eca8f97dfecc883471679d699de6829f53613d17080fb9322e5c9ced0d",
+  "source_helper_sha256_after": "1681ada82e0948e3731b99290f2cc0ea17183c7adc612f622ce20162ed4a5079",
+  "source_ui_tests_sha256_after": "8dfc671d73b343130325c3866665333fc59172d6123c52c2f8c82402aa17f298",
+  "ci_failure": {
+    "run_id": 34212907804,
+    "job_id": 102017840345,
+    "tests_run": 108,
+    "failures": 2,
+    "skipped": 2,
+    "failed_test_names": [
+      "test_failed_native_write_reverts_checkbox_and_reports_failure",
+      "test_literal_checkbox_reflects_saved_state_after_window_recreation"
+    ]
+  },
+  "linux_baseline_reproduction": {
+    "tests_run": 3,
+    "failures": 2,
+    "seconds": 1.091,
+    "checkbox_visible": false,
+    "widget_rect_xywh": [0, 0, 640, 480],
+    "style_click_rect_xywh": [0, 228, 271, 24],
+    "default_widget_center_inside_click_rect": false
+  },
+  "fix": {
+    "sharing_page_shown_offscreen": true,
+    "checkbox_scrolled_into_view": true,
+    "literal_QTest_mouse_event_retained": true,
+    "click_position": "QStyle.SE_CheckBoxIndicator center, validated against widget and style click region",
+    "visibility_assertions_added": true,
+    "watchdog_and_exercise_timers_owned_stopped_and_disconnected": true,
+    "static_product_auto_close_timer_requested": false
+  },
+  "intermediate_full_suite": {
+    "tests_run": 105,
+    "failures": 1,
+    "errors": 3,
+    "skipped": 2,
+    "issues": [
+      "Two source checkbox callbacks were interrupted by earlier sessions' uncancelled static auto-close timers.",
+      "The isolated test wrapper omitted the repository root from Python imports.",
+      "The isolated nonroot wrapper needed an in-process Git safe.directory setting for the read-only repository mount."
+    ],
+    "all_issues_resolved_before_final_run": true
+  },
+  "final_windows_focused": {
+    "tests_run": 3,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 0.865,
+    "exit_code": 0
+  },
+  "final_linux_full_desktop_suite": {
+    "tests_run": 108,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "skip_reason": "Existing dpkg process-maintenance tests require root; the qualification runs as UID 1000.",
+    "source_checkbox_tests_passed_in_full_suite_order": true,
+    "seconds": 27.099,
+    "exit_code": 0,
+    "private_log_sha256": "8e6f4e24d0b4fc637490ab3ba496c49aec252c0540b886bbcc6dbc30309b4daf"
+  },
+  "linux_isolation": {
+    "network": "none",
+    "cpu_limit": 2,
+    "memory_limit_bytes": 2147483648,
+    "uid": 1000,
+    "repository_and_dependency_mounts_read_only": true,
+    "home_and_XDG_paths": "private container tmpfs",
+    "Qt_platform": "offscreen",
+    "temporary_containers_removed": true
+  },
+  "black_check": "passed",
+  "isort_check": "passed",
+  "git_diff_check": "passed",
+  "product_source_changed": false,
+  "real_native_login_entry_or_credential_mutated": false,
+  "historical_windows_source_evidence_preserved": true,
+  "frozen_acceptance_replayed": false
+}

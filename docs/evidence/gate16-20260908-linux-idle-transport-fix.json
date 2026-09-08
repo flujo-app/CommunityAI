@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-08T10:17:09.836605+00:00",
+  "scope": "Gate 16 source-driver idle transport compatibility fix; local non-compute validation only",
+  "result": "passed-focused-local-validation",
+  "complete_gate16": false,
+  "release_artifacts_rebuilt": false,
+  "ci_failure": {
+    "commit": "64e4cf070dd8e5d19b9591e910e654094fa0f60b",
+    "run_id": 34212907798,
+    "job_id": 102017840609,
+    "platform": "Linux",
+    "python": "3.12.3",
+    "pytest": "6.2.5",
+    "hivemind": "1.1.12",
+    "case": "test_probe_uses_real_handler_admission_and_rejects_without_cache_allocation[loopback-tls]",
+    "error_type": "ConnectionResetError",
+    "failed": 1,
+    "passed": 80,
+    "skipped": 4,
+    "duration_seconds": 13.8,
+    "diagnosis": "After independent health showed the idle lease released, producer completion caused upstream Hivemind to write END_OF_STREAM to the expired connection. The initial exception arose in await next_reply; reawaiting the same task during cleanup made the traceback point at finally."
+  },
+  "before_fix_reproduction": {
+    "platform": "Linux",
+    "failed": 1,
+    "duration_seconds": 11.19,
+    "error_type": "ConnectionResetError"
+  },
+  "source_sha256": {
+    "scripts/gate16_live_rpc.py": "57a2b5cc3afa184963b74a38988f380922b83597eefa012b544c96ceb53957ec",
+    "tests/test_gate16_live_rpc.py": "527e292730254f9204f5aa1a3c275a25be9ff21275c5bc5d6f983bb28de5e6dc"
+  },
+  "changes": [
+    "Require observed idle release no earlier than step_timeout and no later than step_timeout plus five seconds, measured using the client monotonic clock from stream opening.",
+    "Check the exact accepted and rejected admission deltas before finishing the request producer.",
+    "Reject a reply task already completed with a reset, cancellation or any result other than normal EOF before producer release.",
+    "Only accept ConnectionResetError from awaiting the producer-triggered closure after those independent checks; record the fixed transport_closure category.",
+    "Keep admission and malformed-request reset failures, cache-capacity equality checks, RPC budgets and owned-process cleanup unchanged."
+  ],
+  "validation": {
+    "command": "python -m pytest tests/test_gate16_live_rpc.py -q -p no:cacheprovider --disable-warnings",
+    "linux": {
+      "passed": 26,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 12.65,
+      "python": "3.12.14",
+      "pytest": "9.1.1",
+      "hivemind": "1.1.12",
+      "transport": "upstream Linux Hivemind with actual loopback TLS"
+    },
+    "windows": {
+      "passed": 26,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 9.5,
+      "python": "3.12.9",
+      "pytest": "6.2.5",
+      "hivemind": "1.1.12",
+      "transport": "locally patched Windows Hivemind with actual loopback TLS"
+    },
+    "first_fix_before_final_negative_regression": {
+      "linux": {
+        "passed": 25,
+        "duration_seconds": 12.45
+      },
+      "windows": {
+        "passed": 25,
+        "duration_seconds": 12.12
+      }
+    },
+    "black_22_3_exit": 0,
+    "isort_5_10_exit": 0,
+    "git_diff_check": "passed for both source files",
+    "independent_read_only_review": "Passed after adding the already-completed reset negative regression.",
+    "new_regressions": [
+      "Post-timeout ConnectionResetError accepted only after health/counter proof.",
+      "Normal EOF remains accepted after the same proof.",
+      "Early lease release fails for both reset and EOF.",
+      "Counter contamination fails before producer release.",
+      "Already-completed reset with otherwise-valid elapsed time and counters fails before producer release.",
+      "An unrelated RuntimeError after producer release remains a failure.",
+      "Resets during admission and malformed probes remain failures."
+    ],
+    "real_handler_scope": "Actual TransformerConnectionHandler and admission state with a non-compute fake backend whose allocator raises on use; actual loopback TLS server/client in both platforms. New proof-ordering regressions additionally use deterministic health/clock fixtures."
+  },
+  "linux_container_limits": {
+    "image_id": "sha256:5a8edd63065b163d724195b1afb2554418a4d194b2ea3d9b07c58ceae64896f7",
+    "cpus": 2,
+    "memory_mib": 2048,
+    "memory_plus_swap_mib": 2048,
+    "pids": 128,
+    "network": "none; loopback within the disposable container only",
+    "user": "1000:1000",
+    "read_only_root": true,
+    "read_only_repository": true,
+    "read_only_existing_venv_volume": true,
+    "tmpfs_mib": 128,
+    "gpu_devices": 0,
+    "model_cache_mounts": 0,
+    "pull_policy": "never",
+    "all_owned_containers_removed": true
+  },
+  "private_logs_sha256": {
+    "ci_failure": {
+      "path": ".gate13-runs/ci-linux-64e4cf0.log",
+      "sha256": "296a519816485f2c7a8e8220d3a9e52dece96240fb7430d4feb0d3e87ec0e0ec"
+    },
+    "linux_before_fix": {
+      "path": ".gate13-runs/gate16-linux-idle-before-20260908.log",
+      "sha256": "bc6be7a7abf5e020b41be462c3179ec5c669a4504e3667b1b582dc0d97d4d56b"
+    },
+    "linux_first_fix": {
+      "path": ".gate13-runs/gate16-linux-idle-after-20260908.log",
+      "sha256": "f7e004a6a4dfaace8c7214278b28ac1d6eb6e08fefaa07d547e86307ea591c8e"
+    },
+    "windows_first_fix": {
+      "path": ".gate13-runs/gate16-windows-idle-fix-20260908.log",
+      "sha256": "4a664ba95eb053abd0e8adfb23b94cc13f7cc739b2fe985b364b81660f6da439"
+    },
+    "linux_final": {
+      "path": ".gate13-runs/gate16-linux-idle-final-20260908.log",
+      "sha256": "8df2cbb325f3811878ff500bfc790445f8abc9bd5e37f6553cda48f498a6310a"
+    },
+    "windows_final": {
+      "path": ".gate13-runs/gate16-windows-idle-fix-final-20260908.log",
+      "sha256": "fad9e63ef854b21adb065237d10523a99e0eede0dbe28fa36a3f3b0e8f097c07"
+    },
+    "black": {
+      "path": ".gate13-runs/gate16-idle-fix-black-20260908.log",
+      "sha256": "83abf4b47e6b6e216d698b30f1f030922562c86836a54764d86a0e463467807e"
+    },
+    "isort": {
+      "path": ".gate13-runs/gate16-idle-fix-isort-20260908.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "historical_evidence_unchanged": {
+    "path": "docs/evidence/gate16-20260908-driver-preparation.json",
+    "sha256": "e9e26234b48c581abd7832527743a0ada1cd8b1d5eddbccefe032349c2553911",
+    "original_validation": "24 passed on Windows; exact historical source hashes retained there."
+  },
+  "limits": [
+    "This is local source-driver validation, not a live public canary or a frozen release qualification.",
+    "The Linux reproduction uses the existing Python 3.12.14 / pytest 9.1.1 environment, while CI used Python 3.12.3 / pytest 6.2.5. The original Linux transport failure reproduced before the fix. A fresh CI result is separate evidence.",
+    "The idle timing proof is client-observed; public health is sampled and does not expose a per-session timer or a transport close reason. It is timeout-consistent evidence, not proof of the remote close cause.",
+    "Health-to-peer pairing remains operator supplied because public health exposes no peer identity.",
+    "No model loads, GPU work, GUI launches, external network traffic, public route changes, native credential changes or cloud provisioning occurred.",
+    "The remaining Gate 16 live prerequisites and observations in the canary runbook remain open."
+  ]
+}

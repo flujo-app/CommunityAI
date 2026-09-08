@@ -248,7 +248,18 @@ class Probe:
                 timeout=max(0, self.step_timeout + 5 - (self.clock() - opened)),
             )
             elapsed = self.clock() - opened
+            require(elapsed >= self.step_timeout, "idle_lease_released_before_timeout")
             require(elapsed <= self.step_timeout + 5, "idle_timeout_exceeded")
+            require(
+                after["admission"]["rejected_sessions"] == self.baseline["admission"]["rejected_sessions"] + 1
+                and after["admission"]["accepted_sessions"] == self.baseline["admission"]["accepted_sessions"] + 1,
+                "admission_counters_contaminated_or_missing",
+            )
+            if next_reply.done():
+                require(
+                    not next_reply.cancelled() and isinstance(next_reply.exception(), StopAsyncIteration),
+                    "idle_stream_closed_before_producer_release",
+                )
             # Hivemind waits for the request producer after the server closes.
             # Finish it only after health proves the server released its lease,
             # so a client end-of-stream cannot falsely establish idle expiry.
@@ -256,19 +267,20 @@ class Probe:
             try:
                 await asyncio.wait_for(next_reply, 5)
             except StopAsyncIteration:
-                pass
+                closure = "end_of_stream"
+            except ConnectionResetError:
+                # Upstream Linux Hivemind can fail writing END_OF_STREAM to the
+                # expired server stream. Only this post-proof producer release
+                # may accept a reset; admission/malformed RPCs still fail on it.
+                closure = "connection_reset_after_idle_release"
             else:
                 raise CanaryError("idle_stream_produced_output")
-            require(
-                after["admission"]["rejected_sessions"] == self.baseline["admission"]["rejected_sessions"] + 1
-                and after["admission"]["accepted_sessions"] == self.baseline["admission"]["accepted_sessions"] + 1,
-                "admission_counters_contaminated_or_missing",
-            )
             self.checks.append(
                 {
                     "case": "idle_stream_and_per_peer_admission",
                     "result": "passed",
                     "duration_seconds": round(elapsed, 3),
+                    "transport_closure": closure,
                 }
             )
         finally:
