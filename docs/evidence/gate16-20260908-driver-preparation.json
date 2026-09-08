@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-08T08:40:29.662722+00:00",
+  "scope": "Gate 16 driver preparation and local source validation only",
+  "result": "passed-local-driver-validation",
+  "complete_gate16": false,
+  "live_public_canary_executed": false,
+  "source_base_commit": "23a1f99e81df5f98ee3260b7df2529332547ccca",
+  "source_binding": "Exact file hashes below; shared working tree has unrelated changes. No release artifact rebuilt.",
+  "files_sha256": {
+    "scripts/gate16_live_rpc.py": "440b8da49169796c4161c61e5f21fc6171b3c0dad891ef4afe14efacd3aeeff1",
+    "scripts/gate16_catalog_channel.py": "521cd9362c088f4b16e2d1bfea09d09c80c35b25e96e7d17bf662ef729a75e99",
+    "tests/test_gate16_live_rpc.py": "4947f5df260379b2921057aa4b0f3fd246dea4d54de93fb8165a03a199cc3887",
+    "tests/test_gate16_catalog_channel.py": "e942292e15c73c5cbefbab2895a7d7ee96ec116f8dc9ae362263a22d638ec613",
+    "docs/gate16-rpc-policy.example.json": "77b66b5981fdc0bc2dadf3e59d2211a5e436332ceafcabd58f962476c63a1022",
+    "docs/GATE16_CANARY.md": "13b6f4e90308c8216753db7f058786083201b523516df9fcfef9081b40f951cf"
+  },
+  "validation": {
+    "command": "python -m pytest tests/test_gate16_live_rpc.py tests/test_gate16_catalog_channel.py -q --disable-warnings",
+    "python": "3.12.9",
+    "platform": "win32",
+    "passed": 24,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_seconds": 11.003,
+    "private_junit_sha256": "140c4ac99e053b0f099c0dcda3322fa7d84736cf1cb54032db1271d3f4bb00eb",
+    "private_log_sha256": "46d7d9bd010619e860239c3a54b4a3d0cf8ff4b25fb5bba39140a1456371433b",
+    "black_22_3_check": "passed for both scripts and both test files",
+    "isort_5_10_check": "passed for both scripts and both test files",
+    "actual_transport": "Real loopback TLS p2pd server/client using the actual TransformerConnectionHandler and RPC stubs, with a non-compute fake backend whose cache allocator raises on use",
+    "catalog_execution": "Actual catalog crypto/installer against temporary local state; mocked authenticated consumer status and in-memory fetch, no live HTTPS channel",
+    "regressions": [
+      "dry preflight cannot create transport",
+      "overload cannot pass malformed rejection",
+      "rate refill before per-peer session-cap test; missing cap fails",
+      "stale health and wrong manifest fail",
+      "file-only catalog update cannot pass",
+      "later node serving stale config revision cannot pass",
+      "stopping node cannot pass",
+      "child inspection and HTTP cleanup failures retain failed result JSON"
+    ],
+    "cleanup": "Loopback client/server shutdown checked by owned p2pd child return codes; temporary fixture state only; native credential getter mocked in cleanup-fault test",
+    "earlier_failed_attempts": "Private logs retained. Initial test fixture used an incorrect P2P handler registration signature and too-short local deadlines. Loopback test then exposed Hivemind waiting for the request producer after remote close; driver now waits for independently observed worker lease release before finishing that producer. Final validation is a separate run."
+  },
+  "limits": {
+    "rpc_operation_seconds": 600,
+    "rpc_cleanup_seconds": 80,
+    "rpc_calls": 20,
+    "rpc_input_bytes": 131072,
+    "catalog_observer_default_seconds": 420,
+    "catalog_observer_maximum_seconds": 900,
+    "catalog_validity_seconds": 7200
+  },
+  "privacy": {
+    "model_loads": 0,
+    "gpu_jobs": 0,
+    "gui_launches": 0,
+    "public_route_mutations": 0,
+    "cloud_resources_provisioned": 0,
+    "external_catalog_publications": 0,
+    "raw_logs_exported": false,
+    "native_credentials_created": 0,
+    "private_signing_keys_retained": 0
+  },
+  "remaining_live_prerequisites": [
+    "Already-owned formed route with exact worker allowlist and live health access",
+    "Recorded effective launch settings and operator-verified health-to-peer pairing",
+    "Existing authorized HTTPS canary channel and publication workflow",
+    "Qualified installed consumers under explicit owning lifecycle with disposable native credentials"
+  ],
+  "remaining_gate16_observations": [
+    "Real local/community inference before and after probes",
+    "Installed-client disclosure and block-health reconstruction",
+    "Live signed catalog withdrawal and forward restore through ordinary consumer refresh",
+    "Actual owned-worker route disable and no unintended restart",
+    "Independent full process/resource/credential cleanup and retained settings/cache proof"
+  ]
+}
