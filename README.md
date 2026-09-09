@@ -25,6 +25,7 @@ Once the app is running and connected, point your AI Chat application to
 | --- | --- | --- |
 | http://localhost:8080 | /v1/chat/completions | auto |
 
+## Screenshots
 "Home" Screen:
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/0e02de2b-88f0-4af0-8fe6-79b2ed9a5979" />
 
