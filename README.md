@@ -7,8 +7,13 @@
 
 **AI powered by people.**
 
+[Download CommunityAI for Windows or Linux](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.3)
+— available for closed alpha testing. Already using the app's updater? Check for
+updates in the sidebar, then choose **Restart to update** when the download finishes.
 
-![CommunityAI sharing screen](desktop/dist/communityai-sharing-final.png)
+
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/410a7c84-efa7-4a93-aa14-7ab9bb474575" />
+
 
 ## How it works
 
@@ -20,54 +25,32 @@ Community-AI is a shared Large-Language-Model, by the people, for the people.
 
 Community-AI takes care of everything else.
 
-Community inference runs on contributing peers, including the model's input and
-output stages. Your app sends text and receives answers without downloading
-community model weights. When the mesh cannot answer, the small local fallback
-remains available. Sharing your GPU is optional.
 
-The application ships one model-agnostic runtime. Its signed catalog approves
-exact model manifests. Local fallback and sharing roles download the checkpoint
-files they need, verify their declared size and SHA-256, and keep them in a
-persistent shared cache. See [artifact delivery](docs/adr/0003-direct-manifested-artifact-delivery.md)
-and [text-only community consumers](docs/adr/0004-text-only-community-consumers.md).
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/64f168b4-ce93-4162-9be0-8001ae01f829" />
 
-The [Windows and Linux alpha](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.3)
-is available for closed testing. See the [installation guide](docs/ALPHA_INSTALL.md).
-This release fixes community inference and gives sharing the full configured GPU
-memory budget. Existing updater installations download it and offer **Restart to
-update**. Users of the September 8 release need one manual installer upgrade. Credits,
-earnings, payments, and payouts are planned later and are not currently available.
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/a18ee47d-1506-4121-accd-3bb2e10e2e2e" />
+
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/0f7a233a-f095-40a4-8c50-0936ea2b1808" />
 
 ## System requirements
 
-**A dedicated GPU is optional.** For the current alpha, plan for **8 GB RAM and
-20 GB free disk space** to install the app and use its small local model.
-These are practical starting guidelines; we have not certified the lowest-end
-CPU or smallest working RAM/VRAM configuration.
+A dedicated GPU is optional. These are practical starting guidelines for the
+alpha; the lowest supported hardware configuration has not been certified.
 
 | Component | What you need |
 | --- | --- |
-| **CPU** | A 64-bit Intel or AMD processor (x86-64). **Four cores recommended**; CPU-only answers are slower. There is no validated minimum clock speed or processor generation yet. |
-| **RAM** | **8 GB as a starting point; 16 GB recommended.** The small local fallback needs roughly 3.1 GB of available RAM, or free GPU memory if it runs on the GPU. The text-only community client does not load community model weights. Sharing hardware needs additional memory for the model parts you contribute. |
-| **GPU** | **Not required for CPU mode.** For GPU acceleration and sharing, use a CUDA-compatible NVIDIA GPU. An **RTX 2070 SUPER with 8 GB VRAM** has passed our sharing checks; lower VRAM capacities are not yet qualified. The current installers do not accelerate inference on AMD or Intel GPUs. |
-| **Free disk space** | Start with **20 GB free**, preferably on an SSD. This allows room for the app, installer/temporary update files and the small local fallback. Using the text-only community client does not download community model weights. **Sharing requires extra space** for the model parts you contribute. |
-| **Operating system** | 64-bit **Windows 10 (1809 or later)/11**, or **Ubuntu 22.04+/Debian 12+** with a desktop environment. No native macOS or ARM installer is currently provided. |
-| **Internet** | Required for initial model downloads and community inference/sharing. The small local model can run offline after downloading. |
+| **CPU** | 64-bit Intel or AMD (x86-64). Four cores recommended. |
+| **RAM** | 8 GB as a starting point; 16 GB recommended. Sharing needs extra memory for the model parts you contribute. |
+| **GPU** | Optional. NVIDIA CUDA is supported for acceleration and sharing; an RTX 2070 SUPER with 8 GB VRAM has been tested. AMD and Intel GPU acceleration is not included. |
+| **Disk space** | Start with 20 GB free, preferably on an SSD. The app uses about 4.3 GB on Windows or 5.2 GB on Linux; the small local model adds about 1.8 GB. Sharing requires additional space. |
+| **Operating system** | 64-bit Windows 10 (1809+)/11, Ubuntu 22.04+ or Debian 12+ with a desktop environment. |
+| **Internet** | Required for community inference and initial downloads. The small local model works offline after downloading. |
 
-The installed app occupies about **4.3 GB on Windows** or **5.2 GB on Linux**.
-The small local model downloads another **1.8 GB**. The current Qwen3.8 27B
-community checkpoint totals about **31 GB**. Contributors download the files
-needed for their role; community consumers do not download those weights. The
-small online installer still downloads the complete runtime; it does not reduce
-installed disk usage.
+When the community model is available, your app sends text to peers without
+downloading its weights or processing model layers locally. The small local
+fallback remains available when the mesh cannot answer. Sharing your GPU is optional.
 
-For NVIDIA acceleration, install a driver compatible with the bundled CUDA 12.4
-runtime. NVIDIA's CUDA 12.4 GA driver baseline is **551.61 on Windows** or
-**550.54.14 on Linux**; use these versions or newer. You do not need to install
-the CUDA Toolkit, Python or PyTorch separately.
-[NVIDIA driver reference](https://docs.nvidia.com/cuda/archive/12.4.0/cuda-toolkit-release-notes/index.html).
-
-The Windows OS floor follows the bundled [Qt runtime requirements](https://doc.qt.io/qt-6/windows.html).
-See the [installation guide](docs/ALPHA_INSTALL.md) and
-[recorded hardware checks](docs/evidence/gate14-20260907-final-resource-acceptance.md)
-for details about the tested configurations.
+For NVIDIA use, install a CUDA 12.4-compatible driver (551.61+ on Windows,
+550.54.14+ on Linux). Python, PyTorch and the CUDA runtime are included.
+See the [installation guide](https://github.com/flujo-app/CommunityAI/blob/codex/gate14-20260902-b/docs/ALPHA_INSTALL.md)
+for setup, updates and the current alpha limitations.
