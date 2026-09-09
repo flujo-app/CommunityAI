@@ -12,11 +12,11 @@ import time
 import uuid
 from typing import AsyncIterator
 
-from hivemind import DHT
 from hivemind.p2p import P2PContext, PeerID, ServicerBase
 from hivemind.proto import runtime_pb2
 
 from drift.protocol_identity import TRANSPORT_SECURITY, ProtocolSecurityError, SignedRecord, _validate_lifetime
+from drift.utils.client_dht import create_client_dht
 
 MAX_REQUEST_BYTES = 128 * 1024
 MAX_FRAME_BYTES = 64 * 1024
@@ -171,7 +171,7 @@ class TextPeerClient:
         self.dht = (
             dht
             if dht is not None
-            else DHT(initial_peers=list(initial_peers), client_mode=True, start=True, tls=True, startup_timeout=30)
+            else create_client_dht(initial_peers=initial_peers, client_mode=True, tls=True, startup_timeout=30)
         )
         self._owns_dht = dht is None
 

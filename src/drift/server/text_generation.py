@@ -149,6 +149,9 @@ class TextGenerationEngine:
                         raise ValueError("Batched prompts are not supported")
                     prompt = prompt[0]
                 input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+            model_device = getattr(self.runtime.model, "device", None)
+            if model_device is not None:
+                input_ids = input_ids.to(model_device)
             if input_ids.shape[1] + max_tokens > self.max_context_tokens:
                 raise ValueError(f"This community peer supports {self.max_context_tokens} tokens including the answer")
             kwargs = build_generate_kwargs(

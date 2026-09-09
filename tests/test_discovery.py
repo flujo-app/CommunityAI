@@ -54,6 +54,52 @@ def test_stalled_dht_startup_has_a_parent_timeout_and_cleans_the_child(monkeypat
     assert instances[0].stopped
 
 
+def test_dead_cached_peers_do_not_delay_a_healthy_configured_seed(monkeypatch):
+    import hivemind
+
+    attempts = []
+
+    class SeedDHT:
+        def __init__(self, *, initial_peers, **kwargs):
+            self.peers = initial_peers
+            attempts.append(self)
+
+        def run_in_background(self, *, timeout):
+            if any(peer == "dead-cached-peer" for peer in self.peers):
+                raise TimeoutError("dead address blocks startup of the entire peer set")
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(hivemind, "DHT", SeedDHT)
+    result = _default_dht_factory(initial_peers=["healthy-seed", "dead-cached-peer"])
+    assert result is attempts[0]
+    assert len(attempts) == 1
+
+
+def test_offline_primary_falls_back_to_another_seed_and_closes_failed_dht(monkeypatch):
+    import hivemind
+
+    attempts = []
+
+    class SeedDHT:
+        def __init__(self, *, initial_peers, **kwargs):
+            self.peers, self.closed = initial_peers, False
+            attempts.append(self)
+
+        def run_in_background(self, *, timeout):
+            if self.peers == ["offline-primary"]:
+                raise TimeoutError("primary unavailable")
+
+        def shutdown(self):
+            self.closed = True
+
+    monkeypatch.setattr(hivemind, "DHT", SeedDHT)
+    result = _default_dht_factory(initial_peers=["offline-primary", "healthy-cached-peer"])
+    assert attempts[0].closed
+    assert result is attempts[1] and not result.closed
+
+
 class FakeDHT:
     def __init__(self):
         self.alive = True
