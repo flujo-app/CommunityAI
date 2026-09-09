@@ -67,7 +67,8 @@ for setup, updates and the current alpha limitations.
 
 ## Important note on privacy and security:
 **Do NOT use CommunityAI for confidential/private data**
-**The peer handling your text can read it. The encryption protects on the network but a peer must actually open the message to process it. We cannot guarantee that another person’s computer won’t record it, or that a malicious peer will answer honestly.**
+**The peer handling your text can read it. We encrypt network-traffic, but a peer must actually open your request in cleartext to process it. 
+We cannot guarantee that another person’s computer won’t record it, or that a malicious peer will answer honestly.**
 
 Nonetheless, this is what we do right now to make it as secure as possible:
 - Messages between computers are encrypted
