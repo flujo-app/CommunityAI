@@ -105,11 +105,25 @@ class ResourcePlaythroughTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             plan = root / "plan.json"
-            plan.write_text(json.dumps({"steps": [{"action": "start"}], "timeout_seconds": 30,
-                                        "acknowledgement": str(root / "ack.json")}), encoding="utf-8")
+            plan.write_text(
+                json.dumps(
+                    {"steps": [{"action": "start"}], "timeout_seconds": 30, "acknowledgement": str(root / "ack.json")}
+                ),
+                encoding="utf-8",
+            )
             with patch("communityai_desktop.pyside_shell.run", return_value=0) as run:
-                self.assertEqual(main(["--no-manage-node", "--resource-ui-playthrough", str(plan),
-                                       "--resource-ui-evidence", str(root / "evidence.json")]), 0)
+                self.assertEqual(
+                    main(
+                        [
+                            "--no-manage-node",
+                            "--resource-ui-playthrough",
+                            str(plan),
+                            "--resource-ui-evidence",
+                            str(root / "evidence.json"),
+                        ]
+                    ),
+                    0,
+                )
                 self.assertFalse(run.call_args.kwargs["single_instance"])
                 self.assertIsInstance(run.call_args.kwargs["qualification_automation"], ResourcePlaythrough)
             with patch("communityai_desktop.pyside_shell.run", return_value=0) as run:
