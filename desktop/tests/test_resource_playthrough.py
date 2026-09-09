@@ -7,12 +7,11 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QPushButton, QWidget
-
 from communityai_desktop.app import main
 from communityai_desktop.resource_controls import ResourceControls
 from communityai_desktop.resource_playthrough import ResourcePlaythrough
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 
 class ResourcePlaythroughTests(unittest.TestCase):

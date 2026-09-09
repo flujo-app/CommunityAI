@@ -52,11 +52,10 @@ def checkbox_session(read_enabled, write_enabled, *, click=False):
     # An inherited native Qt setting must not open a test window. If another
     # caller already constructed a native QApplication, refuse before run().
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from communityai_desktop.pyside_shell import run
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QStyle, QStyleOptionButton
-
-    from communityai_desktop.pyside_shell import run
 
     application = QApplication.instance() or QApplication([])
     if application.platformName() != "offscreen":
