@@ -35,6 +35,10 @@ Once the app is running and connected, point your AI Chat application to
 "Sharing" Screen:
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/ef20f95e-a199-4058-adf9-d9782de5a005" />
 
+## Known Issues:
+- Goose returns "Ran into this error: Server error: Community peers are busy or unreachable. Please try again shortly. Please retry if you think this is a transient or recoverable error." -> A fix is on the way
+
+
 ## System requirements
 
 A dedicated GPU is optional. These are practical starting guidelines for the
