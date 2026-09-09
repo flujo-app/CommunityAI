@@ -86,7 +86,7 @@ def _normalize_model_download(value: Any) -> Dict[str, Any]:
         raise NodeClientError("Local node model download estimate has an unsupported schema version")
     size = value["selected_whole_shard_bytes"]
     if size is not None and (
-        isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= MAX_SELECTED_WHOLE_SHARD_BYTES
+        isinstance(size, bool) or not isinstance(size, int) or not 0 <= size <= MAX_SELECTED_WHOLE_SHARD_BYTES
     ):
         raise NodeClientError("Local node model download estimate has invalid selected whole-shard bytes")
     return {

@@ -132,6 +132,40 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         await response.body_iterator.aclose()
         self.assertTrue(all(item.active_requests == 0 for item in self.manager.snapshots()))
 
+    async def test_node_status_reaches_desktop_with_no_download_and_live_block_grid(self):
+        from dataclasses import replace
+
+        from communityai_desktop.client import NodeClient
+        from communityai_desktop.controller import DesktopController
+        from drift.node.server import create_node_app
+
+        manifest = ModelManifest.load(MANIFEST)
+        manager = ModelManager()
+        descriptor = replace(ModelDescriptor.from_manifest(manifest), selected_whole_shard_bytes=0)
+        health = {**self.health, "source": "discovery", "replica_counts": [1] * 64, "last_updated_age": 0.0}
+        manager.register(
+            descriptor, lambda: ModelRuntime(None, None, text_client=self.peer), route_health=lambda: health
+        )
+        manager.configure_auto_selection([descriptor.model_id])
+        try:
+            app = create_node_app(manager, api_keys=["api-test"], control_keys=["control-test"])
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as api:
+                response = await api.get("/control/v1/status", headers={"Authorization": "Bearer control-test"})
+                self.assertEqual(response.status_code, 200)
+                control = NodeClient("http://127.0.0.1:8080", "control-test")
+                with patch.object(control, "_request", return_value=response.json()), patch.object(
+                    control, "list_keys", return_value=[]
+                ):
+                    view = DesktopController(control).snapshot()
+            model = view["models"][0]
+            self.assertTrue(model["route_complete"])
+            self.assertTrue(model["auto_selected"])
+            self.assertIsNone(model["download_progress"])
+            self.assertEqual(model["covered_blocks"], 64)
+            self.assertEqual(model["health"]["replica_counts"], [1] * 64)
+        finally:
+            manager.shutdown()
+
 
 class PeerStartupTests(unittest.TestCase):
     def test_readiness_discovery_starts_without_a_consumer_request(self):

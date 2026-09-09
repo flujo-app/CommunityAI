@@ -86,6 +86,8 @@ class NodeClientTests(unittest.TestCase):
             "selected_whole_shard_bytes": 4_571_197_320,
         }
         self.assertEqual(_normalize_model_download(valid), valid)
+        no_download = {"schema_version": 1, "selected_whole_shard_bytes": 0}
+        self.assertEqual(_normalize_model_download(no_download), no_download)
 
         invalid_values = (
             None,
@@ -94,7 +96,7 @@ class NodeClientTests(unittest.TestCase):
             {"schema_version": True, "selected_whole_shard_bytes": 4_571_197_320},
             {"schema_version": 1.0, "selected_whole_shard_bytes": 4_571_197_320},
             {"schema_version": 1, "selected_whole_shard_bytes": True},
-            {"schema_version": 1, "selected_whole_shard_bytes": 0},
+            {"schema_version": 1, "selected_whole_shard_bytes": -1},
             {"schema_version": 1, "selected_whole_shard_bytes": 64 * 1024**4 + 1},
             {**valid, "credential": "must-not-be-accepted"},
         )
