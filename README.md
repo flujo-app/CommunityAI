@@ -39,8 +39,6 @@ Qwen 27B produced about 5.2 tokens/second.
 | Wait for first text | 11.63 seconds |
 | Total time | 21.11 seconds |
 
-It works - but it's not fast.
-
 ## Screenshots
 "Home" Screen:
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/0e02de2b-88f0-4af0-8fe6-79b2ed9a5979" />
