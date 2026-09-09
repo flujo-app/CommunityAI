@@ -25,6 +25,22 @@ Once the app is running and connected, point your AI Chat application to
 | --- | --- | --- |
 | http://localhost:8080 | /v1/chat/completions | auto |
 
+## Speed
+It works, but it's not fast. Don't expect it to outperform big, optimized datacenters.
+A Benchmark we ran on 09/09/2026:
+
+Qwen 27B produced about 5.2 tokens/second.
+
+| Measurement |	Result |
+| --- | --- |
+| Output | 49 tokens, two complete sentences |
+| Generation speed after first text | ~5.17 tokens/s |
+| Overall speed, including initial wait | 2.32 tokens/s |
+| Wait for first text | 11.63 seconds |
+| Total time | 21.11 seconds |
+
+It works - but it's not fast.
+
 ## Screenshots
 "Home" Screen:
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/0e02de2b-88f0-4af0-8fe6-79b2ed9a5979" />
