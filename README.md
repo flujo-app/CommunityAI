@@ -7,6 +7,11 @@
 
 **AI powered by people.**
 
+[Download CommunityAI for Windows or Linux](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.3)
+— available for closed alpha testing. Already using the app's updater? Check for
+updates in the sidebar, then choose **Restart to update** when the download finishes.
+
+
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/410a7c84-efa7-4a93-aa14-7ab9bb474575" />
 
 
@@ -26,3 +31,26 @@ Community-AI takes care of everything else.
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/a18ee47d-1506-4121-accd-3bb2e10e2e2e" />
 
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/0f7a233a-f095-40a4-8c50-0936ea2b1808" />
+
+## System requirements
+
+A dedicated GPU is optional. These are practical starting guidelines for the
+alpha; the lowest supported hardware configuration has not been certified.
+
+| Component | What you need |
+| --- | --- |
+| **CPU** | 64-bit Intel or AMD (x86-64). Four cores recommended. |
+| **RAM** | 8 GB as a starting point; 16 GB recommended. Sharing needs extra memory for the model parts you contribute. |
+| **GPU** | Optional. NVIDIA CUDA is supported for acceleration and sharing; an RTX 2070 SUPER with 8 GB VRAM has been tested. AMD and Intel GPU acceleration is not included. |
+| **Disk space** | Start with 20 GB free, preferably on an SSD. The app uses about 4.3 GB on Windows or 5.2 GB on Linux; the small local model adds about 1.8 GB. Sharing requires additional space. |
+| **Operating system** | 64-bit Windows 10 (1809+)/11, Ubuntu 22.04+ or Debian 12+ with a desktop environment. |
+| **Internet** | Required for community inference and initial downloads. The small local model works offline after downloading. |
+
+When the community model is available, your app sends text to peers without
+downloading its weights or processing model layers locally. The small local
+fallback remains available when the mesh cannot answer. Sharing your GPU is optional.
+
+For NVIDIA use, install a CUDA 12.4-compatible driver (551.61+ on Windows,
+550.54.14+ on Linux). Python, PyTorch and the CUDA runtime are included.
+See the [installation guide](https://github.com/flujo-app/CommunityAI/blob/codex/gate14-20260902-b/docs/ALPHA_INSTALL.md)
+for setup, updates and the current alpha limitations.
