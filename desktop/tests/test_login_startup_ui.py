@@ -26,13 +26,18 @@ class LoginStartupUiTests(unittest.TestCase):
         self.assertTrue(first["final_checked"])
         self.assertTrue(second["initial_checked"])
         self.assertFalse(second["final_checked"])
-        self.assertEqual(second["initial_detail"], "Enabled for this user")
-        self.assertEqual(second["final_detail"], "Off")
+        self.assertEqual(second["initial_detail"], "")
+        self.assertEqual(first["final_detail"], "CommunityAI will open when you sign in.")
+        self.assertEqual(second["final_detail"], "Automatic opening is off.")
         self.assertEqual(state["writes"], [True, False])
         self.assertEqual(first["qt_platform"], "offscreen")
         self.assertEqual(second["qt_platform"], "offscreen")
         self.assertTrue(first["checkbox_visible"])
         self.assertTrue(second["checkbox_visible"])
+        self.assertTrue(first["settings_initially_collapsed"])
+        self.assertTrue(second["settings_initially_collapsed"])
+        self.assertTrue(first["final_detail_visible"])
+        self.assertTrue(second["final_detail_visible"])
 
     def test_failed_native_write_reverts_checkbox_and_reports_failure(self):
         def denied(enabled):
@@ -42,8 +47,9 @@ class LoginStartupUiTests(unittest.TestCase):
         self.assertFalse(result["initial_checked"])
         self.assertFalse(result["final_checked"])
         self.assertEqual(result["warning_count"], 1)
-        self.assertIn("Could not change login startup", result["final_detail"])
+        self.assertEqual(result["final_detail"], "Could not save this setting. Try again.")
         self.assertTrue(result["checkbox_visible"])
+        self.assertTrue(result["final_detail_visible"])
 
     def test_unreadable_startup_registration_disables_the_checkbox(self):
         def denied():
@@ -55,6 +61,6 @@ class LoginStartupUiTests(unittest.TestCase):
         result = replay.checkbox_session(denied, never_write)
         self.assertFalse(result["initial_enabled"])
         self.assertFalse(result["final_checked"])
-        self.assertTrue(result["initial_detail"].startswith("Unavailable:"))
+        self.assertEqual(result["initial_detail"], "Sign-in settings could not be read.")
         self.assertEqual(result["warning_count"], 0)
         self.assertTrue(result["checkbox_visible"])

@@ -94,6 +94,7 @@ def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, 
                     else "unknown"
                 ),
                 "desired_running": snapshot.get("desired_running") is True,
+                "operator_paused": snapshot.get("operator_paused") is True,
                 "download_progress": public_progress(snapshot.get("download_progress")),
                 "placement": {
                     "automatic": snapshot.get("automatic") is True,
@@ -164,6 +165,7 @@ def create_node_app(
     contribution_policy: Optional[ContributionPolicyConfig] = None,
     contribution_policy_store: Optional[ContributionPolicyStore] = None,
     route_outcome_observer: Optional[Callable[..., None]] = None,
+    hardware_status: Optional[Callable[[dict], dict]] = None,
 ):
     """Compose the OpenAI API and authenticated local control surface."""
     if api_key_store is None and (not api_keys or any(not isinstance(key, str) or not key for key in api_keys)):
@@ -228,6 +230,7 @@ def create_node_app(
             "started_at": started_at,
             "openai_base_url": f"http://{'[' + host + ']' if ':' in host else host}:{port}/v1",
             "runtime_budget": model_manager.residency(),
+            "hardware": hardware_status(policy_snapshot["policy"]) if hardware_status is not None else {},
             "inference_mode": model_manager.inference_mode,
             "inference_mode_editable": contribution_policy_store is not None,
             "auto_selection": model_manager.auto_selection_snapshot(),

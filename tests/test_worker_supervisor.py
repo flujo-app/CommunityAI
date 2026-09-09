@@ -365,6 +365,14 @@ def test_supervisor_replaces_one_paused_automatic_assignment_and_autostarts():
     supervisor = WorkerSupervisor([initial], stop_timeout=2, poll_period=0.01, popen=_sleep_popen)
     supervisor.start_service()
 
+    supervisor.pause_worker("automatic")
+    assert supervisor.snapshot("automatic")["operator_paused"] is True
+    assert supervisor.start_worker("automatic") is False
+    pending = supervisor.snapshot("automatic")
+    assert pending["operator_paused"] is False
+    assert pending["desired_running"] is False
+    assert pending["pid"] is None  # Pending placement must never launch a worker.
+
     assert supervisor.replace_launch(updated) is True
     _wait_for(lambda: supervisor.snapshot("automatic")["state"] == "running")
     snapshot = supervisor.snapshot("automatic")

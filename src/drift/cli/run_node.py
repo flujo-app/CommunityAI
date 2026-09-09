@@ -1303,6 +1303,9 @@ def _serve_once(args, parser) -> bool:
 
     # Arm this before a lazy request can create the model client's p2pd child.
     tie_child_processes_to_this_process()
+    from drift.node.hardware_status import HardwareStatus
+
+    hardware_status = HardwareStatus(config)
     app = create_node_app(
         manager,
         api_key_store=key_store,
@@ -1315,6 +1318,7 @@ def _serve_once(args, parser) -> bool:
         contribution_policy=config.contribution_policy,
         contribution_policy_store=policy_store,
         route_outcome_observer=route_outcomes.record,
+        hardware_status=hardware_status.snapshot,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
     logger.info(

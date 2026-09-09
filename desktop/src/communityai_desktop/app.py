@@ -208,6 +208,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     activate_existing_instance=not args.started_at_login,
                     before_termination_restore=None if lifecycle is None else lifecycle.close,
                     qualification_automation=qualification_automation,
+                    single_instance=qualification_automation is None,
                 )
                 or 0
             )

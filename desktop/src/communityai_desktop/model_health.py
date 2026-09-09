@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from communityai_desktop.presentation import model_name
+
 COLORS = {
     "covered": "#237851",
     "replicated": "#35b779",
@@ -63,49 +65,57 @@ class DownloadCard(QFrame):
         self.bar = QProgressBar()
         self.bar.setRange(0, 1000)
         self.bar.setTextVisible(False)
-        self.bar.setAccessibleName("Current artifact download progress")
+        self.bar.setAccessibleName("Current file download progress")
         self.totals = caption("")
         for widget in (self.title, self.detail, self.bar, self.totals):
             layout.addWidget(widget)
 
     def set_state(self, name, progress, model_state=None):
+        name = model_name(name)
         if progress is None:
-            self.title.setText(f"{name} · Download has not started")
-            self.detail.setText("Files are downloaded when this model is first needed.")
+            self.title.setText(f"{name} · Not downloaded")
+            self.detail.setText("Downloads when needed.")
             self.bar.hide()
             self.totals.setText("")
+            self.totals.hide()
             return
         state = progress["state"]
         labels = {
             "waiting": "Waiting",
-            "checking": "Checking cache",
+            "checking": "Checking downloaded files",
             "downloading": "Downloading",
             "retrying": "Retrying download",
             "verifying": "Verifying files",
             "loading": "Loading model",
             "ready": "Ready",
-            "failed": "Download or loading failed",
+            "failed": "Couldn’t prepare this model",
             "paused": "Paused",
         }
         if state == "ready" and model_state == "known":
-            labels["ready"] = "Files verified · Model unloaded"
+            labels["ready"] = "Downloaded"
         self.title.setText(f"{name} · {labels[state]}")
         size, received = progress["artifact_bytes"], progress["artifact_received_bytes"]
-        artifact = progress.get("artifact") or "Preparing file selection"
+        artifact = progress.get("artifact") or "Preparing download"
         speed = progress.get("bytes_per_second") or 0
-        detail = f"{artifact} · {byte_text(received)} / {byte_text(size)}"
-        if state == "downloading":
+        detail = f"{byte_text(received or 0)} / {byte_text(size)}" if size else "Preparing download"
+        if state == "downloading" and speed:
             detail += f" · {byte_text(speed)}/s"
         self.detail.setText(detail)
+        self.detail.setToolTip(artifact)
         self.bar.setVisible(bool(size))
         self.bar.setValue(min(1000, int(1000 * (received or 0) / size)) if size else 0)
-        self.bar.setAccessibleDescription(detail)
-        self.totals.setText(
+        self.bar.setAccessibleDescription(f"{artifact} · {detail}")
+        diagnostic = (
             f"{byte_text(progress['verified_bytes'])} verified across {progress['verified_files'] or 0} files"
             f" · {byte_text(progress['received_bytes'])} received or cached"
             + (f" · Resumed {byte_text(progress['resumed_bytes'])}" if progress["resumed_bytes"] else "")
             + (f" · {progress['retries']} retries" if progress["retries"] else "")
         )
+        files, total_files = progress.get("verified_files"), progress.get("selected_files")
+        self.totals.setText(f"{files or 0} of {total_files} files checked" if total_files else "")
+        self.totals.setVisible(bool(total_files))
+        self.totals.setToolTip(diagnostic)
+        self.setToolTip(diagnostic)
 
 
 class DownloadsPanel(QFrame):
@@ -138,50 +148,100 @@ class DownloadsPanel(QFrame):
         self.empty.setVisible(not entries)
 
 
+class _ModelDisclosureButton(QPushButton):
+    def sizeHint(self):
+        return self.layout().totalSizeHint() if self.layout() else super().sizeHint()
+
+    def minimumSizeHint(self):
+        return self.layout().totalMinimumSize() if self.layout() else super().minimumSizeHint()
+
+
 class ModelHealthCard(QFrame):
     def __init__(self):
         super().__init__()
         self.setObjectName("card")
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(8, 8, 8, 8)
+        self.expand_button = _ModelDisclosureButton()
+        self.expand_button.setObjectName("modelDisclosure")
+        self.expand_button.setCheckable(True)
+        self.expand_button.setStyleSheet(
+            "QPushButton#modelDisclosure { background: transparent; border: 0; padding: 0; text-align: left; }"
+            "QPushButton#modelDisclosure:hover { background: #192131; }"
+            "QPushButton#modelDisclosure:focus { border: 1px solid #826BFF; }"
+        )
+        header = QHBoxLayout(self.expand_button)
+        header.setContentsMargins(12, 10, 12, 10)
+        copy = QVBoxLayout()
+        copy.setSpacing(4)
         self.title = caption("", "sectionTitle")
         self.summary = caption("")
-        self.legend = caption(
-            "Green: covered · Bright green: replicated · Blue: joining · Purple: reserved · Red: offline / local failure · Gray: missing"
-        )
+        self.summary.setStyleSheet("font-size: 13px;")
+        self.disclosure = caption("Show details", "bodyStrong")
+        for widget in (self.title, self.summary, self.disclosure):
+            widget.setAttribute(Qt.WA_TransparentForMouseEvents)
+        copy.addWidget(self.title)
+        copy.addWidget(self.summary)
+        header.addLayout(copy, 1)
+        header.addWidget(self.disclosure)
+        self.layout.addWidget(self.expand_button)
+        self.details = QWidget()
+        details_layout = QVBoxLayout(self.details)
+        details_layout.setContentsMargins(12, 4, 12, 12)
+        details_layout.setSpacing(10)
+        self.layout.addWidget(self.details)
+        self.details.hide()
+        self.expand_button.toggled.connect(self._toggle_details)
+        self.legend = caption("Green: available · Blue: joining · Purple: reserved · Red: offline · Gray: missing")
+        self.legend.setToolTip("Brighter green means a block has more than one copy. Select a block for details.")
         self.grid = QGridLayout()
         self.grid.setSpacing(5)
         self.grid.setAlignment(Qt.AlignLeft)
         self.cells = []
         self.selected = 0
-        self.block_detail = caption("Select a block to inspect its coverage.")
+        self.block_detail = caption("Select a block for details.")
+        self.local_info = caption("")
         self.download = DownloadCard()
-        self.peer_button = QPushButton("Show peer details")
+        self.worker_downloads = {}
+        self.worker_downloads_layout = QVBoxLayout()
+        self.peer_button = QPushButton("Contributors")
         self.peer_button.setCheckable(True)
         self.peer_button.toggled.connect(self._toggle_peers)
-        self.peer_table = QTableWidget(0, 4)
+        self.peer_table = QTableWidget(0, 3)
         self.peer_table.setStyleSheet(
             "QTableWidget { background: #10151f; color: #e7eaf0; gridline-color: #293344; border: 1px solid #293344; }"
             "QHeaderView::section { background: #192231; color: #aab8cc; border: 0; padding: 7px; }"
             "QTableWidget::item:selected { background: #334861; }"
         )
-        self.peer_table.setHorizontalHeaderLabels(["Peer", "Observed state", "Blocks", "Runtime"])
+        self.peer_table.setHorizontalHeaderLabels(["Contributor", "Status", "Blocks"])
         self.peer_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.peer_table.verticalHeader().hide()
         self.peer_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.peer_table.setAccessibleName("Observed model peers")
+        self.peer_table.setAccessibleName("Model contributors")
         self.peer_table.hide()
-        self.peer_note = caption(
-            "Reservations express intent. Joining includes download/loading. Remote download percentages and unused capacity are not reported."
-        )
-        for widget in (self.title, self.summary, self.legend):
-            self.layout.addWidget(widget)
-        self.layout.addLayout(self.grid)
-        for widget in (self.block_detail, self.download, self.peer_button, self.peer_table, self.peer_note):
-            self.layout.addWidget(widget)
+        self.peer_note = caption("No contributors connected yet.")
+        self.peer_note.hide()
+        details_layout.addWidget(self.legend)
+        details_layout.addLayout(self.grid)
+        for widget in (self.block_detail, self.local_info, self.download):
+            details_layout.addWidget(widget)
+        details_layout.addLayout(self.worker_downloads_layout)
+        for widget in (self.peer_button, self.peer_table, self.peer_note):
+            details_layout.addWidget(widget)
+
+    def _toggle_details(self, checked):
+        self.details.setVisible(checked)
+        self.disclosure.setText("Hide details" if checked else "Show details")
+        self._update_accessible_header()
+
+    def _update_accessible_header(self):
+        self.expand_button.setAccessibleName(f"{self.title.text()}. {self.summary.text()}. {self.disclosure.text()}")
+        self.expand_button.setAccessibleDescription("Expanded" if self.expand_button.isChecked() else "Collapsed")
 
     def _toggle_peers(self, checked):
-        self.peer_table.setVisible(checked)
-        self.peer_button.setText("Hide peer details" if checked else "Show peer details")
+        self.peer_table.setVisible(checked and self.peer_table.rowCount() > 0)
+        self.peer_note.setVisible(checked and self.peer_table.rowCount() == 0)
+        self.peer_button.setText(f"{'Hide contributors' if checked else 'Contributors'} ({self.peer_table.rowCount()})")
 
     def _select(self, index):
         self.selected = index
@@ -203,25 +263,41 @@ class ModelHealthCard(QFrame):
                 cell.clicked.connect(lambda checked=False, index=index: self._select(index))
                 self.grid.addWidget(cell, index // 16, index % 16)
                 self.cells.append(cell)
-        self.title.setText(model["id"])
+        self.title.setText(model_name(model["id"]))
         age = health["last_updated_age"]
         stale = health["status"] not in ("complete", "incomplete") or (age is not None and age > 120)
-        summary = (
-            "Runs on this computer"
-            if local
-            else f"{model['coverage']} blocks covered · {model.get('peer_count') or 0} peers serving"
-        )
-        if not local:
-            summary += f" · Observed {int(age)}s ago" if age is not None else " · Waiting for observations"
-            if stale:
-                summary += " · Coverage unknown / stale"
-            if health["total_blocks"] > total:
-                summary += f" · Showing first {total} blocks"
-            if not health["reservations_known"]:
-                summary += " · Reservation lookup unavailable"
+        if local:
+            summary = (
+                "On this computer · Ready" if model["state"] == "ready" else "On this computer · Downloads when needed"
+            )
+        elif stale:
+            summary = "Checking availability"
+        elif model.get("route_complete", health["status"] == "complete"):
+            count = model.get("peer_count") or 0
+            summary = f"Available · {count} {'contributor' if count == 1 else 'contributors'}"
+        else:
+            summary = f"Waiting for contributors · {model['coverage']} blocks available"
+        progress = model.get("download_progress")
+        if local and progress and progress["state"] == "ready" and model["state"] != "ready":
+            summary = "On this computer · Downloaded"
+        if progress and progress["state"] in ("downloading", "retrying", "verifying", "loading", "failed", "paused"):
+            activity = {
+                "downloading": "Downloading",
+                "retrying": "Retrying download",
+                "verifying": "Checking downloaded files",
+                "loading": "Loading",
+                "failed": "Couldn’t prepare this model",
+                "paused": "Download paused",
+            }[progress["state"]]
+            summary = f"{'On this computer' if local else 'Your download'} · {activity}"
         self.summary.setText(summary)
+        self.summary.setToolTip(f"Updated {int(age)} seconds ago" if age is not None and not local else "")
+        self._update_accessible_header()
         self.legend.setVisible(not local)
         self.block_detail.setVisible(not local)
+        size = model.get("selected_whole_shard_bytes")
+        self.local_info.setText(f"Download size: {byte_text(size)}" if size else "Uses this computer for answers.")
+        self.local_info.setVisible(local)
         for index, cell in enumerate(self.cells):
             replicas = health["replica_counts"][index] if health["replica_counts"] is not None else None
             joining = health["joining_counts"][index] if health["joining_counts"] is not None else 0
@@ -254,12 +330,16 @@ class ModelHealthCard(QFrame):
                 if offline or failures
                 else "missing"
             )
-            detail = f"Block {index} · {state.capitalize()} · {replicas if replicas is not None else 'Unknown'} serving replicas · {joining or 0} joining · {len(reservations)} reservations"
+            detail = f"Block {index} · {state.capitalize()} · {replicas if replicas is not None else 'Unknown'} copies"
+            if joining:
+                detail += f" · {joining} joining"
+            if reservations:
+                detail += f" · {len(reservations)} reservations"
             owners = [p["public_name"] or p["peer_id"][:12] for p in health["peers"] if index in p["online_blocks"]]
             if owners:
                 detail += " · Peers: " + ", ".join(owners[:8])
             if failures:
-                detail += " · Local worker failed: " + ", ".join(failures)
+                detail += " · Sharing failed on this computer"
             cell.setToolTip(detail)
             cell.setAccessibleName(detail)
             cell.setStyleSheet(
@@ -267,7 +347,26 @@ class ModelHealthCard(QFrame):
             )
         if self.cells:
             self._select(min(self.selected, len(self.cells) - 1))
-        self.download.set_state(model["id"], model.get("download_progress"), model["state"])
+        self.download.set_state("Your download", model.get("download_progress"), model["state"])
+        self.download.setVisible(model.get("download_progress") is not None)
+        downloading_workers = [
+            worker
+            for worker in workers
+            if worker["model"] == model["id"] and worker.get("download_progress") is not None
+        ]
+        worker_ids = {worker["id"] for worker in downloading_workers}
+        for worker_id in list(self.worker_downloads):
+            if worker_id not in worker_ids:
+                card = self.worker_downloads.pop(worker_id)
+                self.worker_downloads_layout.removeWidget(card)
+                card.deleteLater()
+        for worker in downloading_workers:
+            if worker["id"] not in self.worker_downloads:
+                card = self.worker_downloads[worker["id"]] = DownloadCard()
+                self.worker_downloads_layout.addWidget(card)
+            self.worker_downloads[worker["id"]].set_state(
+                "Sharing download", worker["download_progress"], worker["state"]
+            )
         peer_rows = []
         by_id = {p["peer_id"]: p for p in health["peers"]}
         for reservation in health["reservations"]:
@@ -294,11 +393,11 @@ class ModelHealthCard(QFrame):
             if peer["online_blocks"]:
                 states.append(f"Serving {len(peer['online_blocks'])}")
             if peer["joining_blocks"]:
-                states.append(f"Joining {len(peer['joining_blocks'])}")
+                states.append(f"Preparing {len(peer['joining_blocks'])}")
             if reserved:
-                states.append(f"Reserved {len(reserved)}")
+                states.append(f"Planning to share {len(reserved)}")
             if peer["offline_blocks"]:
-                states.append("Offline announcement")
+                states.append("Offline")
             blocks = block_ranges(peer["online_blocks"] + peer["joining_blocks"] + peer["offline_blocks"] + reserved)
             runtime = (
                 " · ".join(
@@ -329,7 +428,7 @@ class ModelHealthCard(QFrame):
                 state = progress["state"] if progress is not None else worker["display_status"]
                 peer_rows.append(
                     (
-                        f"This computer · {worker['id']}",
+                        "This computer",
                         state.capitalize(),
                         worker.get("placement", {}).get("block_indices") or "Unassigned",
                         "Local contribution",
@@ -339,10 +438,9 @@ class ModelHealthCard(QFrame):
         self.peer_table.setRowCount(len(peer_rows))
         self.peer_table.setFixedHeight(min(300, 55 + 30 * len(peer_rows)))
         for row, values in enumerate(peer_rows):
-            for column, value in enumerate(values[:4]):
+            for column, value in enumerate(values[:3]):
                 item = QTableWidgetItem(value)
-                item.setToolTip(values[4] if column == 0 else value)
+                item.setToolTip(f"{values[4]}\n{values[3]}" if column == 0 else value)
                 self.peer_table.setItem(row, column, item)
         self.peer_button.setVisible(not local)
-        self.peer_table.setVisible(not local and self.peer_button.isChecked())
-        self.peer_note.setVisible(not local)
+        self._toggle_peers(not local and self.peer_button.isChecked())

@@ -43,6 +43,24 @@ CATALOG_BOOTSTRAP_SCHEMA_VERSION = 1
 MAX_CATALOG_BYTES = 4 * 1024 * 1024
 MAX_MANIFEST_BYTES = 8 * 1024 * 1024
 DEFAULT_FETCH_TIMEOUT = (5.0, 20.0)
+# The first public alpha predated immutable installed-catalog history. Its two
+# managed entries survived the v2 migration even though v2 withdrew them. Keep
+# this compatibility record exact: names or directories alone are not evidence
+# that an advanced user's model belongs to our retired catalog.
+_LEGACY_PUBLIC_ALPHA_CATALOG_ID = "communityai-public-alpha-v1"
+_LEGACY_PUBLIC_ALPHA_ROOT = "sha256:9388a51a4c3856256e9db2c53838045e6be34202c72f1c5abd84cd33391a6b31"
+_LEGACY_PUBLIC_ALPHA_MODELS = frozenset(
+    (
+        "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+        "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+    )
+)
+_DEFAULT_CONTRIBUTION_POLICY = {
+    "sharing_enabled": False,
+    "max_vram": "100%",
+    "max_processing_percent": 100,
+    "max_disk_space": "20GiB",
+}
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _PUBLIC_PEER_RE = re.compile(r"^/(ip4|ip6|dns4|dns6)/([^/]+)/tcp/([1-9][0-9]{0,4})/p2p/([^/]{20,128})$")
 _SPECIAL_USE_DNS_SUFFIXES = (
@@ -540,6 +558,87 @@ class CatalogBootstrapInstaller:
         except ModelCatalogError as exc:
             raise CatalogBootstrapError(f"Rejected model catalog from {source}: {exc}") from exc
 
+    def _installed_catalog(self, config: NodeConfig) -> Optional[ModelCatalog]:
+        if config.catalog_path is None:
+            return None
+        installed = CatalogBootstrapConfig.load(config.catalog_bootstrap_path)
+        if not self.bootstrap.permits_replacement_of(installed):
+            raise CatalogBootstrapError("The application bootstrap does not authorize this installed catalog")
+        envelope = SignedModelCatalog.load(config.catalog_path)
+        # Historical membership remains meaningful after expiry. This never
+        # authorizes a network update or bypasses its current-time/rollback gate.
+        return envelope.verify(installed.trust_root, now=envelope.signed.issued_at_ms / 1000)
+
+    def _retired_managed_paths(self, config: NodeConfig, catalog: ModelCatalog) -> set[Path]:
+        managed = set()
+        previous = self._installed_catalog(config)
+        if previous is not None:
+            managed.update(model.manifest_digest for model in previous.models)
+        if (
+            catalog.catalog_id == _LEGACY_PUBLIC_ALPHA_CATALOG_ID
+            and catalog.sequence >= 2
+            and _LEGACY_PUBLIC_ALPHA_ROOT in self.bootstrap.replaces_trust_roots
+        ):
+            managed.update(_LEGACY_PUBLIC_ALPHA_MODELS)
+        retired = managed.difference(model.manifest_digest for model in catalog.models)
+        pinned = {worker.model.casefold() for worker in config.workers if worker.model.casefold() != "auto"}
+        paths = set()
+        for model in config.models:
+            manifest = ModelManifest.load(model.manifest_path)
+            if (
+                manifest.digest_id in retired
+                and model.manifest_path == self.manifest_dir / f"{manifest.digest}.json"
+                and not pinned.intersection(
+                    value.casefold() for value in (manifest.digest_id, manifest.name, *manifest.aliases)
+                )
+            ):
+                paths.add(model.manifest_path)
+        return paths
+
+    def _repair_existing_config(self) -> CatalogBootstrapResult:
+        """Remove proven retired managed entries, retaining model files and user settings."""
+        if not self.config_path.is_file() or self.config_path.is_symlink():
+            raise CatalogBootstrapError("Catalog migration requires a safe existing node configuration")
+        try:
+            with node_config_write_lock(self.config_path):
+                original = self.config_path.read_text(encoding="utf-8")
+                config = NodeConfig.from_json(original, base_dir=self.config_path.parent)
+                catalog = self._installed_catalog(config)
+                retired = set() if catalog is None else self._retired_managed_paths(config, catalog)
+                previous = json.loads(original)
+                missing_policy = catalog is not None and previous.get("contribution_policy") is None
+                if not retired and not missing_policy:
+                    return self._existing_result()
+                if missing_policy:
+                    previous["contribution_policy"] = dict(_DEFAULT_CONTRIBUTION_POLICY)
+                previous["models"] = [
+                    entry
+                    for model, entry in zip(config.models, previous["models"])
+                    if model.manifest_path not in retired
+                ]
+                NodeConfig.from_dict(previous, base_dir=self.config_path.parent)
+                _atomic_write(
+                    self.config_path,
+                    json.dumps(previous, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    overwrite=True,
+                )
+        except NodeConfigWriteLockError as exc:
+            raise CatalogBootstrapError("Another node configuration writer is active") from exc
+        return CatalogBootstrapResult(
+            config_path=self.config_path,
+            catalog_id=catalog.catalog_id,
+            catalog_sequence=catalog.sequence,
+            catalog_digest=catalog.digest,
+            model_count=len(previous["models"]),
+            source="existing-config-migration",
+            created=True,
+        )
+
+    def repair_existing_config(self) -> CatalogBootstrapResult:
+        """Apply offline application migrations before starting an existing node."""
+        with _catalog_bootstrap_lock(self.lock_path):
+            return self._repair_existing_config()
+
     def _install_manifests(self, catalog: ModelCatalog) -> Tuple[Path, ...]:
         import drift
         from drift.node.loading import validate_manifest_execution
@@ -629,11 +728,7 @@ class CatalogBootstrapInstaller:
             ),
             "catalog_bootstrap_path": str(self.installed_bootstrap_path),
             "route_demand_authority_roots": list(catalog.route_demand_authority_roots or ()),
-            "contribution_policy": {
-                "sharing_enabled": False,
-                "max_vram": "100%",
-                "max_processing_percent": 100,
-            },
+            "contribution_policy": dict(_DEFAULT_CONTRIBUTION_POLICY),
             "workers": [
                 {
                     "id": "automatic",
@@ -682,8 +777,11 @@ class CatalogBootstrapInstaller:
                 if refresh:
                     original = self.config_path.read_text(encoding="utf-8")
                     old_config = NodeConfig.from_json(original, base_dir=self.config_path.parent)
+                    retired_paths = self._retired_managed_paths(old_config, catalog)
                     previous = json.loads(original)
                     generated = json.loads(config_text)
+                    if previous.get("contribution_policy") is None:
+                        previous["contribution_policy"] = generated["contribution_policy"]
                     old_entries = {
                         model.manifest_path: entry for model, entry in zip(old_config.models, previous["models"])
                     }
@@ -710,15 +808,15 @@ class CatalogBootstrapInstaller:
                                 entry = {k: v for k, v in entry.items() if not k.startswith("local_")}
                         entries.append(entry)
                     for model in old_config.models:
-                        if model.manifest_path in current_paths:
+                        if model.manifest_path in current_paths or model.manifest_path in retired_paths:
                             continue
                         old_manifest = ModelManifest.load(model.manifest_path)
                         if current_selectors.intersection(
                             s.casefold() for s in (old_manifest.name, *old_manifest.aliases)
                         ):
                             continue
-                        # Exact older/user-added manifests stay explicit choices,
-                        # but leave automatic selection and contribution approval.
+                        # User-added manifests stay explicit choices, but leave
+                        # automatic selection and contribution approval.
                         entries.append(old_entries[model.manifest_path])
                     previous["models"] = entries
                     for field in (
@@ -767,7 +865,7 @@ class CatalogBootstrapInstaller:
                     rendered = self.fetch_text(url, MAX_CATALOG_BYTES)
                     candidate = self._load_catalog(url, rendered, CatalogRollbackGuard.from_dict(guard.to_dict()))
                     if current is not None and candidate.digest == current.digest:
-                        return self._existing_result()
+                        return self._repair_existing_config()
                     return self._try_candidate(url, rendered, guard, refresh=True)
                 except (CatalogBootstrapError, ModelCatalogError, ManifestError, OSError) as exc:
                     errors.append(str(exc))

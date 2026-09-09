@@ -623,11 +623,26 @@ class Gate13Playthrough:
                     # paused baseline through the literal per-model control,
                     # then replay the literal master Start action.
                     if contribution.get("intent_enabled"):
-                        self._click_model_toggle_to_pause()
+                        desired = any(
+                            worker.get("model") == self.plan.model_id and worker.get("desired_running")
+                            for worker in self._window._snapshot.get("workers", [])
+                        )
+                        if desired:
+                            self._click_model_toggle_to_pause()
+                        else:
+                            self._pause_before_policy_action("wait_prestart_paused")
                     else:
                         self._click_start()
+            elif self._state == "wait_policy_paused":
+                contribution = self._window._snapshot.get("contribution", {})
+                if not self._window._busy and not contribution.get("intent_enabled"):
+                    self._begin_policy_edit()
             elif self._state == "wait_prestart_paused":
                 contribution = self._window._snapshot.get("contribution", {})
+                if not self._window._busy and contribution.get("intent_enabled"):
+                    desired = any(worker.get("desired_running") for worker in self._window._snapshot.get("workers", []))
+                    if not desired:
+                        self._pause_before_policy_action("wait_prestart_paused")
                 if (
                     not self._window._busy
                     and not contribution.get("intent_enabled")
@@ -696,12 +711,51 @@ class Gate13Playthrough:
         if not self._show_sharing_page():
             self._fail()
             return
+        if self._window._snapshot.get("contribution", {}).get("intent_enabled"):
+            self._pause_before_policy_action("wait_policy_paused")
+            return
+        if not self._show_more_settings():
+            self._fail()
+            return
         if self._window.edit_policy_button.isEnabled() is False:
+            self._fail()
+            return
+        self._window.pages.currentWidget().ensureWidgetVisible(self._window.edit_policy_button)
+        if not self._window.edit_policy_button.isVisible():
             self._fail()
             return
         self._state = "editing_policy"
         self._qt["QTimer"].singleShot(100, self._fill_policy_dialog)
         self._window.edit_policy_button.click()
+
+    def _pause_before_policy_action(self, state: str) -> None:
+        if not self._show_sharing_page():
+            self._fail()
+            return
+        button = self._window.master_share_button
+        if button.text() != "Pause sharing" or not button.isEnabled():
+            return
+        self._state = state
+        button.click()
+
+    def _show_more_settings(self) -> bool:
+        window = self._window
+        matches = [
+            button
+            for button in window.findChildren(type(window.master_share_button))
+            if button.accessibleName() == "More sharing settings"
+        ]
+        # Older qualified shells presented these controls directly on Sharing.
+        if not matches:
+            edit_button = getattr(window, "edit_policy_button", None)
+            return edit_button is None or not hasattr(edit_button, "isVisible") or edit_button.isVisible()
+        if len(matches) != 1 or not matches[0].isEnabled():
+            return False
+        button = matches[0]
+        window.pages.currentWidget().ensureWidgetVisible(button)
+        if not button.isChecked():
+            button.click()
+        return bool(button.isChecked())
 
     def _fill_policy_dialog(self) -> None:
         try:
@@ -758,6 +812,9 @@ class Gate13Playthrough:
 
     def _click_model_toggle_to_pause(self) -> None:
         if not self._show_sharing_page():
+            self._fail()
+            return
+        if not self._show_more_settings():
             self._fail()
             return
         checkbox_type = self._qt.get("QCheckBox")

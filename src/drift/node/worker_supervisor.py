@@ -707,10 +707,20 @@ class WorkerSupervisor:
         with self._lock:
             if not record.launch.policy_admitted:
                 record.desired_running = False
+                if record.launch.automatic:
+                    # A user's Start clears an earlier Pause even while placement
+                    # is pending. The reconciler may start it only after every
+                    # policy and signed-placement check admits its next launch.
+                    record.operator_paused = False
+                    return False
                 raise WorkerPolicyError(record.launch.policy_reason)
             record.operator_paused = False
             record.desired_running = True
-            return self._spawn_locked(record)
+            return self._spawn_locked(
+                record,
+                defer_outside_schedule=record.launch.automatic,
+                defer_unavailable_resources=record.launch.automatic,
+            )
 
     @staticmethod
     def _kill_linux_worker_group(process: subprocess.Popen) -> None:

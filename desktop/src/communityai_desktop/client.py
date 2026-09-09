@@ -398,6 +398,7 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
                 "model": model,
                 "state": state,
                 "desired_running": worker["desired_running"],
+                "operator_paused": worker.get("operator_paused") is True,
                 "placement": placement,
                 "policy": policy,
                 "schedule": schedule,
@@ -414,6 +415,21 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
         "policy": policy_snapshot,
         "workers": normalized_workers,
     }
+
+
+def _normalize_hardware(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for field in ("cpu_name", "gpu_name", "gpu_device", "device"):
+        item = value.get(field)
+        result[field] = (
+            " ".join(item.split())[:160] if isinstance(item, str) and item.isprintable() and item.strip() else None
+        )
+    for field in ("gpu_total_bytes", "sharing_vram_bytes", "sharing_vram_available_bytes"):
+        item = value.get(field)
+        result[field] = item if type(item) is int and 0 <= item <= 64 * 1024**4 else None
+    return result
 
 
 class NodeClient:
@@ -496,6 +512,7 @@ class NodeClient:
         ]
         result["auto_selection"] = _normalize_auto_selection(result.get("auto_selection"))
         result["contribution"] = _normalize_contribution_status(result.get("contribution"))
+        result["hardware"] = _normalize_hardware(result.get("hardware"))
         return result
 
     def get_contribution_policy(self) -> Dict[str, Any]:

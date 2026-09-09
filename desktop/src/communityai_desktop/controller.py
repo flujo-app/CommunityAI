@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from communityai_desktop.client import NodeClient, NodeClientError
+from communityai_desktop.client import NodeApiError, NodeClient, NodeClientError
 from communityai_desktop.telemetry import route_view
 
 
@@ -26,11 +26,15 @@ class DesktopController:
             model["auto_selected"] = model["id"] == auto_selection["model"]
         contribution = status["contribution"]
         workers = [self._worker_view(worker) for worker in contribution["workers"]]
+        hardware = dict(status.get("hardware") or {})
+        selected = next((model for model in models if model["auto_selected"]), {})
+        hardware["inference_device"] = selected.get("device")
         return {
             "node_status": status.get("status", "unknown"),
             "openai_base_url": status["openai_base_url"],
             "started_at": status.get("started_at"),
             "runtime_budget": status.get("runtime_budget", {}),
+            "hardware": hardware,
             "inference_mode": status.get("inference_mode", "auto"),
             "inference_mode_editable": status.get("inference_mode_editable", False),
             "models": models,
@@ -38,7 +42,7 @@ class DesktopController:
             "workers": workers,
             "keys": [self._key_view(key) for key in self.client.list_keys()],
             "network": self._network_view(status.get("network"), models),
-            "contribution": self._contribution_view(contribution, workers),
+            "contribution": self._contribution_view(contribution, workers, hardware),
         }
 
     @staticmethod
@@ -64,6 +68,7 @@ class DesktopController:
             "route_complete": route_complete,
             "peer_count": route.get("peer_count"),
             "execution": "local" if route.get("source") == "local" else "distributed",
+            "device": route.get("device"),
             "selected_whole_shard_bytes": selected_whole_shard_bytes,
             "download_storage_estimate": _download_storage_estimate(selected_whole_shard_bytes),
             "active_requests": model.get("active_requests", 0),
@@ -108,8 +113,21 @@ class DesktopController:
         )
         state = worker["state"]
         desired_running = worker["desired_running"]
-        if state in ("running", "starting"):
+        progress_state = (worker.get("download_progress") or {}).get("state")
+        preparing = state in ("running", "starting") and progress_state in {
+            "waiting",
+            "checking",
+            "downloading",
+            "retrying",
+            "verifying",
+            "loading",
+        }
+        if preparing:
+            display_status = "Downloading model" if progress_state in ("downloading", "retrying") else "Preparing model"
+        elif state == "running":
             display_status = "Sharing"
+        elif state == "starting":
+            display_status = "Starting sharing"
         elif desired_running and blocked_reason:
             display_status = f"Waiting: {blocked_reason}"
         elif not admitted:
@@ -123,7 +141,9 @@ class DesktopController:
             "model": worker["model"],
             "state": state,
             "desired_running": desired_running,
-            "sharing_active": state in ("running", "starting"),
+            "operator_paused": worker.get("operator_paused", False),
+            "sharing_active": state == "running" and not preparing,
+            "preparing": preparing,
             "can_start": admitted,
             "blocked_reason": blocked_reason,
             "display_status": display_status,
@@ -170,7 +190,11 @@ class DesktopController:
         return {"peer_count": peer_count, "regions": clean_regions}
 
     @staticmethod
-    def _contribution_view(contribution: Dict[str, Any], workers: list[Dict[str, Any]]) -> Dict[str, Any]:
+    def _contribution_view(
+        contribution: Dict[str, Any], workers: list[Dict[str, Any]], hardware: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
+        policy_snapshot = contribution["policy"]
+        policy = policy_snapshot["policy"]
         active_models = sorted({worker["model"] for worker in workers if worker["sharing_active"]})
         selected_models = sorted({worker["model"] for worker in workers if worker["desired_running"]})
         blocked_reasons = []
@@ -179,7 +203,12 @@ class DesktopController:
             reason = worker["blocked_reason"]
             if reason and reason not in blocked_reasons:
                 blocked_reasons.append(reason)
-            if worker["desired_running"] and reason and reason not in selected_blocked_reasons:
+            selected = worker["desired_running"] or (
+                policy.get("sharing_enabled")
+                and worker.get("placement", {}).get("automatic")
+                and not worker.get("operator_paused", False)
+            )
+            if selected and reason and reason not in selected_blocked_reasons:
                 selected_blocked_reasons.append(reason)
 
         vram_pairs = {
@@ -198,16 +227,22 @@ class DesktopController:
             vram_bytes = vram_pool_bytes = vram_percent = None
             vram_status = "unavailable"
 
-        policy_snapshot = contribution["policy"]
+        hardware = hardware or {}
+        if hardware.get("sharing_vram_bytes") is not None:
+            vram_bytes = hardware["sharing_vram_bytes"]
+            vram_pool_bytes = hardware.get("gpu_total_bytes")
+            vram_percent = round(vram_bytes * 100 / vram_pool_bytes) if vram_pool_bytes else None
+            vram_status = "configured"
+        intent_enabled = policy.get("sharing_enabled", False) or bool(selected_models)
         return {
             "configured": contribution["configured"],
             "editable": contribution["editable"],
             "config_revision": policy_snapshot["config_revision"],
-            "policy": policy_snapshot["policy"],
+            "policy": policy,
             "enabled": bool(active_models),
-            "intent_enabled": bool(selected_models),
-            "can_start": any(worker["can_start"] for worker in workers),
-            "can_pause": any(worker["desired_running"] for worker in workers),
+            "intent_enabled": intent_enabled,
+            "can_start": contribution["editable"] and bool(workers),
+            "can_pause": intent_enabled,
             "active_models": active_models,
             "selected_models": selected_models,
             "blocked_reasons": blocked_reasons,
@@ -216,7 +251,37 @@ class DesktopController:
             "vram_bytes": vram_bytes,
             "vram_pool_bytes": vram_pool_bytes,
             "vram_percent": vram_percent,
+            "processing_percent": policy.get("max_processing_percent", 100),
+            "vram_available_bytes": hardware.get("sharing_vram_available_bytes"),
         }
+
+    def set_sharing_enabled(self, enabled: bool) -> Dict[str, Any]:
+        """Persist the user's sharing choice before starting or stopping workers."""
+        current = self.client.status()["contribution"]
+        if not current["editable"]:
+            raise NodeClientError("Sharing settings are unavailable. Restart CommunityAI and try again.")
+        if enabled and not current["workers"]:
+            raise NodeClientError("No community model is available for sharing yet.")
+        saved = current["policy"]
+        for worker in current["workers"]:
+            self.client.worker_action(worker["id"], "pause")
+        policy = {**saved["policy"], "sharing_enabled": enabled}
+        if enabled:
+            policy["max_disk_space"] = policy.get("max_disk_space") or "20GiB"
+            policy["max_vram"] = policy.get("max_vram") or "100%"
+            policy["max_processing_percent"] = policy.get("max_processing_percent", 100)
+        result = self.client.update_contribution_policy(policy, expected_revision=saved["config_revision"])
+        if not enabled:
+            return {**result, "message": "Sharing paused."}
+        waiting = False
+        for worker in current["workers"]:
+            try:
+                self.client.worker_action(worker["id"], "start")
+            except NodeApiError as exc:
+                if exc.status_code != 409:
+                    raise
+                waiting = True
+        return {**result, "message": "Sharing is waiting to start." if waiting else "Sharing enabled."}
 
     def worker_action(self, worker_id: str, action: str) -> Dict[str, Any]:
         return self.client.worker_action(worker_id, action)
@@ -240,7 +305,16 @@ class DesktopController:
             raise NodeClientError("Settings changed elsewhere. Refresh before applying limits.")
         if not current["editable"] or "max_processing_percent" not in saved["policy"]:
             raise NodeClientError("Update the local node to use these resource controls.")
-        resume = [worker["id"] for worker in current["workers"] if worker["desired_running"]]
+        resume = [
+            worker["id"]
+            for worker in current["workers"]
+            if worker["desired_running"]
+            or (
+                saved["policy"].get("sharing_enabled")
+                and worker.get("placement", {}).get("automatic")
+                and not worker.get("operator_paused", False)
+            )
+        ]
         # Pause all configured workers, including automatic workers with no current
         # process. This prevents the placement service racing the policy transaction.
         for worker in current["workers"]:
@@ -256,13 +330,7 @@ class DesktopController:
                 self.client.worker_action(worker_id, "start")
             except NodeClientError as exc:
                 errors.append(str(exc))
-        result["message"] = (
-            "Limits saved. Sharing is waiting: " + "; ".join(errors)[:200]
-            if errors
-            else "Limits saved. Previously selected sharing resumed."
-            if resume
-            else "Limits saved. Sharing remains paused."
-        )
+        result["message"] = "Changes saved. Sharing is waiting to start." if errors else "Changes saved."
         return result
 
     def set_workers_enabled(self, worker_ids: list[str], enabled: bool) -> list[Dict[str, Any]]:

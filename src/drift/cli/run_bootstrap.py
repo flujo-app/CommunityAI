@@ -57,7 +57,7 @@ def main() -> None:
                     installer.bootstrap.trust_root != installed.trust_root
                     and installer.bootstrap.permits_replacement_of(installed)
                 )
-            result = installer.refresh() if args.refresh or needs_refresh else installer._existing_result()
+            result = installer.refresh() if args.refresh or needs_refresh else installer.repair_existing_config()
         else:
             result = bootstrap_node_from_catalog(args.bootstrap_config, data_dir=data_dir, config_path=config_path)
     except CatalogBootstrapError as exc:

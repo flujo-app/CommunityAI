@@ -52,10 +52,11 @@ def checkbox_session(read_enabled, write_enabled, *, click=False):
     # An inherited native Qt setting must not open a test window. If another
     # caller already constructed a native QApplication, refuse before run().
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    from communityai_desktop.pyside_shell import run
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication, QMessageBox, QStyle, QStyleOptionButton
+    from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QStyle, QStyleOptionButton
+
+    from communityai_desktop.pyside_shell import run
 
     application = QApplication.instance() or QApplication([])
     if application.platformName() != "offscreen":
@@ -85,6 +86,19 @@ def checkbox_session(read_enabled, write_enabled, *, click=False):
             def exercise():
                 try:
                     checkbox = window.login_startup_toggle
+                    more = [
+                        button
+                        for button in window.findChildren(QPushButton)
+                        if button.accessibleName() == "More sharing settings"
+                    ]
+                    if len(more) != 1 or more[0].isChecked():
+                        raise AssertionError("Sharing settings must start collapsed")
+                    observed["settings_initially_collapsed"] = not checkbox.isVisible()
+                    window.pages.currentWidget().ensureWidgetVisible(more[0])
+                    app.processEvents()
+                    QTest.mouseClick(more[0], Qt.LeftButton)
+                    if not more[0].isChecked():
+                        raise AssertionError("Sharing settings did not expand after clicking their control")
                     window.pages.currentWidget().ensureWidgetVisible(checkbox)
                     app.processEvents()
                     if not checkbox.isVisible():
@@ -115,6 +129,7 @@ def checkbox_session(read_enabled, write_enabled, *, click=False):
                     observed.update(
                         final_checked=checkbox.isChecked(),
                         final_detail=window.login_startup_detail.text(),
+                        final_detail_visible=window.login_startup_detail.isVisible(),
                         qt_platform=app.platformName(),
                     )
                 except BaseException as exc:
@@ -198,11 +213,11 @@ def run_native_windows(executable, output):
         with patch.object(startup, "WINDOWS_RUN_KEY", private_key):
             enabled = checkbox_session(startup.login_startup_enabled, startup.set_login_startup, click=True)
             assert enabled["initial_checked"] is False and enabled["final_checked"] is True
-            assert enabled["final_detail"] == "Enabled for this user"
+            assert enabled["final_detail"] == "CommunityAI will open when you sign in."
             assert startup.login_startup_enabled()
             reopened = checkbox_session(startup.login_startup_enabled, startup.set_login_startup, click=True)
             assert reopened["initial_checked"] is True and reopened["final_checked"] is False
-            assert reopened["initial_detail"] == "Enabled for this user" and reopened["final_detail"] == "Off"
+            assert reopened["initial_detail"] == "" and reopened["final_detail"] == "Automatic opening is off."
             assert not startup.login_startup_enabled() and read_value(private_key) is None
             result["enable"] = enabled
             result["reopen_and_disable"] = reopened

@@ -8,11 +8,12 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtWidgets import QApplication
+
 from communityai_desktop.acceptance import fake_node
 from communityai_desktop.client import NodeClient, NodeClientError
 from communityai_desktop.controller import DesktopController
 from communityai_desktop.resource_controls import ResourceControls
-from PySide6.QtWidgets import QApplication
 
 
 class ResourceControlsTests(unittest.TestCase):
@@ -47,13 +48,49 @@ class ResourceControlsTests(unittest.TestCase):
             "policy": {"max_vram": "2GiB", "max_processing_percent": 100},
         }
         widget.set_state(saved)
-        self.assertEqual(widget.values["max_vram"].text(), "Custom: 2GiB")
+        self.assertEqual(widget.values["max_vram"].text(), "2GiB")
         widget.sliders["max_processing_percent"].setValue(50)
         self.assertEqual(widget._draft, {"max_processing_percent": 50})
         widget.set_state({**saved, "config_revision": "other"})
         self.assertFalse(widget.apply_button.isEnabled())
         widget.set_state({**saved, "policy": {"max_vram": "50%"}})
         self.assertFalse(widget.sliders["max_processing_percent"].isEnabled())
+        widget.close()
+
+    def test_memory_value_shows_bytes_and_caps_local_inference_reserve(self):
+        widget = ResourceControls()
+        saved = {
+            "editable": True,
+            "config_revision": "revision",
+            "policy": {"max_vram": "100%", "max_processing_percent": 100},
+            "vram_bytes": int(4.5 * 1024**3),
+            "vram_pool_bytes": 8 * 1024**3,
+            "vram_available_bytes": int(4.5 * 1024**3),
+        }
+        widget.set_state(saved)
+        self.assertEqual(widget.values["max_vram"].text(), "4.5 GB of 8.0 GB")
+        self.assertEqual(widget.sliders["max_vram"].maximum(), 57)
+        self.assertEqual(widget.sliders["max_vram"].value(), 57)
+        self.assertEqual(widget._draft, {})
+        # Saving only computing must retain the original 100% memory policy.
+        widget.sliders["max_processing_percent"].setValue(50)
+        widget.set_state(saved)
+        changes = []
+        widget.apply_requested.connect(lambda fields, revision: changes.append(fields))
+        widget.apply_button.click()
+        self.assertEqual(changes, [{"max_processing_percent": 50}])
+        self.assertEqual(widget._policy["max_vram"], "100%")
+        widget.sliders["max_vram"].setValue(25)
+        self.assertEqual(widget.values["max_vram"].text(), "2.0 GB of 8.0 GB")
+        self.assertEqual(widget._draft["max_vram"], "25%")
+        # Dragging to the useful top requests all available memory, not 57%.
+        widget.sliders["max_vram"].setValue(widget.sliders["max_vram"].maximum())
+        self.assertEqual(widget._draft["max_vram"], "100%")
+        self.assertEqual(widget.values["max_vram"].text(), "4.5 GB of 8.0 GB")
+        widget.set_state(saved)
+        self.assertEqual(widget.values["max_vram"].text(), "4.5 GB of 8.0 GB")
+        self.assertEqual(widget.sliders["max_vram"].value(), 57)
+        self.assertEqual(widget.values["max_processing_percent"].text(), "50%")
         widget.close()
 
 
@@ -110,6 +147,77 @@ class ResourceControllerTests(unittest.TestCase):
             DesktopController(client).update_resource_limits({"max_vram": "25%"}, expected_revision="stale")
         self.assertEqual(client.actions, [])
 
+    def test_saving_limits_keeps_automatic_sharing_requested_while_placement_is_pending(self):
+        for worker in self.status["contribution"]["workers"]:
+            worker["desired_running"] = False
+        self.status["contribution"]["policy"]["policy"]["sharing_enabled"] = True
+        client = self.client()
+        DesktopController(client).update_resource_limits({"max_vram": "50%"}, expected_revision=self.revision)
+        self.assertIn(("start", "worker-b"), client.actions)
+
+    def test_pending_automatic_reason_is_visible_but_individual_pause_is_preserved(self):
+        contribution = self.status["contribution"]
+        contribution["policy"]["policy"]["sharing_enabled"] = True
+        worker = next(worker for worker in contribution["workers"] if worker["id"] == "worker-b")
+        worker["desired_running"] = False
+        worker["state"] = "paused"
+        worker["policy"].update(admitted=False, reason="automatic placement is waiting for fresh eligible coverage")
+        viewed = DesktopController._worker_view(worker)
+        result = DesktopController._contribution_view(contribution, [viewed])
+        self.assertEqual(result["selected_blocked_reasons"], [worker["policy"]["reason"]])
+        self.assertTrue(result["intent_enabled"])
+        self.assertFalse(result["enabled"])
+        worker["operator_paused"] = True
+        result = DesktopController._contribution_view(contribution, [DesktopController._worker_view(worker)])
+        self.assertEqual(result["selected_blocked_reasons"], [])
+        client = self.client()
+        DesktopController(client).update_resource_limits({"max_vram": "50%"}, expected_revision=self.revision)
+        self.assertNotIn(("start", "worker-b"), client.actions)
+
+    def test_first_start_saves_explicit_opt_in_and_defaults_before_worker_start(self):
+        self.status["contribution"]["policy"]["policy"].update(
+            sharing_enabled=False, max_vram=None, max_disk_space=None
+        )
+        client = self.client()
+        DesktopController(client).set_sharing_enabled(True)
+        actions = [action for action, _ in client.actions]
+        self.assertEqual(actions, ["pause", "pause", "pause", "save", "start", "start", "start"])
+        policy = client.actions[3][1]
+        self.assertTrue(policy["sharing_enabled"])
+        self.assertEqual(policy["max_vram"], "100%")
+        self.assertEqual(policy["max_processing_percent"], 100)
+        self.assertEqual(policy["max_disk_space"], "20GiB")
+
+    def test_pause_is_persisted_and_failed_opt_in_never_starts_workers(self):
+        client = self.client()
+        DesktopController(client).set_sharing_enabled(False)
+        self.assertEqual([action for action, _ in client.actions], ["pause", "pause", "pause", "save"])
+        self.assertFalse(client.actions[-1][1]["sharing_enabled"])
+        client = self.client(failure="save")
+        with self.assertRaises(NodeClientError):
+            DesktopController(client).set_sharing_enabled(True)
+        self.assertNotIn("start", [action for action, _ in client.actions])
+
+    def test_pending_worker_reports_persisted_intent_and_physical_memory_without_worker_budget(self):
+        current = self.status["contribution"]
+        current["workers"] = []
+        current["policy"]["policy"]["sharing_enabled"] = True
+        result = DesktopController._contribution_view(
+            current,
+            [],
+            {
+                "gpu_total_bytes": 8_000_000_000,
+                "sharing_vram_bytes": 4_500_000_000,
+                "sharing_vram_available_bytes": 4_500_000_000,
+            },
+        )
+        self.assertTrue(result["intent_enabled"])
+        self.assertTrue(result["can_pause"])
+        self.assertFalse(result["enabled"])
+        self.assertEqual(result["vram_bytes"], 4_500_000_000)
+        self.assertEqual(result["vram_pool_bytes"], 8_000_000_000)
+        self.assertEqual(result["processing_percent"], 100)
+
     def test_real_policy_api_stops_old_process_and_preserves_limits_on_reload(self):
         from fastapi.testclient import TestClient
 
@@ -125,7 +233,6 @@ class ResourceControllerTests(unittest.TestCase):
                 "schema_version": 1,
                 "models": [{"manifest": "manifest.json", "initial_peers": ["peer-one"]}],
                 "workers": [{"id": "worker", "model": "model", "identity_path": "worker.key", "num_blocks": 1}],
-                "contribution_policy": {"sharing_enabled": True, "max_disk_space": "8GiB", "max_vram": "100%"},
             }
             config_path.write_text(json.dumps(document), encoding="utf-8")
 
@@ -134,7 +241,11 @@ class ResourceControllerTests(unittest.TestCase):
                 return WorkerSupervisorSettings(
                     launches=(
                         WorkerLaunch(
-                            "worker", "model", (sys.executable, "-c", "import time; time.sleep(60)", str(percent))
+                            "worker",
+                            "model",
+                            (sys.executable, "-c", "import time; time.sleep(60)", str(percent)),
+                            policy_admitted=config.contribution_policy.sharing_enabled,
+                            policy_reason=None if config.contribution_policy.sharing_enabled else "sharing is disabled",
                         ),
                     ),
                     stop_timeout=2,
@@ -163,8 +274,16 @@ class ResourceControllerTests(unittest.TestCase):
                             return response.json()
 
                     controller = DesktopController(Client("http://127.0.0.1:8080", "test-control"))
-                    supervisor.start_worker("worker")
+                    self.assertFalse(NodeConfig.load(config_path).contribution_policy.sharing_enabled)
+                    self.assertIsNone(NodeConfig.load(config_path).contribution_policy.max_disk_space)
+                    self.assertIsNone(NodeConfig.load(config_path).contribution_policy.max_vram)
+                    controller.set_sharing_enabled(True)
+                    started_policy = NodeConfig.load(config_path).contribution_policy
+                    self.assertTrue(started_policy.sharing_enabled)
+                    self.assertEqual(started_policy.max_disk_space, "20GiB")
+                    self.assertEqual(started_policy.max_vram, "100%")
                     old_process = supervisor._record("worker").process
+                    self.assertIsNotNone(old_process)
                     controller.update_resource_limits(
                         {"max_processing_percent": 25, "max_vram": "50%"},
                         expected_revision=store.snapshot()["config_revision"],
@@ -184,6 +303,8 @@ class ResourceControllerTests(unittest.TestCase):
                     )
                     self.assertIsNotNone(new_process.poll())
                     self.assertIsNone(supervisor._record("worker").process)
+                    controller.set_sharing_enabled(False)
+                    self.assertFalse(NodeConfig.load(config_path).contribution_policy.sharing_enabled)
             finally:
                 supervisor.shutdown()
                 manager.shutdown()

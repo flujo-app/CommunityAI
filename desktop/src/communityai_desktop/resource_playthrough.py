@@ -90,18 +90,6 @@ class ResourcePlaythrough:
             raise PlaythroughError("resource_control_disabled")
         self.test.mouseClick(button, self.qt.LeftButton)
 
-    def opt_in(self):
-        try:
-            dialog = self.window.findChild(self.types["QDialog"], "sharingPolicyDialog")
-            checkbox = dialog.findChild(self.types["QCheckBox"], "policy_sharing_enabled")
-            if not checkbox.isChecked():
-                self.click(checkbox)
-            buttons = dialog.findChild(self.types["QDialogButtonBox"], "sharingPolicyButtons")
-            self.click(buttons.button(self.types["QDialogButtonBox"].StandardButton.Save))
-            self.result["opt_in_policy_dialog"] = True
-        except Exception:
-            self.finish("resource_opt_in_failed")
-
     def tick(self):
         if self.done:
             return
@@ -126,37 +114,37 @@ class ResourcePlaythrough:
             if not contribution.get("editable"):
                 return
             step = self.steps[self.index]
-            if self.phase == "opt_in":
-                if not (contribution.get("policy") or {}).get("sharing_enabled"):
-                    return
-                self.phase = "ready"
             if self.phase == "ready":
                 self.action_started = time.monotonic()
-                self.click(window._page_buttons[2])
+                self.click(window._page_buttons[0 if step["action"] in ("start", "pause") else 2])
                 if step["action"] == "limits":
                     for field, key in (("max_vram", "vram_percent"), ("max_processing_percent", "processing_percent")):
                         slider = controls.sliders[field]
                         if not slider.isEnabled():
                             raise PlaythroughError("resource_slider_disabled")
+                        if field == "max_vram" and step[key] != 100 and step[key] >= slider.maximum():
+                            raise PlaythroughError("resource_vram_target_above_available_memory")
+                        target = min(step[key], slider.maximum())
                         slider.setFocus()
                         self.test.keyClick(slider, self.qt.Key_Home)
-                        for _ in range(step[key] - 1):
+                        for _ in range(target - 1):
                             self.test.keyClick(slider, self.qt.Key_Right)
-                        if slider.value() != step[key]:
+                        if slider.value() != target:
                             raise PlaythroughError("resource_slider_value_mismatch")
                     self.click(controls.apply_button)
                 elif step["action"] in ("start", "pause"):
-                    if step["action"] == "start" and not (contribution.get("policy") or {}).get("sharing_enabled"):
-                        self.phase = "opt_in"
-                        self.types["QTimer"].singleShot(100, self.opt_in)
-                        self.click(window.edit_policy_button)
-                        return
                     expected = "Start sharing" if step["action"] == "start" else "Pause sharing"
-                    if window.master_share_button.text() != expected:
+                    if window.home_share_button.text() != expected:
                         raise PlaythroughError("resource_sharing_button_mismatch")
-                    if not window.master_share_button.isEnabled():
-                        return  # Admission can refresh after the saved opt-in policy.
-                    self.click(window.master_share_button)
+                    self.click(window.home_share_button)
+                    pending_text = "Starting…" if step["action"] == "start" else "Stopping…"
+                    confirmed_text = "Pause sharing" if step["action"] == "start" else "Start sharing"
+                    for button in (window.home_share_button, window.master_share_button):
+                        if button.text() not in (pending_text, confirmed_text):
+                            raise PlaythroughError("resource_sharing_immediate_feedback_missing")
+                        if button.text() == pending_text and button.isEnabled():
+                            raise PlaythroughError("resource_sharing_pending_button_enabled")
+                    self.immediate_feedback = window.home_share_button.text()
                 self.phase = "observe"
                 return
             policy = contribution.get("policy") or {}
@@ -167,7 +155,9 @@ class ResourcePlaythrough:
                 }
                 if any(policy.get(field) != value for field, value in expected.items()):
                     return
-                if controls.sliders["max_vram"].value() != step["vram_percent"]:
+                if controls.sliders["max_vram"].value() != min(
+                    step["vram_percent"], controls.sliders["max_vram"].maximum()
+                ):
                     raise PlaythroughError("resource_display_mismatch")
                 if controls.sliders["max_processing_percent"].value() != step["processing_percent"]:
                     raise PlaythroughError("processing_display_mismatch")
@@ -185,6 +175,7 @@ class ResourcePlaythrough:
                     "vram_display": controls.values["max_vram"].text(),
                     "processing_display": controls.values["max_processing_percent"].text(),
                     "message": controls.message.text()[:240],
+                    **({"immediate_feedback": self.immediate_feedback} if step["action"] in ("start", "pause") else {}),
                 }
             )
             window.grab().save(str(self.evidence_path.with_suffix(".png")))

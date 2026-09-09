@@ -2,11 +2,14 @@ import os
 import time
 import unittest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 from communityai_desktop.model_health import DownloadCard, ModelHealthCard
 from communityai_desktop.telemetry import download_view, route_view
-from PySide6.QtWidgets import QApplication
 
 
 class ModelHealthTests(unittest.TestCase):
@@ -38,17 +41,48 @@ class ModelHealthTests(unittest.TestCase):
         }
         widget = ModelHealthCard()
         widget.set_state(model)
+        widget.resize(900, 600)
+        widget.show()
+        self.application.processEvents()
+        self.assertFalse(widget.expand_button.isChecked())
+        self.assertFalse(widget.details.isVisible())
+        self.assertFalse(widget.cells[0].isVisible())
+        self.assertTrue(widget.title.isVisible())
+        self.assertEqual(widget.title.text(), "Test model")
+        self.assertEqual(widget.summary.text(), "Waiting for contributors · 2/5 blocks available")
+        self.assertLess(widget.sizeHint().height(), 150)
+        QTest.mouseClick(widget.expand_button, Qt.LeftButton)
+        self.application.processEvents()
+        self.assertTrue(widget.details.isVisible())
+        self.assertTrue(widget.cells[0].isVisible())
+        self.assertFalse(widget.download.isVisible())
         for index, state in enumerate(("Replicated", "Covered", "Joining", "Reserved", "Offline")):
             self.assertIn(state, widget.cells[index].toolTip())
-        widget.cells[3].click()
+        QTest.mouseClick(widget.cells[3], Qt.LeftButton)
         self.assertIn("1 reservations", widget.block_detail.text())
-        widget.peer_button.click()
+        QTest.mouseClick(widget.peer_button, Qt.LeftButton)
         self.assertEqual(widget.peer_table.rowCount(), 3)
+        self.assertEqual(widget.peer_table.columnCount(), 3)
+        self.assertTrue(widget.peer_table.isVisible())
         self.assertEqual(widget.peer_table.item(0, 0).text(), "<b>literal name</b>")
         model["health"]["status"] = "unknown"
         widget.set_state(model)
         self.assertIn("Unknown", widget.cells[0].toolTip())
+        self.assertEqual(widget.summary.text(), "Checking availability")
+        self.assertTrue(widget.expand_button.isChecked())
+        self.assertTrue(widget.details.isVisible())
         self.assertTrue(widget.peer_button.isChecked())
+        self.assertEqual(widget.selected, 3)
+        QTest.mouseClick(widget.expand_button, Qt.LeftButton)
+        self.assertFalse(widget.peer_table.isVisible())
+        widget.set_state(model)
+        self.assertFalse(widget.expand_button.isChecked())
+        self.assertFalse(widget.details.isVisible())
+        widget.expand_button.setFocus()
+        QTest.keyClick(widget.expand_button, Qt.Key_Space)
+        self.assertTrue(widget.details.isVisible())
+        self.assertTrue(widget.peer_table.isVisible())
+        self.assertEqual(widget.selected, 3)
         widget.close()
 
     def test_download_bytes_do_not_imply_verification_and_stale_speed_is_zero(self):
@@ -62,6 +96,7 @@ class ModelHealthTests(unittest.TestCase):
                 "verified_bytes": 0,
                 "received_bytes": 100,
                 "verified_files": 0,
+                "selected_files": 2,
                 "resumed_bytes": 50,
                 "retries": 2,
                 "updated_at": time.time() - 20,
@@ -73,11 +108,96 @@ class ModelHealthTests(unittest.TestCase):
         widget.set_state("Test", progress)
         self.assertEqual(widget.bar.value(), 1000)
         self.assertIn("Verifying", widget.title.text())
-        self.assertIn("0 B verified", widget.totals.text())
-        self.assertIn("2 retries", widget.totals.text())
+        self.assertEqual(widget.detail.text(), "100 B / 100 B")
+        self.assertEqual(widget.totals.text(), "0 of 2 files checked")
+        self.assertIn("0 B verified", widget.toolTip())
+        self.assertIn("2 retries", widget.toolTip())
+        widget.close()
+
+    def test_local_model_hides_network_details_and_keeps_download_inside_disclosure(self):
+        model = {
+            "id": "Qwen3.5-0.8B-Local",
+            "execution": "local",
+            "coverage": "0/0",
+            "state": "known",
+            "health": route_view({}),
+        }
+        widget = ModelHealthCard()
+        widget.set_state(model)
+        widget.show()
+        self.application.processEvents()
+        self.assertEqual(widget.title.text(), "Qwen3.5 0.8B")
+        self.assertEqual(model["id"], "Qwen3.5-0.8B-Local")
+        self.assertEqual(widget.summary.text(), "On this computer · Downloads when needed")
+        QTest.mouseClick(widget.expand_button, Qt.LeftButton)
+        self.assertFalse(widget.legend.isVisible())
+        self.assertFalse(widget.block_detail.isVisible())
+        self.assertFalse(widget.peer_button.isVisible())
+        self.assertFalse(widget.peer_note.isVisible())
+        self.assertFalse(widget.download.isVisible())
+        model["download_progress"] = download_view(
+            {
+                "schema_version": 1,
+                "state": "downloading",
+                "artifact_bytes": 1000,
+                "artifact_received_bytes": 250,
+                "bytes_per_second": 50,
+            }
+        )
+        widget.set_state(model)
+        self.assertTrue(widget.expand_button.isChecked())
+        self.assertTrue(widget.download.isVisible())
+        self.assertEqual(widget.download.bar.value(), 250)
+        self.assertEqual(widget.summary.text(), "On this computer · Downloading")
+        self.assertIn("250 B / 1000 B", widget.download.detail.text())
+        QTest.mouseClick(widget.expand_button, Qt.LeftButton)
+        model["download_progress"]["artifact_received_bytes"] = 500
+        widget.set_state(model)
+        self.assertFalse(widget.download.isVisible())
+        self.assertEqual(widget.download.bar.value(), 500)
         widget.close()
 
     def test_malformed_optional_peer_data_is_ignored(self):
         view = route_view({"total_blocks": 64, "peers": True, "reservations": 42})
         self.assertEqual(view["peers"], [])
         self.assertEqual(view["reservations"], [])
+
+    def test_sharing_download_is_available_inside_model_details(self):
+        model = {
+            "id": "Community model",
+            "execution": "distributed",
+            "coverage": "0/1",
+            "state": "known",
+            "health": route_view({"total_blocks": 1, "status": "incomplete"}),
+        }
+        worker = {
+            "id": "one",
+            "model": model["id"],
+            "state": "running",
+            "display_status": "Loading",
+            "download_progress": download_view(
+                {
+                    "schema_version": 1,
+                    "state": "downloading",
+                    "artifact_bytes": 1000,
+                    "artifact_received_bytes": 250,
+                }
+            ),
+        }
+        widget = ModelHealthCard()
+        widget.set_state(model, [worker])
+        widget.show()
+        self.application.processEvents()
+        download = widget.worker_downloads["one"]
+        self.assertFalse(download.isVisible())
+        QTest.mouseClick(widget.expand_button, Qt.LeftButton)
+        self.assertTrue(download.isVisible())
+        self.assertEqual(download.title.text(), "Sharing download · Downloading")
+        worker["download_progress"]["artifact_received_bytes"] = 500
+        widget.set_state(model, [worker])
+        self.assertIs(widget.worker_downloads["one"], download)
+        self.assertEqual(download.bar.value(), 500)
+        widget.set_state(model, [])
+        self.assertEqual(widget.worker_downloads, {})
+        self.assertTrue(widget.expand_button.isChecked())
+        widget.close()

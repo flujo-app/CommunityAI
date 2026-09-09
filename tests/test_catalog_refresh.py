@@ -1,12 +1,14 @@
 import json
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from test_catalog_bootstrap import NOW, _release_documents
 
-from drift.model_catalog import CatalogSigningKey, SignedModelCatalog
+from drift.model_catalog import CatalogSigningKey, ModelCatalogError, SignedModelCatalog
 from drift.model_manifest import ModelManifest
 from drift.node.catalog_bootstrap import CatalogBootstrapConfig, CatalogBootstrapError, CatalogBootstrapInstaller
 from drift.node.catalog_refresh import CatalogRefreshService, load_configured_catalog
@@ -55,6 +57,185 @@ def test_signed_refresh_preserves_user_policy_and_supports_existing_installation
     assert after.catalog_path != before.catalog_path
     assert before.catalog_path.is_file()
     assert not installer.refresh().created
+
+
+def test_catalog_withdrawal_removes_managed_entries_but_preserves_custom_model_and_files(tmp_path):
+    installer, path, released, key = installation(tmp_path)
+    original = json.loads(path.read_text())
+    withdrawn = original["models"][1]
+    retired_path = Path(withdrawn["manifest"])
+    cache = Path(withdrawn["cache_dir"])
+    cache.mkdir(parents=True)
+    (cache / "retained-weights").write_bytes(b"downloaded model")
+    custom_source = ModelManifest.load(retired_path).to_dict()
+    custom_source.update(name="My advanced model", aliases=["my-advanced-model"])
+    custom = tmp_path / "my-model.json"
+    custom.write_text(ModelManifest.from_dict(custom_source).canonical_json())
+    original["models"].append(dict(withdrawn, manifest=str(custom)))
+    path.write_text(json.dumps(original))
+    released[0] = SignedModelCatalog(
+        1, replace(released[0].signed, sequence=2, models=(released[0].signed.models[0],)), ()
+    ).add_signature(key)
+
+    assert installer.refresh().created
+    refreshed = NodeConfig.load(path)
+    assert [model.manifest_path for model in refreshed.models] == [Path(original["models"][0]["manifest"]), custom]
+    assert refreshed.auto_model_priority == (released[0].signed.models[0].manifest_digest,)
+    assert retired_path.is_file() and custom.is_file()
+    assert (cache / "retained-weights").read_bytes() == b"downloaded model"
+
+
+def legacy_public_alpha_installation(tmp_path):
+    """Reproduce the released app's v2 config with the two v1 leftovers and no v1 history."""
+    public = Path("public-alpha")
+    bootstrap = CatalogBootstrapConfig.load(public / "catalog-qwen-v2/catalog-bootstrap.json")
+    envelope = SignedModelCatalog.load(public / "catalog-qwen-v2/catalog.signed.json")
+    path = tmp_path / "node-config.json"
+    installer = CatalogBootstrapInstaller(
+        bootstrap,
+        data_dir=tmp_path,
+        config_path=path,
+        fetch_text=lambda *_: json.dumps(envelope.to_dict()),
+        now=envelope.signed.issued_at_ms / 1000 + 60,
+    )
+    installer.catalog_dir.mkdir(parents=True)
+    installer.manifest_dir.mkdir()
+    installer.installed_bootstrap_path.write_text(json.dumps(bootstrap.to_dict()))
+    catalog_path = installer.catalog_dir / f"2-{envelope.signed.digest.removeprefix('sha256:')}.signed.json"
+    catalog_path.write_text(json.dumps(envelope.to_dict()))
+    models = []
+    for bundle in ("catalog-qwen-v2", "catalog-v1"):
+        released = SignedModelCatalog.load(public / bundle / "catalog.signed.json")
+        for model in released.signed.models:
+            digest = model.manifest_digest.removeprefix("sha256:")
+            manifest_path = installer.manifest_dir / f"{digest}.json"
+            manifest_path.write_bytes((public / bundle / "manifests" / manifest_path.name).read_bytes())
+            entry = {
+                "manifest": str(manifest_path),
+                "cache_dir": str(installer.cache_dir / digest),
+                "initial_peers": [] if model.execution == "local" else list(bootstrap.initial_peers),
+            }
+            if model.execution is not None:
+                entry["execution"] = model.execution
+            models.append(entry)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "models": models,
+                "catalog_path": str(catalog_path),
+                "catalog_bootstrap_path": str(installer.installed_bootstrap_path),
+                "auto_model_priority": [model.manifest_digest for model in envelope.signed.models],
+                "inference_mode": "local_only",
+                "max_loaded_models": 2,
+                "workers": [
+                    {
+                        "id": "automatic",
+                        "model": "auto",
+                        "identity_path": str(tmp_path / "identity.key"),
+                        "num_blocks": 1,
+                    }
+                ],
+            }
+        )
+    )
+    for name in ("identity.key", "api-keys.json", "local-api.key", "cache-sentinel"):
+        (tmp_path / name).write_bytes(b"private user data retained")
+    return installer, path, envelope
+
+
+@pytest.mark.parametrize("method", ["repair_existing_config", "refresh", "cli"])
+def test_existing_v2_repairs_legacy_catalog_and_missing_limits_without_network_or_data_loss(
+    tmp_path, monkeypatch, method
+):
+    installer, path, envelope = legacy_public_alpha_installation(tmp_path)
+    original = json.loads(path.read_text())
+    preserved = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file() and p != path}
+    if method == "cli":
+        from drift.cli import run_bootstrap
+
+        def no_fetch(*_):
+            pytest.fail("An unchanged installed catalog must be repaired offline")
+
+        monkeypatch.setattr(run_bootstrap, "CatalogBootstrapInstaller", lambda *_args, **_kwargs: installer)
+        installer.fetch_text = no_fetch
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "bootstrap",
+                str(installer.installed_bootstrap_path),
+                "--data_dir",
+                str(tmp_path),
+                "--node_config",
+                str(path),
+                "--refresh_if_needed",
+            ],
+        )
+        run_bootstrap.main()
+    else:
+        assert getattr(installer, method)().created
+    repaired = NodeConfig.load(path)
+    assert {ModelManifest.load(model.manifest_path).digest_id for model in repaired.models} == {
+        model.manifest_digest for model in envelope.signed.models
+    }
+    assert repaired.inference_mode == "local_only" and repaired.max_loaded_models == 2
+    assert json.loads(path.read_text())["workers"] == original["workers"]
+    assert repaired.contribution_policy.sharing_enabled is False
+    assert repaired.contribution_policy.max_vram == "100%"
+    assert repaired.contribution_policy.max_processing_percent == 100
+    assert repaired.contribution_policy.max_disk_space == "20GiB"
+    assert all(p.read_bytes() == content for p, content in preserved.items())
+    assert not installer.repair_existing_config().created
+
+
+@pytest.mark.parametrize("preservation", ["external_path", "explicit_worker", "custom_canonical"])
+def test_legacy_cleanup_preserves_advanced_models_and_explicit_preferences(tmp_path, preservation):
+    installer, path, _ = legacy_public_alpha_installation(tmp_path)
+    original = json.loads(path.read_text())
+    old_entry = original["models"][2]
+    old_manifest = ModelManifest.load(old_entry["manifest"])
+    if preservation == "external_path":
+        custom_path = tmp_path / "advanced.json"
+        custom_path.write_text(old_manifest.canonical_json())
+        old_entry["manifest"] = str(custom_path)
+    elif preservation == "explicit_worker":
+        original["workers"][0]["model"] = old_manifest.aliases[0]
+    else:
+        custom_source = old_manifest.to_dict()
+        custom_source.update(name="My custom model", aliases=["my-custom"])
+        custom = ModelManifest.from_dict(custom_source)
+        custom_path = installer.manifest_dir / f"{custom.digest}.json"
+        custom_path.write_text(custom.canonical_json())
+        old_entry["manifest"] = str(custom_path)
+    original["contribution_policy"] = {
+        "sharing_enabled": True,
+        "max_disk_space": "35GiB",
+        "max_vram": "7GiB",
+        "max_processing_percent": 37,
+    }
+    path.write_text(json.dumps(original))
+
+    assert installer.repair_existing_config().created
+    repaired = json.loads(path.read_text())
+    assert old_entry in repaired["models"]
+    assert repaired["contribution_policy"] == original["contribution_policy"]
+    assert repaired["workers"] == original["workers"]
+
+
+def test_legacy_cleanup_rejects_tampered_catalog_and_requires_authorized_predecessor(tmp_path):
+    installer, path, _ = legacy_public_alpha_installation(tmp_path)
+    installer.bootstrap = replace(installer.bootstrap, replaces_trust_roots=())
+    assert installer.repair_existing_config().created  # Only supplies missing default limits.
+    assert len(NodeConfig.load(path).models) == 4
+    accepted = path.read_bytes()
+    catalog_path = NodeConfig.load(path).catalog_path
+    envelope = SignedModelCatalog.load(catalog_path)
+    tampered = replace(envelope, signed=replace(envelope.signed, sequence=3))
+    catalog_path.write_text(json.dumps(tampered.to_dict()))
+    with pytest.raises(ModelCatalogError, match="signature"):
+        installer.repair_existing_config()
+    assert path.read_bytes() == accepted
 
 
 @pytest.mark.parametrize("same_identity", [True, False])
