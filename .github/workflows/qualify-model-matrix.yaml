@@ -38,6 +38,11 @@ jobs:
         id: scope
         shell: bash
         run: |
+          # NOTE: "windows-xpu" and "linux-xpu" are registered in
+          # scripts/run_external_model_qualification.py but intentionally not
+          # scheduled here yet: no self-hosted XPU runner is provisioned, and
+          # scheduling a profile with no matching runner would queue forever.
+          # Add them to the public-alpha list once an XPU runner exists.
           if [[ "${{ inputs.qualification_scope }}" == "public-alpha" ]]; then
             echo 'profiles=["windows-cpu","windows-cuda","linux-cpu","linux-cuda"]' >> "$GITHUB_OUTPUT"
           else

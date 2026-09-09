@@ -48,7 +48,7 @@ alpha; the lowest supported hardware configuration has not been certified.
 | --- | --- |
 | **CPU** | 64-bit Intel or AMD (x86-64). Four cores recommended. |
 | **RAM** | 8 GB as a starting point; 16 GB recommended. Sharing needs extra memory for the model parts you contribute. |
-| **GPU** | Optional. NVIDIA CUDA is supported for acceleration and sharing; an RTX 2070 SUPER with 8 GB VRAM has been tested. AMD and Intel GPU acceleration is not included. |
+| **GPU** | Optional. NVIDIA CUDA and Intel XPU are supported for acceleration and sharing; an RTX 2070 SUPER with 8 GB VRAM has been tested. AMD GPU acceleration is not included. |
 | **Disk space** | Start with 20 GB free, preferably on an SSD. The app uses about 4.3 GB on Windows or 5.2 GB on Linux; the small local model adds about 1.8 GB. Sharing requires additional space. |
 | **Operating system** | 64-bit Windows 10 (1809+)/11, Ubuntu 22.04+ or Debian 12+ with a desktop environment. |
 | **Internet** | Required for community inference and initial downloads. The small local model works offline after downloading. |
@@ -72,7 +72,9 @@ updates in the sidebar, then choose **Restart to update** when the download fini
 The online installer downloads and verifies the full package during setup.
 
 For NVIDIA use, install a CUDA 12.4-compatible driver (551.61+ on Windows,
-550.54.14+ on Linux). Python, PyTorch and the CUDA runtime are included.
+550.54.14+ on Linux). For Intel use, install a recent Intel GPU driver with
+XPU/oneAPI support and select the XPU runtime (`DRIFT_DEVICE=xpu`, see the
+installation guide). Python, PyTorch and the matching GPU runtime are included.
 See the [installation guide](https://github.com/flujo-app/CommunityAI/blob/codex/gate14-20260902-b/docs/ALPHA_INSTALL.md)
 for setup, updates and the current alpha limitations.
 

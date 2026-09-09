@@ -34,6 +34,11 @@ INSTALL_ARCHIVE_SPECS = {
     "Linux": ("communityai-desktop-linux.tar.gz", "tar.gz"),
     "Windows": ("communityai-desktop-windows.zip", "zip"),
 }
+QUALIFIED_TORCH_BUILDS = (
+    # Qualified node runtimes: NVIDIA CUDA 12.4 and Intel XPU.
+    "2.6.0+cu124",
+    "2.6.0+xpu",
+)
 UNSIGNED_ALPHA_WARNING = (
     "Unsigned public-alpha engineering bundle: verify SHA256SUMS before use. "
     "No publisher signature or authenticated automatic update is provided."
@@ -1059,8 +1064,11 @@ def _verify_desktop_metrics(
     for field in ("drift", "torch", "transformers", "hivemind", "fastapi", "uvicorn", "keyring"):
         if not _is_printable_string(node_runtime.get(field)):
             raise RuntimeError(f"node runtime metric {field} is missing or unsafe")
-    if node_runtime["torch"] != "2.6.0+cu124":
-        raise RuntimeError("node runtime is not the qualified CUDA PyTorch build")
+    if node_runtime["torch"] not in QUALIFIED_TORCH_BUILDS:
+        raise RuntimeError(
+            "node runtime is not a qualified PyTorch build "
+            f"(expected one of {', '.join(QUALIFIED_TORCH_BUILDS)})"
+        )
 
     expected_worker_runtime = {
         "schema_version": 1,
