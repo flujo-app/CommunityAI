@@ -56,8 +56,10 @@ CANDIDATES: Mapping[str, Candidate] = {
 HOST_PROFILES: Mapping[str, HostProfile] = {
     "windows-cpu": HostProfile(system="windows", device="cpu"),
     "windows-cuda": HostProfile(system="windows", device="cuda"),
+    "windows-xpu": HostProfile(system="windows", device="xpu"),
     "linux-cpu": HostProfile(system="linux", device="cpu"),
     "linux-cuda": HostProfile(system="linux", device="cuda"),
+    "linux-xpu": HostProfile(system="linux", device="xpu"),
     "macos-cpu": HostProfile(system="macos", device="cpu"),
     "macos-mps": HostProfile(system="macos", device="mps"),
 }
@@ -142,6 +144,10 @@ def require_device(profile: HostProfile) -> None:
 
     if profile.device == "cuda" and not torch.cuda.is_available():
         raise ExternalQualificationError("the CUDA-labelled runner has no available CUDA device")
+    if profile.device == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is None or not xpu.is_available():
+            raise ExternalQualificationError("the XPU-labelled runner has no available Intel XPU device")
     if profile.device == "mps":
         mps = getattr(torch.backends, "mps", None)
         if mps is None or not mps.is_available():
