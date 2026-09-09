@@ -19,7 +19,7 @@ Keep exact signed catalogs/manifests, verified partial artifact downloads,
 authenticated discovery/transport, finite admission/timeouts, local resource
 limits, prompt-visibility disclosure, and a working route/catalog disable path.
 A one-route alpha must say that availability is best effort. macOS, credits,
-payments/payouts, automatic software updates, and exhaustive
+payments/payouts and exhaustive
 hostile-network/long-soak qualification remain outside this alpha. The owner now
 requires working Inno Setup and Debian installers for alpha. On September 7 the
 owner explicitly deferred Windows publisher signing; unsigned alpha setup with
@@ -81,7 +81,7 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
 | Q3.8 | **PASSED, owner-accepted bounded alpha scope** | Runtime, packaged conversation/recovery, bounded formation and Windows/Linux startup migration passed. On September 8 the owner accepted those results for alpha and deferred additional conversation/hardware measurements and frozen periodic catalog activation/draining. Broader performance and beta update behavior remain unqualified. |
 | 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
-| 15 | **PASSED, bounded Windows/Debian/Ubuntu alpha scope** | **“Install it, replace it, remove it.”** Windows active different-version upgrade and Debian/Ubuntu active same-version replacement/removal/reinstall passed. Both frozen sign-in checkboxes passed enable/restart/disable with native registration and cleanup verified. Manual cache/reset choices passed on disposable Windows state; disable sign-in startup before uninstalling. [Combined acceptance](evidence/gate15-20260908-final-installer-acceptance.md). Unsigned alpha is owner-authorized; signing, Store, hosted signed APT and automatic updates follow after alpha. |
+| 15 | **PASSED, bounded Windows/Debian/Ubuntu alpha scope** | **“Install it, replace it, remove it.”** Windows active different-version upgrade and Debian/Ubuntu active same-version replacement/removal/reinstall passed. Both frozen sign-in checkboxes passed enable/restart/disable with native registration and cleanup verified. Manual cache/reset choices passed on disposable Windows state; disable sign-in startup before uninstalling. [Combined acceptance](evidence/gate15-20260908-final-installer-acceptance.md). Unsigned alpha is owner-authorized; signing, Store and hosted signed APT follow after alpha. Automatic updates ship in the September 9 release. |
 | 16 | **IN PROGRESS; existing recovery/safety evidence under release-scope review** | Real worker-loss/fallback/rejoin, formation, resource shutdown and local safety checks already passed in their recorded scopes. Credit those results before scheduling any new run. The combined public-deployment probe followed by real inference has not run; periodic live catalog withdrawal/restore qualification follows the owner's beta deferral. |
 | 17 | **IN PROGRESS; candidate downloads published** | All four qualified installer options and release metadata are public and hash-verified. Prepare the draft release and observation within the declared best-effort scope; the combined Gate 16 canary remains unexecuted. |
 
@@ -92,6 +92,16 @@ cloud framework simply to advance gate numbers. Gate 16 provides the bounded
 public safety check; exhaustive hardening is deferred.
 
 ## Next work, in useful product order
+
+September 9 release `0.1.0-alpha.20260909.2` adds the repaired desktop and signed
+application updates. The [installation guide](ALPHA_INSTALL.md) has current
+downloads; [updater behavior and publication](AUTOMATIC_UPDATES.md) describe the
+one-time manual upgrade from September 8. Existing source checks and a Windows
+update-handoff fixture passed. No new full desktop, GPU, cloud or installed Linux
+updater qualification is claimed. The owner explicitly requested immediate
+publication using the existing checks and normal packaging/integrity checks.
+
+The September 8 distribution records below remain historical evidence.
 
 September 8 distribution refresh: the owner requested removal of duplicate
 libraries and unused bitsandbytes CUDA variants, plus a small verified downloader
@@ -336,7 +346,7 @@ Purchases/payouts add marketplace work. See the [credit audit](COMMUNITY_AI_MODE
 and [existing design](REVIVAL.md#identity-keys-accounting-and-credits).
 
 Also deferred: DeepSeek/GLM activation, independent seed/route/mirror redundancy,
-independent key-holder governance, authenticated automatic software updater,
+independent key-holder governance,
 macOS, and exhaustive malicious-load/Sybil/partition/long-soak campaigns. Preserve
 their existing foundations; prioritize the usable Qwen path.
 

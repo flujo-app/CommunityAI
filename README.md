@@ -28,5 +28,8 @@ one installer or container image per model. Download minimization is currently l
 whole upstream checkpoint shards. See
 [`ADR 0003`](docs/adr/0003-direct-manifested-artifact-delivery.md).
 
-CommunityAI is still working toward its first public inference alpha. Credits,
+The [Windows and Linux alpha](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.2)
+is available for closed testing. See the [installation guide](docs/ALPHA_INSTALL.md).
+This release adds automatic application downloads with **Restart to update**.
+Users of the first release need to install this update once. Credits,
 earnings, payments, and payouts are planned later and are not currently available.
