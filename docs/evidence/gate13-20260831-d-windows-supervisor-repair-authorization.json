@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-windows-supervisor-repair-authorization",
+  "run_id": "gate13-20260831-d",
+  "recorded_at": "2026-08-31T22:20:51Z",
+  "objective": "Launch the already-authorized Windows packaged lifecycle exactly once under a headless ordinary-user supervisor.",
+  "finding": {
+    "task_name": "communityai-gate13-gate13-20260831-d-windows",
+    "registered_principal": "M",
+    "registered_logon_type": "Interactive",
+    "registered_run_level": "Limited",
+    "scheduler_state": "Ready",
+    "scheduler_last_result_decimal": 267011,
+    "scheduler_last_result_hex": "0x41303",
+    "scheduler_interpretation": "task_has_not_yet_run",
+    "status_record_present": false,
+    "terminal_record_present": false,
+    "evidence_record_present": false,
+    "lifecycle_attempt_consumed": false,
+    "additional_cloud_resources_required": false
+  },
+  "root_cause": [
+    "Interactive scheduled tasks do not start from this headless SSH operator session.",
+    "Task Scheduler canonicalized the registered principal to a leaf account name, while the observer compared it to the qualified current identity string."
+  ],
+  "repair_binding": {
+    "implementation_commit": "3a1d1fcaa8430e3c0bfc47910666f11989eb0a3d",
+    "host_adapter_path": "scripts/gate13_host_job.py",
+    "host_adapter_sha256": "sha256:922a9365269a2c1f0aee09473b15fdcc9b9a08522cfd5e9934145b4966b0ad31",
+    "host_adapter_bytes": 41592,
+    "replacement_logon_type": "S4U",
+    "principal_match": "resolved_principal_sid_equals_current_identity_sid",
+    "unchanged_entrypoint_sha256": "sha256:9b860ff820851b31ac272ee4d28dd3a899f56014b8dfce45e912ba4fc9ab605c",
+    "unchanged_lifecycle_config_sha256": "sha256:a926514b35b10baab742ff270db606fef2f7ddf58317e1023f12b1cd66affbd0"
+  },
+  "authorized_actions": [
+    "Verify the exact old task name, action, ordinary-user principal, Interactive logon type, Limited run level, Ready state, 0x41303 last result, and absence of status, terminal, and evidence records.",
+    "Unregister only that exact never-run task.",
+    "Replace only the host adapter and its digest binding in host-job.json.",
+    "Register and start the same exact task once with S4U, Limited run level, and SID-based principal verification.",
+    "Fail closed if any lifecycle output appeared before repair or if the old task binding differs."
+  ],
+  "invariants": [
+    "The paid Windows VM is not recreated.",
+    "The lifecycle entrypoint, package, model, route acceptance, evidence contract, and one-attempt ceiling are unchanged.",
+    "No second lifecycle attempt is authorized.",
+    "Windows evidence must still be collected and the Windows VM deleted before Linux is created."
+  ],
+  "added_cost_usd": "0.00",
+  "tests": {
+    "command": ".\\.venv-cuda\\Scripts\\python.exe -m pytest -q tests/test_gate13_host_job.py",
+    "result": "23 passed"
+  }
+}

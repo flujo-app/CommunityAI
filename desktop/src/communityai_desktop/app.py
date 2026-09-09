@@ -44,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-manage-node", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(LOGIN_STARTUP_FLAG, action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--capture-page", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--gate13-ui-evidence", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--gate13-ui-screenshot", type=Path, help=argparse.SUPPRESS)
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--store-control-key", action="store_true")
     action.add_argument("--delete-control-key", action="store_true")
@@ -53,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--onboarding-ui-self-test", action="store_true", help=argparse.SUPPRESS)
     action.add_argument("--capture-ui", type=Path, help=argparse.SUPPRESS)
     action.add_argument("--probe-only", action="store_true", help=argparse.SUPPRESS)
+    action.add_argument("--gate13-ui-playthrough", type=Path, help=argparse.SUPPRESS)
     return parser
 
 
@@ -69,6 +72,11 @@ def _write_json(value: Any) -> None:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.gate13_ui_playthrough is None:
+        if args.gate13_ui_evidence is not None or args.gate13_ui_screenshot is not None:
+            parser.error("Gate 13 evidence options require --gate13-ui-playthrough")
+    elif args.gate13_ui_evidence is None:
+        parser.error("--gate13-ui-playthrough requires --gate13-ui-evidence")
     try:
         if args.self_test:
             _write_json(run_self_test())
@@ -150,6 +158,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             token = credential_store.get_or_migrate()
             return DesktopController(NodeClient(node_url, token, timeout=args.timeout))
 
+        qualification_automation = None
+        if args.gate13_ui_playthrough is not None:
+            from communityai_desktop.gate13_playthrough import Gate13Playthrough, PlaythroughPlan
+
+            qualification_automation = Gate13Playthrough(
+                PlaythroughPlan.load(args.gate13_ui_playthrough),
+                args.gate13_ui_evidence,
+                screenshot_path=args.gate13_ui_screenshot,
+            )
+
         if args.probe_only:
             try:
                 _write_json(connect().snapshot())
@@ -169,6 +187,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     start_minimized=args.started_at_login,
                     activate_existing_instance=not args.started_at_login,
                     before_termination_restore=None if lifecycle is None else lifecycle.close,
+                    qualification_automation=qualification_automation,
                 )
                 or 0
             )

@@ -486,6 +486,26 @@ def _artifact_path_below_root(root: Path | str, relative_path: str) -> Path:
     return candidate
 
 
+def _windows_safe_path(path: Path) -> Path:
+    """Opt long manifest-cache paths into the Win32 extended namespace.
+
+    Full manifest and artifact SHA-256 identifiers make resumable lock and
+    partial paths exceed the legacy Win32 path limit under an ordinary user
+    profile. Python then reports a misleading ``FileNotFoundError`` even when
+    the parent directory exists. Keep the audited on-disk layout unchanged,
+    but use an extended-length spelling for filesystem operations.
+    """
+    absolute = path.absolute()
+    if os.name != "nt":
+        return absolute
+    rendered = str(absolute)
+    if rendered.startswith("\\\\?\\") or len(rendered) < 248:
+        return absolute
+    if rendered.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + rendered[2:])
+    return Path("\\\\?\\" + rendered)
+
+
 def _validate_artifact_file(artifact: ManifestArtifact, candidate: Path) -> os.stat_result:
     try:
         stat_result = candidate.stat()
@@ -670,9 +690,9 @@ class ManifestArtifactVerifier:
         cache_root = Path(self.cache_dir).absolute()
         manifest_root = cache_root / "manifest-artifacts" / self.manifest.digest
         name_digest = hashlib.sha256(artifact.path.encode("utf-8")).hexdigest()
-        partial = manifest_root / "partial" / f"{name_digest}.part"
-        final = _artifact_path_below_root(manifest_root / "snapshot", artifact.path)
-        lock = manifest_root / "locks" / f"{name_digest}.lock"
+        partial = _windows_safe_path(manifest_root / "partial" / f"{name_digest}.part")
+        final = _windows_safe_path(_artifact_path_below_root(manifest_root / "snapshot", artifact.path))
+        lock = _windows_safe_path(manifest_root / "locks" / f"{name_digest}.lock")
         return partial, final, lock
 
     def _resumable_hub_download(self, artifact: ManifestArtifact, *, destination: Optional[Path] = None) -> str:

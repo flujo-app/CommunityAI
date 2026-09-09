@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-failed-attempt-and-cleanup",
+  "run_id": "gate13-20260831-g",
+  "recorded_at": "2026-09-01T01:24:46.392Z",
+  "result": "failed_cleanup_verified",
+  "provider_plan_digest": "sha256:f27f36158f2ad16019578555023cc854cb1e6e3b10ebae8cd3ed24d757b8e032",
+  "route_acceptance": {
+    "result": "passed",
+    "evidence_sha256": "04271d6ac93410974d26818f3c3f930f0031877ae6c6d11441c7e75569453633",
+    "total_duration_ms": 298408,
+    "qwen": {
+      "covered_blocks": 24,
+      "total_blocks": 24,
+      "peer_count": 1
+    },
+    "gemma": {
+      "covered_blocks": 35,
+      "total_blocks": 35,
+      "peer_count": 1
+    },
+    "primary_inference": true,
+    "fallback_inference": true,
+    "restoration_inference": true,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "credentials_retained_in_evidence": false
+  },
+  "windows_attempt": {
+    "lifecycle_run_id": "gate13-20260831-g-windows",
+    "attempt_ordinal": 1,
+    "execution_transport": "durable_iap_ssh_foreground_as_ordinary_user",
+    "ordinary_user": "M",
+    "ordinary_user_admin": false,
+    "package_preflight": {
+      "archive_bytes": 2695065068,
+      "archive_sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+      "download_result": "passed",
+      "url_retained": false
+    },
+    "committed_adapter_sha256": "6a01626718a8cf7bd5743d2f07e20d808d6708280c9005cd6a03de8ff807567e",
+    "committed_entrypoint_sha256": "a85c51eb0231bcef991a77c57b622fad575049f000c8b95bbeec7f78eaec7a1e",
+    "started_at_unix": 1788225618,
+    "finished_at_unix": 1788225620,
+    "exit_code": 2,
+    "failure_code": "windows_packaged_lifecycle_failed",
+    "failure_phase": "package_verification",
+    "failure_operation": "package_verification",
+    "bounded_failure_record_bytes": 173,
+    "stderr_bytes": 0
+  },
+  "root_cause": {
+    "class": "operator_staging_omission",
+    "finding": "the fresh staging upload contained the eight executable and configuration files but omitted the four already-pinned release audit inputs required by Test-Gate13PackageAudit",
+    "missing_inputs": [
+      "audit/desktop-metrics.json",
+      "audit/provenance.json",
+      "audit/release-metadata.json",
+      "audit/SHA256SUMS"
+    ],
+    "product_or_route_regression": false,
+    "next_attempt_change": "stage and hash-verify the four existing audit inputs before archive download and execution; no lifecycle or route redesign"
+  },
+  "linux_attempt": {
+    "instance_created": false,
+    "attempt_ordinal": 0
+  },
+  "cleanup": {
+    "route_instance_absent": true,
+    "route_disk_absent": true,
+    "windows_instance_absent": true,
+    "windows_disk_absent": true,
+    "linux_instance_absent": true,
+    "linux_disk_absent": true,
+    "route_firewalls_absent": true,
+    "gpus_all_regions": {
+      "limit": 1,
+      "usage": 0
+    },
+    "protected_bootstrap_running": true
+  },
+  "privacy": {
+    "credentials_retained": false,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "endpoints_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false
+  }
+}

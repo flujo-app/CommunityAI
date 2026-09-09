@@ -2712,27 +2712,37 @@ def run_from_config(path: str) -> Mapping[str, Any]:
             raise LifecycleRunError("lifecycle cleanup was not proved")
 
 
+def _termination_requested(_signum: int, _frame: Any) -> None:
+    raise LifecycleRunError("lifecycle termination was requested")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     os.umask(0o077)
+    previous_sigterm = signal.signal(signal.SIGTERM, _termination_requested)
+    previous_sigint = signal.signal(signal.SIGINT, _termination_requested)
     try:
-        _disable_core_dumps()
-        if len(arguments) != 2 or arguments[0] != "--config":
-            raise LifecycleRunError("exactly one config path is required")
-        document = run_from_config(arguments[1])
-    except BaseException:
-        print(
-            _canonical_json(
-                {
-                    "failure_code": "linux_lifecycle_failed",
-                    "result": "failed",
-                    "schema_version": SCHEMA_VERSION,
-                }
+        try:
+            _disable_core_dumps()
+            if len(arguments) != 2 or arguments[0] != "--config":
+                raise LifecycleRunError("exactly one config path is required")
+            document = run_from_config(arguments[1])
+        except BaseException:
+            print(
+                _canonical_json(
+                    {
+                        "failure_code": "linux_lifecycle_failed",
+                        "result": "failed",
+                        "schema_version": SCHEMA_VERSION,
+                    }
+                )
             )
-        )
-        return 2
-    print(_canonical_json(document))
-    return 0
+            return 2
+        print(_canonical_json(document))
+        return 0
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        signal.signal(signal.SIGINT, previous_sigint)
 
 
 if __name__ == "__main__":

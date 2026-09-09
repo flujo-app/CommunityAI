@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-automated-paid-cloud-qualification-and-cleanup",
+  "gate": 13,
+  "run_id": "gate13-20260901-a",
+  "result": "passed",
+  "recorded_at": "2026-09-02T08:54:19Z",
+  "goal": "Replay the successful manual Gate 13 clean-host desktop procedure automatically on Windows and Linux against the paid public route, without manual UI recovery.",
+  "authorization": {
+    "evidence": "gate13-20260901-a-cost-authorization.json",
+    "owner_reset_recorded": true,
+    "maximum_lifetime_reservation_usd": "56.00",
+    "maximum_is_not_a_bill_forecast": true,
+    "cost_note": "The owner reports the comparable real-world replay cost is approximately USD 10. Final provider billing for this run was not available at cleanup time."
+  },
+  "production_packages": {
+    "requested_source_commit": "e904d36416a4f186c0bec05ff20210df9ca19848",
+    "workflow_merge_commit": "f83c19997d6180c784e2a85f8d5d68c4361ad99e",
+    "workflow_merge_parents": [
+      "f64a388a47b098ac7f69d2affc59816376b43bb1",
+      "e904d36416a4f186c0bec05ff20210df9ca19848"
+    ],
+    "workflow_run": 33600715239,
+    "workflow_result": "success",
+    "style_run": 33600715224,
+    "style_result": "success",
+    "test_run": 33600715198,
+    "test_result": "success",
+    "windows": {
+      "workflow_artifact": "communityai-desktop-install-windows",
+      "artifact_id": 9835635064,
+      "wrapper_sha256": "sha256:d2e6a90b881838b6f738924c3dc222cb7056bf121dc9ed91c56ea055760aa329",
+      "wrapper_bytes": 2695087981,
+      "archive_sha256": "sha256:965c24c3235dd5e4621961376e0d563bb50e81ed214297e2826c0a2454accfe5",
+      "archive_bytes": 2695087805,
+      "audit_artifact_id": 9835635695,
+      "audit_artifact_sha256": "sha256:2007bca3fd77d7debacf2fec7f2975b6ee3e3a7d02f29e8baa7014915d57b407"
+    },
+    "linux": {
+      "workflow_artifact": "communityai-desktop-install-linux",
+      "artifact_id": 9835679452,
+      "wrapper_sha256": "sha256:2712b6adc33f9b932b359afe97764a4361dc6f286342c52b46d09aa536a7389d",
+      "wrapper_bytes": 3360754507,
+      "archive_sha256": "sha256:9f7c8629f3f91f1a1b291e2f3f7e1019d1497440ed399b08c837c887f2b0107a",
+      "archive_bytes": 3360754329,
+      "audit_artifact_id": 9835680252,
+      "audit_artifact_sha256": "sha256:dc47d2406b84fba40811b9d2bec44e2e99c18992e049179712ea6bb76485d543"
+    }
+  },
+  "manual_findings_translated": [
+    {
+      "source": "FLUJO conversation 264a0383-8cbf-4e0a-9073-1ae6072d19fe narration and tool calls",
+      "finding": "The first inference can return Model unavailable while the exact selected model is still becoming complete.",
+      "automation": "Poll /v1/models every five seconds for up to 90 seconds, then replay the exact one-token model:auto request once."
+    },
+    {
+      "source": "FLUJO manual desktop sequence",
+      "finding": "Sharing controls are page-scoped and the manual run navigated to Sharing before editing policy or clicking master controls.",
+      "automation": "Open the Sharing page before every sharing action and retain the accessible-name, toggle, selection, legacy, and focus/Enter control fallbacks."
+    },
+    {
+      "source": "FLUJO sequence 17517-17532",
+      "finding": "The manual run saved the policy, toggled Share compute with the selected model, clicked Start sharing, observed it, then clicked Pause sharing.",
+      "automation": "If policy reconciliation already enabled sharing, click the exact checked per-model control to restore the paused baseline before exercising literal Start and Pause."
+    }
+  ],
+  "automation_source": {
+    "inference_recovery_commit": "05fbe4fd40e1daa9f33fabfe6ca5fedc9a6798d6",
+    "sharing_page_commit": "984aef348c2b09e1a8383bb74873525d62065db8",
+    "automatic_sharing_normalization_commit": "e904d36416a4f186c0bec05ff20210df9ca19848",
+    "route_service_timeout_commit": "b093b850625235b9fa6a10605d15005511ee15f6",
+    "route_stale_advertisement_commit": "66f440bc02d7920b0a697b4095c243c0ff17ae78",
+    "fresh_linux_supervisor_commit": "4c6eaca8b0de8d20885c932e5bdcd1f50fc67947",
+    "automated_playthrough": {
+      "path": "scripts/gate13_automated_playthrough.py",
+      "sha256": "sha256:9ffda923a37ef64631898ad82139457a329393f15b78afd45709611f7f4a087f",
+      "bytes": 20545
+    },
+    "lifecycle_validator": {
+      "path": "scripts/gate13_packaged_lifecycle.py",
+      "sha256": "sha256:c899ffb162aef49e7dc54c1e62a86505713652e341bd32f77f123e76bde8d1d4",
+      "bytes": 33278
+    },
+    "final_host_job_adapter": {
+      "path": "scripts/gate13_host_job.py",
+      "sha256": "sha256:79a3220ff06faa1c359feb771903d3d842c004b122244cfef161945403fe91d9",
+      "bytes": 45781
+    },
+    "final_route_fence": {
+      "path": "scripts/gate13_route_fence.py",
+      "sha256": "sha256:e90f48bbf2e582ef7bae47e71c8e635e69f94dc86c8a7b5197a0d079af1bd5a5",
+      "bytes": 9907
+    }
+  },
+  "prequalification_diagnostics": {
+    "manual_ui_assistance_accepted_as_qualification": false,
+    "client_attempts_started_before_final_windows_run": 0,
+    "client_attempts_started_before_final_linux_run": 0,
+    "findings": [
+      "A Windows diagnostic run proved that clicking master controls while the Sharing page was hidden could wait indefinitely; navigation was added and tested.",
+      "A later Windows diagnostic showed policy reconciliation can auto-start the selected worker before the automation reaches Start; the exact FLUJO per-model toggle sequence was restored.",
+      "The first Linux route fence failed closed after an API-side bootstrap startup failure. A later live retry exposed and fixed the bounded service-action and stale-DHT-advertisement cases.",
+      "The Linux host adapter rejected the fresh host before creating a unit because Ubuntu omits ExecStart for LoadState=not-found; the exact fresh inventory is now accepted while extra fields remain rejected."
+    ]
+  },
+  "route": {
+    "instance": "route-20260901-a-node",
+    "machine_type": "g2-standard-8",
+    "accelerator": "1 x NVIDIA L4",
+    "runtime_source_commit": "f64a388a47b098ac7f69d2affc59816376b43bb1",
+    "windows_fence": {
+      "result": "passed",
+      "target": "windows",
+      "model_id": "Qwen3.5 2B",
+      "manifest_digest": "sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33",
+      "covered_blocks": 24,
+      "total_blocks": 24,
+      "peer_count_minimum": 1,
+      "stable_rechecks": 2,
+      "standby_service_stopped": true
+    },
+    "linux_fence": {
+      "result": "passed",
+      "target": "linux",
+      "model_id": "Gemma 4 E2B IT",
+      "manifest_digest": "sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd",
+      "covered_blocks": 35,
+      "total_blocks": 35,
+      "peer_count_minimum": 1,
+      "stable_rechecks": 2,
+      "standby_service_stopped": true
+    }
+  },
+  "windows": {
+    "result": "passed",
+    "attempt_ordinal": 1,
+    "instance": "gate13-20260901-a-win",
+    "machine_type": "e2-standard-8",
+    "image": "windows-server-2025-dc-v20260814",
+    "ordinary_user": "M",
+    "interactive_console_session": true,
+    "manual_ui_actions_after_launch": 0,
+    "evidence_digest": "sha256:764c63b24b0339ded38862d26787b236699ab7c2fc4c15ddaf2717218c4e5adb",
+    "real_window_sessions": 2,
+    "localhost_inference_count": 1,
+    "policy_dialog_saved": true,
+    "start_clicked": true,
+    "start_observation_seconds": 25.0,
+    "pause_control_observed": true,
+    "pause_clicked": true,
+    "sharing_intent_paused": true,
+    "session_duration_seconds": {
+      "initial": 260.828,
+      "restart": 66.328
+    },
+    "qualification_temporaries_removed": true
+  },
+  "linux": {
+    "result": "passed",
+    "attempt_ordinal": 1,
+    "instance": "gate13-20260901-a-linux",
+    "machine_type": "e2-standard-8",
+    "image": "ubuntu-2404-noble-amd64-v20260826",
+    "ordinary_user": "gate13",
+    "display": "TCP-disabled Xvfb X11 with private D-Bus and native Secret Service",
+    "manual_ui_actions_after_launch": 0,
+    "evidence_digest": "sha256:624bcfd01763ac81b1ebfac50aee196988bbbdd30f94610997464faa6dfe637c",
+    "real_window_sessions": 2,
+    "localhost_inference_count": 2,
+    "policy_dialog_saved": true,
+    "start_clicked": true,
+    "start_observation_seconds": 20.0,
+    "restart_resume_observed": true,
+    "pause_control_observed": true,
+    "pause_clicked": true,
+    "sharing_intent_paused": true,
+    "session_duration_seconds": {
+      "initial": 229.269578,
+      "restart": 44.956091
+    },
+    "qualification_temporaries_removed": true
+  },
+  "validation": {
+    "desktop_gate13_tests": {
+      "passed": 215,
+      "failed": 0
+    },
+    "route_fence_tests": {
+      "passed": 5,
+      "failed": 0
+    },
+    "host_job_tests": {
+      "passed": 28,
+      "failed": 0
+    },
+    "latest_source_style_run": 33610030286,
+    "latest_source_style_result": "success",
+    "latest_source_test_run": 33610030231,
+    "latest_source_test_result": "success",
+    "windows_evidence_validator_result": "passed",
+    "linux_evidence_validator_result": "passed"
+  },
+  "cleanup": {
+    "exact_instances_absent": [
+      "route-20260901-a-node",
+      "gate13-20260901-a-win",
+      "gate13-20260901-a-linux"
+    ],
+    "exact_disks_absent": [
+      "route-20260901-a-node",
+      "gate13-20260901-a-win",
+      "gate13-20260901-a-linux"
+    ],
+    "exact_firewalls_absent": [
+      "route-20260901-a-dht",
+      "route-20260901-a-iap",
+      "route-20260901-a-relay"
+    ],
+    "regional_l4_quota": {
+      "metric": "NVIDIA_L4_GPUS",
+      "limit": 1,
+      "usage": 0
+    },
+    "protected_bootstrap": {
+      "name": "communityai-bootstrap-1",
+      "status": "RUNNING"
+    },
+    "passed": true
+  },
+  "privacy": {
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "token_identifiers_retained": false,
+    "credentials_retained": false,
+    "signed_urls_retained": false,
+    "provider_endpoints_retained": false
+  }
+}

@@ -7,6 +7,50 @@ and qualification evidence remains in `docs/REVIVAL_TEST_RESULTS.md`.
 
 ### Added
 
+- Gate 14 hardware acceptance now has a fail-closed, source-bound verifier and durable GCP
+  lifecycle controller. They pin the exact Gate 13 packaged lifecycle and Windows/Qwen plus
+  Linux/Gemma Gate 9 envelopes, enforce the USD 100 aggregate ledger ceiling, serialize fresh
+  L4 hosts, bind host-reported evidence before collection, and require cleanup proof for the
+  exact authorization bytes, controller source, provider plan, project, zone, resources,
+  and successful terminal state while excluding the protected bootstrap from cleanup targets.
+  The focused 49-test suite covers deadline, rollback, orphan/returned-resource inventory, forged-state,
+  evidence-substitution, cross-platform, hidden/excess spend, and cleanup-binding failures. Exact source
+  `c0f2342e15aa7e12ca7c2980deca64d613204143` passed independent adversarial review, CodeQL,
+  style, Linux/Windows tests, and production-package provenance verification. A native read-only GCP
+  preflight stopped before inventory or quota inspection because the configured account requires
+  interactive reauthentication; no reservation or resource was created, so the current-epoch USD 44
+  remainder is intact. This is software and package evidence only: no Gate 14 hardware pass is claimed yet.
+- Gate 13's successful manual desktop flow now has a bounded automated replay. The
+  production package can open its real Qt window in a hidden qualification mode, perform
+  localhost inference, save the actual sharing-policy dialog, click Start, exit, relaunch,
+  prove sharing resumed, click Pause, and infer again without retaining prompt, response,
+  credential, endpoint, or path data. A standard-library outer runner verifies the exact
+  production archive, runs all four packaged self-tests, executes both sessions, validates
+  canonical evidence, and removes its run temporaries. The durable host-job boundary now
+  accepts the Python replay entrypoint on Windows and Linux. Local real-window and contract
+  tests pass; no paid clean-host replay or new release artifact is claimed by this change.
+- The owner raised the current combined GCP/Fly public-alpha accounting epoch to USD 500 on
+  2026-08-31. The existing USD 52 committed maximum remains charged. Run
+  `gate13-20260831-b` reserved USD 56 but failed before VM creation when its two IAP tags reached
+  gcloud as one value; exact cleanup passed. Fresh run `gate13-20260831-c` reserves USD 56 with
+  corrected explicit tag arguments, leaving USD 336. Per-run preflight, hard deadlines, exact
+  cleanup, protected-resource, and evidence requirements are unchanged.
+- Gate 13 paid qualification now has durable source-bound native host jobs: an exact-current-user
+  Windows Scheduled Task and a non-root transient Linux systemd service persist one attempt across
+  operator disconnects, bound output, terminate the complete process tree on timeout or overflow,
+  revalidate canonical lifecycle evidence before collection, and never re-arm consumed route or
+  client intents. Exact Windows lifecycle-config co-location and full Linux `ExecStart` structure
+  matching close the final independent-review gaps. Source `0e16ac2` passes the 217-test Gate 13 and
+  desktop matrix independently. This is a software prerequisite only: it created no cloud resources,
+  authorizes no paid run, and does not claim a completed clean-host lifecycle or Gate 13 pass.
+- Gate 13 paid qualification now has a persisted authorization-bound run-state contract that
+  inventories exact resources before every transition, accepts the product route before any
+  client, runs Windows/Qwen before Linux/Gemma, permanently consumes a failed or ambiguous
+  lifecycle host, rejects stale/foreign/deadline-expired observations, validates digest-bound
+  canonical 16-phase records, and permits a pass only after both records and exact provider
+  absence. The failed `gate13-20260831-a` attempt is cleanup-proved: its route, clients, disks,
+  and firewalls are absent while the protected bootstrap remains running. No lifecycle pass is
+  claimed, and the run's USD 52 maximum remains committed in the current budget epoch.
 - Gate 13 packaged-lifecycle prerequisites now emit deterministic self-contained Windows ZIP
   and Linux tar.gz archives, preserve or reject platform filesystem semantics fail-closed, and
   bind the archive plus strict desktop metrics into exact-type release provenance. The local

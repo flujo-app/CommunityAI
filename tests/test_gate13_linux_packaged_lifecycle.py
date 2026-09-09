@@ -742,6 +742,11 @@ def test_system_systemd_unit_is_authoritative_and_graceful(monkeypatch, tmp_path
     assert owner.owned == []
 
 
+def test_termination_signal_enters_lifecycle_cleanup_path():
+    with pytest.raises(linux_lifecycle.LifecycleRunError, match="termination"):
+        linux_lifecycle._termination_requested(15, None)
+
+
 def test_main_failure_is_generic_and_does_not_echo_config(monkeypatch, capsys):
     marker = "/private/path/must-not-escape"
     monkeypatch.setattr(linux_lifecycle, "_disable_core_dumps", lambda: None)
