@@ -53,12 +53,18 @@ Name: "{group}\Uninstall CommunityAI"; Filename: "{uninstallexe}"
 
 [Run]
 Filename: "{app}\CommunityAI.exe"; Description: "Open CommunityAI"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\CommunityAI.exe"; Flags: nowait runasoriginaluser; Check: IsSilentUpdate
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"; Check: HasInstallationMarker
 Type: filesandordirs; Name: "{app}\node"; Check: HasInstallationMarker
 
 [Code]
+function IsSilentUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:UPDATE|0}') = '1');
+end;
+
 function HasInstallationMarker: Boolean;
 begin
   Result := FileExists(ExpandConstant('{app}\.communityai-installation'));

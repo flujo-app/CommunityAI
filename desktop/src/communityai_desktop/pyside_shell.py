@@ -191,6 +191,7 @@ def run(
     instance_name: str | None = None,
     before_termination_restore: Callable[[], None] | None = None,
     qualification_automation=None,  # noqa: ANN001
+    updater=None,  # noqa: ANN001
 ) -> int:
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
@@ -297,6 +298,7 @@ def run(
             self._mode_pending = False
             self._awaiting_mode_snapshot = False
             self._closing = False
+            self._update_notice = ""
             self._controller = controller
             self._snapshot: Dict[str, Any] = {
                 "models": [],
@@ -334,6 +336,16 @@ def run(
             self._timer.timeout.connect(self.refresh)
             self._timer.start()
             self.refresh()
+            if updater is not None:
+                self._update_timer = QTimer(self)
+                self._update_timer.setInterval(500)
+                self._update_timer.timeout.connect(self._render_update)
+                self._update_timer.start()
+                self._update_check_timer = QTimer(self)
+                self._update_check_timer.setInterval(6 * 60 * 60 * 1000)
+                self._update_check_timer.timeout.connect(updater.check)
+                self._update_check_timer.start()
+                QTimer.singleShot(10_000, updater.check)
 
         def _build_sidebar(self) -> QFrame:
             sidebar = QFrame()
@@ -371,6 +383,15 @@ def run(
                 layout.addWidget(button)
 
             layout.addStretch(1)
+            if updater is not None:
+                self.update_detail = label("", "bodyMuted")
+                self.update_detail.setWordWrap(True)
+                self.update_detail.hide()
+                self.update_button = QPushButton("Check for updates")
+                self.update_button.setObjectName("textButton")
+                self.update_button.clicked.connect(self._update_clicked)
+                layout.addWidget(self.update_detail)
+                layout.addWidget(self.update_button)
             status_row = QHBoxLayout()
             self.sidebar_dot = label("●", "sidebarDot")
             self.sidebar_status = label("Connecting", "sidebarStatus")
@@ -379,6 +400,30 @@ def run(
             status_row.addStretch(1)
             layout.addLayout(status_row)
             return sidebar
+
+        def _render_update(self):
+            state = updater.snapshot()
+            busy = state["status"] in ("checking", "downloading", "installing")
+            self.update_button.setEnabled(not busy)
+            self.update_button.setText(state["message"] if state["status"] != "error" else "Retry update")
+            detail = self._update_notice or (state["message"] if state["status"] == "error" else "")
+            self.update_detail.setText(detail)
+            self.update_detail.setVisible(bool(detail))
+
+        def _update_clicked(self):
+            self._update_notice = ""
+            if updater.snapshot()["status"] == "ready":
+                if any(model.get("active_requests", 0) for model in self._snapshot.get("models", [])):
+                    self._update_notice = "Wait for the current answer to finish, then try again."
+                    self._render_update()
+                    return
+                try:
+                    updater.install()
+                except ValueError as exc:
+                    self._update_notice = str(exc)
+            else:
+                updater.check()
+            self._render_update()
 
         def _scroll_page(self, title: str, subtitle: str) -> tuple[QScrollArea, QVBoxLayout]:
             scroll = QScrollArea()
@@ -1300,6 +1345,8 @@ def run(
     def stop_window_refreshes():
         window._closing = True
         window._timer.stop()
+        if updater is not None:
+            updater.close()
 
     application.aboutToQuit.connect(stop_window_refreshes)
     window._show_page(max(0, min(3, screenshot_page)))

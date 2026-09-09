@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from communityai_desktop import __version__
 from communityai_desktop.acceptance import fake_node, run_self_test
 from communityai_desktop.client import NodeClient, NodeClientError, normalize_loopback_url
 from communityai_desktop.controller import DesktopController
@@ -26,12 +25,13 @@ from communityai_desktop.lifecycle import (
     NodeLifecycleSupervisor,
     default_bootstrap_config_path,
 )
+from communityai_desktop.release import RELEASE_VERSION
 from communityai_desktop.startup import LOGIN_STARTUP_FLAG, SingleInstanceError
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CommunityAI desktop")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {RELEASE_VERSION}")
     parser.add_argument("--node-url", default="http://127.0.0.1:8080")
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--credential-service", default=DEFAULT_CREDENTIAL_SERVICE, help=argparse.SUPPRESS)
@@ -198,6 +198,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         from communityai_desktop.pyside_shell import run
 
+        updater = None
+        if qualification_automation is None:
+            from communityai_desktop.updater import UpdateManager, installed_root
+            from PySide6.QtCore import QStandardPaths
+
+            root = installed_root()
+            if root is not None:
+                cache = (
+                    Path(QStandardPaths.writableLocation(QStandardPaths.GenericCacheLocation)) / "CommunityAI/updates"
+                )
+                updater = UpdateManager(cache, root=root)
+
         # Credential and connection errors belong in the window for normal desktop
         # startup. Existing headless installations migrate automatically.
         try:
@@ -209,6 +221,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     before_termination_restore=None if lifecycle is None else lifecycle.close,
                     qualification_automation=qualification_automation,
                     single_instance=qualification_automation is None,
+                    updater=updater,
                 )
                 or 0
             )

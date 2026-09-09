@@ -64,6 +64,7 @@ def build(bundle, output, version, maintainer):
         copy_bundle(bundle, app)
         (app / ".communityai-installation").unlink(missing_ok=True)
         shutil.copyfile(scripts / "installation-marker.txt", app / ".communityai-installation")
+        shutil.copyfile(scripts / "linux_online_root.py", app / "update_install.py")
         control = root / "DEBIAN"
         control.mkdir()
         size_kib = installed_size_kib(app)
@@ -74,7 +75,7 @@ def build(bundle, output, version, maintainer):
             "Depends: libc6 (>= 2.35), libstdc++6, libdbus-1-3, libegl1, libgl1, libglib2.0-0, "
             "libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libxcb-cursor0, "
             "libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libxcb-shape0, libwayland-cursor0\n"
-            "Recommends: gnome-keyring\nHomepage: https://github.com/flujo-app/CommunityAI\n"
+            "Recommends: gnome-keyring, policykit-1\nHomepage: https://github.com/flujo-app/CommunityAI\n"
             "Description: CommunityAI public inference alpha\n"
             " Local OpenAI-compatible inference with optional community model sharing.\n"
             " Model weights download on demand. Settings and cache survive removal.\n",

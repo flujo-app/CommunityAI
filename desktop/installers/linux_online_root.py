@@ -55,7 +55,16 @@ def protected_copy(source, destination, expected_size, expected_sha256):
         raise ValueError("Protected package size or SHA-256 verification failed")
 
 
-def run(source, filename, expected_size, expected_sha256, *, directory=Path("/var/tmp"), popen=subprocess.Popen):
+def run(
+    source,
+    filename,
+    expected_size,
+    expected_sha256,
+    *,
+    directory=Path("/var/tmp"),
+    popen=subprocess.Popen,
+    noninteractive=False
+):
     if os.geteuid() != 0:
         raise ValueError("The protected installation helper requires root")
     if not re.fullmatch(r"communityai_[0-9][A-Za-z0-9.+~\-]*_amd64\.deb", filename):
@@ -76,7 +85,7 @@ def run(source, filename, expected_size, expected_sha256, *, directory=Path("/va
         staging.chmod(0o755)
         print("Protected package size and SHA-256 verified. Starting APT.")
         keep_staging = True
-        child = popen(["/usr/bin/apt", "install", str(package)])
+        child = popen(["/usr/bin/apt", "install", *(["--yes"] if noninteractive else []), str(package)])
         try:
             code = child.wait()
         except KeyboardInterrupt:
@@ -92,10 +101,11 @@ def run(source, filename, expected_size, expected_sha256, *, directory=Path("/va
 
 
 def main():
-    if len(sys.argv) != 5:
+    noninteractive = len(sys.argv) == 6 and sys.argv[5] == "--noninteractive"
+    if len(sys.argv) != 5 and not noninteractive:
         raise SystemExit("Expected source package, filename, byte count and SHA-256")
     try:
-        return run(Path(sys.argv[1]), sys.argv[2], int(sys.argv[3]), sys.argv[4])
+        return run(Path(sys.argv[1]), sys.argv[2], int(sys.argv[3]), sys.argv[4], noninteractive=noninteractive)
     except KeyboardInterrupt:
         return 130
     except (OSError, ValueError) as exc:
