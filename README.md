@@ -7,21 +7,7 @@
 
 **AI powered by people.**
 
-[Download CommunityAI for Windows or Linux](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.3)
-— available for closed alpha testing. Already using the app's updater? Check for
-updates in the sidebar, then choose **Restart to update** when the download finishes.
-
-**Latest release: 0.1.0-alpha.20260909.3**
-
-| Platform | Online installer | Offline installer |
-| --- | --- | --- |
-| Windows | [Download setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-online-setup.exe) | [Download full setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-setup.exe) |
-| Ubuntu/Debian | [Download installer (Python)](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-linux-online.py) | [Download .deb](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai_0.1.0~alpha.20260909.3_amd64.deb) |
-
-The online installer downloads and verifies the full package during setup.
-
-<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/410a7c84-efa7-4a93-aa14-7ab9bb474575" />
-
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/14bfe3e2-4d47-4beb-9230-7b22cc962838" />
 
 ## How it works
 
@@ -33,12 +19,14 @@ Community-AI is a shared Large-Language-Model, by the people, for the people.
 
 Community-AI takes care of everything else.
 
+"Home" Screen:
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/0e02de2b-88f0-4af0-8fe6-79b2ed9a5979" />
 
-<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/64f168b4-ce93-4162-9be0-8001ae01f829" />
+"Models" Screen:
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/7a3a4d73-cc0a-4148-af8c-082c3788480e" />
 
-<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/a18ee47d-1506-4121-accd-3bb2e10e2e2e" />
-
-<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/0f7a233a-f095-40a4-8c50-0936ea2b1808" />
+"Sharing" Screen:
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/ef20f95e-a199-4058-adf9-d9782de5a005" />
 
 ## System requirements
 
@@ -57,6 +45,20 @@ alpha; the lowest supported hardware configuration has not been certified.
 When the community model is available, your app sends text to peers without
 downloading its weights or processing model layers locally. The small local
 fallback remains available when the mesh cannot answer. Sharing your GPU is optional.
+
+
+[Download CommunityAI for Windows or Linux](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.3)
+— available for closed alpha testing. Already using the app's updater? Check for
+updates in the sidebar, then choose **Restart to update** when the download finishes.
+
+**Latest release: 0.1.0-alpha.20260909.3**
+
+| Platform | Online installer | Offline installer |
+| --- | --- | --- |
+| Windows | [Download setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-online-setup.exe) | [Download full setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-setup.exe) |
+| Ubuntu/Debian | [Download installer (Python)](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-linux-online.py) | [Download .deb](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai_0.1.0~alpha.20260909.3_amd64.deb) |
+
+The online installer downloads and verifies the full package during setup.
 
 For NVIDIA use, install a CUDA 12.4-compatible driver (551.61+ on Windows,
 550.54.14+ on Linux). Python, PyTorch and the CUDA runtime are included.
