@@ -5,7 +5,12 @@ import pytest
 import torch
 
 from drift.node.config import NodeConfig, NodeConfigError, NodeModelConfig
-from drift.node.local_inference import LocalInferenceModel, local_device, local_route_observer
+from drift.node.local_inference import (
+    LocalInferenceModel,
+    local_device,
+    local_route_observer,
+    make_local_manifest_loader,
+)
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime
 
 
@@ -69,6 +74,52 @@ def test_local_runtime_rejects_unbounded_request_and_closes(tmp_path):
     runtime.close()
     with pytest.raises(RuntimeError, match="closed"):
         runtime.generate(torch.tensor([[1]]), max_new_tokens=1)
+
+
+def test_fallback_rechecks_gpu_after_download_and_uses_cpu_if_sharing_fills_it(tmp_path, monkeypatch):
+    import psutil
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+    from drift.model_manifest import ModelManifest
+
+    model_manifest = ModelManifest.load("manifests/candidates/qwen3.5-0.8b-local-bfloat16-eager.json")
+    config = NodeModelConfig(tmp_path / "qwen.json", (), execution="local")
+    free = [8 * 1024**3]
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda device: (free[0], 8 * 1024**3))
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=16 * 1024**3))
+
+    class Verifier:
+        snapshot_root = tmp_path
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def ensure_startup_metadata(self, **kwargs):
+            pass
+
+        def ensure_path(self, path):
+            # Another process claimed the GPU while the local files downloaded.
+            free[0] = 0
+
+    devices = []
+    model = SimpleNamespace(get_memory_footprint=lambda: 1024)
+    model.eval = lambda: model
+
+    def load_model(*args, **kwargs):
+        devices.append(kwargs["device_map"])
+        return model
+
+    monkeypatch.setattr("drift.node.local_inference.ManifestArtifactVerifier", Verifier)
+    monkeypatch.setattr(AutoConfig, "from_pretrained", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(AutoModelForCausalLM, "from_pretrained", load_model)
+    monkeypatch.setattr(AutoTokenizer, "from_pretrained", lambda *args, **kwargs: object())
+    runtime = make_local_manifest_loader(model_manifest, config)()
+    try:
+        assert devices == [{"": "cpu"}]
+        assert runtime.route_health()["device"] == "cpu"
+    finally:
+        runtime.close()
 
 
 def test_auto_moves_up_and_down_without_replacing_active_runtime():

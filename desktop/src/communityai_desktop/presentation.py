@@ -29,7 +29,7 @@ def model_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
     if snapshot.get("inference_mode") == "local_only":
         reason = "You chose to use only this computer."
     elif local:
-        reason = "The community model is not ready, so your messages use this computer."
+        reason = "The community cannot answer right now. Using this computer until it is available."
     else:
         reason = "The community model is ready to answer your messages."
     return model_name(selected), reason, "On this computer" if local else "With the community"

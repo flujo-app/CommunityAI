@@ -1,0 +1,112 @@
+{
+  "scope": "Two short real public-mesh requests from a fresh source client; not frozen installer qualification",
+  "base_commit": "c74efcfe913b75dded569e31ff943db2be813edf",
+  "provider_source_archive_sha256": "ee1a7c2cd795dcaffaead77845fbf2fc0e609c3dd743cbadee9120c3265ac497",
+  "results": {
+    "completion": {
+      "status_code": 200,
+      "response": {
+        "id": "cmpl-dae32d1af44f4f8c87e4052d",
+        "object": "text_completion",
+        "created": 1788938402,
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "length",
+            "text": " Paris.\n"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 3,
+          "total_tokens": 8
+        }
+      },
+      "elapsed_seconds": 106.93700000000536,
+      "consumer_cache_files": [],
+      "consumer_rss_bytes": 595922944,
+      "artifact_downloads_forbidden": true,
+      "gpu_visible": false,
+      "observed_at_unix": 1788938505.593864,
+      "covered_blocks": 64,
+      "text_peer_count": 1
+    },
+    "chat": {
+      "status_code": 200,
+      "response": {
+        "id": "chatcmpl-8b11eed2dc7e44989b91fe82",
+        "object": "chat.completion",
+        "created": 1788938604,
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "length",
+            "message": {
+              "role": "assistant",
+              "content": "4\n"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 26,
+          "completion_tokens": 3,
+          "total_tokens": 29
+        }
+      },
+      "elapsed_seconds": 157.6559999999954,
+      "consumer_cache_files": [],
+      "consumer_rss_bytes": 596209664,
+      "artifact_downloads_forbidden": true,
+      "gpu_visible": false,
+      "observed_at_unix": 1788938758.1669347,
+      "covered_blocks": 64,
+      "text_peer_count": 1
+    }
+  },
+  "focused_source_tests": {
+    "consumer_and_transport": 8,
+    "model_manager_discovery_desktop": 46,
+    "existing_api_node": 41,
+    "resource_controls": 12,
+    "fallback_budget_hardware_and_desktop": 24,
+    "node_configuration": 72
+  },
+  "resource_controls": "100% is the full physical GPU sharing budget. No permanent local fallback reservation. Fallback independently uses available GPU or CPU/RAM and rechecks after downloads.",
+  "gcp_deadline_utc": "2026-09-10T05:57:40Z",
+  "gcp_termination": "DELETE; attached boot disks auto-delete",
+  "limitations": [
+    "No claim of minimum whole-system RAM qualification",
+    "One text service on an existing CPU block worker",
+    "Automatic desktop placement of text-serving roles is not implemented",
+    "No new installers built or published yet"
+  ],
+  "consumer_source_sha256": {
+    "desktop/src/communityai_desktop/controller.py": "1418d310f32cc553268d43dd6f1c3786ad15ad7c58c90c9aa1d322e880cae85a",
+    "desktop/src/communityai_desktop/model_health.py": "4e8c0b6f349159e682a7a118c011787e9096ad6b61db9e685eb448b0d2d9778d",
+    "desktop/src/communityai_desktop/presentation.py": "ef2146a3a648afe0abf3d48d5256d12f52bac088021d57a40e8ae27639d66b77",
+    "desktop/tests/test_simple_desktop.py": "2089612931f88fcfba36b1371f0a840cf98005afd3b828db49b3ad069458a8f2",
+    "src/drift/api/server.py": "8cc7fd031a4f8904e68403d35168ab9e44068f65a8e18f8d39aa624e8d42d78f",
+    "src/drift/api/text_response.py": "3b677512dda03d9b824771b755bb24a733628948e24722be369d828c37ec64cf",
+    "src/drift/cli/__main__.py": "38377950216ff8b037c1508c1ef6f26d017830da2a8b1b69a7d06014a9707d07",
+    "src/drift/cli/run_node.py": "7df0bfbe77404dcd668133baa212acd610cd521042c3293bdc222df3247ad12b",
+    "src/drift/cli/run_text_peer.py": "6d54477268adf038b5675d0073e4fd4ea2568dfa8eb25fb9dd8fe267702931af",
+    "src/drift/client/routing/sequence_manager.py": "7ed2e841eb3b105ad32f17f76da851a4f03ab4f6c59a78d69b7f56bf7a35b969",
+    "src/drift/node/discovery.py": "4ff7a95d7dbd01093af030128a6e8f05deba5151fd6c440cf2a2cbf39e7106fb",
+    "src/drift/node/loading.py": "370746f46ef15468b740ce3bd38663331954a88afa09b406298bf7415724d4eb",
+    "src/drift/node/model_manager.py": "b9f423ed10b32115d61412e3d2abfb5be341cd797ac21d5ec92e94e16762bef0",
+    "src/drift/server/text_generation.py": "cbab82e1568d229165c485eb3a77ad8c34d9099878f5038bdb94a07ffec760ad",
+    "src/drift/server/text_peer.py": "35c652fbc7cd64f592232fb9073f4b73a8245846a089a9b1cac9a4247a59f277",
+    "src/drift/text_mesh.py": "8e2d48f2ed2af0aa712593d96f0626242e6abe92b84837a7ef7664e2fee8224b",
+    "tests/test_text_mesh.py": "1d0d49e289e6a397186399ee39ebc71c37e74006333fa31ae9f9ca6f1cfaa5fe",
+    "desktop/src/communityai_desktop/resource_controls.py": "0427358a9a2f470f70e1bbf11587fb76cf66b19a95613b1d0cf7ea0780626ecf",
+    "desktop/tests/test_resource_controls.py": "5332dca166ca690c47e6bcc65aea4ced1f573aee056071d8259547cdba53ec11",
+    "src/drift/node/hardware_status.py": "ec9ed045722efa8863bcbc5ddfcd45db218e89ae630d651b61add2bb064ebc58",
+    "src/drift/node/local_inference.py": "07a4fad72f7e764cf3b4b0ff193294f24c03f11f5a6b36ebdd4ebeab9f32e32e",
+    "tests/test_node_hardware_status.py": "423e6553284a6c53a9a9c66eadc5a1c59c27c8871c86aa2390b12fe44c15a4e0",
+    "tests/test_local_inference.py": "3b8e568948015deea23f7804411c856f033c2a3f3dc1ba2e7505bdcc2b810951",
+    "tests/test_node_config.py": "eb9bb36a172fbecf1552995fa787e82a3db3db7ea36551243226243eee724532",
+    "desktop/tests/test_resource_playthrough.py": "8e3b69236837912c481eb02e85012522b302267f99f8b01b822f528cf74b93c6"
+  }
+}

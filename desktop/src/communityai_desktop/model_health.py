@@ -1,6 +1,5 @@
 """Live block coverage, observed peers, and this computer's artifact transfers."""
 
-from communityai_desktop.presentation import model_name
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -15,6 +14,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from communityai_desktop.presentation import model_name
 
 COLORS = {
     "covered": "#237851",
@@ -274,6 +275,8 @@ class ModelHealthCard(QFrame):
         elif model.get("route_complete", health["status"] == "complete"):
             count = model.get("peer_count") or 0
             summary = f"Available · {count} {'contributor' if count == 1 else 'contributors'}"
+        elif model.get("chat_ready") is False and health["status"] == "complete":
+            summary = "Model blocks available · Waiting for a peer to handle chat"
         else:
             summary = f"Waiting for contributors · {model['coverage']} blocks available"
         progress = model.get("download_progress")

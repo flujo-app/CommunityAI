@@ -59,14 +59,7 @@ class HardwareStatus:
             if device.type == "cpu":
                 self.shared_pool = 0
                 return
-            reserve = sum(
-                model.local_max_memory_bytes
-                for model in config.models
-                if model.execution == "local"
-                and model.local_device != "cpu"
-                and (model.local_device == "auto" or normalize_device(torch.device(model.local_device)) == device)
-            )
-            self.shared_pool = max(0, total - reserve - (512 * 1024**2 if reserve else 0))
+            self.shared_pool = total
         except (RuntimeError, ValueError, OSError, AssertionError):
             # Hardware reporting must not prevent the API or desktop from starting.
             self.inventory["device"] = "unknown"

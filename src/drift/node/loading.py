@@ -15,6 +15,24 @@ from drift.node.route_health import sequence_manager_route_health
 logger = get_logger(__name__)
 
 
+def make_text_peer_loader(manifest, *, initial_peers, revocation_files=(), request_timeout=30):
+    """Build a consumer with no tokenizer, model tensors or weight downloads."""
+
+    def load():
+        from drift.protocol_identity import RevocationStore
+        from drift.text_mesh import TextPeerClient
+
+        client = TextPeerClient(
+            manifest,
+            initial_peers=initial_peers,
+            revocations=RevocationStore.from_files(revocation_files),
+            request_timeout=request_timeout,
+        )
+        return ModelRuntime(model=None, tokenizer=None, text_client=client, close=client.close)
+
+    return load
+
+
 def validate_manifest_execution(manifest: ModelManifest, execution: str) -> None:
     """Reject catalog architectures absent from this runtime without fetching weights."""
     from transformers.models.auto.modeling_auto import (

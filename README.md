@@ -44,9 +44,9 @@ CPU or smallest working RAM/VRAM configuration.
 | Component | What you need |
 | --- | --- |
 | **CPU** | A 64-bit Intel or AMD processor (x86-64). **Four cores recommended**; CPU-only answers are slower. There is no validated minimum clock speed or processor generation yet. |
-| **RAM** | **8 GB as a starting point; 16 GB recommended.** The small local model needs roughly 3.1 GB of available RAM, or free GPU memory if it runs on the GPU. Larger community models can need substantially more memory for the parts handled on your computer. |
+| **RAM** | **8 GB as a starting point; 16 GB recommended.** The small local fallback needs roughly 3.1 GB of available RAM, or free GPU memory if it runs on the GPU. The text-only community client does not load community model weights. Sharing hardware needs additional memory for the model parts you contribute. |
 | **GPU** | **Not required for CPU mode.** For GPU acceleration and sharing, use a CUDA-compatible NVIDIA GPU. An **RTX 2070 SUPER with 8 GB VRAM** has passed our sharing checks; lower VRAM capacities are not yet qualified. The current installers do not accelerate inference on AMD or Intel GPUs. |
-| **Free disk space** | Start with **20 GB free**, preferably on an SSD. This allows room for the app, installer/temporary update files and the small local model. **Additional community-model downloads need extra space**, depending on the model and blocks you contribute. |
+| **Free disk space** | Start with **20 GB free**, preferably on an SSD. This allows room for the app, installer/temporary update files and the small local fallback. Using the text-only community client does not download community model weights. **Sharing requires extra space** for the model parts you contribute. |
 | **Operating system** | 64-bit **Windows 10 (1809 or later)/11**, or **Ubuntu 22.04+/Debian 12+** with a desktop environment. No native macOS or ARM installer is currently provided. |
 | **Internet** | Required for initial model downloads and community inference/sharing. The small local model can run offline after downloading. |
 

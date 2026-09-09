@@ -29,10 +29,9 @@ from drift.node.contribution_planner import (
 )
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery, PeerCache
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
-from drift.node.loading import make_manifest_loader, validate_manifest_execution
+from drift.node.loading import make_text_peer_loader, validate_manifest_execution
 from drift.node.local_inference import local_route_observer, make_local_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelNotFoundError
-from drift.node.model_selection import MeasuredModelSelector, RouteProbeService
 from drift.node.native_credentials import (
     DEFAULT_CREDENTIAL_ACCOUNT,
     DEFAULT_CREDENTIAL_SERVICE,
@@ -263,6 +262,7 @@ def _build_model_manager(
             peer_cache=peer_cache,
             replay_history_dir=replay_history_dir,
             route_demand_authority_roots=config.route_demand_authority_roots,
+            discover_text=True,
         )
         manager.add_shutdown_callback(discovery.close)
         for model_config, manifest in configured_manifests:
@@ -275,21 +275,18 @@ def _build_model_manager(
                 )
                 descriptors.append(descriptor)
                 continue
-            descriptors.append(
-                manager.register_manifest(
+            descriptor = replace(ModelDescriptor.from_manifest(manifest), selected_whole_shard_bytes=0)
+            manager.register(
+                descriptor,
+                make_text_peer_loader(
                     manifest,
-                    make_manifest_loader(
-                        manifest,
-                        initial_peers=model_config.initial_peers,
-                        token=token,
-                        cache_dir=str(model_config.cache_dir) if model_config.cache_dir is not None else None,
-                        revocation_files=tuple(str(path) for path in model_config.revocation_files),
-                        request_timeout=model_config.request_timeout,
-                        max_retries=model_config.max_retries,
-                    ),
-                    route_health=discovery.observer(manifest.digest_id),
-                )
+                    initial_peers=model_config.initial_peers,
+                    revocation_files=tuple(str(path) for path in model_config.revocation_files),
+                    request_timeout=model_config.request_timeout,
+                ),
+                route_health=discovery.observer(manifest.digest_id),
             )
+            descriptors.append(descriptor)
         manager.configure_auto_selection(config.auto_model_priority, local_only=config.inference_mode == "local_only")
     except BaseException:
         manager.shutdown()
@@ -633,21 +630,9 @@ def _prepare_worker_supervisor_settings(
                     size, fraction = limit
                     return size if size is not None else math.floor(total_vram * fraction)
 
-                local_reserve = sum(
-                    model.local_max_memory_bytes
-                    for model in config.models
-                    if model.execution == "local"
-                    and model.local_device != "cpu"
-                    and (
-                        model.local_device == "auto"
-                        or normalize_device(torch.device(model.local_device)) == configured_device
-                    )
-                )
-                shared_pool = max(0, total_vram - local_reserve - (512 * 1024**2 if local_reserve else 0))
-                if shared_pool == 0:
-                    policy_admitted = False
-                    policy_reason = "local inference reserves the available device-memory budget"
-                policy_vram_bytes = max(1, min(shared_pool, resolve_vram_limit(policy_vram_limit)))
+                # Sharing owns its configured fraction of the physical device.
+                # An optional local fallback must not reduce this budget.
+                policy_vram_bytes = min(total_vram, resolve_vram_limit(policy_vram_limit))
                 effective_vram_bytes = policy_vram_bytes
                 if worker_vram_limit != (None, None):
                     effective_vram_bytes = min(effective_vram_bytes, resolve_vram_limit(worker_vram_limit))
@@ -1219,13 +1204,11 @@ def _serve_once(args, parser) -> bool:
             replay_history_dir=args.data_dir / "replay-history",
         )
         catalog = load_configured_catalog(config)
-        probe_service = None
         if catalog is not None:
             manager.set_catalog_models(model.manifest_digest for model in catalog.models if model.execution != "local")
-            selector = MeasuredModelSelector(catalog, discovery.snapshot)
-            manager.set_selection_policy(selector.allows)
-            if config.inference_mode != "local_only":
-                probe_service = RouteProbeService(manager, selector)
+            # Product chat uses authenticated text peers. It must not download local
+            # input/output weights or wait for a local synthetic generation probe.
+            # Complete end-to-end availability is checked by the manager/discovery.
         placement_registry = PlacementRegistry()
         route_outcomes = RouteOutcomeTracker()
         worker_supervisor = _build_worker_supervisor(
@@ -1340,15 +1323,11 @@ def _serve_once(args, parser) -> bool:
     if config.catalog_path is not None and args.config is not None:
         refresh_service = CatalogRefreshService(config, args.config, args.data_dir, manager, restart)
         refresh_service.start()
-    if probe_service is not None:
-        probe_service.start()
     try:
         server.run()
     finally:
         if refresh_service is not None:
             refresh_service.close()
-        if probe_service is not None:
-            probe_service.close()
         if placement_service is not None:
             placement_service.close()
         worker_supervisor.shutdown()

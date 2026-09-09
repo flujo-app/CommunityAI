@@ -67,6 +67,7 @@ class ModelRuntime:
     close: Optional[Callable[[], None]] = None
     route_health: Optional[Callable[[], Dict[str, Any]]] = None
     cleanup_health: Optional[Callable[[], Dict[str, Any]]] = None
+    text_client: Any = None
 
 
 @dataclass(frozen=True)
@@ -93,10 +94,10 @@ class ModelDescriptor:
         if self.selected_whole_shard_bytes is not None and (
             isinstance(self.selected_whole_shard_bytes, bool)
             or not isinstance(self.selected_whole_shard_bytes, int)
-            or not 1 <= self.selected_whole_shard_bytes <= MAX_SELECTED_WHOLE_SHARD_BYTES
+            or not 0 <= self.selected_whole_shard_bytes <= MAX_SELECTED_WHOLE_SHARD_BYTES
         ):
             raise ValueError(
-                "selected_whole_shard_bytes must be None or an integer between 1 and "
+                "selected_whole_shard_bytes must be None or an integer between 0 and "
                 f"{MAX_SELECTED_WHOLE_SHARD_BYTES}"
             )
 
@@ -637,6 +638,7 @@ class ModelManager:
                 and isinstance(peers, int)
                 and not isinstance(peers, bool)
                 and (peers == 0 if local else peers > 0)
+                and (local or route.get("chat_ready", True))
             )
             if complete and not local and self._selection_policy is not None:
                 complete = self._selection_policy(record.descriptor, route)

@@ -24,7 +24,7 @@ class ResourceControls(QWidget):
         self.sliders = {}
         self.values = {}
         for field, title in (
-            ("max_vram", "GPU memory"),
+            ("max_vram", "GPU memory limit"),
             ("max_processing_percent", "Computing"),
         ):
             row = QHBoxLayout()
@@ -54,10 +54,6 @@ class ResourceControls(QWidget):
         self._update_enabled()
 
     def _changed(self, field, percent):
-        if field == "max_vram" and percent == self.sliders[field].maximum():
-            # The top means all currently available sharing memory, including
-            # after a future hardware or local-reserve change.
-            percent = 100
         self._draft[field] = f"{percent}%" if field == "max_vram" else percent
         self.values[field].setText(self._vram_text(percent) if field == "max_vram" else f"{percent}%")
         self.message.setText("Unsaved changes")
@@ -68,8 +64,6 @@ class ResourceControls(QWidget):
             amount = self._vram_saved
             if percent is not None:
                 amount = self._vram_total * percent / 100
-                if self._vram_available is not None:
-                    amount = min(amount, self._vram_available)
             if amount is not None:
                 return f"{amount / 1024**3:.1f} GB of {self._vram_total / 1024**3:.1f} GB"
         return "No GPU memory detected"
@@ -87,9 +81,6 @@ class ResourceControls(QWidget):
         self._vram_total = contribution.get("vram_pool_bytes")
         self._vram_available = contribution.get("vram_available_bytes")
         self._vram_saved = contribution.get("vram_bytes")
-        maximum = 100
-        if self._vram_total and self._vram_available is not None:
-            maximum = max(1, min(100, math.ceil(self._vram_available * 100 / self._vram_total)))
         for field, slider in self.sliders.items():
             raw = self._draft.get(field, self._policy.get(field, 100))
             if field == "max_vram":
@@ -100,13 +91,13 @@ class ResourceControls(QWidget):
                 except ValueError:
                     percent = None
                 text = self._vram_text(percent)
-                if self._vram_total is None and raw and percent is None:
+                if raw and percent is None:
                     text = str(raw)
             else:
                 percent = raw
                 text = f"{percent:g}%"
             slider.blockSignals(True)
-            slider.setMaximum(maximum if field == "max_vram" else 100)
+            slider.setMaximum(100)
             slider.setValue(100 if percent is None else round(percent))
             slider.blockSignals(False)
             self.values[field].setText(text)

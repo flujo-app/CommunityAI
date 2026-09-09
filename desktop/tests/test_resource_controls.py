@@ -8,11 +8,12 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtWidgets import QApplication
+
 from communityai_desktop.acceptance import fake_node
 from communityai_desktop.client import NodeClient, NodeClientError
 from communityai_desktop.controller import DesktopController
 from communityai_desktop.resource_controls import ResourceControls
-from PySide6.QtWidgets import QApplication
 
 
 class ResourceControlsTests(unittest.TestCase):
@@ -56,20 +57,20 @@ class ResourceControlsTests(unittest.TestCase):
         self.assertFalse(widget.sliders["max_processing_percent"].isEnabled())
         widget.close()
 
-    def test_memory_value_shows_bytes_and_caps_local_inference_reserve(self):
+    def test_full_memory_limit_is_not_reduced_for_local_fallback(self):
         widget = ResourceControls()
         saved = {
             "editable": True,
             "config_revision": "revision",
             "policy": {"max_vram": "100%", "max_processing_percent": 100},
-            "vram_bytes": int(4.5 * 1024**3),
+            "vram_bytes": 8 * 1024**3,
             "vram_pool_bytes": 8 * 1024**3,
-            "vram_available_bytes": int(4.5 * 1024**3),
+            "vram_available_bytes": 8 * 1024**3,
         }
         widget.set_state(saved)
-        self.assertEqual(widget.values["max_vram"].text(), "4.5 GB of 8.0 GB")
-        self.assertEqual(widget.sliders["max_vram"].maximum(), 57)
-        self.assertEqual(widget.sliders["max_vram"].value(), 57)
+        self.assertEqual(widget.values["max_vram"].text(), "8.0 GB of 8.0 GB")
+        self.assertEqual(widget.sliders["max_vram"].maximum(), 100)
+        self.assertEqual(widget.sliders["max_vram"].value(), 100)
         self.assertEqual(widget._draft, {})
         # Saving only computing must retain the original 100% memory policy.
         widget.sliders["max_processing_percent"].setValue(50)
@@ -82,13 +83,13 @@ class ResourceControlsTests(unittest.TestCase):
         widget.sliders["max_vram"].setValue(25)
         self.assertEqual(widget.values["max_vram"].text(), "2.0 GB of 8.0 GB")
         self.assertEqual(widget._draft["max_vram"], "25%")
-        # Dragging to the useful top requests all available memory, not 57%.
+        # Every slider position expresses the configured fraction of the card.
         widget.sliders["max_vram"].setValue(widget.sliders["max_vram"].maximum())
         self.assertEqual(widget._draft["max_vram"], "100%")
-        self.assertEqual(widget.values["max_vram"].text(), "4.5 GB of 8.0 GB")
+        self.assertEqual(widget.values["max_vram"].text(), "8.0 GB of 8.0 GB")
         widget.set_state(saved)
-        self.assertEqual(widget.values["max_vram"].text(), "4.5 GB of 8.0 GB")
-        self.assertEqual(widget.sliders["max_vram"].value(), 57)
+        self.assertEqual(widget.values["max_vram"].text(), "8.0 GB of 8.0 GB")
+        self.assertEqual(widget.sliders["max_vram"].value(), 100)
         self.assertEqual(widget.values["max_processing_percent"].text(), "50%")
         widget.close()
 

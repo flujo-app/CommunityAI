@@ -394,6 +394,10 @@ def create_app(
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
         loaded = await load_model(body.model)
+        if loaded.runtime.text_client is not None:
+            from drift.api.text_response import text_peer_response
+
+            return await text_peer_response(loaded, body, chat=True, semaphore=semaphore)
         selected_model = loaded.descriptor.model_id
         selected_tokenizer = loaded.runtime.tokenizer
         try:
@@ -459,6 +463,10 @@ def create_app(
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
         loaded = await load_model(body.model)
+        if loaded.runtime.text_client is not None:
+            from drift.api.text_response import text_peer_response
+
+            return await text_peer_response(loaded, body, chat=False, semaphore=semaphore)
         selected_model = loaded.descriptor.model_id
         selected_tokenizer = loaded.runtime.tokenizer
         try:

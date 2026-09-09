@@ -7,11 +7,12 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
+
 from communityai_desktop.app import main
 from communityai_desktop.resource_controls import ResourceControls
 from communityai_desktop.resource_playthrough import ResourcePlaythrough
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 
 class ResourcePlaythroughTests(unittest.TestCase):
@@ -60,7 +61,7 @@ class ResourcePlaythroughTests(unittest.TestCase):
             self.assertEqual(playback.result["steps"][0]["immediate_feedback"], "Starting…")
             window.close()
 
-    def test_saved_full_memory_accepts_capped_slider_position(self):
+    def test_saved_full_memory_uses_full_slider_position(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             plan = root / "plan.json"
@@ -86,8 +87,8 @@ class ResourcePlaythroughTests(unittest.TestCase):
                 "intent_enabled": False,
                 "policy": {"sharing_enabled": False, "max_vram": "100%", "max_processing_percent": 100},
                 "vram_pool_bytes": 8 * 1024**3,
-                "vram_bytes": int(4.5 * 1024**3),
-                "vram_available_bytes": int(4.5 * 1024**3),
+                "vram_bytes": 8 * 1024**3,
+                "vram_available_bytes": 8 * 1024**3,
             }
             window._snapshot = {"contribution": contribution}
             window.resource_controls.set_state(contribution)
@@ -96,7 +97,7 @@ class ResourcePlaythroughTests(unittest.TestCase):
             playback.tick()
             playback.tick()
             self.assertEqual(playback.phase, "acknowledgement")
-            self.assertEqual(window.resource_controls.sliders["max_vram"].value(), 57)
+            self.assertEqual(window.resource_controls.sliders["max_vram"].value(), 100)
             self.assertEqual(playback.result["steps"][0]["saved_vram"], "100%")
             window.close()
 

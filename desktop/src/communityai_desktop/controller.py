@@ -58,6 +58,7 @@ class DesktopController:
             and isinstance(total, int)
             and total > 0
             and covered == total
+            and route.get("chat_ready", True)
         )
         return {
             "id": str(model.get("id", "unknown")),
@@ -66,6 +67,8 @@ class DesktopController:
             "covered_blocks": covered,
             "total_blocks": total,
             "route_complete": route_complete,
+            "chat_ready": route.get("chat_ready"),
+            "text_peer_count": route.get("text_peer_count"),
             "peer_count": route.get("peer_count"),
             "execution": "local" if route.get("source") == "local" else "distributed",
             "device": route.get("device"),
@@ -74,7 +77,7 @@ class DesktopController:
             "active_requests": model.get("active_requests", 0),
             "last_error": model.get("last_error"),
             "health": route_view(route),
-            "download_progress": model["download"].get("progress"),
+            "download_progress": None if selected_whole_shard_bytes == 0 else model["download"].get("progress"),
         }
 
     @staticmethod

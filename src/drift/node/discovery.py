@@ -323,6 +323,7 @@ class ModelCoverageDiscovery:
         replay_history_dir: Optional[Path | str] = None,
         route_demand_authority_roots: Sequence[str] = (),
         peer_snapshot: Callable[[Any], Sequence[str]] = _default_peer_snapshot,
+        discover_text: bool = False,
     ) -> None:
         if update_period <= 0 or startup_timeout <= 0:
             raise ValueError("discovery periods must be positive")
@@ -330,6 +331,7 @@ class ModelCoverageDiscovery:
         self._startup_timeout = startup_timeout
         self._dht_factory = dht_factory
         self._lookup = lookup
+        self._discover_text = discover_text
         self._peer_cache = peer_cache
         authority_roots = tuple(route_demand_authority_roots)
         if authority_roots and not 2 <= len(authority_roots) <= _MAX_ROUTE_DEMAND_AUTHORITY_ROOTS:
@@ -422,6 +424,13 @@ class ModelCoverageDiscovery:
                     result["status"] = "unknown"
             result["source"] = "discovery"
             result["last_error"] = state.last_error
+            if self._discover_text:
+                text_peers = [
+                    peer for peer in result.get("text_peers", []) if peer["expires_at_ms"] > time.time() * 1000
+                ]
+                result["text_peers"] = text_peers
+                result["text_peer_count"] = len(text_peers)
+                result["chat_ready"] = result["status"] == "complete" and bool(text_peers)
             if isinstance(result.get("reservations"), list):
                 result["reservations"] = [r for r in result["reservations"] if r["expires_at"] > time.time()]
             return result
@@ -574,6 +583,13 @@ class ModelCoverageDiscovery:
                                 dht = None
                                 break
                         health = module_infos_route_health(module_infos)
+                        if self._discover_text:
+                            from drift.text_mesh import discover_text_peers
+
+                            with self._group_io_locks[initial_peers]:
+                                health["text_peers"] = discover_text_peers(
+                                    dht, manifest, revocations=state.revocations, replay_guard=state.replay_guard
+                                )
                         if callable(getattr(dht, "get", None)):
                             try:
                                 with self._group_io_locks[initial_peers]:

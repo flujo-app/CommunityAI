@@ -25,7 +25,7 @@ def test_gpu_names_and_budget_exist_before_worker_placement(monkeypatch):
     assert full["gpu_name"] == "NVIDIA GeForce RTX 3070"
     assert full["device"] == "cuda:0"
     assert full["gpu_total_bytes"] == 8 * 1024**3
-    assert full["sharing_vram_bytes"] == int(4.5 * 1024**3)
+    assert full["sharing_vram_bytes"] == 8 * 1024**3
     assert full["processing_percent"] == 100
     half = status.snapshot({"sharing_enabled": False, "max_vram": "25%", "max_processing_percent": 30})
     assert half["sharing_vram_bytes"] == 2 * 1024**3

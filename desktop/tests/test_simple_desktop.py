@@ -18,7 +18,7 @@ class SimpleSummaryTests(unittest.TestCase):
         snapshot = {"auto_selection": {"model": "Qwen3.5-0.8B-Local", "source": "local"}}
         name, reason, location = model_summary(snapshot)
         self.assertEqual(name, "Qwen3.5 0.8B")
-        self.assertIn("community model is not ready", reason)
+        self.assertIn("community cannot answer right now", reason)
         self.assertEqual(location, "On this computer")
         snapshot["inference_mode"] = "local_only"
         self.assertEqual(model_summary(snapshot)[1], "You chose to use only this computer.")
@@ -58,9 +58,10 @@ class SimpleDesktopInteractionTests(unittest.TestCase):
         self._exercise_poll_race(True)
 
     def _exercise_poll_race(self, fail_poll):
-        from communityai_desktop.pyside_shell import run
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QLabel
+
+        from communityai_desktop.pyside_shell import run
 
         with fake_node(all_workers_paused=True) as (url, token):
             state = DesktopController(NodeClient(url, token)).snapshot()

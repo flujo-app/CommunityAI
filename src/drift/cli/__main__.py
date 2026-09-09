@@ -32,6 +32,7 @@ _COMMANDS = (
     "manifest",
     "catalog",
     "identity",
+    "text-peer",
 )
 
 _USAGE = """usage: drift <command> [options]
@@ -53,6 +54,7 @@ commands:
   manifest  Validate and inspect a content-addressed ModelManifest v1
   catalog   Create signing keys, trust roots, and threshold-signed model catalogs
   identity  Create, inspect, rotate, revoke, and verify public-swarm identities
+  text-peer Serve input/output processing and generation for text-only mesh clients
 
 Run `drift <command> --help` for command-specific options.
 """
@@ -93,6 +95,8 @@ def main() -> int:
         from drift.cli.run_catalog import main as run
     elif command == "identity":
         from drift.cli.run_identity import main as run
+    elif command == "text-peer":
+        from drift.cli.run_text_peer import main as run
     else:  # dht
         from drift.cli.run_dht import main as run
 

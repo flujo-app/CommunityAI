@@ -279,7 +279,7 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
         loader_calls.append((manifest.digest_id, kwargs))
         return lambda: ModelRuntime(object(), object())
 
-    monkeypatch.setattr("drift.cli.run_node.make_manifest_loader", fake_make_loader)
+    monkeypatch.setattr("drift.cli.run_node.make_text_peer_loader", fake_make_loader)
     config = NodeConfig(
         schema_version=1,
         max_loaded_models=1,
@@ -305,10 +305,9 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
     assert manager.auto_selection_snapshot()["status"] == "unavailable"
     assert loader_calls[0][1]["initial_peers"] == ("peer-one",)
     assert loader_calls[1][1]["initial_peers"] == ("peer-two",)
-    assert loader_calls[1][1]["cache_dir"] == "cache"
+    assert all(descriptor.selected_whole_shard_bytes == 0 for descriptor in descriptors)
     assert loader_calls[1][1]["request_timeout"] == 9
-    assert loader_calls[1][1]["max_retries"] == 4
-    assert all(call[1]["token"] == "provider-token" for call in loader_calls)
+    assert all("cache_dir" not in call[1] and "token" not in call[1] for call in loader_calls)
     assert discovery.snapshot(first.digest_id)["status"] == "unknown"
     assert discovery._states[first.digest_id].target.cache_scope == ("shipped-one",)
     assert discovery._states[second.digest_id].target.cache_scope == ("shipped-two",)
@@ -327,7 +326,7 @@ def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch,
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config = NodeConfig(
@@ -382,7 +381,7 @@ def test_automatic_worker_waits_then_binds_exact_model_and_block_range(monkeypat
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config = NodeConfig.from_dict(
@@ -602,7 +601,7 @@ def test_automatic_placement_service_reconciles_fresh_coverage_into_supervision(
     dht_time = [2_000.0]
     monkeypatch.setattr(run_node_module, "get_dht_time", lambda: dht_time[0])
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config_source = _config_dict(
@@ -972,7 +971,7 @@ def test_worker_supervisor_enforces_resolved_model_policy_and_disk_ceiling(monke
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config = NodeConfig.from_dict(
@@ -1025,7 +1024,7 @@ def test_disabled_contribution_policy_blocks_auto_start_and_control_start(monkey
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config = NodeConfig(
@@ -1062,7 +1061,7 @@ def test_denied_model_cannot_be_started_through_an_alias(monkeypatch, tmp_path):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config = NodeConfig(
@@ -1105,7 +1104,7 @@ def test_contribution_policy_rejects_alias_based_allow_deny_conflicts(monkeypatc
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config = NodeConfig(
@@ -1190,7 +1189,7 @@ def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tm
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     monkeypatch.setattr("drift.cli.run_node.get_device_total_memory", lambda device: 16 * 1024**3)
@@ -1234,12 +1233,57 @@ def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tm
     manager.shutdown()
 
 
+@pytest.mark.parametrize("sharing_percent", [25, 100])
+def test_fallback_never_reduces_worker_sharing_budget(monkeypatch, tmp_path, sharing_percent):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr("drift.cli.run_node.get_device_total_memory", lambda device: 8 * 1024**3)
+    local_manifest = Path("manifests/candidates/qwen3.5-0.8b-local-bfloat16-eager.json").resolve()
+    config = NodeConfig.from_dict(
+        _config_dict(
+            models=[
+                {"manifest": str(manifest_path), "initial_peers": ["peer-one"]},
+                {
+                    "manifest": str(local_manifest),
+                    "initial_peers": [],
+                    "execution": "local",
+                    "local_max_memory": "16GiB",
+                },
+            ],
+            workers=[
+                {
+                    "id": "gpu-worker",
+                    "model": manifest.name,
+                    "identity_path": "worker.key",
+                    "num_blocks": 2,
+                    "device": "cuda:0",
+                }
+            ],
+            contribution_policy={"sharing_enabled": True, "max_disk_space": "1GiB", "max_vram": f"{sharing_percent}%"},
+        ),
+        base_dir=tmp_path,
+    )
+    manager, _, _ = _build_model_manager(config, token=None)
+    supervisor = _build_worker_supervisor(config, manager)
+    try:
+        launch = supervisor.launches[0]
+        expected = 8 * 1024**3 * sharing_percent // 100
+        assert launch.policy_admitted
+        assert launch.max_vram_bytes == expected
+        assert launch.vram_pool_bytes == expected
+        assert launch.command[launch.command.index("--max_device_memory") + 1] == str(expected)
+    finally:
+        supervisor.shutdown()
+        manager.shutdown()
+
+
 def test_power_monitor_is_scoped_to_each_cuda_workers_device(monkeypatch, tmp_path):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     monkeypatch.setattr("drift.cli.run_node.get_device_total_memory", lambda device: 16 * 1024**3)
@@ -1294,7 +1338,7 @@ def test_accelerator_worker_requires_node_wide_vram_pool(monkeypatch, tmp_path):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     monkeypatch.setattr(
-        "drift.cli.run_node.make_manifest_loader",
+        "drift.cli.run_node.make_text_peer_loader",
         lambda *args, **kwargs: lambda: ModelRuntime(object(), object()),
     )
     config = NodeConfig.from_dict(

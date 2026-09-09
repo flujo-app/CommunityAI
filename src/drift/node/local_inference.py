@@ -161,7 +161,7 @@ def make_local_manifest_loader(manifest: ModelManifest, config: NodeModelConfig)
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
 
-        device = local_device(config, manifest)
+        local_device(config, manifest)
         verifier = ManifestArtifactVerifier(
             manifest,
             repository=manifest.source.repository,
@@ -178,6 +178,9 @@ def make_local_manifest_loader(manifest: ModelManifest, config: NodeModelConfig)
         model_class = (
             AutoModelForImageTextToText if getattr(stock_config, "text_config", None) else AutoModelForCausalLM
         )
+        # Downloads can take minutes. Choose from the memory available now,
+        # without reserving GPU memory or reducing contribution limits.
+        device = local_device(config, manifest)
         model = None
         previous_fraction = None
         try:
