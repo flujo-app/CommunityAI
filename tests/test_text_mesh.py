@@ -15,6 +15,7 @@ from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime
 from drift.protocol_identity import NodeIdentity, ProtocolSecurityError, RevocationStore
 from drift.text_mesh import (
     TextPeerClient,
+    TextPeerUnavailable,
     TextPeerProtocol,
     announcement_key,
     create_text_announcement,
@@ -247,6 +248,9 @@ class RealTransportTests(unittest.IsolatedAsyncioTestCase):
                     self.cancelled = asyncio.Event()
 
                 async def stream(self, payload, peer):
+                    if payload["body"]["prompt"] == "busy":
+                        yield {"type": "error", "code": "busy", "message": "This community peer is busy"}
+                        return
                     yield {"type": "delta", "text": payload["body"]["prompt"] + " via mesh"}
                     if payload["body"]["prompt"] == "cancel":
                         await self.cancelled.wait()
@@ -279,6 +283,8 @@ class RealTransportTests(unittest.IsolatedAsyncioTestCase):
                 frames = [frame async for frame in client.stream({"prompt": "Hello"}, chat=False)]
                 self.assertEqual(frames[0]["text"], "Hello via mesh")
                 self.assertEqual(frames[-1]["type"], "done")
+                with self.assertRaisesRegex(TextPeerUnavailable, "This community peer is busy"):
+                    _ = [frame async for frame in client.stream({"prompt": "busy"}, chat=False)]
                 stream = client.stream({"prompt": "cancel"}, chat=False)
                 first = await anext(stream)
                 self.assertEqual(first["text"], "cancel via mesh")

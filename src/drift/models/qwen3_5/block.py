@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 import torch
-from transformers.cache_utils import DynamicCache
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.masking_utils import create_causal_mask, create_recurrent_attention_mask
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5DecoderLayer, Qwen3_5TextRotaryEmbedding
 
@@ -55,11 +55,19 @@ class WrappedQwen3_5Block(BloomLayoutCacheMixin, Qwen3_5DecoderLayer):
         position_embeddings = self.rotary_emb(hidden_states, text_position_ids)
 
         if self.block_type == "full_attention":
+            # This worker owns one layer's cache, not the complete HF model cache.
+            # Mask helpers select the first full-attention layer by default, which
+            # is empty when this is a later layer (e.g. block 7 instead of 3).
+            # Give them a view of this layer so both prefix offset and KV length
+            # remain correct across multi-token prefill chunks.
+            mask_cache = (
+                Cache(layers=[past_key_values.layers[self.global_layer_idx]]) if past_key_values is not None else None
+            )
             causal_mask = create_causal_mask(
                 self.config,
                 hidden_states,
                 attention_mask,
-                past_key_values,
+                mask_cache,
                 position_ids=text_position_ids,
             )
         else:

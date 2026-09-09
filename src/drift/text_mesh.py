@@ -183,6 +183,7 @@ class TextPeerClient:
             raise TextPeerUnavailable("No community peer is ready to answer yet. Please try again shortly.")
         p2p = await self.dht.replicate_p2p()
         deadline = time.monotonic() + self.total_timeout
+        last_peer_error = None
         try:
             for candidate in peers[:3]:
                 emitted, complete, received = False, False, 0
@@ -236,6 +237,10 @@ class TextPeerClient:
                         raise TextPeerUnavailable(
                             "The community connection stopped during the answer. Please retry."
                         ) from exc
+                    if isinstance(exc, TextPeerUnavailable):
+                        last_peer_error = exc
+                    else:
+                        logger.warning("Community peer request failed (%s)", type(exc).__name__)
                 finally:
                     if not complete:
                         try:
@@ -256,7 +261,9 @@ class TextPeerClient:
                     if responses is not None:
                         with contextlib.suppress(Exception):
                             await responses.aclose()
-            raise TextPeerUnavailable("Community peers are busy or unreachable. Please try again shortly.")
+            if last_peer_error is not None:
+                raise last_peer_error
+            raise TextPeerUnavailable("Could not connect to a community peer. Please try again shortly.")
         finally:
             await p2p.shutdown()
 

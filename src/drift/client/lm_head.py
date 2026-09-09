@@ -1,5 +1,4 @@
 import dataclasses
-import platform
 from typing import Union
 
 import torch
@@ -15,7 +14,7 @@ logger = get_logger(__name__)
 @dataclasses.dataclass
 class LMHeadConfig:
     # This settings matter for running the client with dtype bfloat16 on CPU.
-    # If the CPU doesn't support AVX512, chunked_forward() significantly speeds up computations.
+    # If the CPU lacks native BF16 arithmetic, chunked_forward() speeds up computations.
     use_chunked_forward: Union[str, bool] = "auto"
     chunked_forward_step: int = 16384
 
@@ -32,15 +31,12 @@ class LMHead(nn.Module):
 
         self.use_chunked_forward = config.use_chunked_forward
         if self.use_chunked_forward == "auto":
-            if platform.machine() == "x86_64":
-                # Import of cpufeature may crash on non-x86_64 machines
-                from cpufeature import CPUFeature
-
-                # If the CPU supports AVX512, plain bfloat16 is ~10x faster than chunked_forward().
-                # Otherwise, it's ~8x slower.
-                self.use_chunked_forward = not (CPUFeature["AVX512f"] and CPUFeature["OS_AVX512"])
-            else:
-                self.use_chunked_forward = True
+            # cpufeature's native import can raise SIGFPE in virtualized hosts,
+            # killing the entire peer before Python can handle the error.
+            # Use PyTorch's capability probe and require actual BF16 support;
+            # AVX512 alone does not imply fast BF16 arithmetic.
+            supports_bf16 = getattr(torch.cpu, "_is_avx512_bf16_supported", lambda: False)
+            self.use_chunked_forward = not supports_bf16()
         self.chunked_forward_step = config.chunked_forward_step
         self._chunked_warning_shown = False
 
