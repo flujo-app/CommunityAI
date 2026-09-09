@@ -67,8 +67,9 @@ for setup, updates and the current alpha limitations.
 
 ## Important note on privacy and security:
 **Do NOT use CommunityAI for confidential/private data**
+**The peer handling your text can read it. The encryption protects on the network but a peer must actually open the message to process it. We cannot guarantee that another person’s computer won’t record it, or that a malicious peer will answer honestly.**
 
-This is what we do right now to make it as secure as possible:
+Nonetheless, this is what we do right now to make it as secure as possible:
 - Messages between computers are encrypted
 - Each computer proves it owns the identity it advertises (like an impersonation check)
 - The files you download (Installer, Model-Data, etc.) must match our (preapproved) hashes.
@@ -76,6 +77,5 @@ This is what we do right now to make it as secure as possible:
 - We limit request sizes, simultaneous work and waiting times to make it harder for someone to overwhelm the network.
 - All public (non-encrypted) status information is just things like available blocks and rough activity counts.
 
-**But(!) the peer handling your text can read it. The encryption protects on the network but a peer must actually open the message to process it. We cannot guarantee that another person’s computer won’t record it, or that a malicious peer will answer honestly.**
 
 Again, don't use it for confident/company data!
