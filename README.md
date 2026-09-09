@@ -11,6 +11,14 @@
 — available for closed alpha testing. Already using the app's updater? Check for
 updates in the sidebar, then choose **Restart to update** when the download finishes.
 
+**Latest release: 0.1.0-alpha.20260909.3**
+
+| Platform | Online installer | Offline installer |
+| --- | --- | --- |
+| Windows | [Download setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-online-setup.exe) | [Download full setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-setup.exe) |
+| Ubuntu/Debian | [Download installer (Python)](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-linux-online.py) | [Download .deb](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai_0.1.0~alpha.20260909.3_amd64.deb) |
+
+The online installer downloads and verifies the full package during setup.
 
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/410a7c84-efa7-4a93-aa14-7ab9bb474575" />
 
