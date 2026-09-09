@@ -414,5 +414,18 @@
   "installed_linux_updater_handoff_tested": false,
   "windows_postcompile_resume": "ISCC completed successfully; the original Windows PowerShell signature-module autoload failed. PowerShell 7 completed the unsigned-status, version and SHA-256 metadata checks on the unchanged installer. The initial failure record is retained locally.",
   "portable_bundle_metadata": "The portable bundle's automatic_updates=false describes the uninstalled bundle. Installer-managed applications enable the updater.",
-  "publication_scope": "Fresh Windows and Linux builds; built-in packaging checks, uploaded size/checksum metadata and public start/end samples for large installers; complete hashes for small public files. Earlier installer/native-runtime evidence remains separate."
+  "publication_scope": "Fresh Windows and Linux builds; built-in packaging checks, uploaded size/checksum metadata and public start/end samples for large installers; complete hashes for small public files. Earlier installer/native-runtime evidence remains separate.",
+  "installed_windows_updater_observation": {
+    "from_version": "0.1.0-alpha.20260909.2",
+    "offered_version": "0.1.0-alpha.20260909.3",
+    "observed_at_utc": "2026-09-09T09:17:47.2607833Z",
+    "existing_desktop_process_preserved": true,
+    "check_triggered_through_actual_sidebar": true,
+    "download_completed": true,
+    "visible_button": "Restart to update",
+    "button_enabled": true,
+    "verification_basis": "The installed UpdateManager enters ready only after the complete installer matches the signed feed size and SHA-256.",
+    "installation_or_restart_triggered": false,
+    "scope": "Real installed Windows application detected, downloaded and offered the release. Installer handoff and the new application UI remain for the user to activate and review."
+  }
 }
