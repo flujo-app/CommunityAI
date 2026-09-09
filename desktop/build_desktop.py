@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import importlib.metadata
 import json
 import os
 import platform
@@ -20,6 +21,11 @@ from typing import BinaryIO, Sequence
 
 from communityai_desktop.acceptance import run_self_test
 from communityai_desktop.pyside_shell import check_runtime
+
+try:  # Direct script execution and repository test imports use different roots.
+    from runtime_packaging import normalize_runtime
+except ModuleNotFoundError:
+    from desktop.runtime_packaging import normalize_runtime
 
 APP_NAME = "CommunityAI"
 NODE_NAME = "CommunityAI-Node"
@@ -43,17 +49,43 @@ _RELEASE_SOURCE_PATHS = (
     ".gitattributes",
     ".github/workflows/desktop.yaml",
     "desktop/build_desktop.py",
+    "desktop/runtime_packaging.py",
     "desktop/launch_desktop.py",
     "desktop/launch_node.py",
     "desktop/pyproject.toml",
     "desktop/src",
     "public-alpha/catalog-v1",
+    "public-alpha/catalog-qwen-v2",
     "pyproject.toml",
     "scripts/build_hivemind_windows.py",
     "scripts/hivemind-win32.patch",
     "src",
 )
 _EXPECTED_UNSET = object()
+
+
+def _check_build_storage(output_root: Path, build_root: Path) -> None:
+    """Reserve conservative staging/archive capacity on each actual volume."""
+    gib = 1024**3
+    volumes: dict[int, tuple[Path, int]] = {}
+    # Observed Windows output is 4.5 GB unpacked plus a 2.7 GB archive.
+    # Work staging also holds the sidecar before it is moved into the bundle.
+    for target, required in ((output_root, 8 * gib), (build_root, 5 * gib)):
+        existing = target.resolve()
+        while not existing.exists():
+            existing = existing.parent
+        volume = existing.stat().st_dev
+        prior = volumes.get(volume, (existing, 2 * gib))  # reserve per volume
+        volumes[volume] = (prior[0], prior[1] + required)
+    for location, required in volumes.values():
+        free = shutil.disk_usage(location).free
+        if free < required:
+            raise RuntimeError(
+                f"Insufficient build space on the volume containing {location}: "
+                f"{free / gib:.1f} GiB free; an estimated {required / gib:.1f} GiB is required "
+                "for staging, unpacked output, archive and reserve. Free space or choose "
+                "--output-root and --build-root on a volume with sufficient capacity."
+            )
 
 
 def _canonical_json(payload: object) -> str:
@@ -352,6 +384,7 @@ def _normalized_tar_info(name: str, *, mode: int) -> tarfile.TarInfo:
 
 
 def _write_tar_install_archive(archive_path: Path, entries: Sequence[dict[str, object]]) -> None:
+    regular_inodes: dict[tuple[int, int], dict[str, object]] = {}
     with archive_path.open("wb") as raw_stream:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw_stream, compresslevel=9, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
@@ -367,10 +400,23 @@ def _write_tar_install_archive(archive_path: Path, entries: Sequence[dict[str, o
                         archive.addfile(info)
                     elif entry["kind"] == "file":
                         source = Path(entry["_source"])
+                        source_stat = source.lstat()
+                        if not stat.S_ISREG(source_stat.st_mode):
+                            raise RuntimeError("install archive regular source changed type")
+                        identity = source_stat.st_dev, source_stat.st_ino
+                        prior = regular_inodes.get(identity)
+                        if prior is not None:
+                            if any(entry[key] != prior[key] for key in ("sha256", "size_bytes", "mode")):
+                                raise RuntimeError("install archive hardlink identity changed")
+                            info.type = tarfile.LNKTYPE
+                            info.linkname = str(prior["path"])
+                            archive.addfile(info)
+                            continue
                         info.type = tarfile.REGTYPE
                         info.size = int(entry["size_bytes"])
                         with source.open("rb") as source_stream:
                             archive.addfile(info, source_stream)
+                        regular_inodes[identity] = entry
                     else:
                         raise RuntimeError(f"unsupported install archive entry kind: {entry['kind']!r}")
 
@@ -454,8 +500,9 @@ def _verify_tar_install_archive(
                 actual[member_path] = member
             if set(actual) != set(expected):
                 raise RuntimeError("install archive members do not match the release bundle")
-            for member_path, entry in expected.items():
-                member = actual[member_path]
+            verified_regular: set[str] = set()
+            for member_path, member in actual.items():
+                entry = expected[member_path]
                 if entry["kind"] == "directory":
                     if not member.isdir() or stat.S_IMODE(member.mode) != int(entry["mode"]):
                         raise RuntimeError(f"install archive directory mode or type mismatch: {member_path}")
@@ -466,16 +513,32 @@ def _verify_tar_install_archive(
                     if canonical_target != entry["link_target"]:
                         raise RuntimeError(f"install archive symlink target mismatch: {member_path}")
                 elif entry["kind"] == "file":
+                    effective_size = member.size
+                    if member.islnk():
+                        target = _validate_install_member_path(member.linkname)
+                        target_entry = expected.get(target, {})
+                        if (
+                            member.linkname != target
+                            or target not in verified_regular
+                            or member.size != 0
+                            or any(entry[key] != target_entry.get(key) for key in ("sha256", "size_bytes", "mode"))
+                        ):
+                            raise RuntimeError(
+                                "install archive hardlink target is not a verified identical regular file"
+                            )
+                        effective_size = int(target_entry["size_bytes"])
                     if (
-                        not member.isfile()
+                        not (member.isfile() or member.islnk())
                         or member.issparse()
-                        or member.size != int(entry["size_bytes"])
+                        or effective_size != int(entry["size_bytes"])
                         or stat.S_IMODE(member.mode) != int(entry["mode"])
                     ):
                         raise RuntimeError(f"install archive file size, mode, or type mismatch: {member_path}")
                     stream = archive.extractfile(member)
                     if stream is None or _sha256_archive_stream(stream) != entry["sha256"]:
                         raise RuntimeError(f"install archive file digest mismatch: {member_path}")
+                    if member.isfile():
+                        verified_regular.add(member_path)
                 else:
                     raise RuntimeError(f"unsupported install archive entry kind: {entry['kind']!r}")
     except (OSError, tarfile.TarError) as exc:
@@ -1135,7 +1198,23 @@ def _run_bundle(
 
 
 def _run_pyinstaller(arguments: list[str]) -> None:
-    subprocess.run([sys.executable, "-m", "PyInstaller", *arguments], check=True)
+    environment = os.environ.copy()
+    if os.name == "nt":
+        # Qt links Windows' ICU ABI. An unrelated tool on PATH may ship another
+        # icuuc.dll with the same basename and incompatible exports. Restrict
+        # dependency lookup to this Python environment and Windows; PyInstaller's
+        # package hooks still discover Torch and Qt's own runtime directories.
+        windows = Path(os.environ["SystemRoot"])
+        environment["PATH"] = os.pathsep.join(
+            str(path)
+            for path in (
+                Path(sys.executable).parent,
+                Path(sys.base_prefix),
+                windows / "System32",
+                windows,
+            )
+        )
+    subprocess.run([sys.executable, "-m", "PyInstaller", *arguments], check=True, env=environment)
 
 
 def _prepare_release_inputs(publication_bundle: Path | None) -> dict[str, object] | None:
@@ -1180,6 +1259,7 @@ def _verify_packaged_release_inputs(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--build-root", type=Path)
     parser.add_argument("--publication-bundle", type=Path)
     parser.add_argument("--source-commit")
     parser.add_argument("--build-workflow")
@@ -1234,7 +1314,8 @@ def main() -> int:
     source_commit, source_tree = _source_identity(repository, args.source_commit)
     build_workflow = args.build_workflow or os.environ.get("GITHUB_WORKFLOW_REF", "local")
     output_root = (args.output_root or project / "dist" / "desktop").resolve()
-    build_root = project / "build" / "desktop"
+    build_root = (args.build_root or project / "build" / "desktop").resolve()
+    _check_build_storage(output_root, build_root)
     bundle_root = output_root / APP_NAME
     icon_path = project / "src" / "communityai_desktop" / "assets" / "communityai.ico"
     if not icon_path.is_file():
@@ -1269,6 +1350,8 @@ def main() -> int:
         str(build_root / "spec"),
         "--hidden-import",
         "communityai_desktop.pyside_shell",
+        "--hidden-import",
+        "communityai_desktop.gate13_playthrough",
         "--add-data",
         f"{icon_path}{os.pathsep}communityai_desktop/assets",
     ]
@@ -1325,6 +1408,13 @@ def main() -> int:
         "--exclude-module",
         "PySide6",
     ]
+    if platform.system() == "Linux":
+        # Approved desktop profiles use eager/native kernels. Optional PEFT/bitsandbytes
+        # imports otherwise initialize Triton's JIT on GPU hosts, requiring a compiler
+        # and Python development headers that ordinary frozen-app users do not have.
+        # Retain PyTorch and bitsandbytes native kernels; source deployments can opt
+        # into Triton separately when their execution profile requires it.
+        node_args.extend(("--exclude-module", "triton"))
     credential_backend = {
         "Windows": "keyring.backends.Windows",
         "Darwin": "keyring.backends.macOS",
@@ -1345,6 +1435,11 @@ def main() -> int:
     node_executable = node_root / f"{NODE_NAME}{'.exe' if os.name == 'nt' else ''}"
     if not node_executable.is_file():
         raise RuntimeError(f"packaged node executable was not staged: {node_executable}")
+
+    normalization = normalize_runtime(
+        node_root, target_platform=platform.system(), torch_version=importlib.metadata.version("torch")
+    )
+    (bundle_root / "runtime-packaging.json").write_text(_canonical_json(normalization), encoding="utf-8")
 
     environment = os.environ.copy()
     environment.setdefault("QT_QPA_PLATFORM", "offscreen")

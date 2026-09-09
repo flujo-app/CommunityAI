@@ -346,6 +346,12 @@ class RemoteSequenceManager:
             ix = slice(int(ix), int(ix) + 1, 1)
         return type(self)(self.config, self.block_uids[ix], dht=self.dht, state=self.state[ix])
 
+    def start_discovery(self):
+        """Observe route availability before the first inference request."""
+        with self._thread_start_lock:
+            if not self.is_alive():
+                self._thread.start()
+
     def update(self, *, wait: bool):
         """Run an asynchronous update in background as soon as possible"""
         self.ready.clear()

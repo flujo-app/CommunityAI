@@ -1,0 +1,431 @@
+{
+  "version": "0.1.0-alpha.20260909.3",
+  "source_commit": "d7f4333cc8ff74ce060076c1d6effb67fb4c6d2c",
+  "release_url": "https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.3",
+  "installers": {
+    "linux-amd64": {
+      "filename": "communityai_0.1.0~alpha.20260909.3_amd64.deb",
+      "format": "deb",
+      "kind": "offline-installer",
+      "platform": "linux-amd64",
+      "publisher": "Mario Andreschak",
+      "sha256": "57361da76241997cb5437d9af973aeebc6410e082ad87bf1b2b6410415733a14",
+      "size_bytes": 2302529348,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai_0.1.0~alpha.20260909.3_amd64.deb",
+      "version": "0.1.0~alpha.20260909.3"
+    },
+    "windows-x64": {
+      "filename": "communityai-0.1.0-alpha.20260909.3-windows-setup.exe",
+      "format": "exe",
+      "kind": "offline-installer",
+      "platform": "windows-x64",
+      "publisher": "Mario Andreschak",
+      "sha256": "5ba5d1a4890dd76227ee21ad0b2caf21c402d67f8fd617573c1942990682413b",
+      "size_bytes": 2465339019,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-setup.exe",
+      "version": "0.1.0-alpha.20260909.3"
+    }
+  },
+  "hosted_objects": [
+    {
+      "anonymous_complete_body_verified": false,
+      "anonymous_range_samples_verified": true,
+      "key": "alpha/20260909.3/communityai_0.1.0~alpha.20260909.3_amd64.deb",
+      "samples": [
+        {
+          "sha256": "f32ce2a227dfbc728621623bef7d468b0448248dc592cf088c1af8e241196ddc",
+          "size_bytes": 65536,
+          "start": 0
+        },
+        {
+          "sha256": "f55d71ad899e0a45755901b16cc28228029edf7a5456fbd3678c1a5dbc1fc7a0",
+          "size_bytes": 65536,
+          "start": 2302463812
+        }
+      ],
+      "scope": "Uploaded metadata and first/last 64 KiB match. No complete public re-download; installers/updater verify complete downloads on the client.",
+      "sha256": "57361da76241997cb5437d9af973aeebc6410e082ad87bf1b2b6410415733a14",
+      "size_bytes": 2302529348,
+      "uploaded_size_and_checksum_metadata_verified": true,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai_0.1.0~alpha.20260909.3_amd64.deb",
+      "verified_at_utc": "2026-09-09T08:53:38.322004+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": false,
+      "anonymous_range_samples_verified": true,
+      "key": "alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-setup.exe",
+      "samples": [
+        {
+          "sha256": "3bebe436fae4d118223044d658128291f2137c5fd7e504b372558504725ecb53",
+          "size_bytes": 65536,
+          "start": 0
+        },
+        {
+          "sha256": "88548b150fca67e49034474974972343437ce61333a066740baccd71315278f0",
+          "size_bytes": 65536,
+          "start": 2465273483
+        }
+      ],
+      "scope": "Uploaded metadata and first/last 64 KiB match. No complete public re-download; installers/updater verify complete downloads on the client.",
+      "sha256": "5ba5d1a4890dd76227ee21ad0b2caf21c402d67f8fd617573c1942990682413b",
+      "size_bytes": 2465339019,
+      "uploaded_size_and_checksum_metadata_verified": true,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-setup.exe",
+      "verified_at_utc": "2026-09-09T08:53:42.133237+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-online-setup.exe",
+      "sha256": "c1b598dcc26c6ad7ddbe4694078c5b66506f271b447a4904f6780a3ebda3f520",
+      "size_bytes": 2107748,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-online-setup.exe",
+      "verified_at_utc": "2026-09-09T08:55:20.762253+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-linux-online.py",
+      "sha256": "94bb7b5fa8c9c7e8697a57bfb06d1700048058b7d19d11417da878b00058aa5f",
+      "size_bytes": 13900,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-linux-online.py",
+      "verified_at_utc": "2026-09-09T08:55:21.471689+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/release-downloads.json",
+      "sha256": "56ba09ba23d4335aa4d7b39bc4ba56d8bc698f5439420be60c981cd293063112",
+      "size_bytes": 1087,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/release-downloads.json",
+      "verified_at_utc": "2026-09-09T08:55:22.212066+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/source-checksums.json",
+      "sha256": "0fb659512e4f81deec9e2c2fc8ca57f48b062b09f422bc8b389f10f408d06399",
+      "size_bytes": 10724,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/source-checksums.json",
+      "verified_at_utc": "2026-09-09T08:55:22.966668+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/SOURCE-SHA256SUMS",
+      "sha256": "a40b4446af501e0db575d8047a88c5e20fb2f300d6416ffd0eb28668bfa40c1f",
+      "size_bytes": 3149,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/SOURCE-SHA256SUMS",
+      "verified_at_utc": "2026-09-09T08:55:23.724752+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/windows/provenance.json",
+      "sha256": "bb48a9f6b055076526471c0c042b7a4df9c41420377cd848c34b73bb96b86ea6",
+      "size_bytes": 1242642,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/windows/provenance.json",
+      "verified_at_utc": "2026-09-09T08:55:25.323968+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/windows/desktop-metrics.json",
+      "sha256": "2bba7e87a45132d939a8f7be8dd193ceffaf7d91647deea4c274d158219024b6",
+      "size_bytes": 3786,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/windows/desktop-metrics.json",
+      "verified_at_utc": "2026-09-09T08:55:26.041395+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/windows/release-metadata.json",
+      "sha256": "6a434cf14100572954452052b8a1e6e8565b2930e3251b1b8327cfdcd7383a25",
+      "size_bytes": 872,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/windows/release-metadata.json",
+      "verified_at_utc": "2026-09-09T08:55:26.814023+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/windows/SHA256SUMS",
+      "sha256": "2b9d8a2b0881be4a880aec84a1b872a50936b7555749d3f034684adcc52715b7",
+      "size_bytes": 674959,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/windows/SHA256SUMS",
+      "verified_at_utc": "2026-09-09T08:55:28.033657+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/windows/communityai-0.1.0-alpha.20260909.3-windows-setup.exe.json",
+      "sha256": "f04a2c7d04e4fc3fafc691b31e1a09536297181583662b434da7de8676c820f0",
+      "size_bytes": 300,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/windows/communityai-0.1.0-alpha.20260909.3-windows-setup.exe.json",
+      "verified_at_utc": "2026-09-09T08:55:28.713534+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/windows/communityai-0.1.0-alpha.20260909.3-windows-online-setup.exe.json",
+      "sha256": "6a4a8bc929727bcee03de7eb1ec6953e2bfb060aa8556e147976031f39c19034",
+      "size_bytes": 1433,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/windows/communityai-0.1.0-alpha.20260909.3-windows-online-setup.exe.json",
+      "verified_at_utc": "2026-09-09T08:55:29.401713+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/linux/provenance.json",
+      "sha256": "45f4cba3e3c52d0467511e0d6c137b4b956b26606e258e5fe2f42db4a566eb41",
+      "size_bytes": 1244846,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/linux/provenance.json",
+      "verified_at_utc": "2026-09-09T08:55:31.755964+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/linux/desktop-metrics.json",
+      "sha256": "ce74dd8ba992465162e2a9a63fa2c8cde49b935831db734ebed0d431d1e60146",
+      "size_bytes": 3814,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/linux/desktop-metrics.json",
+      "verified_at_utc": "2026-09-09T08:55:32.437129+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/linux/release-metadata.json",
+      "sha256": "6a434cf14100572954452052b8a1e6e8565b2930e3251b1b8327cfdcd7383a25",
+      "size_bytes": 872,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/linux/release-metadata.json",
+      "verified_at_utc": "2026-09-09T08:55:33.203263+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/linux/SHA256SUMS",
+      "sha256": "23e80e3ee4a228d27e7aa35e95bd203fe29affb4c35eae6e9ed6c38b27bad4c9",
+      "size_bytes": 675799,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/linux/SHA256SUMS",
+      "verified_at_utc": "2026-09-09T08:55:34.369533+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/linux/communityai_0.1.0~alpha.20260909.3_amd64.deb.json",
+      "sha256": "557c3f68bba0ec25b907d3ee858991cd0fbfd6f72444c122508600921105c0c6",
+      "size_bytes": 1170,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/linux/communityai_0.1.0~alpha.20260909.3_amd64.deb.json",
+      "verified_at_utc": "2026-09-09T08:55:35.133677+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/metadata/linux/communityai-0.1.0-alpha.20260909.3-linux-online.py.json",
+      "sha256": "1755f199e6c11ae54030a483915616539e42cc0798a4c0e5389d15959ce71c20",
+      "size_bytes": 915,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/metadata/linux/communityai-0.1.0-alpha.20260909.3-linux-online.py.json",
+      "verified_at_utc": "2026-09-09T08:55:35.838884+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/INSTALLER-SHA256SUMS",
+      "sha256": "0d7d58e279001d5a710649529d418184ac7ad034c81a9a1bc6e27e09e09e12cd",
+      "size_bytes": 473,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/INSTALLER-SHA256SUMS",
+      "verified_at_utc": "2026-09-09T08:55:36.531260+00:00"
+    },
+    {
+      "anonymous_complete_body_verified": true,
+      "attempts": [
+        {
+          "http_status": 200,
+          "offset": 0,
+          "request": 1,
+          "result": "complete"
+        }
+      ],
+      "download_copy_created": false,
+      "key": "alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-release-metadata.zip",
+      "sha256": "912ea4789f63676f0f231eed03b07a982662e876966b34028de348ba4541ce25",
+      "size_bytes": 997612,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-release-metadata.zip",
+      "verified_at_utc": "2026-09-09T08:55:37.841971+00:00"
+    }
+  ],
+  "feed_sha256": "7638ccc7f198f2ac48b016e4c3f7b740ebe497132824900367b7cd2dd0aad0f4",
+  "source_checks": {
+    "text_mesh_and_node_desktop_integration": "9 passed",
+    "desktop_status_parser": "16 passed",
+    "node_config": "72 passed",
+    "local_inference_hardware_resource_controls": "24 passed"
+  },
+  "real_public_mesh_consumer": "Completion and chat passed with artifact downloads forbidden and an empty consumer cache; see text-only-mesh-consumer-20260909.md",
+  "consumer_timing_seconds": {
+    "completion": 106.937,
+    "chat": 157.656
+  },
+  "text_peer_placement": "Explicit operator text-peer role; automatic desktop placement of text peers is not implemented",
+  "new_installed_desktop_gpu_cloud_campaign": false,
+  "installed_linux_updater_handoff_tested": false,
+  "windows_postcompile_resume": "ISCC completed successfully; the original Windows PowerShell signature-module autoload failed. PowerShell 7 completed the unsigned-status, version and SHA-256 metadata checks on the unchanged installer. The initial failure record is retained locally.",
+  "portable_bundle_metadata": "The portable bundle's automatic_updates=false describes the uninstalled bundle. Installer-managed applications enable the updater.",
+  "publication_scope": "Fresh Windows and Linux builds; built-in packaging checks, uploaded size/checksum metadata and public start/end samples for large installers; complete hashes for small public files. Earlier installer/native-runtime evidence remains separate.",
+  "installed_windows_updater_observation": {
+    "from_version": "0.1.0-alpha.20260909.2",
+    "offered_version": "0.1.0-alpha.20260909.3",
+    "observed_at_utc": "2026-09-09T09:17:47.2607833Z",
+    "existing_desktop_process_preserved": true,
+    "check_triggered_through_actual_sidebar": true,
+    "download_completed": true,
+    "visible_button": "Restart to update",
+    "button_enabled": true,
+    "verification_basis": "The installed UpdateManager enters ready only after the complete installer matches the signed feed size and SHA-256.",
+    "installation_or_restart_triggered": false,
+    "scope": "Real installed Windows application detected, downloaded and offered the release. Installer handoff and the new application UI remain for the user to activate and review."
+  }
+}

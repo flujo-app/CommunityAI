@@ -1,5 +1,7 @@
 # Catalog bootstrap v1
 
+Publisher key location and emergency recovery: [CATALOG_SIGNING_KEY.md](CATALOG_SIGNING_KEY.md).
+
 Status: the strict sidecar consumer, desktop lifecycle integration, last-known-good
 cache, best-effort-alpha publication-bundle contract, and fail-closed packaging handoff
 are implemented. The threshold-one `public-alpha/catalog-v1` bundle publishes the

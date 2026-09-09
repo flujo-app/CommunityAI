@@ -1,0 +1,218 @@
+{
+  "container_observation": {
+    "gpu_math_performed_in_online_replay": false,
+    "id": "0d34b0f01d06219896235073174016520855209bdc80f4d37f4fe05aaf814d3e",
+    "image_id": "sha256:0042575ad9d57e21900044ed3227ca15bb5017b033d84781d6a57f16e9db51a3",
+    "memory_bytes": 3221225472,
+    "memory_swap_bytes": 3221225472,
+    "mounts": [
+      {
+        "destination": "/environment",
+        "writable": false
+      },
+      {
+        "destination": "/repo",
+        "writable": false
+      }
+    ],
+    "nano_cpus": 2000000000,
+    "network_names": [
+      null
+    ],
+    "status": "running"
+  },
+  "dependency_route": "APT downloaded 24.0 MB from official Ubuntu repositories for the declared gnome-keyring recommendation and its dependencies.",
+  "execution": {
+    "container": "communityai-release-linux-v3-acceptance-20260908",
+    "cpus": 2,
+    "driver_sha256": "0d40fe1bb294e5b5fa954e0bc9b8dcae71be3967447c3b9526e8ff5773b8159c",
+    "gpu_math_replay": false,
+    "gui_or_model_launch": false,
+    "last_review_detail": "Native stdout and stderr saved separately to preserve strict JSON parsing without treating harmless stderr as stdout",
+    "memory_bytes": 3221225472,
+    "network_names": [
+      "bridge"
+    ],
+    "production_script_sha256": "59a00906d358c1cac0046e9c323a612e7f6fdb824d21ba562de0bae18ba39b0b",
+    "root_upload_greenlight_received": true,
+    "scope": "Actual production Linux online acceptance",
+    "started_at_utc": "2026-09-09T00:54:27.1537002Z"
+  },
+  "first_readonly_audit_failure": "An initial audit expected the removed version in the final not-installed dpkg event; dpkg correctly records <none>. Its failure is retained; the corrected read-only audit verifies installed/removal versions and final absent state.",
+  "limitations": [
+    "APT input is bound to the protected SHA-verified file by actual APT Get output, not by captured process arguments.",
+    "The original harness failed after the production installer exited0, so its planned post-online CPU check did not run.",
+    "CPU/CUDA validation is referenced from the prior exact-package offline acceptance; no native replay is claimed for this online attempt.",
+    "No GUI, model weights, generation, public peer, native credential store or public canary was exercised.",
+    "Ubuntu 22.04 / Python 3.10 under the recorded Docker/WSL2 host; no new Debian 12 or bare-metal desktop replay.",
+    "External user-state sentinel retention was checked; full Gate15 settings/worker lifecycle evidence remains separate.",
+    "Publisher signing remains deferred until after alpha."
+  ],
+  "native_validation_reference": {
+    "evidence": "alpha-normalized-linux-20260908.json",
+    "evidence_sha256": "aa2320fd6b721d70078ba4ef0eedd371685d0db02a4cf7d794f5b3e165d083b5",
+    "installed_checks": [
+      {
+        "contract": {
+          "application": "CommunityAI-Native-Runtime",
+          "cpu_matmul_passed": true,
+          "cuda_build": "12.4",
+          "cuda_required": false,
+          "cuda_test_performed": false,
+          "frozen": true,
+          "model_loading_performed": false,
+          "network_join_performed": false,
+          "schema_version": 1,
+          "torch": "2.6.0+cu124"
+        },
+        "elapsed_seconds": 3.265,
+        "exit_code": 0,
+        "name": "installed-native-cpu",
+        "ordinary_uid": 1000
+      },
+      {
+        "contract": {
+          "application": "CommunityAI-Native-Runtime",
+          "bitsandbytes_native_library": "libbitsandbytes_cuda124.so",
+          "bitsandbytes_nf4_maximum_absolute_error": 0.14501953125,
+          "bitsandbytes_nf4_roundtrip_passed": true,
+          "cpu_matmul_passed": true,
+          "cuda_build": "12.4",
+          "cuda_linalg_passed": true,
+          "cuda_matmul_passed": true,
+          "cuda_required": true,
+          "cuda_test_performed": true,
+          "frozen": true,
+          "model_loading_performed": false,
+          "network_join_performed": false,
+          "schema_version": 1,
+          "torch": "2.6.0+cu124"
+        },
+        "elapsed_seconds": 3.902,
+        "exit_code": 0,
+        "name": "installed-native-cuda",
+        "ordinary_uid": 1000
+      }
+    ],
+    "installer_sha256": "714b9a7ac9121f3cf3b85f9677d541b488c2f00020bc6e1ce73ba7081f851576",
+    "replayed_after_this_online_install": false,
+    "scope": "Previously completed CPU/CUDA checks of the byte-identical offline package"
+  },
+  "network_after": {},
+  "original_harness": {
+    "error": "AssertionError: ",
+    "failed_assertion": "No APT process arguments were captured by its /proc/exe-based observer.",
+    "online_native_check_performed": false,
+    "process_argv_observations": [],
+    "raw_result_sha256": "3579477dd77a29443df6d69f1a836017c3a1b74590f9b5b7f88fc3f2c4ac7903",
+    "result": "failed",
+    "retained_without_rewriting": true
+  },
+  "production_installer": {
+    "downloaded_artifact": {
+      "filename": "communityai_0.1.0~alpha.20260908.1_amd64.deb",
+      "format": "deb",
+      "kind": "offline-installer",
+      "platform": "linux-amd64",
+      "publisher": "Mario Andreschak",
+      "sha256": "714b9a7ac9121f3cf3b85f9677d541b488c2f00020bc6e1ce73ba7081f851576",
+      "size_bytes": 2302428788,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai_0.1.0~alpha.20260908.1_amd64.deb",
+      "version": "0.1.0~alpha.20260908.1"
+    },
+    "elapsed_seconds": 1297.439,
+    "exit_code": 0,
+    "filename": "communityai-0.1.0-alpha.20260908.1-linux-online.py",
+    "sha256": "59a00906d358c1cac0046e9c323a612e7f6fdb824d21ba562de0bae18ba39b0b",
+    "size_bytes": 13662
+  },
+  "raw_evidence_directory": ".gate13-runs/linux-v3-build-20260908",
+  "raw_evidence_sha256": {
+    "online-container-inspect.json": "12f279f49223a0af5f203c07db2486c7a91c273f89ab639c35aa0e14ba1d133f",
+    "online-dpkg-transaction.log": "c405e44176e6237706f3e7ce4d0213b5493f690dd953f65f0834aa654fc651c0",
+    "online-execution-launch.json": "cee2322061d312ff8e87bebbd3f4b377f0a1234d5c320e4287dc9bbc02e75f75",
+    "online-first-attempt/executed-helper.py": "0d40fe1bb294e5b5fa954e0bc9b8dcae71be3967447c3b9526e8ff5773b8159c",
+    "online-first-attempt/online-remove.log": "61c2e23ec6f9a836ab4fea4ad2bce0724b5cbe5dc3fdbb28f59b8320edb05a2e",
+    "online-first-attempt/online-result.json": "3579477dd77a29443df6d69f1a836017c3a1b74590f9b5b7f88fc3f2c4ac7903",
+    "online-first-attempt/online-wrapper.log": "8301d2dc11423939b980d2bd440e7f3da111b5b9e0cb9efa90600a397bfcb7af",
+    "online-help.log": "83d1aa3b146a9bce7c5f8a57be3f87e323bdb998943bbafb6e2a2ae3370131dc",
+    "online-network-state-after.json": "e3566b3a06430868d71e9287dfd6c6c520a3da027aabea01951d407ee131dc2f",
+    "online-preflight-reviewed.json": "4de355c3e793862cf375092d7d08e140faa989cbbe54ce79b58772a8d7bb23ef",
+    "online-preflight.json": "5ecf9022d5023b0c50ed08a10c7199c87743046e2ccafb2d9bcfdfc49054640f",
+    "online-reviewed-default-preflight.json": "83445efb537246ebb4827eb72a29ba7f12b6e393f8a8eeae0504fd4026c9e21c",
+    "online-scoped-audit-final.json": "0d784a2f50ada1738d5630f40ea8aac44d11537cfdf0adc3eedce44b4d8760a4",
+    "online-scoped-audit-first-failed.json": "c09c1639aaf7b1408a2597a908d561baf7fc3ea76dad3fb466e38040baed6255",
+    "online-scoped-audit-first.py": "6ca67bd9ced3fbf3e408d5ccef6cc1c892afc50219b9834afb47d83915e61ff6",
+    "production-online-script.py": "59a00906d358c1cac0046e9c323a612e7f6fdb824d21ba562de0bae18ba39b0b",
+    "production-online-script.py.json": "a3b9134f69f232cfed6bc5f5fd12e20a0390ef01c08ff7ca2616af962ee8b9d5"
+  },
+  "repeat_downloads_or_installs_after_harness_failure": 0,
+  "result": "passed",
+  "schema_version": 1,
+  "scope": "Actual public HTTPS download, protected-copy verification, APT installation and removal, accepted through separate log/state audit",
+  "scoped_audit": {
+    "apt_input_binding_lines": [
+      {
+        "line": 160,
+        "text": "Get:78 /var/tmp/communityai-install-e38nkojy/communityai_0.1.0~alpha.20260908.1_amd64.deb communityai amd64 0.1.0~alpha.20260908.1 [2302 MB]"
+      }
+    ],
+    "apt_input_binding_source": "APT Get output in the retained actual wrapper log",
+    "cleanup": {
+      "dpkg_audit_exit": 0,
+      "dpkg_audit_stdout": "",
+      "package_query_exit": 1,
+      "package_status": "",
+      "remaining_online_staging": [],
+      "resident_app_or_package_processes_by_comm": [],
+      "runtime_present": false,
+      "sentinel_sha256": "fe9285e36690c756cc242bdbf3df684483256987d077c20dbc3dde551d58610b",
+      "unreadable_process_comm_pids": []
+    },
+    "download_url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai_0.1.0~alpha.20260908.1_amd64.deb",
+    "dpkg_online_transaction": [
+      "2026-09-09 01:13:41 install communityai:amd64 <none> 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:13:41 status half-installed communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:15:48 status unpacked communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:16:02 configure communityai:amd64 0.1.0~alpha.20260908.1 <none>",
+      "2026-09-09 01:16:02 status unpacked communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:16:02 status half-configured communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:16:02 status installed communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:16:04 status installed communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:16:04 remove communityai:amd64 0.1.0~alpha.20260908.1 <none>",
+      "2026-09-09 01:16:04 status half-configured communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:16:05 status half-installed communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:16:05 status config-files communityai:amd64 0.1.0~alpha.20260908.1",
+      "2026-09-09 01:16:05 status not-installed communityai:amd64 <none>"
+    ],
+    "installed_version_confirmed_by_apt_and_dpkg_logs": true,
+    "installer_bytes": 2302428788,
+    "installer_sha256": "714b9a7ac9121f3cf3b85f9677d541b488c2f00020bc6e1ce73ba7081f851576",
+    "installer_version": "0.1.0~alpha.20260908.1",
+    "native_check_after_online_install_performed": false,
+    "original_harness_error": "AssertionError: ",
+    "original_harness_failure_retained": true,
+    "original_harness_result": "failed",
+    "original_harness_result_sha256": "3579477dd77a29443df6d69f1a836017c3a1b74590f9b5b7f88fc3f2c4ac7903",
+    "parent_opt_removal_warning": "The shared /opt parent remains because it also contains image tooling; /opt/communityai is absent.",
+    "process_argv_observed": false,
+    "production_wrapper_elapsed_seconds": 1297.439,
+    "production_wrapper_exit": 0,
+    "protected_copy": {
+      "directory_mode": 493,
+      "directory_uid": 0,
+      "file_mode": 420,
+      "file_uid": 0,
+      "observation": "Independent hash/ownership check while protected APT input existed",
+      "package_path": "/var/tmp/communityai-install-e38nkojy/communityai_0.1.0~alpha.20260908.1_amd64.deb",
+      "sha256": "714b9a7ac9121f3cf3b85f9677d541b488c2f00020bc6e1ce73ba7081f851576",
+      "size_bytes": 2302428788
+    },
+    "recorded_at_utc": "2026-09-09T01:24:16.688407+00:00",
+    "result": "passed",
+    "scope": "Actual HTTPS download, independently verified protected copy, APT installation and removal; native validation referenced separately",
+    "script_sha256": "59a00906d358c1cac0046e9c323a612e7f6fdb824d21ba562de0bae18ba39b0b"
+  },
+  "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "sudo_fixture": "Actual sudo ran from ordinary UID 1000 with a NOPASSWD rule only inside this disposable container."
+}

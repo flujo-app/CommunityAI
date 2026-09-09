@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import secrets
 import sys
 import time
 from dataclasses import replace
@@ -15,18 +16,21 @@ from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 from hivemind.utils.timed_storage import get_dht_time
 
 import drift
-from drift.model_manifest import ManifestError, ModelManifest
+from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest, select_manifest_block_artifacts
+from drift.node.catalog_refresh import CatalogRefreshService, load_configured_catalog
 from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
 from drift.node.contribution_planner import (
     AutomaticContributionPlanner,
     AutomaticPlacementService,
+    PlacementArtifactPlan,
     PlacementCandidate,
     PlacementPlan,
     PlacementRegistry,
 )
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery, PeerCache
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
-from drift.node.loading import make_manifest_loader
+from drift.node.loading import make_text_peer_loader, validate_manifest_execution
+from drift.node.local_inference import local_route_observer, make_local_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelNotFoundError
 from drift.node.native_credentials import (
     DEFAULT_CREDENTIAL_ACCOUNT,
@@ -50,6 +54,8 @@ from drift.protocol_identity import (
     create_intent_lease,
     create_route_demand,
 )
+from drift.utils.auto_config import AutoDistributedConfig
+from drift.utils.disk_cache import DEFAULT_CACHE_DIR
 from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
@@ -163,17 +169,7 @@ def _load_node_config(args: argparse.Namespace, *, persisted_config: NodeConfig 
         configured = persisted_config if persisted_config is not None else NodeConfig.load(args.config)
         if args.max_loaded_models is None:
             return configured
-        return NodeConfig(
-            schema_version=configured.schema_version,
-            max_loaded_models=args.max_loaded_models,
-            models=configured.models,
-            auto_model_priority=configured.auto_model_priority,
-            route_demand_authority_roots=configured.route_demand_authority_roots,
-            workers=configured.workers,
-            contribution_policy=configured.contribution_policy,
-            discovery_update_period=configured.discovery_update_period,
-            discovery_startup_timeout=configured.discovery_startup_timeout,
-        )
+        return replace(configured, max_loaded_models=args.max_loaded_models)
 
     manifest_path = Path(args.model_manifest).expanduser().resolve()
     cache_dir = Path(args.cache_dir).expanduser().resolve() if args.cache_dir else None
@@ -243,6 +239,7 @@ def _build_model_manager(
         for model_config in config.models:
             manifest = ModelManifest.load(model_config.manifest_path)
             manifest.validate_runtime(drift.__version__)
+            validate_manifest_execution(manifest, model_config.execution)
             if manifest.runtime.adapter_profile != "none":
                 raise ManifestError("Content-addressed adapter profiles are not executable in this release")
             configured_manifests.append((model_config, manifest))
@@ -258,31 +255,39 @@ def _build_model_manager(
                     ),
                 )
                 for model_config, manifest in configured_manifests
+                if model_config.execution == "distributed"
             ],
             update_period=config.discovery_update_period,
             startup_timeout=config.discovery_startup_timeout,
             peer_cache=peer_cache,
             replay_history_dir=replay_history_dir,
             route_demand_authority_roots=config.route_demand_authority_roots,
+            discover_text=True,
         )
         manager.add_shutdown_callback(discovery.close)
         for model_config, manifest in configured_manifests:
-            descriptors.append(
-                manager.register_manifest(
-                    manifest,
-                    make_manifest_loader(
-                        manifest,
-                        initial_peers=model_config.initial_peers,
-                        token=token,
-                        cache_dir=str(model_config.cache_dir) if model_config.cache_dir is not None else None,
-                        revocation_files=tuple(str(path) for path in model_config.revocation_files),
-                        request_timeout=model_config.request_timeout,
-                        max_retries=model_config.max_retries,
-                    ),
-                    route_health=discovery.observer(manifest.digest_id),
+            if model_config.execution == "local":
+                descriptor = replace(ModelDescriptor.from_manifest(manifest), execution="local")
+                manager.register(
+                    descriptor,
+                    make_local_manifest_loader(manifest, model_config),
+                    route_health=local_route_observer(manifest, model_config),
                 )
+                descriptors.append(descriptor)
+                continue
+            descriptor = replace(ModelDescriptor.from_manifest(manifest), selected_whole_shard_bytes=0)
+            manager.register(
+                descriptor,
+                make_text_peer_loader(
+                    manifest,
+                    initial_peers=model_config.initial_peers,
+                    revocation_files=tuple(str(path) for path in model_config.revocation_files),
+                    request_timeout=model_config.request_timeout,
+                ),
+                route_health=discovery.observer(manifest.digest_id),
             )
-        manager.configure_auto_selection(config.auto_model_priority)
+            descriptors.append(descriptor)
+        manager.configure_auto_selection(config.auto_model_priority, local_only=config.inference_mode == "local_only")
     except BaseException:
         manager.shutdown()
         raise
@@ -307,6 +312,58 @@ def _resolve_policy_models(
     return resolved
 
 
+def _resolved_automatic_cache_root(worker, model_config: NodeModelConfig) -> Path:
+    configured = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
+    return Path(DEFAULT_CACHE_DIR if configured is None else configured).expanduser().resolve()
+
+
+def _manifest_artifact_plans(
+    manifest: ModelManifest,
+    worker,
+    *,
+    token: str | None,
+    cache_dir: Path | None,
+    max_disk_space: int,
+) -> tuple[PlacementArtifactPlan, ...]:
+    if worker.num_blocks is None or worker.num_blocks > manifest.model.num_blocks:
+        raise ManifestError("Automatic worker block count exceeds the manifested model")
+    source_token = token if manifest.model.gated else False
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        repository=manifest.source.repository,
+        revision=manifest.source.revision,
+        token=source_token,
+        cache_dir=cache_dir,
+        max_disk_space=max_disk_space,
+    )
+    config_root = verifier.ensure_startup_metadata()
+    block_config = AutoDistributedConfig.from_pretrained(
+        config_root,
+        token=source_token,
+        local_files_only=True,
+    )
+    manifest.validate_model_config(block_config)
+    weight_map = verifier.load_weight_map()
+    return tuple(
+        PlacementArtifactPlan(
+            start_block=start,
+            end_block=start + worker.num_blocks,
+            artifact_bytes=plan.artifact_bytes,
+            artifact_set_digest=plan.artifact_set_digest,
+        )
+        for start in range(manifest.model.num_blocks - worker.num_blocks + 1)
+        for plan in (
+            select_manifest_block_artifacts(
+                manifest,
+                block_prefix=block_config.block_prefix,
+                start_block=start,
+                end_block=start + worker.num_blocks,
+                weight_map=weight_map,
+            ),
+        )
+    )
+
+
 def _automatic_placement_candidates(
     config: NodeConfig,
     manager: ModelManager,
@@ -316,6 +373,7 @@ def _automatic_placement_candidates(
     token: str | None,
     route_outcomes: RouteOutcomeTracker | None = None,
     allow_remote_route_demand: bool = False,
+    artifact_plan_cache: dict | None = None,
 ) -> tuple[PlacementCandidate, ...]:
     policy = config.contribution_policy
     allowed = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
@@ -329,18 +387,22 @@ def _automatic_placement_candidates(
             ordered_keys.append(key)
     manifested = []
     for model_config in config.models:
+        if model_config.execution == "local":
+            continue
         manifest = ModelManifest.load(model_config.manifest_path)
+        if not manager.catalog_allows_contribution(manifest.digest_id):
+            continue
         descriptor = manager.resolve(manifest.digest_id)
         key = _model_key(descriptor)
         if key not in ordered_keys:
             ordered_keys.append(key)
-        manifested.append((manifest, descriptor, key))
+        manifested.append((model_config, manifest, descriptor, key))
     priority = {key: index for index, key in enumerate(ordered_keys)}
 
     disk_limits = [value for value in (worker.max_disk_bytes, policy.max_disk_bytes) if value is not None]
     effective_disk_bytes = min(disk_limits, default=None)
     candidates = []
-    for manifest, descriptor, key in manifested:
+    for model_config, manifest, descriptor, key in manifested:
         artifact_bytes = sum(artifact.size for artifact in manifest.artifacts)
         if key in denied:
             reason = f"model {descriptor.model_id!r} is denied by contribution policy"
@@ -350,13 +412,30 @@ def _automatic_placement_candidates(
             reason = f"model {descriptor.model_id!r} requires gated artifact authorization"
         elif effective_disk_bytes is None:
             reason = "automatic placement requires a finite disk budget"
-        elif artifact_bytes > effective_disk_bytes:
-            reason = (
-                f"manifested artifacts require {artifact_bytes} bytes, above the "
-                f"{effective_disk_bytes}-byte disk budget"
-            )
         else:
             reason = None
+        artifact_plans = ()
+        if reason is None:
+            try:
+                cache_root = _resolved_automatic_cache_root(worker, model_config)
+                plan_key = (manifest.digest_id, worker.num_blocks, str(cache_root), effective_disk_bytes)
+                cached = None if artifact_plan_cache is None else artifact_plan_cache.get(plan_key)
+                if cached is None:
+                    artifact_plans = _manifest_artifact_plans(
+                        manifest, worker, token=token, cache_dir=cache_root, max_disk_space=effective_disk_bytes
+                    )
+                    if artifact_plan_cache is not None:
+                        # Plans are immutable claims derived from a verified pinned
+                        # index. Reopening that index on every discovery tick can
+                        # interrupt an admitted worker during cache materialization.
+                        # Worker startup still independently verifies all artifacts.
+                        if len(artifact_plan_cache) >= 128:
+                            artifact_plan_cache.pop(next(iter(artifact_plan_cache)))
+                        artifact_plan_cache[plan_key] = artifact_plans
+                else:
+                    artifact_plans = cached
+            except (ManifestError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                reason = f"exact block artifact planning failed: {type(exc).__name__}"
         candidates.append(
             PlacementCandidate(
                 model_id=descriptor.model_id,
@@ -371,6 +450,8 @@ def _automatic_placement_candidates(
                     discovery.route_demand_snapshot(manifest.digest_id) if allow_remote_route_demand else None
                 ),
                 policy_reason=reason,
+                artifact_plans=artifact_plans,
+                max_artifact_bytes=effective_disk_bytes,
             )
         )
     return tuple(candidates)
@@ -425,10 +506,20 @@ def _prepare_worker_supervisor_settings(
         placement = automatic_placements.get(worker.worker_id.casefold())
         decision = None if placement is None else placement.decision
         if automatic:
-            fallback_selector = (
-                config.auto_model_priority[0]
-                if config.auto_model_priority
-                else ModelManifest.load(config.models[0].manifest_path).digest_id
+            distributed = [
+                digest
+                for digest, (model_config, _) in manifested_models.items()
+                if model_config.execution == "distributed" and manager.catalog_allows_contribution(digest)
+            ]
+            if not distributed:
+                continue
+            fallback_selector = next(
+                (
+                    selector
+                    for selector in config.auto_model_priority
+                    if manager.resolve(selector).manifest_digest in distributed
+                ),
+                distributed[0],
             )
             selector = fallback_selector if decision is None else decision.manifest_digest
         else:
@@ -438,6 +529,8 @@ def _prepare_worker_supervisor_settings(
         except ModelNotFoundError as exc:
             raise NodeConfigError(f"worker {worker.worker_id!r} selects {exc}") from exc
         model_config, manifest = manifested_models[descriptor.manifest_digest]
+        if model_config.execution == "local":
+            raise NodeConfigError(f"worker {worker.worker_id!r} cannot host a standalone local inference profile")
         if automatic:
             selected_num_blocks = None
             selected_block_indices = f"0:{worker.num_blocks}" if decision is None else decision.block_indices
@@ -459,12 +552,20 @@ def _prepare_worker_supervisor_settings(
             )
         if worker.public_ip is not None and worker.port is None:
             raise NodeConfigError(f"worker {worker.worker_id!r} public_ip requires port")
+        if worker.public_port is not None and (worker.port is None or worker.public_ip is None):
+            raise NodeConfigError(f"worker {worker.worker_id!r} public_port requires port and public_ip")
 
         resolved_model = _model_key(descriptor)
+        intent_published = bool(automatic and placement is not None and placement.intent_published)
+        remote_acknowledged = bool(automatic and placement is not None and placement.remote_acknowledged)
         if not policy.sharing_enabled:
             policy_reason = "sharing is disabled by contribution policy"
         elif automatic and decision is None:
             policy_reason = placement_reason
+        elif automatic and not (intent_published and remote_acknowledged):
+            policy_reason = "automatic placement intent is not remotely acknowledged"
+        elif automatic and decision.artifact_set_digest is None:
+            policy_reason = "automatic placement has no exact artifact-set binding"
         elif resolved_model in denied_models:
             policy_reason = f"model {descriptor.model_id!r} is denied by contribution policy"
         elif allowed_models and resolved_model not in allowed_models:
@@ -529,6 +630,8 @@ def _prepare_worker_supervisor_settings(
                     size, fraction = limit
                     return size if size is not None else math.floor(total_vram * fraction)
 
+                # Sharing owns its configured fraction of the physical device.
+                # An optional local fallback must not reduce this budget.
                 policy_vram_bytes = min(total_vram, resolve_vram_limit(policy_vram_limit))
                 effective_vram_bytes = policy_vram_bytes
                 if worker_vram_limit != (None, None):
@@ -557,21 +660,54 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--num_blocks", str(selected_num_blocks)))
         else:
             command.extend(("--block_indices", selected_block_indices))
+        cache_dir = (
+            _resolved_automatic_cache_root(worker, model_config)
+            if automatic
+            else worker.cache_dir
+            if worker.cache_dir is not None
+            else model_config.cache_dir
+        )
+        if automatic and decision is not None and decision.artifact_set_digest is not None:
+            command.extend(
+                (
+                    "--expected_manifest_digest",
+                    decision.manifest_digest,
+                    "--expected_block_indices",
+                    selected_block_indices,
+                    "--expected_artifact_bytes",
+                    str(decision.artifact_bytes),
+                    "--expected_artifact_set_digest",
+                    decision.artifact_set_digest,
+                    "--expected_cache_root",
+                    str(cache_dir),
+                )
+            )
         if worker.device is not None:
             command.extend(("--device", worker.device))
-        cache_dir = worker.cache_dir if worker.cache_dir is not None else model_config.cache_dir
         if cache_dir is not None:
             command.extend(("--cache_dir", str(cache_dir)))
         if effective_disk_space is not None:
             command.extend(("--max_disk_space", effective_disk_space))
         if effective_vram_bytes is not None:
             command.extend(("--max_device_memory", str(effective_vram_bytes)))
+        command.extend(("--max_processing_percent", str(policy.max_processing_percent)))
+        if policy.max_processing_percent < 100:
+            # One stable lock for all this node's workers, across model/device
+            # changes. Never remove a live lock file during a policy update.
+            budget_path = config.workers[0].identity_path.with_name(
+                f".{config.workers[0].identity_path.name}.processing-budget"
+            )
+            command.extend(("--processing_budget_path", str(budget_path)))
         if worker.port is not None:
             command.extend(("--port", str(worker.port)))
         if worker.public_ip is not None:
-            command.extend(("--public_ip", worker.public_ip))
+            if worker.public_port is None:
+                command.extend(("--public_ip", worker.public_ip))
+            else:
+                command.extend(("--announce_maddrs", f"/ip4/{worker.public_ip}/tcp/{worker.public_port}"))
         for revocation_file in model_config.revocation_files:
             command.extend(("--revocation_file", str(revocation_file)))
+        placement_binding = decision if decision is not None and decision.artifact_set_digest is not None else None
 
         launches.append(
             WorkerLaunch(
@@ -587,6 +723,14 @@ def _prepare_worker_supervisor_settings(
                 automatic=automatic,
                 block_indices=selected_block_indices if automatic else None,
                 placement_reason=placement_reason,
+                intent_published=intent_published,
+                remote_acknowledged=remote_acknowledged,
+                placement_manifest_digest=(None if placement_binding is None else placement_binding.manifest_digest),
+                placement_artifact_bytes=(None if placement_binding is None else placement_binding.artifact_bytes),
+                placement_artifact_set_digest=(
+                    None if placement_binding is None else placement_binding.artifact_set_digest
+                ),
+                placement_cache_root=None if placement_binding is None else str(cache_dir),
                 max_disk_bytes=effective_disk_bytes,
                 max_vram_bytes=effective_vram_bytes,
                 vram_device=vram_device,
@@ -665,6 +809,95 @@ def _prepare_route_identity(
         return None
 
 
+def _intent_lease_binding(worker, decision, identity_key_id: str) -> tuple[int, int, dict, tuple]:
+    start_block, end_block = (int(value) for value in decision.block_indices.split(":"))
+    throughput = None if isinstance(worker.throughput, str) else max(1, round(worker.throughput * 1000))
+    resource_claims = {
+        "schema_version": INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION,
+        "artifact_bytes": decision.artifact_bytes,
+        "block_count": end_block - start_block,
+        "throughput_milli_rps": throughput,
+    }
+    decision_key = (
+        decision.manifest_digest,
+        start_block,
+        end_block,
+        decision.artifact_set_digest,
+        str(worker.identity_path),
+        identity_key_id,
+        tuple(sorted(resource_claims.items())),
+    )
+    return start_block, end_block, resource_claims, decision_key
+
+
+def _placement_decision_key(worker, decision, identity_key_id: str) -> tuple:
+    return _intent_lease_binding(worker, decision, identity_key_id)[3]
+
+
+def _can_retain_acknowledged_plan(
+    previous: PlacementPlan | None,
+    current_decision,
+    worker,
+    identity_key_id: str | None,
+    lease: Mapping | None,
+    *,
+    now: float,
+) -> bool:
+    if previous is None or previous.decision is None or identity_key_id is None:
+        return False
+    previous_key = _placement_decision_key(worker, previous.decision, identity_key_id)
+    current_key = _placement_decision_key(worker, current_decision, identity_key_id)
+    return bool(
+        previous.remote_acknowledged
+        and lease is not None
+        and lease.get("decision_key") == previous_key == current_key
+        and isinstance(lease.get("expires_at"), (int, float))
+        and not isinstance(lease.get("expires_at"), bool)
+        and math.isfinite(lease["expires_at"])
+        and lease["expires_at"] > now
+    )
+
+
+def _recent_gap_preserves_artifact_claim(candidate, decision, num_blocks, *, maximum_age):
+    if candidate is None or candidate.policy_reason is not None:
+        return False
+    health = candidate.health
+    age = health.get("last_updated_age")
+    if (
+        health.get("status") != "unknown"
+        or health.get("last_known_status") not in ("complete", "incomplete")
+        or isinstance(age, bool)
+        or not isinstance(age, (int, float))
+        or not math.isfinite(age)
+        or not 0 <= age <= maximum_age
+    ):
+        return False
+    start, end = map(int, decision.block_indices.split(":"))
+    return bool(
+        end - start == num_blocks
+        and candidate.max_artifact_bytes is not None
+        and decision.artifact_bytes <= candidate.max_artifact_bytes
+        and any(
+            p.start_block == start
+            and p.end_block == end
+            and p.artifact_bytes == decision.artifact_bytes
+            and p.artifact_set_digest == decision.artifact_set_digest
+            for p in candidate.artifact_plans
+        )
+    )
+
+
+def _automatic_placement_seed(worker) -> str:
+    try:
+        return NodeIdentity.ensure(worker.identity_path).key_id
+    except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
+        # A temporarily unavailable contribution key must not stop local
+        # inference. Intent publication still denies worker admission until the
+        # key is usable; an ephemeral seed keeps this session independently
+        # dispersed if permissions recover before the node is restarted.
+        return secrets.token_hex(32)
+
+
 def _build_automatic_placement_service(
     config: NodeConfig,
     manager: ModelManager,
@@ -684,16 +917,18 @@ def _build_automatic_placement_service(
     planners = {
         worker.worker_id.casefold(): AutomaticContributionPlanner(
             num_blocks=worker.num_blocks,
-            jitter_seed=str(worker.identity_path),
+            # Installation paths are identical on many machines. Disperse by
+            # the persistent public identity, not by the key's filename.
+            jitter_seed=_automatic_placement_seed(worker),
             maximum_observation_age_seconds=max(90.0, config.discovery_update_period * 3),
         )
         for worker in automatic_workers
     }
     intent_ttl_seconds = 10 * 60
     intent_refresh_seconds = 2 * 60
-    intent_identities = {}
     intent_sequences = {}
     intent_leases = {}
+    artifact_plan_cache = {}
     route_identity = _prepare_route_identity(discovery, route_identity_path, config.route_demand_authority_roots)
     route_sequences = {}
     route_leases = {}
@@ -735,9 +970,16 @@ def _build_automatic_placement_service(
                 "expires_at": expires_at,
             }
 
-    def publish_intent(worker_id, worker, decision) -> bool:
-        identity_path = str(worker.identity_path)
-        decision_key = (decision.manifest_digest, decision.block_indices, identity_path)
+    def publish_intent(worker_id, worker, decision) -> tuple[bool, str | None]:
+        if decision.artifact_set_digest is None:
+            return False, None
+        try:
+            identity = NodeIdentity.ensure(worker.identity_path)
+            start_block, end_block, resource_claims, decision_key = _intent_lease_binding(
+                worker, decision, identity.key_id
+            )
+        except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
+            return False, None
         now = get_dht_time()
         current_lease = intent_leases.get(worker_id)
         if (
@@ -745,16 +987,8 @@ def _build_automatic_placement_service(
             and current_lease["decision_key"] == decision_key
             and current_lease["expires_at"] - now > intent_refresh_seconds
         ):
-            return True
+            return True, identity.key_id
         try:
-            identity_entry = intent_identities.get(worker_id)
-            if identity_entry is None or identity_entry[0] != identity_path:
-                identity = NodeIdentity.ensure(worker.identity_path)
-                intent_identities[worker_id] = (identity_path, identity)
-            else:
-                identity = identity_entry[1]
-            start_block, end_block = (int(value) for value in decision.block_indices.split(":"))
-            throughput = None if isinstance(worker.throughput, str) else max(1, round(worker.throughput * 1000))
             sequence = max(intent_sequences.get(worker_id, 0) + 1, time.time_ns())
             intent_sequences[worker_id] = sequence
             expires_at = now + intent_ttl_seconds
@@ -763,28 +997,27 @@ def _build_automatic_placement_service(
                 manifest_digest=decision.manifest_digest.removeprefix("sha256:"),
                 start_block=start_block,
                 end_block=end_block,
-                resource_claims={
-                    "schema_version": INTENT_RESOURCE_CLAIMS_SCHEMA_VERSION,
-                    "artifact_bytes": decision.artifact_bytes,
-                    "block_count": end_block - start_block,
-                    "throughput_milli_rps": throughput,
-                },
+                resource_claims=resource_claims,
                 issued_at=now,
                 expires_at=expires_at,
                 sequence=sequence,
             )
         except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
-            return False
+            return False, identity.key_id
         if not discovery.publish_intent(decision.manifest_digest, record.to_dict()):
-            return False
+            return False, identity.key_id
         intent_leases[worker_id] = {
             "decision_key": decision_key,
             "expires_at": expires_at,
         }
-        return True
+        return True, identity.key_id
 
     def reconcile() -> None:
         current = config if config_path is None else NodeConfig.load(config_path)
+        if current.catalog_path != config.catalog_path:
+            # A verified update is waiting for the current request leases to
+            # drain. Keep the old working contribution until activation.
+            return
         current = _reuse_runtime_initial_peers(current, config)
         current_workers = {
             worker.worker_id.casefold(): worker for worker in current.workers if worker.model.casefold() == "auto"
@@ -794,7 +1027,10 @@ def _build_automatic_placement_service(
         route_demand_authorities_unchanged = current.route_demand_authority_roots == config.route_demand_authority_roots
         if current.contribution_policy.sharing_enabled and route_demand_authorities_unchanged:
             for model_config in current.models:
-                publish_route_demand(ModelManifest.load(model_config.manifest_path))
+                if model_config.execution == "distributed":
+                    manifest = ModelManifest.load(model_config.manifest_path)
+                    if manager.catalog_allows_contribution(manifest.digest_id):
+                        publish_route_demand(manifest)
         for worker_id, planner in planners.items():
             worker = current_workers.get(worker_id)
             if worker is None:
@@ -809,25 +1045,70 @@ def _build_automatic_placement_service(
                 allow_remote_route_demand=(
                     route_demand_authorities_unchanged and bool(config.route_demand_authority_roots)
                 ),
+                artifact_plan_cache=artifact_plan_cache,
             )
             proposal = planner.propose(
                 candidates,
                 sharing_enabled=current.contribution_policy.sharing_enabled,
             )
+            if proposal.decision is None and current.contribution_policy.sharing_enabled:
+                previous = previous_plans.get(worker_id)
+                if previous is not None and previous.decision is not None:
+                    # An interrupted lookup is not a revocation of an admitted
+                    # span. Keep that exact claim only within the ordinary
+                    # coverage freshness window and its existing remote lease.
+                    candidate = next(
+                        (c for c in candidates if c.manifest_digest == previous.decision.manifest_digest), None
+                    )
+                    if _recent_gap_preserves_artifact_claim(
+                        candidate,
+                        previous.decision,
+                        worker.num_blocks,
+                        maximum_age=max(90.0, current.discovery_update_period * 3),
+                    ):
+                        try:
+                            identity_key_id = NodeIdentity.load(worker.identity_path).key_id
+                        except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
+                            identity_key_id = None
+                        if _can_retain_acknowledged_plan(
+                            previous,
+                            previous.decision,
+                            worker,
+                            identity_key_id,
+                            intent_leases.get(worker_id),
+                            now=get_dht_time(),
+                        ):
+                            plans[worker_id] = previous
+                            continue
             if proposal.decision is not None:
-                if not publish_intent(worker_id, worker, proposal.decision):
+                published, identity_key_id = publish_intent(worker_id, worker, proposal.decision)
+                if not published:
                     previous = previous_plans.get(worker_id)
+                    lease = intent_leases.get(worker_id)
+                    now = get_dht_time()
                     plans[worker_id] = (
                         previous
-                        if previous is not None and previous.decision is not None
+                        if _can_retain_acknowledged_plan(
+                            previous,
+                            proposal.decision,
+                            worker,
+                            identity_key_id,
+                            lease,
+                            now=now,
+                        )
                         else PlacementPlan(
                             None,
-                            "signed placement intent could not be published to a remote peer",
+                            "signed placement intent could not be published with a live matching lease",
                             proposal.evaluated_models,
                         )
                     )
                     continue
                 planner.commit(proposal)
+                proposal = replace(
+                    proposal,
+                    intent_published=True,
+                    remote_acknowledged=True,
+                )
             plans[worker_id] = proposal
         registry.replace(plans)
         settings = _prepare_worker_supervisor_settings(
@@ -904,6 +1185,12 @@ def main() -> None:
     args = parser.parse_args()
     _validate_args(parser, args)
 
+    while _serve_once(args, parser):
+        logger.info("Activating the authenticated catalog update after all active generations finished")
+
+
+def _serve_once(args, parser) -> bool:
+
     try:
         persisted_config, configured = _load_persisted_and_runtime_config(args)
         peer_cache = PeerCache(args.data_dir / "discovery-peers.json")
@@ -916,6 +1203,12 @@ def main() -> None:
             peer_cache_scopes=peer_cache_scopes,
             replay_history_dir=args.data_dir / "replay-history",
         )
+        catalog = load_configured_catalog(config)
+        if catalog is not None:
+            manager.set_catalog_models(model.manifest_digest for model in catalog.models if model.execution != "local")
+            # Product chat uses authenticated text peers. It must not download local
+            # input/output weights or wait for a local synthetic generation probe.
+            # Complete end-to-end availability is checked by the manager/discovery.
         placement_registry = PlacementRegistry()
         route_outcomes = RouteOutcomeTracker()
         worker_supervisor = _build_worker_supervisor(
@@ -993,6 +1286,9 @@ def main() -> None:
 
     # Arm this before a lazy request can create the model client's p2pd child.
     tie_child_processes_to_this_process()
+    from drift.node.hardware_status import HardwareStatus
+
+    hardware_status = HardwareStatus(config)
     app = create_node_app(
         manager,
         api_key_store=key_store,
@@ -1005,6 +1301,7 @@ def main() -> None:
         contribution_policy=config.contribution_policy,
         contribution_policy_store=policy_store,
         route_outcome_observer=route_outcomes.record,
+        hardware_status=hardware_status.snapshot,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
     logger.info(
@@ -1014,13 +1311,28 @@ def main() -> None:
     worker_supervisor.start_service()
     if placement_service is not None:
         placement_service.start()
+    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="info"))
+    restart_requested = False
+
+    def restart():
+        nonlocal restart_requested
+        restart_requested = True
+        server.should_exit = True
+
+    refresh_service = None
+    if config.catalog_path is not None and args.config is not None:
+        refresh_service = CatalogRefreshService(config, args.config, args.data_dir, manager, restart)
+        refresh_service.start()
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        server.run()
     finally:
+        if refresh_service is not None:
+            refresh_service.close()
         if placement_service is not None:
             placement_service.close()
         worker_supervisor.shutdown()
         manager.shutdown()
+    return restart_requested
 
 
 if __name__ == "__main__":

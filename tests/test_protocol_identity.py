@@ -682,3 +682,56 @@ def test_replay_guard_enforces_active_entry_and_byte_limits(tmp_path):
     oversized_path.write_text(" " * (MAX_REPLAY_HISTORY_BYTES + 1), encoding="utf-8")
     with pytest.raises(ProtocolSecurityError, match="byte limit"):
         ReplayGuard(oversized_path)
+
+
+def test_dht_snapshot_uses_newest_signed_span_without_weakening_replay(tmp_path):
+    identity = make_identity(tmp_path)
+    now = time.time() - 2
+    older, newer = make_server_info(), make_server_info()
+    sign_server_info(identity, older, now=now, sequence=1)
+    sign_server_info(identity, newer, now=now + 1, sequence=2)
+    uids = [f"{DHT_PREFIX}.{i}" for i in range(2)]
+    guard = ReplayGuard()
+
+    def lookup(values):
+        class Snapshot:
+            async def get_many(self, requested, expiration_time, num_workers):
+                return {
+                    uid: SimpleNamespace(value={identity.peer_id.to_base58(): SimpleNamespace(value=value.to_tuple())})
+                    if value
+                    else None
+                    for uid, value in zip(uids, values)
+                }
+
+        return asyncio.run(
+            _get_remote_module_infos(
+                SimpleNamespace(num_workers=None),
+                Snapshot(),
+                uids,
+                None,
+                MANIFEST_DIGEST,
+                EXECUTION_PROFILE,
+                RevocationStore(),
+                guard,
+                None,
+                True,
+            )
+        )
+
+    # Renewal writes are not atomic across the two DHT keys. Both orderings
+    # describe one usable authenticated span, including a temporarily absent key.
+    for values in ([newer, older], [older, newer], [newer, None]):
+        assert all(identity.peer_id in item.servers for item in lookup(values))
+    assert all(not item.servers for item in lookup([older, older]))
+    # A newer worker placement removes block 0; stale copies cannot bring it back.
+    moved = make_server_info()
+    moved.start_block = 1
+    sign_server_info(identity, moved, now=now + 1.5, sequence=3)
+    result = lookup([newer, moved])
+    assert not result[0].servers
+    assert identity.peer_id in result[1].servers
+    # Equivocation at the newest generation excludes the peer for the whole view.
+    fork = make_server_info()
+    fork.throughput = 3.0
+    sign_server_info(identity, fork, now=now + 1.5, sequence=3)
+    assert all(not item.servers for item in lookup([fork, moved]))

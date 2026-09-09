@@ -1,0 +1,110 @@
+{
+  "result": "passed",
+  "scope": "unmodified-frozen-Linux-Qt-sign-in-checkbox-via-AT-SPI",
+  "desktop_sha256": "41383b5e995a2f200f7c96b0fdb8764b7d9edae89ba8efbba0a93d80d883f0aa",
+  "node_sha256": "313f8cbe8b1329b0025e98e64cd12eb2abbadb5e0083f5de5360d997b23d4aa0",
+  "helper_sha256": "c2f359145f43d5e0cdfaa7c76746b78a3e356d4d6b20368d0f7a81dc1f23a18a",
+  "ordinary_user": true,
+  "isolated_xvfb_verified": true,
+  "mock_telemetry": false,
+  "phases": [
+    {
+      "phase": "enable",
+      "authenticated_node_ready": true,
+      "sharing_paused": true,
+      "resident_models": 0,
+      "model_cache_file_count": 0,
+      "model_cache_bytes": 0,
+      "checked_before": false,
+      "checked_after": true,
+      "action": "Toggle",
+      "exact_frozen_autostart_file": true
+    },
+    {
+      "phase": "restart-and-disable",
+      "authenticated_node_ready": true,
+      "sharing_paused": true,
+      "resident_models": 0,
+      "model_cache_file_count": 0,
+      "model_cache_bytes": 0,
+      "checked_before": true,
+      "checked_after": false,
+      "action": "Toggle",
+      "autostart_file_removed": true,
+      "native_credential_preserved": true
+    },
+    {
+      "phase": "started-at-login",
+      "authenticated_node_ready": true,
+      "sharing_paused": true,
+      "resident_models": 0,
+      "model_cache_file_count": 0,
+      "model_cache_bytes": 0,
+      "owned_application_exposed": true,
+      "started_at_login_argument": true
+    }
+  ],
+  "shutdowns": [
+    {
+      "normal_shutdown": true,
+      "forced_cleanup": false,
+      "gui_returncode": 0,
+      "owned_identities_stopped": true
+    },
+    {
+      "normal_shutdown": true,
+      "forced_cleanup": false,
+      "gui_returncode": 0,
+      "owned_identities_stopped": true
+    },
+    {
+      "normal_shutdown": true,
+      "forced_cleanup": false,
+      "gui_returncode": 0,
+      "owned_identities_stopped": true
+    }
+  ],
+  "final_model_cache": {
+    "model_cache_file_count": 0,
+    "model_cache_bytes": 0
+  },
+  "recorded_runtime_identities_stopped": true,
+  "recorded_runtime_identity_count": 14,
+  "private_autostart_entry_absent": true,
+  "native_qualification_credential_absent": true,
+  "limitations": [
+    "Linux Xvfb/AT-SPI, not Windows frozen-checkbox acceptance or physical desktop sign-in.",
+    "Minimized/tray presentation without a window manager is not qualified; executed launch modes are in phases.",
+    "No model acquisition, inference, or sharing work was requested."
+  ],
+  "schema_version": 1,
+  "date_utc": "2026-09-08",
+  "environment": "Ubuntu 22.04 container, ordinary UID 1000, isolated Xvfb and D-Bus/Secret Service session; 2 CPUs and 6 GiB container memory limit",
+  "runtime_source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+  "full_gate15": false,
+  "full_windows_frozen_login_acceptance": false,
+  "python_driver_exit_code": 0,
+  "outer_xvfb_wrapper_exit_code": 1,
+  "independent_process_audit": {
+    "result": "passed",
+    "private_session_processes_absent": true,
+    "autostart_entry_absent": true,
+    "model_cache_files": 0,
+    "model_cache_bytes": 0,
+    "user_scope": 1000
+  },
+  "independent_fresh_secret_service_audit": {
+    "result": "passed",
+    "native_qualification_credential_absent_in_fresh_secret_service_session": true
+  },
+  "harness_limitations": [
+    "The actual Python product driver and all three normal product shutdowns passed. Auxiliary session cleanup stopped its Xvfb server before xvfb-run completed, so the outer wrapper returned 1. The independent subsequent audit found no task-session processes or autostart entry; a new Secret Service session independently confirmed the native credential absent.",
+    "This uses the verified unpacked frozen Linux bundle, not the installed /opt path; package maintenance is covered by separate installer lifecycle records.",
+    "The earlier actor rejected a valid Qt control exposing both Toggle and Press actions; that failed attempt is retained separately. The corrected actor explicitly selects Press for navigation and Toggle for the checkbox."
+  ],
+  "deterministic_tests": {
+    "file": "tests/test_login_startup_linux.py",
+    "passed": 12,
+    "duration_seconds": 0.17
+  }
+}

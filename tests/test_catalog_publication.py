@@ -23,10 +23,55 @@ PEER_ID_ONE = "Qm" + "A" * 44
 PEER_ID_TWO = "Qm" + "B" * 44
 
 
-def _manifest(name: str, alias: str) -> ModelManifest:
+def test_bundle_directory_retries_transient_windows_lock_atomically(tmp_path, monkeypatch):
+    from drift import catalog_release
+
+    source, target = tmp_path / "staging", tmp_path / "published"
+    source.mkdir()
+    (source / "member").write_bytes(b"verified")
+    replace = catalog_release.os.replace
+    attempts = []
+
+    def transient_lock(src, dst):
+        attempts.append((src, dst))
+        if len(attempts) <= 2:
+            assert source.exists() and not target.exists()
+            error = PermissionError("temporary Windows sharing violation")
+            error.winerror = 32
+            raise error
+        replace(src, dst)
+
+    monkeypatch.setattr(catalog_release.os, "replace", transient_lock)
+    monkeypatch.setattr(catalog_release.time, "sleep", lambda _: None)
+    catalog_release._replace_bundle_directory(source, target)
+    assert len(attempts) == 3 and not source.exists()
+    assert (target / "member").read_bytes() == b"verified"
+
+
+@pytest.mark.parametrize("winerror,expected_attempts", [(5, 6), (32, 6), (33, 6), (None, 1), (87, 1)])
+def test_bundle_directory_retry_is_bounded_and_preserves_failure(tmp_path, monkeypatch, winerror, expected_attempts):
+    from drift import catalog_release
+
+    attempts = []
+    failure = PermissionError("persistent access failure")
+    failure.winerror = winerror
+
+    def fail(*args):
+        attempts.append(args)
+        raise failure
+
+    monkeypatch.setattr(catalog_release.os, "replace", fail)
+    monkeypatch.setattr(catalog_release.time, "sleep", lambda _: None)
+    with pytest.raises(PermissionError) as caught:
+        catalog_release._replace_bundle_directory(tmp_path / "staging", tmp_path / "published")
+    assert caught.value is failure and len(attempts) == expected_attempts
+
+
+def _manifest(name: str, alias: str, *, gated: bool = False) -> ModelManifest:
     source = ModelManifest.load("tests/data/model_manifest_v1_vector.json").to_dict()
     source["name"] = name
     source["aliases"] = [alias]
+    source["model"]["gated"] = gated
     return ModelManifest.from_dict(source)
 
 
@@ -37,9 +82,10 @@ def _documents(
     weight_delta: int = 0,
     shared_alias: bool = False,
     best_effort_alpha: bool = False,
+    gated_role: str | None = None,
 ):
-    primary = _manifest("Primary Test", "shared" if shared_alias else "primary-test")
-    standby = _manifest("Standby Test", "shared" if shared_alias else "standby-test")
+    primary = _manifest("Primary Test", "shared" if shared_alias else "primary-test", gated=gated_role == "primary")
+    standby = _manifest("Standby Test", "shared" if shared_alias else "standby-test", gated=gated_role == "standby")
     now = time.time()
     models = []
     for role, manifest in (("primary", primary), ("standby", standby)):
@@ -67,7 +113,7 @@ def _documents(
                     "order": 1,
                     "minimum_replicas": 1 if best_effort_alpha else 2,
                     "minimum_independent_routes": 1 if best_effort_alpha else 2,
-                    "minimum_surviving_replicas": 1,
+                    "minimum_surviving_replicas": 0 if best_effort_alpha else 1,
                     "minimum_soak_seconds": 60,
                     "maximum_observation_age_seconds": 30,
                     "maximum_p95_first_token_ms": 2_000,
@@ -137,6 +183,13 @@ def test_publication_preflight_accepts_explicit_best_effort_alpha_minimum():
     assert report["distinct_seed_identity_count"] == 1
     assert "mirror and seed redundancy or independent operator ownership" in report["not_covered"]
     assert "public-worker route redundancy and soak" in report["not_covered"]
+
+
+def test_publication_preflight_rejects_gated_model_even_when_signed():
+    bootstrap, envelope, manifests = _documents(gated_role="standby")
+
+    with pytest.raises(CatalogBootstrapError, match="gated.*unauthenticated, no-consent"):
+        verify_catalog_publication_bundle(bootstrap, envelope, manifests)
 
 
 @pytest.mark.parametrize(

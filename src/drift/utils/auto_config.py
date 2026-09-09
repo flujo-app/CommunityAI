@@ -40,6 +40,11 @@ class _AutoDistributedBase:
             config = AutoConfig.from_pretrained(model_name_or_path, *args, **kwargs)
         model_type = config.model_type
         source_architectures = None
+        source_quantization = getattr(config, "quantization_config", None)
+        if isinstance(source_quantization, dict):
+            source_quantization_method = source_quantization.get("quant_method")
+        else:
+            source_quantization_method = getattr(source_quantization, "quant_method", None)
         if model_type not in _CLASS_MAPPING:
             # Multimodal wrappers (e.g. Gemma4ForConditionalGeneration) carry the language model in a
             # nested text_config; fall back to it so we serve the text tower of a multimodal checkpoint.
@@ -58,6 +63,9 @@ class _AutoDistributedBase:
         if cls._mapping_field == "config" and source_architectures:
             loaded_config = result[0] if isinstance(result, tuple) else result
             loaded_config._source_architectures = source_architectures
+        if cls._mapping_field == "config" and source_quantization_method is not None:
+            loaded_config = result[0] if isinstance(result, tuple) else result
+            loaded_config._source_quantization_method = source_quantization_method
         return result
 
 

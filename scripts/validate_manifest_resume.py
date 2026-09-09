@@ -17,6 +17,36 @@ import requests
 from huggingface_hub import hf_hub_download
 
 from drift.model_manifest import ManifestArtifactVerifier, ModelManifest
+from drift.utils.hub_ranges import RANGE_BYTES
+
+
+def validate_resume_observations(observations, *, prefix_size, artifact_size):
+    if artifact_size > RANGE_BYTES:
+        spans = [
+            (start, min(artifact_size, start + RANGE_BYTES) - 1)
+            for start in range(prefix_size, artifact_size, RANGE_BYTES)
+        ]
+        expected = [
+            {
+                "requested_range": f"bytes={start}-{end}",
+                "status": 206,
+                "content_range": f"bytes {start}-{end}/{artifact_size}",
+            }
+            for start, end in spans
+        ]
+    else:
+        expected = [
+            {
+                "requested_range": f"bytes={prefix_size}-",
+                "status": 206,
+                "content_range": f"bytes {prefix_size}-{artifact_size - 1}/{artifact_size}",
+            }
+        ]
+    # Parallel bounded requests can finish in either order; every exact span must
+    # still appear once, with an HTTP 206 and matching Content-Range/total size.
+    key = lambda item: item.get("requested_range") or ""
+    if sorted(observations, key=key) != sorted(expected, key=key):
+        raise RuntimeError(f"Hub did not honor the exact resume requests: {observations}")
 
 
 def main() -> None:
@@ -76,15 +106,7 @@ def main() -> None:
         finally:
             requests.get = original_get
 
-        expected_range = f"bytes={prefix_size}-"
-        if observations != [
-            {
-                "requested_range": expected_range,
-                "status": 206,
-                "content_range": f"bytes {prefix_size}-{artifact.size - 1}/{artifact.size}",
-            }
-        ]:
-            raise RuntimeError(f"Hub did not honor the exact resume request: {observations}")
+        validate_resume_observations(observations, prefix_size=prefix_size, artifact_size=artifact.size)
         if result != final or partial.exists():
             raise RuntimeError("resumed artifact was not atomically promoted from its partial path")
 

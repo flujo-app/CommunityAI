@@ -1,0 +1,216 @@
+{
+  "result": "passed",
+  "scope": "Windows packaged Qwen3.8 automatic selection, completion and short chat",
+  "run_id": "q38pm-20260906-070127-a792",
+  "catalog_scope": "staged signed public sequence 2, explicit test configuration",
+  "node_sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45",
+  "install_archive": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "ddc74b7aef1e29615458b930a03c8393a90dd5ec36ebed19528df2f7081d28a3",
+    "size_bytes": 2692402624
+  },
+  "source_commit": null,
+  "community_completion": {
+    "response": {
+      "id": "cmpl-4c104ba4c45b4245a657cccd",
+      "object": "text_completion",
+      "created": 1788681628,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "choices": [
+        {
+          "index": 0,
+          "text": " Paris.\n",
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 56.04699999999866
+  },
+  "community_chat": {
+    "response": {
+      "id": "chatcmpl-54fe359476b04175bae5f07c",
+      "object": "chat.completion",
+      "created": 1788681913,
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Paris\n"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 31,
+        "completion_tokens": 4,
+        "total_tokens": 35
+      }
+    },
+    "seconds": 285.82800000000134
+  },
+  "peak_observed_process_tree_rss_bytes": 4280983552,
+  "cache_scope": "Reused the separately verified direct-Hub cold acquisition; this run does not claim an empty cache",
+  "node_stopped": true,
+  "whole_packaged_exercise_result": "failed",
+  "unfinished_reason": "RuntimeError: Owned worker did not stop",
+  "worker_stop_diagnostic": {
+    "instance": "q38pm-20260906-070127-a792-w2",
+    "action": "start",
+    "before": "MainPID=0\nActiveState=failed\n",
+    "after": "MainPID=5054\nActiveState=active\n",
+    "observed_at_unix": 1788681983.6545467
+  },
+  "source_public_policy": {
+    "local_before_growth": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788678603,
+        "id": "cmpl-f1c138ac3d004b09adab836a",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 44.78853917999999
+    },
+    "qwen38_baseline": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788679685,
+        "id": "cmpl-8467459213c4469894e5af46",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 55.82814912999993
+    },
+    "active_answer_after_mode_change": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788679740,
+        "id": "cmpl-f4cee06101ef48e486bacfef",
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 55.094758717999866
+    },
+    "local_only_next_request": {
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788679744,
+        "id": "cmpl-19bef85c7eb148afa3a694cf",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "seconds": 3.9012851410000167
+    }
+  },
+  "source_injected_recovery": {
+    "result": "not-qualified",
+    "reason": "Source receipt completed before the orchestrator injected worker loss during the authentication interruption",
+    "source_finished_utc": "2026-09-06T07:39:04.115577+00:00",
+    "orchestrator_kill_utc": "2026-09-06T07:55:19.316051+00:00"
+  },
+  "limits": [
+    "Four assigned cloud spans and explicit owned seed configuration; not autonomous desktop formation",
+    "Frozen Windows node and desktop controller, not an ordinary-user GUI/install lifecycle",
+    "Packaged outage/fallback/rejoin and offline-Hub restart remain unfinished in this run",
+    "Single short chat and one 8 GB RTX 2070 SUPER host; not broad latency/concurrency qualification"
+  ],
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "overall_runner_result": "failed",
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-implementation/remote-packaged-v9-public/result.json",
+      "sha256": "5af4c2ccc62e802fecc36ca970ce31ef559db6c0614a3bf6653879b91cd98df8"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-build-v9/desktop-metrics.json",
+      "sha256": "2660bad7d4a76e5582d50c138d4e463e0f49fa0710cc113051f66fe5370718ee"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v9-source.json",
+      "sha256": "4566fd0c2dfeb18d3ef4945705ca672d6ff6df492ed4880edda775d51367645a"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-070127-a792/source-inventory.json",
+      "sha256": "f8141b16f8a34d92a7b408c370a34b6084dea8661611bce331bab3ac063a8bc2"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-070127-a792/product-result.json",
+      "sha256": "7959bcab519943b9cf9417736385ac52c3ed55a169ec93273bf30e5eaaadd2ab"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-070127-a792/result.json",
+      "sha256": "411725bcce2ce4a0ecd8f0ef84cf75693342693fae3d260746a3cc11a7778ae1"
+    }
+  ]
+}

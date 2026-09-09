@@ -114,11 +114,14 @@ def observation(
     )
 
 
-def test_catalog_requires_two_options_and_one_primary_per_rung():
+def test_catalog_allows_one_primary_without_a_standby_and_rejects_two_primaries():
     source = catalog_dict()
-    source["models"] = source["models"][:1] + source["models"][2:]
-    with pytest.raises(ModelCatalogError, match="at least two model options"):
-        ModelCatalog.from_dict(source)
+    source["models"] = [source["models"][0], source["models"][2]]
+    parsed = ModelCatalog.from_dict(source)
+    assert [model.role for model in parsed.models] == ["primary", "primary"]
+    selected, _ = select_highest_eligible_model(parsed, [observation("a"), observation("c")], now=NOW)
+    assert selected is not None
+    assert selected.manifest_digest == digest("c")
 
     source = catalog_dict()
     source["models"][1]["role"] = "primary"

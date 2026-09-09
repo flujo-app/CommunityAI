@@ -1,0 +1,175 @@
+{
+  "local_before_growth": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788668300,
+      "id": "cmpl-3ff87097eb7c4136821707fc",
+      "model": "Qwen3.5-0.8B-Local",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 46.74294086499998
+  },
+  "qwen38_baseline": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788669438,
+      "id": "cmpl-687bf9c0314740adb503973f",
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 61.91162192799993
+  },
+  "active_answer_after_mode_change": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788669554,
+      "id": "cmpl-67b0ea4f990645eea2d77b78",
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 55.38500175699983
+  },
+  "local_only_next_request": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788669558,
+      "id": "cmpl-11ed943f986447f0b0884e93",
+      "model": "Qwen3.5-0.8B-Local",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 4.035045044000071
+  },
+  "local_after_worker_loss": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788669677,
+      "id": "cmpl-be06a1eebb9449c4b126ab8c",
+      "model": "Qwen3.5-0.8B-Local",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 3.677601690000074
+  },
+  "qwen38_after_replacement": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788669965,
+      "id": "cmpl-f174f8a1aa4d47498622de5c",
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 62.824241735999976
+  },
+  "local_fallbacks_before_active_transition": [],
+  "manifest_digests": [
+    "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+    "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4"
+  ],
+  "run_id": "q38pm-20260906-041033-fe7f",
+  "result": "passed",
+  "packaged": false,
+  "scope": "source-node-assigned-mixed-route-promotion-preference-loss-and-rejoin",
+  "catalog_scope": "ephemeral engineering trust root; not the public catalog",
+  "all_blocks": 64,
+  "source_bundle_sha256": "c035ea6924fead097fee3980973f584ae69a90221afc48f47f106711a58c7852",
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "limits": [
+    "Assigned cloud spans; not autonomous desktop swarm formation",
+    "Source node; not packaged community acceptance",
+    "Worker process restarted with new peer identity; separate CPU run proved VM replacement",
+    "Bundle predates explicit chat option and independent readiness observer"
+  ],
+  "overall_runner_result": "failed",
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-041033-fe7f/product-result.json",
+      "sha256": "8024b3ad37fe8e3306ac580a62d7e7940c40d08b8ac5cb28da62680f4f3396df"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-041033-fe7f/source-inventory.json",
+      "sha256": "efbd8328a97719b34d720d26121dc511dd0f2c526bc54afb342d0e735beaf7a6"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-041033-fe7f/result.json",
+      "sha256": "08407a8360053e79fd9a3077163de2505a6a1ef63833dfb877ca510274264b9b"
+    }
+  ]
+}

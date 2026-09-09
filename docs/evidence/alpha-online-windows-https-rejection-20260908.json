@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-08T23:19:25.4315022Z",
+  "scope": "Windows native online downloader real HTTPS hash rejection",
+  "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "compiler": "Inno Setup 6.7.3",
+  "fixture_setup_sha256": "df3bf54148a1c5abaa9245d2c8779b24f0d356c4d008731e3b12fcc6ce3dfc0d",
+  "download_url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/_checks/communityai-0.0.0-online-probe-windows-setup.exe",
+  "download_bytes": 52,
+  "download_content": "Harmless text fixture; not an executable",
+  "expected_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "exit_code": 1,
+  "hash_mismatch_observed": true,
+  "child_installation_launched": false,
+  "silent_error_return_passed": true,
+  "actual_full_installer_download_or_install_tested": false,
+  "log": ".gate13-runs/online-live-rejection-20260908/download-rejection.log",
+  "log_sha256": "4bd092f86f9d5effb4ad0273a7e073e1ff0afa9df321e117076dd1580faa91c3",
+  "temporary_directory_removed": true
+}

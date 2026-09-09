@@ -121,6 +121,7 @@ def test_node_status_requires_auth_and_reports_lazy_model():
                     "denied_models": [],
                     "max_disk_space": None,
                     "max_vram": None,
+                    "max_processing_percent": 100.0,
                     "max_bandwidth_mbps": None,
                     "max_power_watts": None,
                     "pause_timeout": 10.0,
@@ -264,6 +265,8 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
                     "resource_admitted": True,
                     "resource_reason": None,
                     "resource_suspended": False,
+                    "intent_published": False,
+                    "remote_acknowledged": False,
                     "max_disk_bytes": 100 * 1024**3,
                     "max_vram_bytes": 4 * 1024**3,
                     "vram_pool_bytes": 8 * 1024**3,
@@ -313,7 +316,10 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
     with TestClient(app) as client:
         assert client.get("/control/v1/workers").status_code == 401
         assert client.get("/control/v1/workers", headers={"Authorization": "Bearer client-secret"}).status_code == 401
-        assert client.get("/control/v1/workers", headers=headers).json()["workers"][0]["state"] == "paused"
+        private_worker = client.get("/control/v1/workers", headers=headers).json()["workers"][0]
+        assert private_worker["state"] == "paused"
+        assert private_worker["intent_published"] is False
+        assert private_worker["remote_acknowledged"] is False
         status = client.get("/control/v1/status", headers=headers).json()
         assert status["workers"] == [{"id": "worker", "model": "model", "state": "paused", "desired_running": False}]
         status_worker = status["contribution"]["workers"][0]

@@ -1,218 +1,440 @@
 # Public inference alpha release readiness
 
-Last verified: 2026-08-31
+Last reviewed: **2026-09-09**. This is the current release checklist. The former
+checkpoint narratives, completed-gate detail, failed attempts, old model inventory,
+and budget history are preserved in [RELEASE_READINESS_HISTORY.md](RELEASE_READINESS_HISTORY.md).
+Implementation details belong in their linked runbooks and evidence records.
 
-This is the live source of truth for public-alpha implementation. Update it whenever a
-gate changes state. `docs/REVIVAL.md` defines the execution contract and long-term design;
-`docs/REVIVAL_TEST_RESULTS.md` is the detailed evidence archive.
+September 9 release `0.1.0-alpha.20260909.3` packages peer-owned input/output
+processing for community inference and the full configured sharing budget, with
+no permanent fallback reservation. Two real public-mesh requests completed with
+an empty consumer cache and artifact downloads forbidden. The local Qwen fallback
+remains when the mesh cannot answer. The desktop accepts zero-byte community
+downloads and uses common discovery rather than a separate local tensor router.
+Text-peer roles currently require operator setup through the source CLI;
+automatic desktop placement of that role remains open. CPU-mesh answers in this proof took 107–158
+seconds. See [consumer evidence](evidence/text-only-mesh-consumer-20260909.md) and
+[release records](evidence/text-mesh-release-20260909.json). The historical checks
+below retain their original scope and do not qualify the new consumer path.
 
 ## Release definition
 
-- Product: public community inference through the packaged localhost OpenAI-compatible
-  API, with optional bounded compute sharing.
-- Label: public alpha. Do not describe it as a stable, production-SLO service.
-- Supported platforms: Windows and Linux.
-- Deferred platform: macOS, until later CPU/MPS and packaged-device testing passes.
-- First catalog rung: Qwen3.5 2B primary, Gemma 4 E2B standby.
-- Not included: credits, earnings, payments, payouts, or a compute marketplace.
-- Availability promise: best effort. The alpha may initially depend on one CommunityAI
-  discovery seed and one complete candidate route, with a small fallback route and clear
-  unavailable/degraded states; it does not claim a production SLO.
-- Minimum trust floor: pinned signed catalog, exact verified manifests/artifacts,
-  authenticated peer announcements and transport, finite public admission/time limits,
-  authoritative local contribution limits, prompt-visibility disclosure, and a tested
-  route/catalog disable procedure.
-- Post-alpha hardening: independent route/seed/mirror redundancy, independent threshold
-  key holders, publisher-signed installers, authenticated automatic update/rollback, and
-  exhaustive malicious-load/Sybil/partition/long-soak programs.
+Ship a **best-effort Windows/Linux public inference alpha** through the packaged
+desktop and localhost OpenAI-compatible API, with optional bounded compute sharing.
+The intended progression is **local Qwen3.5 → community Qwen3.8-27B →
+DeepSeek-V4-Flash → GLM-5.3-Flash**. The two larger community models are post-alpha
+targets. Local fallback and measured selection are implemented; local offline
+Windows GPU inference passed. Staggered desktop formation and recovery passed in
+the bounded GCP CPU test with real source Qt windows.
 
-## Status vocabulary
+Keep exact signed catalogs/manifests, verified partial artifact downloads,
+authenticated discovery/transport, finite admission/timeouts, local resource
+limits, prompt-visibility disclosure, and a working route/catalog disable path.
+A one-route alpha must say that availability is best effort. macOS, credits,
+payments/payouts and exhaustive
+hostile-network/long-soak qualification remain outside this alpha. The owner now
+requires working Inno Setup and Debian installers for alpha. On September 7 the
+owner explicitly deferred Windows publisher signing; unsigned alpha setup with
+checksums/provenance is acceptable. Store distribution follows trusted signing;
+a signed APT repository can follow the directly installable `.deb`.
 
-- `PASSED`: required real evidence exists and is linked.
-- `IN PROGRESS`: implementation or a real gate run is underway.
-- `READY`: prerequisites exist and the gate can be run.
-- `WAITING`: a required predecessor has not passed; do not work around it.
-- `PAUSED`: partial work exists, but the gate is outside the currently permitted sequence.
-- `BLOCKED`: owner input or unavailable external state is required.
-- `TODO`: not yet started.
-- `DEFERRED`: explicitly outside the public-alpha scope.
+September 8 owner scope decision: the existing packaged conversation and recovery
+evidence is sufficient for alpha. Additional representative conversation,
+performance and hardware measurements are deferred after alpha. Frozen periodic
+catalog activation and active-answer draining qualification are deferred to beta;
+the owner expects only one or two more catalog changes this year. These are no
+longer release blockers. This decision does not claim the omitted checks passed,
+disable the existing refresh implementation, or relax catalog signature checks.
 
-## Critical path
+## Qwen3.8 results: bounded alpha scope accepted
 
-Work from top to bottom while prerequisites are satisfied. Gate V and Gates 5–6 have passed.
-The current mandatory sequence is **Gates 13–16 → Gate 17**. The visible
-vertical slice proved real Qwen3.5 2B inference through a public GCP L4 worker, and the
-strict four-profile Qwen and Gemma matrices now pass, and Gate 7 passed the generic
-five-Machine provider recovery mechanism with TinyLlama. Per-model repetition of the
-same provider recovery gate is not required.
+These live Qwen3.8 tests used `Qwen/Qwen3.8-27B-FP8` revision
+`017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`, manifest
+`sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4`,
+with FP8 weights converted to BF16 and eager attention.
 
-As of 2026-08-31, Gate 13 is `BLOCKED`: cleanup proved the Gate 11 product route,
-its run-scoped firewall rules, and every Gate 13 client and disk absent, so the owner
-explicitly authorized a cleanup-backed reset for the next run. The new combined
-authorization epoch starts at USD 100 with no reservation recorded. The selected native
-GCP account still requires interactive reauthentication, and every paid create still
-requires a fresh exact source-bound conservative ledger reservation plus fail-closed
-preflight. No later mandatory gate is unblocked until the live packaged route and
-completed Gate 13 lifecycle evidence exist.
+| Acceptance outcome | Result and evidence |
+| --- | --- |
+| Complete 64-block CPU route | **PASSED.** Four e2-highmem-4 workers, 16 blocks each, plus an e2-standard-4 client. Three generated tokens in 148.612 seconds. [CPU evidence](evidence/qwen-cpu-full-inference-20260905.json). |
+| Selected-worker loss and same-session recovery | **PASSED in the tested scenario.** Deleted blocks 16–31 VM and disk; fresh replacement used a new peer identity. The original client/session continued with identical tokens, preserving the other three worker/session identities. Local orchestration needed a guarded resume after an SCP failure; the client was not restarted. |
+| GCP L4 + Azure T4 + CPU remainder | **PASSED after the CPU proof.** Four 16-block spans, actual inspected devices, identical three tokens in 75.699 seconds. [Mixed evidence](evidence/qwen-mixed-full-inference-20260905.json). |
+| Cleanup | **PASSED.** Both passing runs' owned cloud resources were verified absent. No quota increases requested. |
+| Local fallback | **PASSED, bounded Windows GPU/Linux CPU scope.** Exact Qwen3.5-0.8B produced real tokens offline through packaged nodes; token limits, local-only persistence and stream cancellation passed. Windows used an 8 GB RTX 2070 SUPER. [Linux package evidence](evidence/qwen-linux-v9-20260906.json) and [product limits](QWEN_DESKTOP_PRODUCT_RESULTS.md). |
+| Local inference plus automatic sharing | **PASSED, one Windows case.** The current package automatically selected one Qwen3.8 block under a 2 GiB worker budget alongside local Qwen's 3 GiB budget. Pause removed the entire worker process tree in 0.110 seconds; restart and concurrent local tokens passed. Public bootstrap startup retries remain a limitation. [Sharing evidence](evidence/qwen-sharing-packaged-20260906.json). |
+| Resource controls and power recovery | **PASSED, bounded Windows cases.** Independent schedule/power/bandwidth/storage admission checks; a real 25-second GPU load triggered power pause and automatic resumption without policy edits. [Power evidence](evidence/qwen-power-recovery-20260906.json). The final Windows/Linux resource-control matrix also passed; see Gate 14 below. |
+| Packaged cold client acquisition | **PASSED.** Eight direct-Hub artifacts, 6.03 GB, verified from an empty cache; the large shard resumed three times. Approximately two hours on the tested connection. [Acquisition evidence](evidence/qwen-packaged-cold-acquisition-20260906.json). This does not establish generation. |
+| Stock/reference correctness | **PASSED, declared bounded scope.** Three prompts × prefill and two cached decode positions; all vocabulary logits within predeclared `atol=0.5`, `rtol=0.01`, and all nine greedy tokens match stock Transformers' independent FP8 dequantizer. Four RPC workers on one CPU host; separate from cross-cloud qualification. [Reference evidence](evidence/qwen-reference-parity-20260906.json). |
+| Automatic promotion, preference and loss/rejoin | **PASSED through the source node under signed public sequence 2 on an assigned mixed route.** Local before growth; Qwen3.8 after measured readiness; active answer preserved when switching to local-only; local after confirmed T4 loss; Qwen3.8 after its replacement joined with a new peer identity. [Source product evidence](evidence/qwen-source-public-recovery-20260906.json). This does not prove autonomous desktop formation. |
+| Packaged Qwen3.8 | **PASSED on the assigned L4/T4/C3 route under signed public sequence 2.** Windows v9 generated three tokens in 12.250 seconds; a 31-token chat prompt answered `Paris` in 19.359 seconds. Peak sampled client process-tree RSS was 4.97 GB. [Evidence](evidence/qwen-packaged-recovery-v9-c3-20260906.json). |
+| Packaged worker outage and cache reuse | **PASSED on that C3 route.** Confirmed worker stop → automatic local answer → same-identity restart → Qwen answer in 13.672 seconds. A new node process repeated community completion/chat and local-only inference with HTTP downloads blocked, making zero download attempts. Owned cloud cleanup passed. The earlier [E2 rejoin timeout](evidence/qwen-packaged-rejoin-timeout-v9-20260906.json) remains a failed attempt. |
+| Autonomous desktop formation and recovery | **PASSED, bounded CPU/source-UI scope.** The actual [one-click runner](QWEN_FORMATION_TEST.md) formed 64/64 blocks from four capacity-only contributors, promoted all six clients and returned real Qwen3.8 answers. Whole-participant loss produced five local answers; unattended same-identity restart restored six Qwen3.8 answers. Real Qt controls/windows passed. No runtime intervention; cleanup verified. Three-token requests took 24–34 seconds. Fallback validation took minutes. [Evidence](evidence/qwen-formation-passed-20260907.json). Fresh installers, fully frozen UI, GPU contributors and simultaneous cold joins are outside this result. |
+| Consumer GPU and chat performance | **DEFERRED after alpha by the owner on September 8.** Existing conversation evidence is accepted for alpha. No RTX 30/40/50, broader conversation, context or concurrency qualification is claimed. |
 
-Do not work on the post-alpha items in the deferred table while an alpha gate can progress.
-Missing Docker, snapshots, local GPU hardware, or local host capacity is not an external
-blocker: use authorized bounded infrastructure according to its role. GCP/local hosts
-cover platform and CUDA qualification; Fly is CPU-only and covers the isolated
-separate-machine recovery topology. A real gate failure justifies the smallest
-implementation fix; speculative harness expansion does not replace the outcome.
+The complete [experiment report](QWEN_FULL_INFERENCE_RESULTS.md) preserves timing,
+source hashes, routes, recovery limitations, and the earlier failed diagnostic
+attempt. [CPU runner](QWEN_FULL_INFERENCE_GCP.md) and [mixed runner](QWEN_MIXED_INFERENCE.md)
+are reusable. A production worker-health digest-format bug was fixed; the report
+records the focused test results. Native FP8 remains optional for Qwen correctness.
 
-The former Gate 5 quota blocker is resolved. The [2026-08-27 quota/probe evidence](evidence/gcp-l4-quota-probe-20260827.json)
-records `GPUS_ALL_REGIONS` limit `1`, and the completed [Gate 5 qualification](evidence/gate5-20260827-qwen3.5-2b-qualification.json)
-again proves one-host-at-a-time L4 operation, zero post-run L4 usage, complete run-resource
-absence, and the protected `communityai-bootstrap-1` still running. The cleaned Gate V and
-Gate 5 runs remain in the historical ledger, but the owner explicitly reset the test-budget
-epoch to USD 100 on 2026-08-27 after their cleanup was proved. Their unobserved maxima no
-longer consume the new authorization; later billing should still be recorded for information.
+The [maintained product replay](QWEN_PRODUCT_TEST.md) now includes the previously
+ignored wrapper/reporting steps. It has local regression coverage; its own live
+replay remains open. The [run audit](evidence/qwen-c3-run-provenance-audit-20260906.md)
+records the interventions in the historical passing C3 run.
+The new [Gate 13-based entry point](QWEN_QUALIFICATION_RUNNER.md) runs the same
+audited Qwen scope through an ordered controller and durable phase records.
 
-| Order | Gate | Status | Current evidence | Next action |
-| ---: | --- | --- | --- | --- |
-| 1 | Integrate the active revival branch and make its CI workflows dispatchable from the repository default branch | PASSED | [PR #8](https://github.com/flujo-app/CommunityAI/pull/8) integrated [commit `22b5598`](https://github.com/flujo-app/CommunityAI/commit/22b559836fa5a4c9b228d87a823d1c99dc3939a9) into `main` after [Check style](https://github.com/flujo-app/CommunityAI/actions/runs/32946456633), [Tests](https://github.com/flujo-app/CommunityAI/actions/runs/32946456596), and [Windows/Linux Production desktop](https://github.com/flujo-app/CommunityAI/actions/runs/32946456600) passed. [PR #22](https://github.com/flujo-app/CommunityAI/pull/22) later integrated the accumulated public-alpha path as merge commit `05fa84d`. Its default-branch [test run 33388263559](https://github.com/flujo-app/CommunityAI/actions/runs/33388263559) exposed one nondeterministic Ubuntu MLA paged-cache equivalence failure after the exact PR head had passed. Source `5d29416` isolates that cache contract from MoE expert routing while retaining separate dense/MoE block coverage; [PR #23 run 33388770828](https://github.com/flujo-app/CommunityAI/actions/runs/33388770828) passes the exact MLA test, 627-test Ubuntu suite, and 64-test Linux public-worker contracts. PR #23 merged as exact commit `c90625c`; its default-branch [Tests](https://github.com/flujo-app/CommunityAI/actions/runs/33389270215), [Check style](https://github.com/flujo-app/CommunityAI/actions/runs/33389270333), and [CodeQL](https://github.com/flujo-app/CommunityAI/actions/runs/33389269851) runs all pass. | Keep the same workflows green on follow-up PRs; they are now dispatchable from the default branch |
-| 2 | Make Windows/Linux the strict public-alpha qualification matrix | PASSED | Default dispatch, exact-profile aggregation, fleet readiness, and the recovery controller now require Windows CPU/CUDA plus Linux CPU/CUDA; focused contract tests pass | Provision four distinct labelled runners and retain real exact-profile evidence; macOS remains a separate deferred gate |
-| 3 | Prepare bounded provider automation and cost controls | PASSED | [PR #9](https://github.com/flujo-app/CommunityAI/pull/9) integrated [commit `1d4f7d4`](https://github.com/flujo-app/CommunityAI/commit/1d4f7d4453eb688994ce21c08e182c1ad8e63ae7) after [style](https://github.com/flujo-app/CommunityAI/actions/runs/32947541300), [tests](https://github.com/flujo-app/CommunityAI/actions/runs/32947541452), and [Windows/Linux production packaging](https://github.com/flujo-app/CommunityAI/actions/runs/32947541637) passed; the 29-test guard prices the serialized 13.5-hour G2/L4 fleet at USD 69 maximum (14-hour N1/T4 at USD 70), binds immutable OS images and hard deletion deadlines, supports split-region CUDA capacity, and excludes `communityai-bootstrap-1` from exact cleanup; provider automation remains passed and native `gcloud`/`flyctl` authentication was valid for the completed Gate 7 work | No further Gate 3 framework work. Revalidate native provider authentication, quota, and the exact ledger reservation immediately before every paid create |
-| 4 | Build immutable Qwen3.5 2B and Gemma 4 E2B qualification images/snapshots | PASSED | [Gate 4 attempt `gate4-20260826-b`](evidence/gate4-20260826-b-qualification-image-build-attempt.json) passed both exact snapshot/in-image checks and published source `7660e33` with SLSA provenance and SPDX SBOM. [Qwen evidence](evidence/gate4-20260826-b-qwen3.5-2b-publication-evidence.json) binds `ghcr.io/flujo-app/communityai-qualification-qwen3.5-2b@sha256:129b96fd848b996a5e3a0c918c39c705d328e6e5010b3222a5c25ea10ab142ed` ([metadata](evidence/gate4-20260826-b-qwen3.5-2b-build-metadata.json)): 6,913,811,781 compressed bytes, 6,913,829,173 uncompressed, 9 GB rootfs. [Gemma evidence](evidence/gate4-20260826-b-gemma-4-e2b-publication-evidence.json) binds `ghcr.io/flujo-app/communityai-qualification-gemma-4-e2b@sha256:5f04eb8e923023ff05f64d13fde5b879e8990725518d4e81210b03b4b6047c6f` ([metadata](evidence/gate4-20260826-b-gemma-4-e2b-build-metadata.json)): 11,011,406,681 compressed bytes, 11,011,424,083 uncompressed, 13 GB rootfs. Both isolated builders and the complete retry network were deleted; the protected bootstrap remains. | Use these immutable digests and evidence-bound rootfs sizes for Gates 5 and 6 |
-| V | Pass a visible public vertical slice: app observes a remote worker, `auto` selects a model, and inference succeeds | PASSED | [Run `gatev-20260827-a`](evidence/gate-v-20260827-a-public-vertical-slice.json) executed clean source `8200afc` against the immutable Qwen image and exact manifest on a public Linux G2/L4 worker. The [desktop evidence](evidence/gate-v-20260827-a-desktop-models.png) shows signed-catalog `auto` selection, 24/24 blocks, and one verified peer; the localhost OpenAI-compatible request returned one token through Qwen in 15.231 seconds. The real run exposed four bounded fixes, all focused tests and two independent reviews passed, every exact run resource is absent, global GPU usage returned to zero, and the protected bootstrap remains running. | Proceed to Gate 5 using the exact pushed source, revalidated one-L4 quota, immutable Qwen input, a new conservative reservation, sequential CUDA hosts, and complete cleanup evidence. |
-| 5 | Qwen3.5 2B Windows/Linux CPU/CUDA qualification | PASSED | [Qualification and cleanup evidence](evidence/gate5-20260827-qwen3.5-2b-qualification.json) and the [strict aggregate](evidence/gate5-20260827-qwen3.5-2b-matrix.json) bind Windows CPU/CUDA and Linux CPU/CUDA passes to exact source `23a4078e17ed9d5ae6f31e7497bae69b83aecef6`, DRIFT `2.3.0.dev2`, Qwen revision `15852e8c16360a2fea060d615a32b45270f8a8fc`, and manifest `sha256:3ba8528cb3c0d85e1ed048e0438a0d64cfbbc298944ed674caa6950d415f8e33`. Every profile proved exact artifacts, 24/24 manifested stock-token parity, selected-worker interruption, and recovery. All Gate 5 instances, disks, and perimeters are absent; L4 usage is zero; the protected bootstrap remains running. | Proceed to Gate 6 under the owner-reset USD 100 budget epoch. |
-| 6 | Gemma 4 E2B Windows/Linux CPU/CUDA qualification | PASSED | [Qualification and cleanup evidence](evidence/gate6-20260827-gemma-4-e2b-qualification.json) and the [strict aggregate](evidence/gate6-20260827-gemma-4-e2b-matrix.json) bind Windows CPU/CUDA and Linux CPU/CUDA passes to exact source `a45025a3262a88df65217b630392488e8548aaaf`, DRIFT `2.3.0.dev2`, Gemma revision `3e22461f65e89153144f8adb70e3b8c2cc9845a7`, and manifest `sha256:2f8debbe0fcdf5af8d4c56c982210fa50aa584314968ae2617e2ccc2de9eafdd`. Every profile proved exact artifacts, 35/35 manifested stock-token parity, selected-worker interruption, and recovery. All Gate 6 instances, disks, firewall, NATs, routers, subnets, addresses, and VPC are absent; global GPU and regional L4 usage are zero; the protected bootstrap remains running. | Complete; Gate 7 subsequently passed. Proceed to Gate 9. |
-| 7 | Provider-level real separate-machine recovery | PASSED | [Run `gate7-tiny-20260828-j`](evidence/gate7-20260828-tinyllama-recovery.json) ran one bootstrap and four CPU-only TinyLlama workers in Fly `gru` with two replicas per block. SIGKILL of `host-a` during generation caused rerouting to `host-c`, activation replay, same-session completion, and exact stock-token parity in 16.395 seconds. All five resources were destroyed and the token was revoked. The [recovery runbook](RECOVERY_TEST_RUNBOOK.md) records the artifact, control-plane, retry, and cleanup lessons. | Proceed to Gate 9. Repeat recovery only in the later clean-install automatic-placement product flow, not once per model. |
-| 8 | Per-model duplicate separate-machine recovery | DEFERRED | Gates 5 and 6 already qualify Qwen and Gemma across the supported platform/device matrix; Gate 7 proves the model-independent provider recovery mechanism. Repeating the same Fly topology for each catalog model would test artifact transport rather than a new release property. | No public-alpha action. Model admission uses manifest/artifact and resource-envelope checks; product-level recovery is covered after automatic placement and catalog publication. |
-| 9 | Publish edge resource envelopes for selectable profiles | PASSED | [Run `gate9-20260830-e`](evidence/gate9-20260830-e-edge-resource-envelopes.json) publishes all four privacy-safe acquisition and schema-v3 steady-state records at exact runtime source `ba410f7`. Qwen selected 4,571,197,320 bytes and Gemma 10,278,818,149 bytes from empty caches on both Windows Server 2022 and Ubuntu 24.04; every artifact SHA-256 passed with zero resumptions. Qwen measured load/first-token/decode at 25.896 s/1.785 s/1.392 tok/s on Windows and 17.115 s/2.973 s/0.800 tok/s on Linux, with process-tree RSS peaks of 1,883,205,632 and 2,832,244,736 bytes. Gemma measured 64.286 s/1.386 s/1.949 tok/s on Windows and 38.808 s/2.025 s/0.868 tok/s on Linux, with peaks of 1,728,995,328 and 2,818,523,136 bytes. Every workload generated eight tokens without retaining prompts or outputs; Windows Job Objects and Linux process groups were empty, and route/DHT, accelerator, runtime-close, and provider cleanup all passed. All four temporary instances and auto-delete disks are absent; the protected bootstrap and separately authorized Gate 11 route remain running. The Windows Gemma cache-preserving in-place memory retry created no new resource and did not raise the USD 46 Gate 9 ceiling. | Proceed immediately to Gate 13 clean packaged install/inference on Windows and Linux using these envelopes and the live bounded product route. |
-| 10 | Implement automatic contributor model and block placement | PASSED | Signed bootstrap now installs one bounded `auto` worker. The local planner filters exact manifested candidates through owner policy and local resource ceilings, requires fresh authenticated replica coverage, targets the least-covered contiguous range with per-node jitter, reconciles exact-manifest launches through the existing artifact-verifying server and `WorkerSupervisor`, applies residency/cooldown/switch hysteresis, exposes placement reasons, and preserves an explicit operator pause across ineligibility or placement changes. A new or migrated worker must sign an expiring exact-manifest/range intent with fixed numeric resource claims and receive a remote DHT store acknowledgement (`exclude_self=True`) before entering the artifact path; invalid, rejected, or failed publication is fail-closed and cannot advance planner state, while a previously admitted placement is retained. Actual completed local generations feed exact-manifest demand, useful-throughput, and reliability through two bounded five-minute aggregate windows; no prompt, output, token ID, key, request ID, address, path, error, or per-request event is retained. Only a closed window with at least four completed routes may be signed by the separate router identity and published under the manifest-bound `demand-v1` DHT key with a 90-second lifetime and `exclude_self=True`. Consumers verify signature, exact schema/digest, lifetime, revocation, and replay ordering. The threshold-signed catalog may authorize 2–32 sorted RSA observer roots; missing or empty roots disable remote demand. Discovery discards unlisted identities before signature/replay work, excludes local and duplicate roots, isolates malformed records, requires two authorized roots, and medians at most 32 quantized observations. Observer keys are never generated or bundled: only a separately provisioned `route-demand.key` matching a signed root may publish, while ordinary nodes can consume without one. Any hot-edited root-list mismatch disables both publication and consumption until restart. Local utility is capped at 6 points and signed remote utility at 2, keeping the combined hint below the 10-point migration margin and 100-point replica step. Verified announcement and route-demand replay watermarks now survive restarts in one Windows-safe journal per raw manifest digest under the node data directory. Each strict journal is capped at 256 active identity scopes and 256 KiB, retains only public record kind, key ID, ordering tuple, record digest, and the bounded replay deadline, and is fsync-written through atomic replacement; malformed, duplicate, oversized, symlinked, non-regular, or unwritable state fails closed. The retained deadline prevents an older still-live record from returning after a short-lived newer record expires. The replay slice's 99-test focused protocol/discovery/planner/node-configuration matrix and 209-pass, 2-skip catalog/node/API superset pass. The Sybil slice's 122-test focused catalog/bootstrap/config/discovery matrix proves that 30 valid attacker keys plus one authorized root cannot reach threshold, two authorized roots aggregate without attacker weight, one high authorized vote cannot inflate a lower second vote, old catalogs remain signature-verifiable with remote demand disabled, and trust-epoch reload mismatches fail closed. A 190-pass, 1-skip catalog/protocol/planner/discovery/node/API superset also passes. Independent verification passed 146 focused tests and a 255-pass, 2-skip broader node/API superset, plus a native-Windows publication-boundary probe; formatting, import-order, import-smoke, and diff checks pass. The [explicit privacy review](AUTOMATIC_PLACEMENT_PRIVACY_V1.md) inventories collection, retention, public-key linkability, DHT/journal/API/log exposure, secure-deletion limits, and residual governance/host risks. Three executable privacy-contract tests fix the aggregate, intent, demand, replay, forbidden-field, and path-free warning schemas; the focused privacy/protocol/planner/discovery/node matrix passes 108 tests and the broader catalog/node/API matrix passes 258 tests with 2 skips. Independent privacy review passed 108 tests with 1 skip and a 225-pass, 2-skip broader subset; every caught observer-key exception and an unauthorized key produced no path, key ID, or exception detail, while prompt and identity-path schema injections failed closed. The [deterministic convergence and load acceptance](AUTOMATIC_PLACEMENT_ACCEPTANCE_V1.md) closes the remaining software gate: equal snapshots use node-specific 32-point model dispersion and range rendezvous ranks; a fixed 512-node cold cohort selects both models and every range below the 85% concentration boundary; two 4,096-node fresh-arrival cohorts remain below that boundary under maximum priority-aligned or standby demand; maximum demand causes zero incumbent migrations; one-replica loss migrates after residency without early reversal; rolling arrivals keep every model/block populated and repair an abrupt block loss. The alpha fails closed above 32 candidates or 512 blocks, permits one `auto` worker, clamps reconciliation to at least one second, and scans each candidate in one bounded pass. The focused planner/convergence/configuration matrix passes 78 tests and the broader catalog/protocol/discovery/node/API matrix passes 214 with 2 skips. A real Windows DHT round trip exposed and fixed a durable-replay multiprocessing regression: replay guards now omit/recreate their thread lock across serialization and reload persistent state; its 15-test protocol/network matrix passes. Independent verification reproduced the 78-test focus, passed an expanded 235-test matrix with 2 skips and the 15-test real-DHT probe, and exercised adversarial score, timing, 32-by-512 load, 1,000-case range-equivalence, and persistent replay-reload boundaries. This slice used no cloud resources and spent USD 0. | Gates 9–11 are passed. Gates 13–14 must now prove the packaged flow and real hardware ceilings using the published envelopes. |
-| 11 | Operate initial public alpha routes | PASSED | [Product-node run `route-20260830-j`](evidence/gate11node-20260830-a-lifecycle.json) installed the generic CommunityAI wheel on a bounded G2/L4 VM, verified the signed catalog, downloaded both exact manifested models directly from Hugging Face into one persistent shared cache, and used the product node's automatic workers to expose complete Qwen 24/24 primary and Gemma 35/35 standby routes. No model-specific image, cache mirror, or operator-transferred model artifact was used. The privacy-safe acceptance passed one-token primary inference, deliberate primary pause, automatic Gemma selection in 58.073 seconds, standby inference, Qwen restoration in 32.042 seconds, and restored inference. Both workers were stable before the drill. After Gate 13 released the L4, the preserved route was restored without changing its model cache or source, its ephemeral endpoint was rebound, both product-node services became active, and a fresh acceptance reproved Qwen 24/24 primary inference, automatic Gemma 35/35 fallback/inference, Qwen restoration, and restored inference. The protected bootstrap remains running. A corrected 4,800-second provider DELETE backstop was set for `2026-08-31T05:28:16.516Z`, earlier than the original deadline. [Post-backstop cleanup evidence](evidence/gate11route-20260830-j-backstop-cleanup.json) and an independent recheck prove the route instance, named disk, and both exact run-scoped firewall rules absent, all Gate 13 clients/disks absent, zero remaining route availability, and the protected bootstrap still running. The same-host standby is a bounded alpha fallback, not independent infrastructure redundancy; independent redundancy remains post-alpha. | Gate 11 acceptance evidence remains complete, but no product route is live after the corrected DELETE backstop. The 2026-08-31 reset supplies a new USD 100 epoch, but any replacement route still requires refreshed native authentication, a fresh exact source-bound conservative reservation, and fail-closed preflight before provisioning. |
-| 12 | Create, publish, and bundle the minimal signed alpha catalog/bootstrap | PASSED | [Run `gate12-20260829-a`](evidence/gate12-20260829-alpha-catalog-publication.json) published the deterministic [`communityai-public-alpha-v1` bundle](../public-alpha/catalog-v1/bundle.json) from source `26be579`. Its threshold-one Ed25519 root signs sequence 1 with the exact qualified Qwen primary and Gemma standby manifests, one pinned public HTTPS mirror, one public seed, a one-route best-effort policy, and no unprovisioned route-demand roots. The canonical bundle binds five members and retains `complete_release_qualification=false`. All three public objects returned HTTP 200 with exact sizes, and a fresh empty consumer fetched them remotely, verified the signature/digests, and created the two-model `auto` node configuration. The private signing key remained ignored and uncommitted. The focused publication suite passes 32 tests, the catalog/bootstrap/model/desktop superset passes 92, and the run spent USD 0. | Preserve the branch-scoped mirror until a newly signed catalog sequence and packaged bootstrap migrate it. The Gate 11 acceptance and Gate 9 envelopes exist, but no product route is currently live; Gate 13 awaits native reauthentication and fresh per-run reservations under the new epoch. Independent threshold holders and interchangeable mirror/seed governance are post-alpha. |
-| 13 | Pass packaged clean-install inference on Windows and Linux | BLOCKED | [Prerequisite run `gate13-20260830-a-prerequisites`](evidence/gate13-20260830-a-prerequisites.json) established deterministic install archives, exact first-use bytes, strict provenance, and the canonical lifecycle contract. [Native-harness and production-package run `gate13-20260830-b`](evidence/gate13-20260830-b-native-harness-and-packages.json) now completes the native Windows Credential Manager/Job Object and Linux Secret Service/systemd-cgroup 16-phase adapters, exact worker and descendant cleanup proofs, 3,600-second acquisition bounds, and package/runtime/catalog cross-binding. Independent software review passed 134 focused tests plus a 113-pass broader matrix with 3 platform skips; the production-discovery correction passes 73 unittests, 4 pytest checks, self-test, formatting, and import checks. [Exact-source production run 33338872342](https://github.com/flujo-app/CommunityAI/actions/runs/33338872342) passed both jobs at source `1971f10` and published independently audited CUDA 12.4 archives: Windows `sha256:45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6` (2,695,065,068 bytes) and Linux `sha256:f96d3ca651964380d4684855ab08682e8187b33386327ec3895cda25b43c2a00` (3,360,717,934 bytes). Pushed source `6787272` adds the fixed stdin-only artifact downloader and exact platform configs; its 42-test adversarial suite and independent race/special-member/live-wrapper audit pass. No cloud resource was created for these prerequisites. Real completed clean-host lifecycle evidence remains absent. Provider cleanup and the temporary Gate 11 restoration are proved, but the corrected backstop has since removed that route. | [Run `gate13-20260830-c` revision 13](evidence/gate13-20260830-c-cost-authorization.json) is stopped clean. The latest Windows host passed exact package audit, clean install, four desktop self-tests, and the packaged-node self-test, then failed before model acquisition because child stderr diagnostics contaminated strict JSON captured on stdout. [Attempt, cleanup, correction, and route-restoration evidence](evidence/gate13-20260830-c-windows-attempt-and-route-restore.json) proves zero cache bytes, no retained credential or product process, all four exact client instances/disks absent, the bootstrap running, and the temporary restored Qwen/Gemma product route. [Post-backstop cleanup evidence](evidence/gate11route-20260830-j-backstop-cleanup.json) now proves that route, its named disk, and both exact run-scoped firewall rules absent while every Gate 13 target remains absent and the protected bootstrap remains running. Pushed source `4818da3` separates captured stdout from a dedicated NUL stderr sink and passes 15 native tests plus independent high-volume, handle-leak, descendant, timeout, and Job Object probes, but it has not completed a paid clean-host lifecycle. The cleanup-backed 2026-08-31 owner reset releases the USD 98 historical maxima and opens a new USD 100 epoch for the next run; it does not authorize any particular resource or reuse the stopped record. A read-only native-auth check on 2026-08-31 found an active account selection, but provider requests could not refresh its token without interactive reauthentication; no provider mutation or resource creation occurred. Complete both 16-phase fresh-host lifecycles only after refreshing native authentication and recording fresh exact source-bound conservative reservations for the replacement route and Gate 13 clients; do not provision, restart FLUJO, or mark Gate 13 passed before then. |
-| 14 | Pass automatic-contribution and resource-control hardware checks | WAITING | [PR #11](https://github.com/flujo-app/CommunityAI/pull/11) and [PR #12](https://github.com/flujo-app/CommunityAI/pull/12) implemented the authenticated node-authoritative Sharing UI and atomic policy editing, but cross-model automatic placement and real packaged hardware evidence are absent. | After Gates 9–13, follow the [recovery runbook](RECOVERY_TEST_RUNBOOK.md) once for the clean-install product flow while validating model/block choice, exact selected-shard bytes, shared-cache affinity, download authorization, VRAM/storage/bandwidth/power limits, suspension, pause timing, cleanup, restart persistence, and unsupported telemetry on real packaged Windows/Linux hardware. |
-| 15 | Complete minimal alpha release engineering | WAITING | The desktop builder now emits a stable sorted `SHA256SUMS` inventory of exact regular-file bytes and safe relative in-bundle file symlinks, source/build/catalog-bound `provenance.json`, and `release-metadata.json` with explicit unsigned public-alpha, no-publisher-signature, no-authenticated-update, Windows/Linux-only, no-credits, and incomplete-qualification claims. Structural verification binds each safe file symlink to its canonical in-bundle target, digest, and size while rejecting changed, missing, extra, absolute, external, broken, cyclic, directory-linked/junction, special, traversal, or case-colliding payloads plus unsupported or noncanonical metadata. Exact-source builds also reject dirty relevant inputs, and the expected-input fresh-process check rejects rewritten commit/tree, workflow, platform, Python, PyInstaller, or catalog evidence. Production desktop CI is configured to verify and bundle the Gate 12 inputs, bind the exact clean Git commit/tree and workflow, revalidate every expected input separately, and upload all evidence on Windows/Linux. The focused release-input/artifact suite passes 15 tests, including fresh-process CLI, dirty-source, and canonical-rewrite checks, and the broader catalog/bootstrap/model/desktop subset passes 134. Independent verification reproduced all 134, passed 58 desktop unittests with two environment skips, formatting/import-order/YAML/diff checks, an expected Gate 12/workflow fresh-process probe, and real Windows junction rejection; no cloud was used. [The first PR #22 production-desktop run](https://github.com/flujo-app/CommunityAI/actions/runs/33273518744) reached packaging on both hosts and exposed two exact cross-platform defects: PyInstaller's legitimate relative internal Qt file symlink on Ubuntu and CRLF-transformed signed Gate 12 JSON on Windows. The follow-up binds safe internal file symlinks without accepting external or directory links, forces `public-alpha/**` to LF at checkout, and includes `.gitattributes` in the clean-source boundary. [The second run](https://github.com/flujo-app/CommunityAI/actions/runs/33274432423) proved the Ubuntu package and the Windows signed-bundle/provenance path, then exposed a stale desktop contribution-status schema 2 contract when the packaged node emitted schema 3 automatic-placement evidence. Source `fcd1f41` now strictly validates schema 3 placement and rejects stale schema 2 plus missing, extra, secret-bearing, or inconsistent placement data; its 50-test node/client/lifecycle/build focus and all 59 desktop unittests passed with two environment skips. [The final run](https://github.com/flujo-app/CommunityAI/actions/runs/33275216332) bound exact source `fcd1f417d1435557addb2d6cded9dac0827c7d8c` and completed both Windows and Ubuntu package jobs, including bundle build/smoke, independent checksum/provenance verification, the Windows packaged-node/native-credential/public-seed smoke, and artifact uploads; every PR style, test, and package check is green. Source `36d85d2` makes generic release-artifact fixtures select the supported Linux archive explicitly instead of inheriting the CI host platform; the 21-test local artifact suite and [PR #22 test run 33372581439](https://github.com/flujo-app/CommunityAI/actions/runs/33372581439) pass, without expanding the supported platform matrix. Clean-install lifecycle evidence remains absent. | Retain the verified Windows/Linux artifacts as engineering evidence, then test clean install, manual upgrade/reinstall, uninstall, retained-data choice for the persistent verified model cache, and recovery instructions on both platforms against a newly authorized live product-node route and the published Gate 9 envelopes. Do not mark passed from metadata/unit tests alone. Publisher signing and automatic authenticated update/rollback are post-alpha. |
-| 16 | Complete the bounded public-alpha safety canary | WAITING | [PR #13](https://github.com/flujo-app/CommunityAI/pull/13) and [PR #14](https://github.com/flujo-app/CommunityAI/pull/14) implemented bounded admission, privacy-safe aggregate health, training-off defaults, rollback procedures, and bounded routine rejection logs; no public canary has run. | After Gates 11–15, run a small monitored canary proving finite admission/timeouts, malformed-peer rejection, health reconstruction, privacy disclosure, route/catalog disable, and clean rollback. Exhaustive hostile-load, Sybil/collusion, partition, and long-soak campaigns are post-alpha. |
-| 17 | Publish and observe the public alpha | TODO | Owner has authorized a public inference alpha, but preceding mandatory alpha gates are open. | After Gate V and Gates 1–16 pass, publish with explicit best-effort availability, unsigned-package, support, and prompt-privacy limitations; preserve the disable path and monitor real route/worker failures. |
+## Current gates
 
-## Deferred work
+`PASSED` requires the stated real evidence; `IN PROGRESS` means required outcomes
+remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 
-| Item | Status | Resume condition |
+| Gate | Status | What must be true before it passes |
 | --- | --- | --- |
-| macOS CPU/MPS and packaged application support | DEFERRED | Real Apple-device hosts and testers are available |
-| Credits, receipts, balances, spend authorization, earnings, and payouts | DEFERRED | Public inference alpha is live and its reliability/privacy behavior is understood |
-| Compute marketplace and jurisdiction-specific payment onboarding | DEFERRED | Accounting threat model, legal review, and independent audit are complete |
-| Larger model ladder rungs | DEFERRED | Once first-rung public capacity and operations are stable, test a real 27-32B split route directly and, if it passes, an exact roughly 70B candidate; intermediate sizes are not mandatory prerequisites |
-| Production-SLO model-route redundancy and largest-worker-loss survival | DEFERRED | The best-effort alpha is live and its real route-loss evidence identifies the required topology |
-| Independent multi-provider seeds, catalog mirrors, and outage survival | DEFERRED | The alpha seed/catalog dependency is measured and independent operators are available |
-| Independent threshold catalog key holders and compromise/rotation governance | DEFERRED | The pinned single-signer alpha catalog is operating and human key holders accept responsibility |
-| Publisher-signed installers plus authenticated automatic update/rollback | DEFERRED | Alpha packaging stabilizes and publisher identities/signing credentials are available |
-| Exhaustive malicious-load, Sybil/collusion, partition, herd-switching, and long-soak campaigns | DEFERRED | The bounded alpha canary passes and real public telemetry supplies representative workloads |
+| V and 1–13 | **PASSED, historical scope** | Integration, trust/discovery, Qwen3.5/Gemma qualification, artifact delivery, and Windows/Linux packaged inference foundations are retained. [Manual desktop evidence](evidence/gate13-20260831-i-manual-qualification-and-cleanup.json) and [automated replay](evidence/gate13-20260901-a-automated-qualification-and-cleanup.json). These do not qualify Qwen3.8 in the current package. |
+| Q3.8 | **PASSED, owner-accepted bounded alpha scope** | Runtime, packaged conversation/recovery, bounded formation and Windows/Linux startup migration passed. On September 8 the owner accepted those results for alpha and deferred additional conversation/hardware measurements and frozen periodic catalog activation/draining. Broader performance and beta update behavior remain unqualified. |
+| 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
+| 15 | **PASSED, bounded Windows/Debian/Ubuntu alpha scope** | **“Install it, replace it, remove it.”** Windows active different-version upgrade and Debian/Ubuntu active same-version replacement/removal/reinstall passed. Both frozen sign-in checkboxes passed enable/restart/disable with native registration and cleanup verified. Manual cache/reset choices passed on disposable Windows state; disable sign-in startup before uninstalling. [Combined acceptance](evidence/gate15-20260908-final-installer-acceptance.md). Unsigned alpha is owner-authorized; signing, Store and hosted signed APT follow after alpha. Automatic updates ship in the September 9 release. |
+| 16 | **IN PROGRESS; existing recovery/safety evidence under release-scope review** | Real worker-loss/fallback/rejoin, formation, resource shutdown and local safety checks already passed in their recorded scopes. Credit those results before scheduling any new run. The combined public-deployment probe followed by real inference has not run; periodic live catalog withdrawal/restore qualification follows the owner's beta deferral. |
+| 17 | **IN PROGRESS; candidate downloads published** | All four qualified installer options and release metadata are public and hash-verified. Prepare the draft release and observation within the declared best-effort scope; the combined Gate 16 canary remains unexecuted. |
+
+Gate 14 protects contributors' PCs and Gate 15 makes distribution usable; retain
+both. Combine overlapping Q3.8/Gate 14/15 observations in the same bounded desktop
+sessions when practical. Do not repeat old Qwen/Gemma qualification or add a new
+cloud framework simply to advance gate numbers. Gate 16 provides the bounded
+public safety check; exhaustive hardening is deferred.
+
+## Next work, in useful product order
+
+September 9 release `0.1.0-alpha.20260909.2` adds the repaired desktop and signed
+application updates. The [installation guide](ALPHA_INSTALL.md) has current
+downloads; [updater behavior and publication](AUTOMATIC_UPDATES.md) describe the
+one-time manual upgrade from September 8. Existing source checks and a Windows
+update-handoff fixture passed. No new full desktop, GPU, cloud or installed Linux
+updater qualification is claimed. The owner explicitly requested immediate
+publication using the existing checks and normal packaging/integrity checks.
+
+The September 8 distribution records below remain historical evidence.
+
+September 8 distribution refresh: the owner requested removal of duplicate
+libraries and unused bitsandbytes CUDA variants, plus a small verified downloader
+and the full offline installer. Both replacement runtimes identify source
+`84205f93fc73d3babd39e238944b97fab0d11b3e`. The Windows
+`0.1.0-alpha.20260908.1` setup is **2,462,345,104 bytes** and passed ordinary-user
+installation, installed native CUDA operations and removal.
+[Windows acceptance](evidence/normalized-windows-installer-20260908.md).
+The Linux `0.1.0~alpha.20260908.1` package is **2,302,428,788 bytes** and passed
+installation, installed CPU/CUDA/worker checks and removal on Ubuntu 22.04.
+[Linux acceptance](evidence/alpha-normalized-linux-20260908.md). Measured
+regular runtime payloads are 4,263,859,354 bytes on Windows and 5,161,115,250 bytes
+on Linux. The [packaging evidence](evidence/runtime-packaging-reduction-20260908.md)
+preserves the earlier estimates and targeted normalization rules.
+
+Cloudflare R2 is configured at the immutable `alpha/20260908.1/` prefix. The
+actual Windows setup and Debian package are uploaded and passed complete hosted
+download/hash verification. The **2,107,751-byte Windows online setup** passed
+actual ordinary-user installer handoff, an installed CPU diagnostic and removal,
+with exact child-process exit, temporary cleanup and persisted user-state baseline
+verified. [Windows hosted acceptance](evidence/normalized-online-windows-installer-20260908.md).
+The **13,662-byte Linux online installer** passed HTTPS download, protected-copy/APT
+installation and removal. [Linux hosted acceptance](evidence/alpha-online-linux-hosted-20260908.md).
+Earlier transport and progress-publication failures remain in those records;
+these single successful handoffs establish no broad availability guarantee.
+
+The Windows online helper, Inno script and builder match source
+`b6c8aad9cea208630785d890cfb966093f809e7e`, checked after the working-tree build;
+the offline runtime source remains `84205f93`. Both online files, all 19 curated
+platform records, the combined manifest, installer checksums and metadata ZIP
+are published. All 24 small public object bodies matched their exact hashes.
+[Publication audit](evidence/alpha-cloudflare-publication-20260909.json).
+The rate-limited `r2.dev` origin serves the declared initial scope.
+The [installation guide](ALPHA_INSTALL.md) carries exact hashes and availability;
+[hosting records](CLOUDFLARE_RELEASE.md) keep platform provenance and the exact
+embedded online manifests separate.
+
+Gate 14 is complete for the declared Windows/Linux alpha scope. The
+[final acceptance](evidence/gate14-20260907-final-resource-acceptance.md) used complete
+catalog-bearing frozen desktop/node packages at `76b6d84` (Windows) and
+`bf67f0d` (Linux, with packaging fixes and unchanged application/catalog source), real Qwen block load,
+literal Qt sliders, explicit opt-in, independent admission guards and native
+credential stores. Both platforms passed all 11 checkpoints and cleanup.
+Processing limits pace sharing compute; brief bursts, loading/downloads and
+local inference remain separate. Linux used Debian 12/Xvfb with CUDA passthrough,
+so this is not a physical Ubuntu/Wayland or broad GPU qualification.
+
+Acceptance found and fixed product defects: insufficient VRAM no longer
+causes an endless worker restart loop, and migration of an identical signed
+manifest into managed storage now preserves per-model cache/resource preferences.
+Linux declares its missing X11 shape-library dependency and excludes optional
+Triton JIT initialization that otherwise required a compiler inside the frozen app.
+The block-health grid, observed peer details and local client/worker download
+progress are included in both packages. The [display checkpoint](evidence/desktop-health-downloads-20260907.md)
+records their state/integrity tests; remote download percentages and unreported
+spare capacity are not invented.
+
+The final Windows setup at `0.1.0-alpha.20260907.2`, using the stable public
+application ID, passed non-elevated installation, upgrade from the earlier full
+setup while Qwen sharing was active, removal, reinstall and final removal. The
+actual installed frozen GUI and node returned local tokens and verified the
+worker cache in each launch. Complete owned trees stopped and settings/cache/
+credentials survived replacement/removal. A redundant test-driver cleanup call
+failed after the final successful uninstall; the subsequent independent cleanup
+audit passed. [Full evidence](evidence/gate15-20260907-frozen-windows-installer.json).
+
+The final Debian installer at `0.1.0~alpha.20260907.4` also passed initial
+installation, active same-version replacement, removal, reinstall and final
+removal with the actual ordinary-user frozen GUI/node. Local Qwen tokens and
+verified sharing artifacts passed on all three launches. Settings/cache and
+credentials survived maintenance, and the independent final audit found no
+installed runtime/DHT processes or test credential. This is Debian 12/Xvfb with
+CUDA passthrough, not a physical Ubuntu desktop or different-version upgrade.
+[Final Debian evidence](evidence/gate15-20260907-frozen-debian-installer.json).
+
+The Debian run exposed two shutdown defects: unreadable process ownership was
+silently skipped, and a fixed process snapshot missed helpers born during shutdown.
+Maintenance now refuses insufficient inspection permissions and continually
+discovers owned processes until repeated observations are quiet. Both failures,
+targeted cleanup and the old-fails/new-passes regression are retained. Installer
+scripts come from `61ab7b1`; the independently verified `bf67f0d` runtime payload
+was preserved byte-for-byte while the Debian control archive was replaced.
+
+The subsequent Ubuntu 22.04 attempt **did not pass**: root `dpkg -i` exceeded
+the 540-second harness limit during initial unpacking, with approximately 2.6 GiB
+written. No installed GUI, node or inference launched. Native test credential,
+DHT and display cleanup passed, and the exact disposable container was removed
+with its partial installation. Caches and raw evidence were retained. The
+underlying performance cause remains unconfirmed.
+[Failed Ubuntu attempt](evidence/gate15-20260908-ubuntu-install-timeout.json).
+The [unpack diagnosis](evidence/gate15-20260907-ubuntu-unpack-diagnosis.md)
+records the 2,733-block XZ payload, relevant package-manager version differences
+and a bounded profiling/repack plan; it does not claim a confirmed root cause.
+
+The September 8 retry **passed the complete Ubuntu 22.04 lifecycle** with the
+same `.4` installer: initial installation, active replacement, removal,
+reinstallation and final removal. The actual installed GUI/node produced local
+Qwen tokens and verified a sharing block on all three launches. Settings/cache/
+credentials survived maintenance; independent runtime/credential cleanup passed
+and the disposable container was removed. Two CPU cores and a 6 GiB memory cap
+bounded local use. Initial installation took 329.971 seconds; the original timeout
+was not reproduced. [Ubuntu acceptance](evidence/gate15-20260908-frozen-ubuntu-installer.md).
+
+The [manual uninstall choices](DESKTOP_UNINSTALL.md) now explain retaining state,
+deleting only reviewed model caches, resetting the native credential and node
+state, and disabling login startup before removal. Disposable Windows checks
+passed, including the actual frozen credential-deletion command. The attempted
+frozen sign-in-toggle test used explicitly selected mock API data and was
+interrupted before any toggle succeeded; it is not a passing UI acceptance.
+All its owned processes, credential and login entry were confirmed absent.
+[Choice evidence](evidence/gate15-20260908-windows-data-login-choices.json).
+
+The unmodified frozen Linux checkbox subsequently passed enable, restart with
+the setting retained, disable, and an explicit login-flag launch through AT-SPI
+on a private Xvfb display. No models loaded; all three normal shutdowns and
+independent credential/process cleanup passed. The initial ambiguous-action
+failure and a separate virtual-display wrapper cleanup error remain recorded.
+[Linux frozen control](evidence/gate15-20260908-frozen-linux-login.md).
+The Windows source Qt/native-registry regression also passed while preserving
+the real login entry. [Windows source evidence](evidence/gate15-20260908-source-login-checkbox.md).
+The subsequent Linux CI run exposed a source-test targeting error: the helper
+clicked the hidden checkbox's center outside its style-defined hit region.
+The helper now exposes Sharing offscreen, clicks the actual indicator, and
+cancels its session timers. All 108 Linux desktop tests completed successfully
+with two existing installer-permission skips; no product change was needed.
+[Portability follow-up](evidence/gate15-20260908-source-login-portability.md).
+
+The unmodified frozen Windows checkbox then **passed enable, normal shutdown,
+restart with enabled state retained, and disable** on unswitched private desktops.
+The exact qualified executable's native `REG_SZ` command was verified. Both
+launches authenticated with sharing paused and no model loads; configuration and
+the native credential survived restart. Both jobs were empty before closure.
+An independent audit found all 18 recorded identities stopped, the test credential
+absent and the original login entry state restored. Earlier reader failures are
+retained as harness findings. [Windows frozen control](evidence/gate15-20260908-frozen-windows-login.md).
+This completes [Gate 15's bounded installer acceptance](evidence/gate15-20260908-final-installer-acceptance.md);
+actual OS sign-out/sign-in and broader physical desktop coverage are not implied.
+
+The normal frozen Windows and Linux desktops independently passed automatic
+startup migration from real signed catalog sequence 1 to exact sequence 2.
+Resource limits, local-only preference, workers, cache and native credential
+survived restart; the old trust root was rejected. Linux passed on a fresh retry
+after the first bootstrap child returned nonzero and the app retained sequence 1.
+That failure and successful metadata-only diagnostics remain recorded; the
+original child error was not retained, so its cause is unconfirmed.
+[Windows acceptance](evidence/qwen-catalog-desktop-20260907.md),
+[Linux acceptance and retained failure](evidence/qwen-catalog-linux-startup-20260908.md).
+
+Six new source integration cases connect the actual periodic refresh service,
+signed installer and model manager: active leases/loading delay restart,
+admission closes before restart, invalid updates preserve state, and closing the
+service preserves active work. These passed without model loads. The frozen
+newer-sequence/active-generation replay is deferred to beta by the September 8
+owner decision and is no longer an alpha blocker.
+[Source evidence and live replay requirements](evidence/qwen-catalog-periodic-source-20260908.md).
+
+Gate 16 now has a [bounded canary protocol](GATE16_CANARY.md) and a passing local
+preflight: 20 real frozen-node HTTP assertions and 131 source tests, including
+loopback TLS/DHT and signed catalog withdrawal/forward restore. No model loaded
+and no public canary ran. Catalog withdrawal removes automatic selection and
+contribution approval while preserving explicit manual selectors; emergency
+route disable must stop the actual owned workers.
+[Local evidence](evidence/gate16-20260907-local-preflight.json).
+
+The prepared live RPC driver now defaults to local preflight and limits an
+explicit worker probe to 20 calls/128 KiB with finite execution and cleanup.
+The separate catalog driver stages an isolated signed withdrawal/restore channel
+locally and observes authenticated runtime configuration after ordinary refresh.
+Twenty-four focused tests passed, including the real handler over loopback TLS
+with no model cache allocation. The live route, HTTPS publication and full canary
+observations remain open. [Driver evidence](evidence/gate16-20260908-driver-preparation.json).
+Linux CI then exposed an upstream Hivemind reset when the client finishes an
+idle stream after the server timeout. The driver accepts that closure only
+after observing lease release within timeout bounds and exact admission deltas;
+early resets and malformed-request transport failures still fail the probe.
+[Transport follow-up](evidence/gate16-20260908-linux-idle-transport-fix.md).
+
+At reviewed head `fdd8d0b`, all nine CI checks passed, including Linux/macOS
+functional tests, style/security checks and both complete Windows/Linux production
+package/installer jobs. This head adds an import-formatting fix after the
+`84205f93` candidate runtime source. CI rebuilds retain their own provenance;
+candidate acceptance remains bound to its exact installer/runtime identities.
+The
+two high-severity CodeQL findings were reviewed against their exact source-to-sink
+paths and [dismissed as false positives](evidence/gate14-20260907-codeql-triage.md),
+with scanning still enabled. Public-key metadata is distinct from private material,
+and generated API bearer keys are distinct from human passwords; advanced imports
+still require operator-supplied strong tokens.
+
+1. **Reuse the existing evidence when resolving Gate 16.** Worker loss, recovery,
+   fallback, formation, resource shutdown and local malformed/admission checks
+   have already passed in their recorded scopes. The owner asked which genuinely
+   new deployment observations remain; do not launch another full qualification
+   campaign merely to repeat them. The combined live canary remains unexecuted.
+2. **Retain the completed distribution acceptance.** Both complete hosted
+   download/hash checks and actual online downloader-to-installer handoffs passed.
+   All four installer options and their checksums/metadata are public and verified.
+   Additional Q3.8
+   conversations/performance measurements and periodic catalog activation/draining
+   are explicitly deferred and must not be reintroduced through Gate 16.
+3. **Prepare the draft alpha release with the verified candidate links.**
+   Use the published exact checksums/provenance and declare the tested platform
+   limits. This can proceed while Gate 16's deployment scope is
+   reviewed; it does not claim the combined canary passed or current public Qwen
+   capacity was observed. Store, trusted Windows signing, hosted signed APT,
+   larger adapters and credits follow.
+
+The [candidate installation/download guide](ALPHA_INSTALL.md) binds the exact
+installer hashes. Both new offline files exceed GitHub Releases' 2 GiB per-asset
+limit and total 4,764,773,892 bytes; the owner-authorized R2 origin serves these
+versioned objects. The [public metadata check](evidence/alpha-public-metadata-20260908.json)
+verified the catalog, bootstrap and both manifests at 23:52 UTC on September 8.
+The signed catalog expires on September 28 at 19:35 UTC. Renew it before expiry
+and preserve `codex/gate-v-auto-selection` while the published URLs depend on
+that branch. No peer was probed: historical successful routes do not establish
+current complete community capacity. These operational facts remain distinct
+from installer acceptance and the unexecuted combined Gate 16 canary.
+
+The [model ladder audit](COMMUNITY_AI_MODEL_LADDER.md) and
+[product results](QWEN_DESKTOP_PRODUCT_RESULTS.md) separate implemented behavior
+from remaining live acceptance. The corrected mixed source-node transition test
+passed. The latest Windows package passed local GPU chat and independent resource
+admission checks, including the new cache-accounting implementation.
+[Package evidence](evidence/qwen-desktop-v9-20260906.json). Direct-Hub cold acquisition
+and the Windows packaged community/recovery/cache path have passed on the assigned
+C3 route. [Complete packaged result](evidence/qwen-packaged-recovery-v9-c3-20260906.json).
+Bounded autonomous CPU desktop formation and recovery passed; earlier failures
+are retained separately in the [formation runbook](QWEN_FORMATION_TEST.md).
+The Linux CUDA package passed verification, offline local CPU chat and the
+final ordinary-user frozen Qt/GPU resource-control matrix described above.
+Broader hardware, physical desktop and installer qualification remain distinct.
+The [catalog signer and three backups](CATALOG_SIGNING_KEY.md) are documented.
+Headcount or advertised VRAM alone cannot trigger a safe upgrade.
+
+## Credits and deferred scope
+
+Credits are a separate product stage. First add measured block-token work,
+content-free signed receipts, replay/double-count protection, and estimated/pending
+UI in **shadow mode**. Spendable balances then need settlement, accounting units,
+reserve/spend/refund rules, abuse resistance, recovery, and outage reconciliation.
+Purchases/payouts add marketplace work. See the [credit audit](COMMUNITY_AI_MODEL_LADDER.md#credits-after-the-inference-alpha)
+and [existing design](REVIVAL.md#identity-keys-accounting-and-credits).
+
+Also deferred: DeepSeek/GLM activation, independent seed/route/mirror redundancy,
+independent key-holder governance,
+macOS, and exhaustive malicious-load/Sybil/partition/long-soak campaigns. Preserve
+their existing foundations; prioritize the usable Qwen path.
 
 ## Cloud authorization and spend ledger
 
-Authorization applies only to CommunityAI qualification and public-alpha infrastructure.
-The ceiling is USD 100 combined across new temporary GCP and Fly resources in the current
-owner-authorized accounting epoch. The existing
-GCP bootstrap's ordinary baseline cost is tracked separately; never delete it as test cleanup.
+The compact table below preserves every legacy run ID, provider, purpose, amount,
+and state because existing qualification tools parse this section. Detailed
+cleanup and authorization history are in the [archive](RELEASE_READINESS_HISTORY.md#cloud-authorization-and-spend-ledger).
+Historical epoch resets are not a new budget authorization; do not interpret the
+old aggregate as today's available balance. September 5–6's explicitly requested
+CPU/mixed experiments and verified cleanup are recorded above; their billed cost
+was not reconciled in this documentation update. No cost is invented or reset here.
+The protected bootstrap remains outside test cleanup. Future runs use the current
+session authorization and fresh provider checks; exact cleanup remains required.
 
-Before every paid run, add an entry with a conservative maximum. After cleanup, replace
-the estimate with observed cost when available. If provider billing is delayed, retain the
-maximum estimate until actual cost is known unless the owner explicitly resets the budget
-after complete cleanup. On reset, keep historical rows, mark them `CLEANED-RELEASED`, and
-continue recording later observed charges for information; released rows do not consume the
-new epoch.
+<details>
+<summary>Legacy runner ledger (44 entries)</summary>
 
 | Run | Provider | Purpose | Maximum estimate | Observed cost | Cleanup proof | State |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| gate13-20260830-c | GCP | Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source `1971f106cc5bf90724d938c986a719ce2744f3e7`, temporarily suspending and later restoring the Gate 11 route while reusing its sole global L4 allocation on uniquely named fresh Windows and Linux clients [plan sha256:427bc1ed8a6645ad0650d91aaba7aa753d398fa84f56d57b50aca04c4e0cc955] | USD 26.00 | — | [Cost authorization](evidence/gate13-20260830-c-cost-authorization.json) binds the passed production archives/audits, pushed download-helper/config identities, exact Actions wrapper/inner archives, exact Qwen/Gemma manifests, no service accounts/scopes, direct model transfer, native credential stores, whole-tree containment, all 16 phases, exact cleanup targets, and zero Fly/image/mirror/credits/macOS work. Revision 13 records the final Windows pre-acquisition failure, pushed correction `4818da3`, complete native cleanup, all four exact client instance/disk absences, and successful Gate 11 route restoration. [Privacy-safe final state](evidence/gate13-20260830-c-windows-attempt-and-route-restore.json) proves the package audit and install boundary, zero model-cache bytes, no retained credential/process/path/endpoint/provider output, protected-bootstrap health, active Qwen/Gemma route services, and fresh primary/fallback/restoration inference. The two required 16-phase lifecycles remain incomplete. Complete cleanup permits the explicit owner reset on 2026-08-31; its USD 26 maximum is historical and delayed billing remains informational. This record authorizes no later provisioning. | CLEANED-RELEASED |
-| gate9-20260830-e | GCP | Gate 9 concurrent Qwen/Gemma Windows/Linux acquisition records and schema-v3 envelopes at pushed source `ba410f74f1cf625f1e1c34734b53e4514fa7c5ec`, reusing the separately authorized product route and using bounded isolated clients [plan sha256:04ba77ee68f4a895ae080a4ddcbf6805b502da6a95a4146734acbddff92de307] | USD 46.00 | — | [Passed envelopes and cleanup](evidence/gate9-20260830-e-edge-resource-envelopes.json) publish all four exact acquisition/envelope records and prove complete client cleanup; [cost authorization](evidence/gate9-20260830-e-cost-authorization.json) binds the exact wheel or exact-commit source archive, signed catalog/bootstrap, Qwen/Gemma manifests, owner-authorized parallel platform/model execution, 60-minute model windows, 90-minute client deletion backstops, exact cleanup targets, protected resources, and zero Fly/image/mirror operations. Native provider authentication was refreshed before the USD 18 Windows-client expansion and again before the zero-ceiling-increase Gemma memory retry; the exact plan permits one cache-preserving in-place resize to `e2-standard-8`. Complete cleanup permits the explicit owner reset on 2026-08-31; its USD 46 maximum is historical and delayed billing remains informational. | CLEANED-RELEASED |
-| route-20260830-j | GCP | Gate 11 signed-catalog product node route [workload gcp-product-node-route] [source e1d715fd47c852fa12ca50c76e8f4c6a0831fd78] [final runtime source 4cef141746705c3ee8bc8e017693855e0bc4871e] [plan sha256:1a0927e9d83a9a409ac2ea0232c4fceb14821d3f2c5eb87def88b8e7cdcb07d8] | USD 26.00 | — | [Passed live lifecycle](evidence/gate11node-20260830-a-lifecycle.json): generic runtime, signed catalog, direct Hugging Face artifacts, shared persistent cache, complete primary/standby routes, primary/fallback/restoration inference, stable workers, no model image, and protected-bootstrap health. [Gate 13 restoration evidence](evidence/gate13-20260830-c-windows-attempt-and-route-restore.json) proves the route was restored, both product services became active, fresh Qwen/Gemma primary/fallback/restoration inference passed, and a corrected 4,800-second DELETE backstop ended no later than the original deadline. [Post-backstop cleanup](evidence/gate11route-20260830-j-backstop-cleanup.json) proves the route instance, named disk, and both exact run-scoped firewall rules absent, all Gate 13 clients/disks absent, zero GPU use, and the protected bootstrap running; acceptance evidence is preserved but no product route is live. Complete cleanup permits the explicit owner reset on 2026-08-31; its USD 26 maximum is historical and delayed billing remains informational. | CLEANED-RELEASED |
-| cache-20260830-g | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source 62be8f1c999b6ebe0ece2a660a0be4757cc83005] [plan sha256:109d2b6958ac8ced31e7202c8eb230387d29615f964d32d6726564b9366eafd7] | USD 10.00 | — | [Live lifecycle](evidence/cache-20260830-g-lifecycle.json) passed public-package/native/provider preflight, exact private repository, keyless identity, reader binding, and builder creation, then failed closed at `cache_warm` after 572.531 seconds with zero cached manifests. Cleanup passed all six exact deletes and absences, removed the ephemeral identity and repository, retained no key, public access, credential, provider output, path, identifier, or argv, and kept the protected bootstrap running. | CLEANED-RELEASED |
-| cache-20260830-f | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source bff0c3203191725928246ad3e13deb01ffbab8de] [plan sha256:735cfd847291229571529c8f640fc76005e340a29680806295dad33a7e1a1fb6] | USD 10.00 | — | [Sanitized post-failure verification](evidence/cache-20260830-f-post-failure-verification.json): the private cache and keyless builder reached concurrent warm, then both exact GHCR pulls reported authentication/daemon failure because both upstream packages were still private. The failed controller was interrupted after the startup script's nonzero exit; all six exact cleanup commands and absence checks, repository deletion/absence, no public access/key/retained credential, and protected-bootstrap health passed. | CLEANED-RELEASED |
-| cache-20260830-e | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source c0bd81e4e3ced3cd05a642740e343da41d05aceb] [plan sha256:fc13db74e107795c6d2896e0135c4a669a3fd7618a9ef1c4feab54f2425cf948] | USD 10.00 | — | [Live lifecycle](evidence/cache-20260830-e-lifecycle.json) passed exact private repository, ephemeral identity, reader binding, and builder creation, then failed closed at `cache_warm` after 1,653.422 seconds with no cache success claim. All six builder/perimeter/identity absences, identity removal, exact repository deletion, no public access/key/retained credential, and protected-bootstrap health passed. The [bounded acknowledgement diagnostic](evidence/cache-20260830-e-acknowledgement-diagnostic.json) proves the known exact JSON boundary while retaining no failed remote bytes. | CLEANED-RELEASED |
-| cache-20260830-d | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source 3ae7a094a1e4ca3865d5b6aa463816eac36318f4] [plan sha256:2387d038386ea64e6301d70133aaee4dceedb2c8279e1a341b744ffb1f9fdbc4] | USD 10.00 | — | [Failed lifecycle](evidence/cache-20260830-d-lifecycle.json) passed exact repository creation/configuration, then stopped before builder creation when domain-restricted sharing rejected the planned temporary `allUsers` reader binding. The [bounded policy diagnostic](evidence/cache-20260830-d-domain-policy-diagnostic.json) proves no public binding applied and exact repository deletion; [sanitized post-failure verification](evidence/cache-20260830-d-post-failure-verification.json) proves the repository and all five builder/perimeter targets absent and the protected bootstrap running. | CLEANED-RELEASED |
-| cache-20260830-c | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source 42241d6fb951cc6274ba991d5762558d67c376ab] [plan sha256:634c4d9db1474655065b1d4d6c2bb4066aeb6c48afa3e2eda7e85d980282104e] | USD 10.00 | — | [Failed lifecycle](evidence/cache-20260830-c-lifecycle.json) stopped at exact repository verification before public binding or builder creation; the [bounded provider-schema diagnostic](evidence/cache-20260830-c-repository-schema-diagnostic.json) proved GCP returns `remoteRepositoryConfig.commonRepository.uri`, deleted the exact diagnostic repository, and re-proved absence; [sanitized post-failure verification](evidence/cache-20260830-c-post-failure-verification.json) proves the API enabled, repository and all five builder/perimeter targets absent, and protected bootstrap running. | CLEANED-RELEASED |
-| cache-20260830-b | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source 448196300660174ae8daf5b70bb55c275dcc981d] [plan sha256:861ebeaa2af38e563bdfb736d955b23ea87bd579188636a5512577ee6b35dd52] | USD 10.00 | — | [Failed lifecycle](evidence/cache-20260830-b-lifecycle.json) stopped at the exact enabled-service query before repository or builder creation; [sanitized post-failure verification](evidence/cache-20260830-b-post-failure-verification.json) proves the API enabled, the exact repository and all five builder/perimeter targets absent, and the protected bootstrap running. | CLEANED-RELEASED |
-| cache-20260830-a | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source a41d9ed72e333057fc017c769ed65f17c92a46e6] [plan sha256:271778431c7553f93d674dffb5131c60133449478d4103c46f366129d7eae2ab] | USD 10.00 | — | [Failed lifecycle](evidence/cache-20260830-a-lifecycle.json) stopped at API enablement before repository or builder creation; [sanitized post-failure verification](evidence/cache-20260830-a-post-failure-verification.json) proves the API enabled, the exact repository and all five builder/perimeter targets absent, and the protected bootstrap running. | CLEANED-RELEASED |
-| route-20260830-i | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source fc4c18b045b9143ba455c38fa890eb112429ad3f] [plan sha256:c17ca0aa19f3eb79f1ae837f240b4972a17c821c5c4b8521582e2d38fbd6b99a] | USD 26.00 | — | [Concurrent-prefetch startup-health timeout and cleanup proof](evidence/gate11route-20260830-i-lifecycle.json): native/provider preflight, exact create, bootstrap, protected registry transport, authenticated concurrent prefetch, and both local digest checks passed; the direct GHCR path still exhausted startup before health, so no inference ran; five exact deletes, all six absence checks, registry removal, and the protected-bootstrap check passed. | CLEANED-RELEASED |
-| route-20260830-h | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source c09552e7ea0d3f0905857acb35a94affabccedbb] [plan sha256:97ce29d07b3965f8fad4272c9a7b641347622a5940b628d917f3a54fa5a17234] | USD 26.00 | — | [Startup-health timeout and cleanup proof](evidence/gate11route-20260830-h-lifecycle.json): native/provider preflight, exact create, bootstrap, protected registry transport, authenticated prefetch, and both local digest checks passed; sequential pulls exhausted the shared startup window before health, so no inference ran; five exact deletes, all six absence checks, registry removal, and the protected-bootstrap check passed. | CLEANED-RELEASED |
-| route-20260830-g | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 108ddbbd4a7da97a426a799e5ced71df87edad36] [plan sha256:52ff4c997508d406b71e0719e4c956829da4a24275d559428de16069c2b37fac] | USD 26.00 | — | [Registry-transport failure and cleanup proof](evidence/gate11route-20260830-g-lifecycle.json): native/provider preflight, exact create, and bootstrap passed; no health or inference ran; five exact deletes, all six absence checks, registry removal, and the protected-bootstrap check passed. | CLEANED-RELEASED |
-| route-20260830-f | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 77eaa8ad683477ac07498d4c2420d8a959afc1e7] [plan sha256:49b182a304b1cd4dd527345cd9f64c1ec80a74dfedda740b2a198c81279e6ece] | USD 26.00 | — | [Serialized primary image-pull failure and cleanup proof](evidence/gate11route-20260830-f-lifecycle.json): native/provider preflight, exact create, and bootstrap passed; no health or inference ran; five exact deletes, all six absence checks, and the protected-bootstrap check passed. | CLEANED-RELEASED |
-| route-20260830-e | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 22b468ad7901edaf85c0ff1c81594c1e90a102bd] [plan sha256:d80db65e522e6955b8d1df9853e961e0c8f0ed7e687152a26fb9d62f7dc1b016] | USD 26.00 | — | [Repeated primary image-pull failure and cleanup proof](evidence/gate11route-20260830-e-lifecycle.json): native/provider preflight, exact create, and bootstrap passed; no health or inference ran; five exact deletes, all six absence checks, and the protected-bootstrap check passed. | CLEANED-RELEASED |
-| route-20260830-d | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source cc2cbb393f19e203a4c7eb5e5abfdfe772dacddc] [plan sha256:47efba5556ab8384b892d4310f3dec8760fe5642f7c20466caea77b858e5c285] | USD 26.00 | — | [Classified primary image-pull failure and cleanup proof](evidence/gate11route-20260830-d-lifecycle.json): native/provider preflight, exact create, and bootstrap passed; no health or inference ran; five exact deletes, all six absence checks, and the protected-bootstrap check passed. | CLEANED-RELEASED |
-| route-20260830-c | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 47dadde939cc869f4b56ea1713127674350ece10] [plan sha256:7a535abd8b3ad6ab42a94538380897b446a280248678cef5c3cd2273020d7261] | USD 26.00 | — | [Failed start-primary and cleanup proof](evidence/gate11route-20260830-c-lifecycle.json): native/provider preflight, exact create, SSH, and bootstrap passed; no health or inference ran; five exact deletes, all six absence checks, and the protected-bootstrap check passed. | CLEANED-RELEASED |
-| route-20260830-b | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 5ef5c5a389ce47080b45bebff66408174a09c4fe] [plan sha256:a87056b4659194824b1a2f0fa40d3834abc7040da78167138df217afd758be12] | USD 26.00 | USD 0 | Independent provider-free verification found a one-second float-rounding timeout overshoot after authorization. No provider call or resource creation occurred; source `47dadde` clamps the bound and uses a new run identity. | CANCELED |
-| route-20260830-a | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 0ea140f3fe764a6772a3b4217ead4bcd7e93562f] [plan sha256:dc11838569220a3fd7d7afbd3e8e70f49ac9034994071252b11931dd9ad45947] | USD 26.00 | — | [Detached retry B](evidence/gate11route-20260830-a-detached-retry-b-lifecycle.json) and the concurrent [keyring failure](evidence/gate11route-20260830-a-keyring-failure-cleanup.json) both stopped before inference and proved five exact deletes, all six resource classes absent, and the protected bootstrap running. The immutable source-`0ea140f` reservation is released; the corrected source uses a new run identity. | CLEANED-RELEASED |
-| gate11pub-20260829-a | GCP | Gate 11 exact Qwen/Gemma public-route image publication from source `d2ea7dea5f3541b86293279b0a650bb46ab82583`; one `e2-standard-4`, 200 GB balanced auto-delete boot disk, six-hour DELETE deadline, registry egress, and contingency | USD 10.00 | — | [Passed publications](evidence/gate11pub-20260829-a-publication-attempt.json) and the [sanitized cleanup verification](evidence/gate11pub-20260829-a-cleanup-verification-attempt.json) bind the strict [Qwen](evidence/gate11pub-20260829-a-qwen3.5-2b-publication-evidence.json) and [Gemma](evidence/gate11pub-20260829-a-gemma-4-e2b-publication-evidence.json) evidence. Registry credentials are absent; native authentication refreshed, the exact builder and auto-delete boot disk are absent, and the protected bootstrap is running. The historical maximum was released by the explicit cleanup-backed owner reset on 2026-08-30; delayed billing remains informational. | CLEANED-RELEASED |
-| gate9-20260829-d | GCP | Gate 9 sequential Qwen/Gemma edge envelopes at pushed source `480c1fa`: one G2/L4 route and one native Linux client per model, native Windows client local, 60-minute model limits, 90-minute DELETE backstops, disks, egress, and contingency | USD 28.00 | — | [Failed attempt and cleanup proof](evidence/gate9-20260829-d-edge-envelope-attempt.json): the native Windows Qwen cold cache made no progress after 22,975,832 bytes and stopped at five minutes; Linux and Gemma did not start; exact instances, disks, firewalls, model service, and benchmark process are absent; global and regional L4 usage are zero; protected bootstrap running. The historical maximum was released by the explicit cleanup-backed owner reset on 2026-08-30; delayed billing remains informational. | CLEANED-RELEASED |
-| gate9-20260829-c | GCP | Owner-authorized clean Gate 9 retry at pushed source `1e845e6`: sequential Qwen/Gemma routes and Windows/Linux cold clients, 60-minute model limits, 90-minute DELETE backstops, disks, egress, and contingency | USD 28.00 | — | [Failed attempt and cleanup proof](evidence/gate9-20260829-c-edge-envelope-attempt.json): the single Windows Qwen invocation failed before inference after MSYS converted the bootstrap multiaddr; Linux and Gemma did not start; exact instances, disks, firewalls, model service, and benchmark process are absent; GPU usage is zero; protected bootstrap running. The historical maximum was released by the explicit cleanup-backed owner reset on 2026-08-30; delayed billing remains informational. | CLEANED-RELEASED |
-| gate9-20260829-b | GCP | Owner-authorized Gate 9 attempt: sequential Qwen/Gemma routes and Windows/Linux cold clients, 60-minute model limits, 90-minute DELETE backstops, disks, egress, and contingency | USD 28.00 | — | [Failed attempt and cleanup proof](evidence/gate9-20260829-b-edge-envelope-attempt.json): Windows Qwen passed; Linux Qwen inference completed but post-close RSS failed the 16 MiB allowance; Gemma was not started; exact instances, disks, firewalls, and benchmark processes are absent; GPU usage is zero; protected bootstrap running. The historical maximum was released by the explicit cleanup-backed owner reset on 2026-08-30; delayed billing remains informational. | CLEANED-RELEASED |
-| gate9-20260829-a | GCP | Stopped Gate 9 Qwen attempt after overlapping orchestration launched two Windows cold-client processes | USD 28.00 | — | [Failed attempt and cleanup proof](evidence/gate9-20260829-a-edge-envelope-attempt.json): both benchmark processes stopped without reports; exact instances, disks, firewalls, and model service absent; GPU usage zero; protected bootstrap running. Historical maximum released by explicit owner direction on 2026-08-29 after cleanup. | CLEANED-RELEASED |
-| gatev-20260827-a | GCP | Gate V one-host Linux G2/L4 Qwen public vertical slice, 150 GB balanced disk, six-hour hard deadline, headroom, and contingency | USD 17 | — | [Passed run and cleanup proof](evidence/gate-v-20260827-a-public-vertical-slice.json): instance, disk, firewalls, subnet, network, addresses, routers, and resource policies absent at 2026-08-27T09:28:20Z; GPU usage zero; protected bootstrap running. Historical maximum released by explicit owner reset on 2026-08-27; billing remains informational. | CLEANED-RELEASED |
-| gate5-20260827-a | GCP | Gate 5 Qwen3.5 2B Windows/Linux qualification and real-run source fixes | USD 69.00 | — | All four exact profile VMs/disks and both network perimeters are absent; GPU usage is zero and `communityai-bootstrap-1` remains running. Historical maximum released by explicit owner reset on 2026-08-27; billing remains informational. | CLEANED-RELEASED |
-| gate5-20260827-b | GCP | Same-source `23a4078` Windows/Linux CPU retries; sequential high-memory hosts, private 150 GB disks, one-hour DELETE deadlines, 25% headroom, and fixed contingency | USD 14.00 | — | [Passed qualification and cleanup proof](evidence/gate5-20260827-qwen3.5-2b-qualification.json): Windows used N1; Linux used a lower-cost E2 fallback after N1 capacity failed in every regional zone. Both hosts/disks and the exact firewall, NAT, router, subnet, address, and network are absent; L4 usage is zero; protected bootstrap running. Historical maximum released by explicit owner reset on 2026-08-27. | CLEANED-RELEASED |
-| gate6-20260827-a | GCP | Gate 6 Gemma 4 E2B four-profile qualification; serial 48 GB CUDA recovery after a native Windows failover-load crash | USD 79.00 | — | [Passed qualification and cleanup proof](evidence/gate6-20260827-gemma-4-e2b-qualification.json): all four profile hosts/disks and the exact firewall, NATs, routers, subnets, addresses, and network are absent; global GPU and regional L4 usage are zero; protected bootstrap running. Historical maximum released by explicit owner reset on 2026-08-27; billing remains informational. | CLEANED-RELEASED |
-| gate7-20260827-a | FLY | Gate 7 CPU-only provider recovery mechanism | USD 30.00 | — | [Passed TinyLlama recovery and cleanup evidence](evidence/gate7-20260828-tinyllama-recovery.json): one bootstrap and four workers ran, one selected worker was killed, the route recovered with exact parity, all five Machines were destroyed, and the token was revoked. Historical maximum released by the explicit owner reset on 2026-08-29 after the later Gate 9A cleanup. | CLEANED-RELEASED |
-| gate7pub-20260827-a | GCP | Gate 7 exact Qwen CPU image publisher after repeat 3,601.7-second Fly registry disconnects; 80 GB disk, four-hour DELETE deadline, egress, and contingency | USD 10.00 | — | [Attempt and cleanup proof](evidence/gate7-20260827-a-separate-machine-attempt.json): exact builder and boot disk absent at 2026-08-28T01:24:30Z; protected bootstrap running. Historical maximum released by the explicit owner reset on 2026-08-29 after the later Gate 9A cleanup; billing remains informational. | CLEANED-RELEASED |
-| gate7pub-20260828-b | GCP | Gate 7 exact CPU-only Qwen image republish from verified source `7570d94`; `e2-standard-4`, 80 GB balanced disk, four-hour DELETE deadline, egress, and contingency | USD 10.00 | — | [Publication and cleanup evidence](evidence/gate7-20260828-b-separate-machine-attempt.json) binds the [immutable image report](evidence/gate7-20260828-b-qwen3.5-2b-publication-evidence.json); builder and disk absent, protected bootstrap running. Historical maximum released by the explicit owner reset on 2026-08-29 after the later Gate 9A cleanup. | CLEANED-RELEASED |
-| g7mirror-20260828-c | GCP | Gate 7 immutable Qwen mirror to the isolated Fly registry; `e2-standard-2`, 30 GB disk, two-hour DELETE deadline, egress, contingency | USD 10.00 | — | [Attempt, repository initialization, credential cleanup, and builder cleanup](evidence/g7mirror-20260828-c-fly-registry-attempt.json): the first copy exposed an uninitialized Fly repository; both registry logins were removed, builder and disk are absent, the protected bootstrap remains running, and supported build-only initialization created no Machine. Historical maximum released by the explicit owner reset on 2026-08-29 after the later Gate 9A cleanup. | CLEANED-RELEASED |
-| g7mirror-20260828-d | GCP | Final Gate 7 immutable Qwen mirror after supported Fly repository initialization; `e2-standard-2`, 30 GB disk, intended two-hour DELETE deadline, egress, contingency | USD 10.00 | — | [Failed attempt and cleanup evidence](evidence/g7mirror-20260828-d-fly-registry-attempt.json): copy did not start because GHCR authentication was rejected; the exact builder and disk are absent, Fly has zero Machines/tokens, and the protected bootstrap is running. Historical maximum released by the explicit owner reset on 2026-08-29 after the later Gate 9A cleanup. | CLEANED-RELEASED |
-| g7mirror-20260828-e | GCP | Canceled Qwen mirror retry | USD 10.00 | USD 0 | Owner stopped the GCP-to-Fly mirror loop before provisioning; no instance or disk was created. | CANCELED |
+| gate13-20260901-a | GCP | Automated Gate 13 real-window replay, finalized against production packages from `e904d36416a4f186c0bec05ff20210df9ca19848`: one bounded L4 route, then sequential ordinary-user Windows/Qwen and Linux/Gemma clients [original plan `sha256:6687b9ba098b3f6676f48f4bf03ebb92bdc6a1278bf5bc1c227819b3a3e7cbb0`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-i | GCP | Final Gate 13 manual clean-host playthrough: Gate 11 route acceptance first, then sequential ordinary-user Windows/Qwen and Linux/Gemma desktop qualification with literal UI controls and post-restart inference [plan `sha256:8525c3099f273c099aba26de57c1f610a0c74cac65ed2640589d51e874bd0c44`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-h | GCP | Final corrected Gate 13 route-first lifecycle with both four-file release-audit bundles pinned and staged, the bounded Windows user-runtime environment, exact archive preflight, and sequential ordinary-user Windows/Qwen then Linux/Gemma clients [plan `sha256:f243254cc5fb65f44d0c9e707be36feb3284fd6e15b15620882843798fb456b1`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-g | GCP | Corrected Gate 13 route-first lifecycle with a bounded standard Windows user-runtime environment, one durable foreground host-adapter execution as each ordinary OS user, exact archive preflight, and sequential Windows/Qwen then Linux/Gemma clients [plan `sha256:f27f36158f2ad16019578555023cc854cb1e6e3b10ebae8cd3ed24d757b8e032`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-f | GCP | Fresh Gate 13 route-first lifecycle using one durable foreground host-adapter execution over IAP SSH as each ordinary OS user, exact archive preflight, and sequential Windows/Qwen then Linux/Gemma clients [plan `sha256:c9a2aafc84940df901a7db1755af2e684f845b78dcdfac04332cfed36388ba25`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-e | GCP | Fresh Gate 13 route-first lifecycle with pinned reusable route setup, corrected S4U/SID Windows host job, explicit archive download-and-hash prerequisite, and sequential Windows/Qwen then Linux/Gemma clients [plan `sha256:9ca0fa516017c4a3709a467752f779bcb3bbc0a7c790f9bc61de56d385804c62`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-d | GCP | Fresh Gate 13 route-first lifecycle using the durable controller and host jobs, one bounded route and sequential clients [plan `sha256:d32050a51b8f696aa224fc7e748c9113e174e3c3069c1f8b2bc769b0c5ecea18`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-c | GCP | Gate 13 durable route-first lifecycle with the same bounded 16-hour route and sequential 6-hour clients, new exact resources, and corrected explicit IAP target-tag arguments [plan `sha256:07b6cd399ef7a9733602dfc19a741feddec8d15e5f4b5bac7347a192675f6d9c`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-b | GCP | Gate 13 durable route-first lifecycle: one 16-hour G2/L4 product route, then sequential fresh 6-hour Windows/Qwen and Linux/Gemma CPU clients [plan `sha256:3f3f921ded6eed1729aff175f5c91b4effe1966a31c82bdbe41ed69075442d64`] | USD 56.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260831-a | GCP | Gate 13 replacement product-node route plus fresh CPU Windows/Linux packaged lifecycles at route source `f64a388a47b098ac7f69d2affc59816376b43bb1` and exact package source `1971f106cc5bf90724d938c986a719ce2744f3e7` [plan sha256:313f5d34eefd64c71e265bdb7044d8ef5f56550360a7e9a7104265434292fd69] | USD 52.00 | — | [Archived cleanup][ledger-history] | CLEANED-COMMITTED |
+| gate13-20260830-c | GCP | Gate 13 sequential clean packaged Qwen Windows and Gemma Linux lifecycles at exact package source `1971f106cc5bf90724d938c986a719ce2744f3e7`, temporarily suspending and later restoring the Gate 11 route while reusing its sole global L4 allocation on uniquely named fresh Windows and Linux clients [plan sha256:427bc1ed8a6645ad0650d91aaba7aa753d398fa84f56d57b50aca04c4e0cc955] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate9-20260830-e | GCP | Gate 9 concurrent Qwen/Gemma Windows/Linux acquisition records and schema-v3 envelopes at pushed source `ba410f74f1cf625f1e1c34734b53e4514fa7c5ec`, reusing the separately authorized product route and using bounded isolated clients [plan sha256:04ba77ee68f4a895ae080a4ddcbf6805b502da6a95a4146734acbddff92de307] | USD 46.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-j | GCP | Gate 11 signed-catalog product node route [workload gcp-product-node-route] [source e1d715fd47c852fa12ca50c76e8f4c6a0831fd78] [final runtime source 4cef141746705c3ee8bc8e017693855e0bc4871e] [plan sha256:1a0927e9d83a9a409ac2ea0232c4fceb14821d3f2c5eb87def88b8e7cdcb07d8] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| cache-20260830-g | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source 62be8f1c999b6ebe0ece2a660a0be4757cc83005] [plan sha256:109d2b6958ac8ced31e7202c8eb230387d29615f964d32d6726564b9366eafd7] | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| cache-20260830-f | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source bff0c3203191725928246ad3e13deb01ffbab8de] [plan sha256:735cfd847291229571529c8f640fc76005e340a29680806295dad33a7e1a1fb6] | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| cache-20260830-e | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source c0bd81e4e3ced3cd05a642740e343da41d05aceb] [plan sha256:fc13db74e107795c6d2896e0135c4a669a3fd7618a9ef1c4feab54f2425cf948] | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| cache-20260830-d | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source 3ae7a094a1e4ca3865d5b6aa463816eac36318f4] [plan sha256:2387d038386ea64e6301d70133aaee4dceedb2c8279e1a341b744ffb1f9fdbc4] | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| cache-20260830-c | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source 42241d6fb951cc6274ba991d5762558d67c376ab] [plan sha256:634c4d9db1474655065b1d4d6c2bb4066aeb6c48afa3e2eda7e85d980282104e] | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| cache-20260830-b | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source 448196300660174ae8daf5b70bb55c275dcc981d] [plan sha256:861ebeaa2af38e563bdfb736d955b23ea87bd579188636a5512577ee6b35dd52] | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| cache-20260830-a | GCP | Gate 11 private same-region route image cache [workload gcp-public-route-cache] [source a41d9ed72e333057fc017c769ed65f17c92a46e6] [plan sha256:271778431c7553f93d674dffb5131c60133449478d4103c46f366129d7eae2ab] | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-i | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source fc4c18b045b9143ba455c38fa890eb112429ad3f] [plan sha256:c17ca0aa19f3eb79f1ae837f240b4972a17c821c5c4b8521582e2d38fbd6b99a] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-h | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source c09552e7ea0d3f0905857acb35a94affabccedbb] [plan sha256:97ce29d07b3965f8fad4272c9a7b641347622a5940b628d917f3a54fa5a17234] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-g | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 108ddbbd4a7da97a426a799e5ced71df87edad36] [plan sha256:52ff4c997508d406b71e0719e4c956829da4a24275d559428de16069c2b37fac] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-f | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 77eaa8ad683477ac07498d4c2420d8a959afc1e7] [plan sha256:49b182a304b1cd4dd527345cd9f64c1ec80a74dfedda740b2a198c81279e6ece] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-e | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 22b468ad7901edaf85c0ff1c81594c1e90a102bd] [plan sha256:d80db65e522e6955b8d1df9853e961e0c8f0ed7e687152a26fb9d62f7dc1b016] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-d | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source cc2cbb393f19e203a4c7eb5e5abfdfe772dacddc] [plan sha256:47efba5556ab8384b892d4310f3dec8760fe5642f7c20466caea77b858e5c285] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-c | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 47dadde939cc869f4b56ea1713127674350ece10] [plan sha256:7a535abd8b3ad6ab42a94538380897b446a280248678cef5c3cd2273020d7261] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| route-20260830-b | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 5ef5c5a389ce47080b45bebff66408174a09c4fe] [plan sha256:a87056b4659194824b1a2f0fa40d3834abc7040da78167138df217afd758be12] | USD 26.00 | USD 0 | [Archived cleanup][ledger-history] | CANCELED |
+| route-20260830-a | GCP | Gate 11 finite Qwen primary and Gemma standby routes [workload gcp-public-route] [source 0ea140f3fe764a6772a3b4217ead4bcd7e93562f] [plan sha256:dc11838569220a3fd7d7afbd3e8e70f49ac9034994071252b11931dd9ad45947] | USD 26.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate11pub-20260829-a | GCP | Gate 11 exact Qwen/Gemma public-route image publication from source `d2ea7dea5f3541b86293279b0a650bb46ab82583`; one `e2-standard-4`, 200 GB balanced auto-delete boot disk, six-hour DELETE deadline, registry egress, and contingency | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate9-20260829-d | GCP | Gate 9 sequential Qwen/Gemma edge envelopes at pushed source `480c1fa`: one G2/L4 route and one native Linux client per model, native Windows client local, 60-minute model limits, 90-minute DELETE backstops, disks, egress, and contingency | USD 28.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate9-20260829-c | GCP | Owner-authorized clean Gate 9 retry at pushed source `1e845e6`: sequential Qwen/Gemma routes and Windows/Linux cold clients, 60-minute model limits, 90-minute DELETE backstops, disks, egress, and contingency | USD 28.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate9-20260829-b | GCP | Owner-authorized Gate 9 attempt: sequential Qwen/Gemma routes and Windows/Linux cold clients, 60-minute model limits, 90-minute DELETE backstops, disks, egress, and contingency | USD 28.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate9-20260829-a | GCP | Stopped Gate 9 Qwen attempt after overlapping orchestration launched two Windows cold-client processes | USD 28.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gatev-20260827-a | GCP | Gate V one-host Linux G2/L4 Qwen public vertical slice, 150 GB balanced disk, six-hour hard deadline, headroom, and contingency | USD 17 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate5-20260827-a | GCP | Gate 5 Qwen3.5 2B Windows/Linux qualification and real-run source fixes | USD 69.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate5-20260827-b | GCP | Same-source `23a4078` Windows/Linux CPU retries; sequential high-memory hosts, private 150 GB disks, one-hour DELETE deadlines, 25% headroom, and fixed contingency | USD 14.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate6-20260827-a | GCP | Gate 6 Gemma 4 E2B four-profile qualification; serial 48 GB CUDA recovery after a native Windows failover-load crash | USD 79.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate7-20260827-a | FLY | Gate 7 CPU-only provider recovery mechanism | USD 30.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate7pub-20260827-a | GCP | Gate 7 exact Qwen CPU image publisher after repeat 3,601.7-second Fly registry disconnects; 80 GB disk, four-hour DELETE deadline, egress, and contingency | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| gate7pub-20260828-b | GCP | Gate 7 exact CPU-only Qwen image republish from verified source `7570d94`; `e2-standard-4`, 80 GB balanced disk, four-hour DELETE deadline, egress, and contingency | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| g7mirror-20260828-c | GCP | Gate 7 immutable Qwen mirror to the isolated Fly registry; `e2-standard-2`, 30 GB disk, two-hour DELETE deadline, egress, contingency | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| g7mirror-20260828-d | GCP | Final Gate 7 immutable Qwen mirror after supported Fly repository initialization; `e2-standard-2`, 30 GB disk, intended two-hour DELETE deadline, egress, contingency | USD 10.00 | — | [Archived cleanup][ledger-history] | CLEANED-RELEASED |
+| g7mirror-20260828-e | GCP | Canceled Qwen mirror retry | USD 10.00 | USD 0 | [Archived cleanup][ledger-history] | CANCELED |
 
-Owner-set accounting baseline on 2026-08-27: **USD 0 spent before `gatev-20260827-a`**.
-The removed USD 99 total was a sum of worst-case reservations, not observed provider spend.
-This baseline is an owner authorization decision, not a Cloud Billing reconciliation.
-Read-only reconciliation at 2026-08-27T15:42:15Z confirmed billing is enabled but the
-project has zero queryable BigQuery export datasets, so no observed-cost figure is available
-yet. The owner reset the budget again on 2026-08-27 after Gate 6 cleanup was proved,
-so its maximum remains historical evidence but no longer consumes the new epoch. The
-`gate7-20260827-a` consumed a conservatively reserved USD 30 maximum and is now
-cleaned. The additional
-`gate7pub-20260827-a` maximum remains committed at USD 10 after its short-lived
-CPU-only GCP builder published the exact image and cleanup was proved; observed billing
-is still unavailable. The resulting 9 GB rootfs plan exceeded Fly's current 8 GB hard
-limit before any Machine was created. Run `gate7pub-20260828-b` consumed a further
-USD 10 maximum for the cleaned short-lived CPU builder that published and verified the
-8 GB-compatible replacement image. Fly rejected its private external registry reference
-before creating a Machine. Run `g7mirror-20260828-c` consumed USD 10 maximum for a
-cleaned mirror builder; the copy exposed that the never-deployed Fly app repository first
-required Fly's supported build-only initialization. That zero-byte local initialization
-created no Machine. Retry `g7mirror-20260828-d` consumed its committed USD 10 maximum after creating the
-bounded builder, then failed before copying because GHCR authentication was rejected.
-Its exact GCP builder and disk are now proved absent and the protected bootstrap is
-running. Retry `g7mirror-20260828-e` was canceled before provisioning. The four
-conservatively committed GCP maxima plus the cleaned Fly reservation left USD 30 before
-`gate9-20260829-a`. After that attempt's complete cleanup was proved, the owner explicitly
-directed immediate continuation on 2026-08-29, resetting the combined test-budget epoch to
-USD 100. The cleaned `gate9-20260829-b`, `gate9-20260829-c`, and `gate9-20260829-d`
-maxima and the cleaned `gate11pub-20260829-a` publisher maximum consumed that epoch while
-billing remained delayed. Native-auth verification at 2026-08-30T00:36:31Z then proved
-the publisher's exact builder and disk absent and the protected bootstrap running. With
-every run in that epoch cleanup-proved, the owner explicitly authorized a cleanup-backed
-reset on 2026-08-30. Those four historical maxima are now `CLEANED-RELEASED`, delayed
-charges remain informational, and the new combined authorization epoch starts at **USD 100**.
-On 2026-08-30 the owner also designated execution speed as the operating priority: take the
-shortest authorized critical path and begin bounded work as soon as its fail-closed preflight
-passes. That priority does not raise the USD 100 ceiling or waive exact cleanup, protected-
-resource, credential, privacy, or acceptance requirements. Fly credit is not counted as extra
-authorization.
+</details>
 
-After the Gate 9 clients, Gate 11 product route, and Gate 13 clients were all cleanup-proved,
-the owner explicitly authorized another cleanup-backed reset for the next run on 2026-08-31.
-Their USD 98 conservative maxima remain historical evidence but no longer consume the new
-epoch; delayed observed charges remain informational. The next run starts with a new combined
-authorization of **USD 100**. Every paid create still requires fresh native authentication,
-an exact source-bound cost authorization, a conservative ledger reservation, and the existing
-fail-closed preflight and cleanup controls.
+[ledger-history]: RELEASE_READINESS_HISTORY.md#cloud-authorization-and-spend-ledger
 
 ## Evidence update rules
 
-- Link a passed gate to an immutable report, source commit, manifest digest, and relevant
-  workflow/provider run.
-- Never put credentials, prompts, provider output, private paths, or private endpoints here.
-- A deterministic unit/integration test may prove implementation readiness, but it cannot
-  pass a gate that explicitly requires external hardware, multiple hosts, public workers,
-  packaging, signing, or real cleanup.
-- Once the required runner, adapter, or verifier exists and passes its contract tests,
-  additional test-harness hardening does not count as critical-path progress unless a
-  real gate attempt exposed the exact defect being fixed.
-- When a gate fails, keep the failure evidence, use `IN PROGRESS`, `WAITING`, or `BLOCKED`
-  accurately, and record the concrete next action. Never lower or bypass the gate merely
-  to obtain a pass.
+- Keep this file to current outcomes, concrete next actions, and operational inputs.
+  Put chronological implementation/provider detail in linked evidence or the archive.
+- Record exact model/profile and source/package identity. A source-runtime test
+  cannot pass a packaged test; a short functional run cannot pass performance.
+- Preserve failed attempts and cleanup evidence. Do not replace a failure with a
+  later pass or lower an acceptance requirement to obtain a green status.
+- Keep private credentials, endpoints, and user content out of release records.
+- New harness work must resolve a concrete implementation or observed-run gap.

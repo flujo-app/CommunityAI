@@ -160,6 +160,13 @@ class NodeModelConfig:
     revocation_files: Tuple[Path, ...] = ()
     request_timeout: float = 30.0
     max_retries: int = 3
+    execution: str = "distributed"
+    local_device: str = "auto"
+    local_max_memory_bytes: int = 3 * 1024**3
+    local_max_disk_bytes: int = 8 * 1024**3
+    local_max_context: int = 2048
+    local_max_new_tokens: int = 256
+    local_max_seconds: float = 120.0
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any], *, base_dir: Path, index: int) -> "NodeModelConfig":
@@ -169,20 +176,59 @@ class NodeModelConfig:
             source,
             field,
             required=("manifest", "initial_peers"),
-            optional=("cache_dir", "revocation_files", "request_timeout", "max_retries"),
+            optional=(
+                "cache_dir",
+                "revocation_files",
+                "request_timeout",
+                "max_retries",
+                "execution",
+                "local_device",
+                "local_max_memory",
+                "local_max_disk_space",
+                "local_max_context",
+                "local_max_new_tokens",
+                "local_max_seconds",
+            ),
         )
+        execution = source.get("execution", "distributed")
+        if execution not in ("distributed", "local"):
+            raise NodeConfigError(f"{field}.execution must be distributed or local")
+        device = source.get("local_device", "auto")
+        if not isinstance(device, str) or re.fullmatch(r"auto|cpu|cuda(?::[0-9]+)?", device) is None:
+            raise NodeConfigError(f"{field}.local_device must be auto, cpu, or cuda[:index]")
+        if execution != "local" and any(key.startswith("local_") for key in source):
+            raise NodeConfigError(f"{field} local settings require local execution")
         cache_value = source.get("cache_dir")
         cache_dir = None if cache_value is None else _resolve_path(cache_value, f"{field}.cache_dir", base_dir)
         revocation_values = _require_string_list(source.get("revocation_files", []), f"{field}.revocation_files")
         return cls(
             manifest_path=_resolve_path(source["manifest"], f"{field}.manifest", base_dir),
-            initial_peers=_require_string_list(source["initial_peers"], f"{field}.initial_peers", nonempty=True),
+            initial_peers=_require_string_list(
+                source["initial_peers"], f"{field}.initial_peers", nonempty=execution == "distributed"
+            ),
             cache_dir=cache_dir,
             revocation_files=tuple(
                 _resolve_path(value, f"{field}.revocation_files[]", base_dir) for value in revocation_values
             ),
             request_timeout=_require_positive_number(source.get("request_timeout", 30), f"{field}.request_timeout"),
             max_retries=_require_positive_int(source.get("max_retries", 3), f"{field}.max_retries"),
+            execution=execution,
+            local_device=device,
+            local_max_memory_bytes=_require_size(source.get("local_max_memory", "3GiB"), f"{field}.local_max_memory")[
+                1
+            ],
+            local_max_disk_bytes=_require_size(
+                source.get("local_max_disk_space", "8GiB"), f"{field}.local_max_disk_space"
+            )[1],
+            local_max_context=_require_positive_int(
+                source.get("local_max_context", 2048), f"{field}.local_max_context"
+            ),
+            local_max_new_tokens=_require_positive_int(
+                source.get("local_max_new_tokens", 256), f"{field}.local_max_new_tokens"
+            ),
+            local_max_seconds=_require_positive_number(
+                source.get("local_max_seconds", 120), f"{field}.local_max_seconds"
+            ),
         )
 
 
@@ -285,6 +331,7 @@ class ContributionPolicyConfig:
     max_vram: Optional[str] = None
     max_vram_bytes: Optional[int] = None
     max_vram_fraction: Optional[float] = None
+    max_processing_percent: float = 100.0
     max_bandwidth_mbps: Optional[float] = None
     max_power_watts: Optional[float] = None
     pause_timeout: float = 10.0
@@ -304,6 +351,7 @@ class ContributionPolicyConfig:
                 "denied_models",
                 "max_disk_space",
                 "max_vram",
+                "max_processing_percent",
                 "max_bandwidth_mbps",
                 "max_power_watts",
                 "pause_timeout",
@@ -333,6 +381,14 @@ class ContributionPolicyConfig:
         else:
             max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
         sharing_enabled = _require_bool(source["sharing_enabled"], f"{field}.sharing_enabled")
+        processing = source.get("max_processing_percent", 100.0)
+        if (
+            isinstance(processing, bool)
+            or not isinstance(processing, (int, float))
+            or not math.isfinite(processing)
+            or not 1 <= processing <= 100
+        ):
+            raise NodeConfigError(f"{field}.max_processing_percent must be between 1 and 100")
         if sharing_enabled and max_disk_bytes is None:
             raise NodeConfigError(f"{field}.max_disk_space is required when sharing_enabled is true")
         return cls(
@@ -345,6 +401,7 @@ class ContributionPolicyConfig:
             max_vram=max_vram,
             max_vram_bytes=max_vram_bytes,
             max_vram_fraction=max_vram_fraction,
+            max_processing_percent=float(processing),
             max_bandwidth_mbps=(
                 None
                 if source.get("max_bandwidth_mbps") is None
@@ -370,6 +427,7 @@ class ContributionPolicyConfig:
             "denied_models": list(self.denied_models),
             "max_disk_space": self.max_disk_space,
             "max_vram": self.max_vram,
+            "max_processing_percent": self.max_processing_percent,
             "max_bandwidth_mbps": self.max_bandwidth_mbps,
             "max_power_watts": self.max_power_watts,
             "pause_timeout": self.pause_timeout,
@@ -401,6 +459,7 @@ class WorkerConfig:
     throughput: float | str = "auto"
     port: Optional[int] = None
     public_ip: Optional[str] = None
+    public_port: Optional[int] = None
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any], *, base_dir: Path, index: int) -> "WorkerConfig":
@@ -425,6 +484,7 @@ class WorkerConfig:
                 "throughput",
                 "port",
                 "public_ip",
+                "public_port",
             ),
         )
         worker_id = _require_string(source["id"], f"{field}.id")
@@ -460,6 +520,12 @@ class WorkerConfig:
         port = None if port_value is None else _require_positive_int(port_value, f"{field}.port")
         if port is not None and port > 65535:
             raise NodeConfigError(f"{field}.port must be <= 65535")
+        public_port_value = source.get("public_port")
+        public_port = (
+            None if public_port_value is None else _require_positive_int(public_port_value, f"{field}.public_port")
+        )
+        if public_port is not None and (public_port > 65535 or port is None or source.get("public_ip") is None):
+            raise NodeConfigError(f"{field}.public_port requires port, public_ip and a value <= 65535")
 
         def optional_string(name: str) -> Optional[str]:
             value = source.get(name)
@@ -508,6 +574,7 @@ class WorkerConfig:
             throughput=throughput,
             port=port,
             public_ip=optional_string("public_ip"),
+            public_port=public_port,
         )
 
 
@@ -524,6 +591,10 @@ class NodeConfig:
     contribution_policy: ContributionPolicyConfig = ContributionPolicyConfig()
     discovery_update_period: float = 30.0
     discovery_startup_timeout: float = 15.0
+    inference_mode: str = "auto"
+    catalog_path: Optional[Path] = None
+    catalog_bootstrap_path: Optional[Path] = None
+    catalog_refresh_seconds: float = 300.0
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any], *, base_dir: Path) -> "NodeConfig":
@@ -540,9 +611,18 @@ class NodeConfig:
                 "contribution_policy",
                 "auto_model_priority",
                 "route_demand_authority_roots",
+                "inference_mode",
+                "catalog_path",
+                "catalog_bootstrap_path",
+                "catalog_refresh_seconds",
             ),
         )
         schema_version = _require_positive_int(source["schema_version"], "schema_version")
+        inference_mode = source.get("inference_mode", "auto")
+        if inference_mode not in ("auto", "local_only"):
+            raise NodeConfigError("inference_mode must be auto or local_only")
+        if (source.get("catalog_path") is None) != (source.get("catalog_bootstrap_path") is None):
+            raise NodeConfigError("catalog_path and catalog_bootstrap_path must be configured together")
         if schema_version != NODE_CONFIG_SCHEMA_VERSION:
             raise NodeConfigError(f"Unsupported schema_version {schema_version}; expected {NODE_CONFIG_SCHEMA_VERSION}")
         models_value = source["models"]
@@ -581,6 +661,16 @@ class NodeConfig:
         return cls(
             schema_version=schema_version,
             max_loaded_models=_require_positive_int(source.get("max_loaded_models", 1), "max_loaded_models"),
+            inference_mode=inference_mode,
+            catalog_path=None
+            if source.get("catalog_path") is None
+            else _resolve_path(source["catalog_path"], "catalog_path", base_dir),
+            catalog_bootstrap_path=None
+            if source.get("catalog_bootstrap_path") is None
+            else _resolve_path(source["catalog_bootstrap_path"], "catalog_bootstrap_path", base_dir),
+            catalog_refresh_seconds=_require_positive_number(
+                source.get("catalog_refresh_seconds", 300), "catalog_refresh_seconds"
+            ),
             models=models,
             auto_model_priority=_require_model_list(source.get("auto_model_priority", []), "auto_model_priority"),
             route_demand_authority_roots=_require_route_demand_authority_roots(

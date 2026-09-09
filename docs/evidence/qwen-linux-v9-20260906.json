@@ -1,0 +1,121 @@
+{
+  "result": "passed",
+  "scope": "Linux CUDA engineering package and offline local CPU inference",
+  "run_id": "q38pm-20260906-070127-a792",
+  "packaged": true,
+  "source_commit": null,
+  "source_archive_sha256": "c76e426f65e946b1c69649797bdc05ba1879094ab9ea429aaa2e064db9ad4604",
+  "install_archive": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 6364,
+    "format": "tar.gz",
+    "path": "communityai-desktop-linux.tar.gz",
+    "platform": "Linux",
+    "preserves_executable_modes": true,
+    "preserves_internal_file_symlinks": true,
+    "schema_version": 1,
+    "sha256": "98fd7c2f9bef97915a9f915ccde1513c571c2c9aa03e0635c63ff82e9aaaadeb",
+    "size_bytes": 3241516842
+  },
+  "runtime": {
+    "application": "CommunityAI-Node",
+    "catalog_bootstrap_schema": 1,
+    "drift": "2.3.0.dev2",
+    "fastapi": "0.141.1",
+    "frozen": true,
+    "hivemind": "1.1.12",
+    "keyring": "25.7.0",
+    "p2pd": "p2pd",
+    "schema_version": 1,
+    "torch": "2.6.0+cu124",
+    "transformers": "5.13.1",
+    "uvicorn": "0.52.4"
+  },
+  "ui_smoke_scope": "Qt offscreen on Ubuntu GCP VM; not native interactive desktop",
+  "ui_smoke_passed": true,
+  "onboarding_ui_smoke_passed": true,
+  "local_completion_seconds": 29.397944817999814,
+  "completion": {
+    "id": "cmpl-3b730e839d294904befcb9c3",
+    "object": "text_completion",
+    "created": 1788681356,
+    "model": "Qwen3.5-0.8B-Local",
+    "choices": [
+      {
+        "index": 0,
+        "text": " Paris.\nThe capital of France is",
+        "finish_reason": "length"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 5,
+      "completion_tokens": 8,
+      "total_tokens": 13
+    }
+  },
+  "short_chat": {
+    "id": "chatcmpl-de9180aa09c44bc1b8f79dbc",
+    "object": "chat.completion",
+    "created": 1788681368,
+    "model": "Qwen3.5-0.8B-Local",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Paris\n"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 31,
+      "completion_tokens": 4,
+      "total_tokens": 35
+    }
+  },
+  "token_budget_rejected": true,
+  "local_only_persisted": true,
+  "stream_cancel_released_lease": true,
+  "node_stopped": true,
+  "limits": [
+    "Unsigned engineering artifact with fixed source snapshot; no commit-bound release attestation",
+    "GPU runtime bundled and verified; inference in this test ran on CPU",
+    "No native desktop install/upgrade/uninstall or Linux GPU sharing claim",
+    "Audit and checksums retained locally; the Linux install archive was not published"
+  ],
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-implementation/q38-linux-audit.tar.gz",
+      "sha256": "1ac692aacdeb8dc0dcdbc3c9438607548eed734627b9a63a8c69f9aa929730b7"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-070127-a792/linux-package-source.json",
+      "sha256": "d1dab1d48265c70460b9a489cce9da5932f2b30728eeb3ccd2661e76026d52f6"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v9-source.json",
+      "sha256": "4566fd0c2dfeb18d3ef4945705ca672d6ff6df492ed4880edda775d51367645a"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v9-source.tar.gz",
+      "sha256": "c76e426f65e946b1c69649797bdc05ba1879094ab9ea429aaa2e064db9ad4604"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/linux-cloud-v9-audit/output/desktop-metrics.json",
+      "sha256": "cd0ffd890d7ec31213a1d0ffb85a42712127113299e20cd459608c144005f402"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/linux-cloud-v9-audit/output/provenance.json",
+      "sha256": "9d07285c1db0de9fe6bba0369fafba3b543e39797eb8d7a898c97f864052a54a"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/linux-cloud-v9-audit/local-qualification/result.json",
+      "sha256": "db3b43844ce0e376802851a7587f496b8a5519ccd346eeceb6800f37ca3b1d27"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/linux-cloud-v9-audit/q38-linux-package.log",
+      "sha256": "c485cd35f9b02c117bc8f60b899e54250a7200f222769bc16c92b2253b5cec2d"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "date_utc": "2026-09-08",
+  "result": "failed-qualification-actor; cleanup-passed",
+  "scope": "first frozen Linux sign-in checkbox attempt",
+  "desktop_sha256": "41383b5e995a2f200f7c96b0fdb8764b7d9edae89ba8efbba0a93d80d883f0aa",
+  "node_sha256": "313f8cbe8b1329b0025e98e64cd12eb2abbadb5e0083f5de5360d997b23d4aa0",
+  "helper_sha256": "726cd08ab7219cd4cc2abeb7e1962bd54fa6d58266a9e22ac8598a102101a43c",
+  "phases": [
+    {
+      "phase": "enable",
+      "authenticated_node_ready": true,
+      "sharing_paused": true
+    }
+  ],
+  "failure": "Sharing navigation exposed Toggle, Press and SetFocus; the first actor required exactly one of several permitted action names and refused before any checkbox interaction.",
+  "checkbox_action_completed": false,
+  "started_at_login_launch_reached": false,
+  "resident_models_observed": false,
+  "independent_model_cache_files": 0,
+  "independent_model_cache_bytes": 0,
+  "shutdowns": [
+    {
+      "normal_shutdown": true,
+      "forced_cleanup": false,
+      "gui_returncode": 0,
+      "owned_identities_stopped": true
+    }
+  ],
+  "native_qualification_credential_absent": true,
+  "private_autostart_entry_absent": true,
+  "independent_cleanup_audit": {
+    "result": "passed",
+    "private_session_processes_absent": true,
+    "autostart_entry_absent": true,
+    "model_cache_files": 0,
+    "model_cache_bytes": 0,
+    "user_scope": 1000
+  },
+  "reporting_correction": "The original generic limitations string mentioned the login argument even though that phase was not reached. Phase records establish that only initial startup completed; no login-argument pass is claimed."
+}

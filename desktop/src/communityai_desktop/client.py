@@ -12,6 +12,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from communityai_desktop.telemetry import download_view
+
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SUPPORTED_CONTROL_API_VERSION = 1
 CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
@@ -76,18 +78,21 @@ def normalize_loopback_url(value: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
-def _normalize_model_download(value: Any) -> Dict[str, int]:
+def _normalize_model_download(value: Any) -> Dict[str, Any]:
     expected_keys = {"schema_version", "selected_whole_shard_bytes"}
-    if not isinstance(value, dict) or set(value) != expected_keys:
+    if not isinstance(value, dict) or set(value) - {"progress"} != expected_keys:
         raise NodeClientError("Local node model download estimate has an invalid schema")
     if type(value["schema_version"]) is not int or value["schema_version"] != MODEL_DOWNLOAD_SCHEMA_VERSION:
         raise NodeClientError("Local node model download estimate has an unsupported schema version")
     size = value["selected_whole_shard_bytes"]
-    if isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= MAX_SELECTED_WHOLE_SHARD_BYTES:
+    if size is not None and (
+        isinstance(size, bool) or not isinstance(size, int) or not 0 <= size <= MAX_SELECTED_WHOLE_SHARD_BYTES
+    ):
         raise NodeClientError("Local node model download estimate has invalid selected whole-shard bytes")
     return {
         "schema_version": MODEL_DOWNLOAD_SCHEMA_VERSION,
         "selected_whole_shard_bytes": size,
+        **({"progress": download_view(value["progress"])} if "progress" in value else {}),
     }
 
 
@@ -137,7 +142,10 @@ def _normalize_auto_selection(value: Any) -> Dict[str, Any]:
             raise NodeClientError("Local node status has invalid auto selection manifest")
         covered = _optional_number(value.get("covered_blocks"), "auto covered blocks", integer=True, positive=True)
         total = _optional_number(value.get("total_blocks"), "auto total blocks", integer=True, positive=True)
-        peers = _optional_number(value.get("peer_count"), "auto peer count", integer=True, positive=True)
+        local = value.get("source") == "local"
+        peers = _optional_number(value.get("peer_count"), "auto peer count", integer=True, positive=not local)
+        if local and peers != 0:
+            raise NodeClientError("Standalone inference must not claim remote peers")
         if covered is None or total is None or peers is None:
             raise NodeClientError("Local node status omitted automatic route evidence")
         if covered != total:
@@ -210,8 +218,18 @@ def _normalize_policy(value: Any) -> Dict[str, Any]:
         "pause_timeout",
         "schedule",
     }
-    if not isinstance(value, dict) or set(value) != fields or not isinstance(value["sharing_enabled"], bool):
+    if (
+        not isinstance(value, dict)
+        or set(value) not in (fields, fields | {"max_processing_percent"})
+        or not isinstance(value["sharing_enabled"], bool)
+    ):
         raise NodeClientError("Local node contribution policy is malformed")
+    processing = {}
+    if "max_processing_percent" in value:
+        percent = _optional_number(value["max_processing_percent"], "processing percentage", positive=True)
+        if percent is None or not 1 <= percent <= 100:
+            raise NodeClientError("Local node has invalid processing percentage")
+        processing["max_processing_percent"] = percent
     allowed = _normalize_model_selectors(value["allowed_models"], "allowed models")
     preferred = _normalize_model_selectors(value["preferred_models"], "preferred models")
     denied = _normalize_model_selectors(value["denied_models"], "denied models")
@@ -270,6 +288,7 @@ def _normalize_policy(value: Any) -> Dict[str, Any]:
         clean_schedule = {"timezone": timezone, "windows": clean_windows}
     return {
         "sharing_enabled": value["sharing_enabled"],
+        **processing,
         "allowed_models": allowed,
         "preferred_models": preferred,
         "denied_models": denied,
@@ -379,10 +398,12 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
                 "model": model,
                 "state": state,
                 "desired_running": worker["desired_running"],
+                "operator_paused": worker.get("operator_paused") is True,
                 "placement": placement,
                 "policy": policy,
                 "schedule": schedule,
                 "resources": resources,
+                "download_progress": download_view(worker.get("download_progress")),
             }
         )
     if not configured and normalized_workers:
@@ -394,6 +415,21 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
         "policy": policy_snapshot,
         "workers": normalized_workers,
     }
+
+
+def _normalize_hardware(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for field in ("cpu_name", "gpu_name", "gpu_device", "device"):
+        item = value.get(field)
+        result[field] = (
+            " ".join(item.split())[:160] if isinstance(item, str) and item.isprintable() and item.strip() else None
+        )
+    for field in ("gpu_total_bytes", "sharing_vram_bytes", "sharing_vram_available_bytes"):
+        item = value.get(field)
+        result[field] = item if type(item) is int and 0 <= item <= 64 * 1024**4 else None
+    return result
 
 
 class NodeClient:
@@ -476,12 +512,23 @@ class NodeClient:
         ]
         result["auto_selection"] = _normalize_auto_selection(result.get("auto_selection"))
         result["contribution"] = _normalize_contribution_status(result.get("contribution"))
+        result["hardware"] = _normalize_hardware(result.get("hardware"))
         return result
 
     def get_contribution_policy(self) -> Dict[str, Any]:
         return _normalize_policy_snapshot(
             self._request("GET", "/control/v1/contribution-policy"),
             require_revision=True,
+        )
+
+    def set_inference_mode(self, mode: str) -> Dict[str, Any]:
+        if mode not in ("auto", "local_only"):
+            raise ValueError("inference mode must be auto or local_only")
+        policy = self.get_contribution_policy()
+        return self._request(
+            "PUT",
+            "/control/v1/inference-mode",
+            payload={"inference_mode": mode, "expected_config_revision": policy["config_revision"]},
         )
 
     def update_contribution_policy(self, policy: Mapping[str, Any], *, expected_revision: str) -> Dict[str, Any]:

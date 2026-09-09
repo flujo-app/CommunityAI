@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-09T01:11:09.561318+00:00",
+  "scope": "Final resumable Windows online source: real HTTPS hash rejection",
+  "fixture_setup_sha256": "4dbfd9448e8638a7bb90cedfb7aa295f22cd111c975fb17c5674e2ffdfb5f1d6",
+  "fixture_setup_bytes": 2107381,
+  "source_hashes": {
+    "download_helper_sha256": "9a609cff0eff3e9cf6381273fbaf43fcbdb20b5eccaef57061b1490ddc60669a",
+    "builder_script_sha256": "e5a33e969a0a4c110d960c4de240418be15d58288c3c4e43678a394f92dd5893",
+    "download_helper_source_sha256": "3df36f4f1273599a3680d3d4981f150f2eaf289d92926b19dbde6620fdad3094",
+    "installer_script_sha256": "b6c680afa048ba581af6d01a596fa8f9f62837bb7d571979cb9d4dc9fbbf6633"
+  },
+  "download_url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/_checks/communityai-0.0.0-online-probe-windows-setup.exe",
+  "download_bytes": 52,
+  "expected_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "exit_code": 1,
+  "hash_mismatch_observed": true,
+  "child_installation_launched": false,
+  "actual_full_installer_download_or_install_tested": false,
+  "temporary_directory_removed": true,
+  "log": ".gate13-runs\\resumable-online-final-https-rejection-20260909\\rejection.log",
+  "log_sha256": "526befce11a2c458251f24fbf36781e6129abca05f5d13cca1bb7865080170bf"
+}

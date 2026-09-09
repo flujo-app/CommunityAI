@@ -1,0 +1,161 @@
+{
+  "recorded_at_utc": "2026-09-08T08:31:05.669933+00:00",
+  "result": "passed",
+  "scope": "source signed periodic refresh / manager integration and helper portability",
+  "reviewed_head": "23a1f99e81df5f98ee3260b7df2529332547ccca",
+  "source_tests": {
+    "passed": 59,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 22.118,
+    "junit": {
+      "path": ".gate13-runs/release-audit-20260908/catalog-tests.xml",
+      "sha256": "70ebda7402f5183693921a20cbfe44dac6f4b5eaaeb55f5b4bbedf125bbe0302",
+      "size_bytes": 8493
+    }
+  },
+  "new_periodic_cases": 6,
+  "helper_cases": 12,
+  "no_model_or_gpu_load": true,
+  "no_frozen_periodic_acceptance_claim": true,
+  "source_bindings": [
+    {
+      "path": "src/drift/node/catalog_refresh.py",
+      "sha256": "92412ad5915a812b28cff20aabf28e3d3e854cc88dcf7c90f0f93fdc53048bf3",
+      "size_bytes": 2241
+    },
+    {
+      "path": "src/drift/node/model_manager.py",
+      "sha256": "4182962cad854eaf934d29f942a8fc8901370295bdcce84949c910860ba05b61",
+      "size_bytes": 33071
+    },
+    {
+      "path": "src/drift/node/catalog_bootstrap.py",
+      "sha256": "8722bc8b8db4766abf9530425b0a4aa5ce0c95100f304bffb6d9d2bdfeac9be3",
+      "size_bytes": 38070
+    },
+    {
+      "path": "tests/test_catalog_refresh.py",
+      "sha256": "a6cf83e9b3af109ccef3ffec97c6883cbc2ff8addc6516876b7e00dbc146548e",
+      "size_bytes": 15930
+    },
+    {
+      "path": "scripts/qualify_catalog_desktop.py",
+      "sha256": "68fc574a3b93e222da32a9836a2c09c20384a712d2f4274b06606c9f191844f2",
+      "size_bytes": 17137
+    },
+    {
+      "path": "tests/test_qualify_catalog_desktop.py",
+      "sha256": "3224b209b72982497658f5e2b617805f2b0fc614e579676611e05acdd2a564bd",
+      "size_bytes": 2941
+    },
+    {
+      "path": "tests/test_catalog_desktop_cleanup.py",
+      "sha256": "0a90a3bff8482cd4618fbd0ff93a2308318f88c6d08351d9c66fdcf96571ee3c",
+      "size_bytes": 4040
+    }
+  ],
+  "ci": {
+    "checks": [
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/runs/101904766214",
+        "name": "CodeQL",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/actions/runs/34175751429/job/101904686509",
+        "name": "run-tests (macos, 3.12)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/actions/runs/34175750804/job/101904687184",
+        "name": "Analyze (actions)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/actions/runs/34175751428/job/101904686239",
+        "name": "black",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/actions/runs/34175751433/job/101904686368",
+        "name": "package (ubuntu-22.04, linux, communityai-desktop-linux.tar.gz)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/actions/runs/34175751429/job/101904686280",
+        "name": "run-tests (ubuntu, 3.12)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/actions/runs/34175750804/job/101904687011",
+        "name": "Analyze (python)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/actions/runs/34175751433/job/101904686451",
+        "name": "package (windows-latest, windows, communityai-desktop-windows.zip)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/flujo-app/CommunityAI/actions/runs/34175751428/job/101904686157",
+        "name": "isort",
+        "state": "SUCCESS"
+      }
+    ],
+    "production_run_id": 34175751433,
+    "conclusion": "success",
+    "head_sha": "23a1f99e81df5f98ee3260b7df2529332547ccca",
+    "merge_source_commit": "1b528212a85a58081e6e80bd855573673b3710ef",
+    "merge_source_tree": "60aa51a940433aebe97a7b57318e22a496f9f4db",
+    "merge_delta_from_head": [
+      "README.md"
+    ],
+    "audit_bundles": [
+      {
+        "path": ".gate13-runs/release-audit-20260908/ci-windows/provenance.json",
+        "sha256": "6adf7b92b8d90cba3ccb41482f87d9733d5172469653902676a6c023d6b0c7a9",
+        "size_bytes": 1220945,
+        "platform": "windows",
+        "archive": {
+          "artifact_root": "CommunityAI",
+          "entry_count": 5851,
+          "format": "zip",
+          "path": "communityai-desktop-windows.zip",
+          "platform": "Windows",
+          "preserves_executable_modes": false,
+          "preserves_internal_file_symlinks": false,
+          "schema_version": 1,
+          "sha256": "6fd9ba2e8083b4b628a2da35799a426c204ca0fffe7b67a762d81ff21ba19d32",
+          "size_bytes": 2690878530
+        },
+        "catalog_digest": "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80"
+      },
+      {
+        "path": ".gate13-runs/release-audit-20260908/ci-linux/provenance.json",
+        "sha256": "4864c62f876478d38cb1027c05b755d5533b3783d1d3f85ec5f96676c4e3b8e8",
+        "size_bytes": 1283127,
+        "platform": "linux",
+        "archive": {
+          "artifact_root": "CommunityAI",
+          "entry_count": 6118,
+          "format": "tar.gz",
+          "path": "communityai-desktop-linux.tar.gz",
+          "platform": "Linux",
+          "preserves_executable_modes": true,
+          "preserves_internal_file_symlinks": true,
+          "schema_version": 1,
+          "sha256": "81cb850aa9b3ad0a9319b9e73fc61e17e819835a5a87b8400fa3ecb3dee2e1b9",
+          "size_bytes": 3109947825
+        },
+        "catalog_digest": "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80"
+      }
+    ]
+  },
+  "limitations": [
+    "HTTPS document fetching and clock are substituted in source tests; signatures, installer, refresh thread and ModelManager are real.",
+    "Inert runtime objects exercise leases/loading without tokens or backend execution.",
+    "Frozen Linux startup replay and newer signed periodic activation remain separate live observations.",
+    "Only CI audit bundles were downloaded; CI multi-gigabyte runtime archives were not locally reverified or installed in this checkpoint."
+  ]
+}

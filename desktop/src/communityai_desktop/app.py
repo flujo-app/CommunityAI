@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from communityai_desktop import __version__
 from communityai_desktop.acceptance import fake_node, run_self_test
 from communityai_desktop.client import NodeClient, NodeClientError, normalize_loopback_url
 from communityai_desktop.controller import DesktopController
@@ -26,12 +25,13 @@ from communityai_desktop.lifecycle import (
     NodeLifecycleSupervisor,
     default_bootstrap_config_path,
 )
+from communityai_desktop.release import RELEASE_VERSION
 from communityai_desktop.startup import LOGIN_STARTUP_FLAG, SingleInstanceError
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CommunityAI desktop")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {RELEASE_VERSION}")
     parser.add_argument("--node-url", default="http://127.0.0.1:8080")
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--credential-service", default=DEFAULT_CREDENTIAL_SERVICE, help=argparse.SUPPRESS)
@@ -44,6 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-manage-node", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(LOGIN_STARTUP_FLAG, action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--capture-page", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--gate13-ui-evidence", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--gate13-ui-screenshot", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--resource-ui-evidence", type=Path, help=argparse.SUPPRESS)
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--store-control-key", action="store_true")
     action.add_argument("--delete-control-key", action="store_true")
@@ -53,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--onboarding-ui-self-test", action="store_true", help=argparse.SUPPRESS)
     action.add_argument("--capture-ui", type=Path, help=argparse.SUPPRESS)
     action.add_argument("--probe-only", action="store_true", help=argparse.SUPPRESS)
+    action.add_argument(
+        "--prepare-update", action="store_true", help="Stop this user's desktop and owned node for installation"
+    )
+    action.add_argument("--gate13-ui-playthrough", type=Path, help=argparse.SUPPRESS)
+    action.add_argument("--resource-ui-playthrough", type=Path, help=argparse.SUPPRESS)
     return parser
 
 
@@ -69,7 +77,23 @@ def _write_json(value: Any) -> None:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.gate13_ui_playthrough is None:
+        if args.gate13_ui_evidence is not None or args.gate13_ui_screenshot is not None:
+            parser.error("Gate 13 evidence options require --gate13-ui-playthrough")
+    elif args.gate13_ui_evidence is None:
+        parser.error("--gate13-ui-playthrough requires --gate13-ui-evidence")
+    if bool(args.resource_ui_playthrough) != bool(args.resource_ui_evidence):
+        parser.error("Resource UI playthrough requires both plan and evidence paths")
     try:
+        if args.prepare_update:
+            try:
+                from communityai_desktop.maintenance import prepare_update
+
+                return prepare_update()
+            except Exception as exc:
+                # A windowed PyInstaller traceback dialog would hold the installer
+                # indefinitely if, for example, the installed Qt runtime is broken.
+                parser.exit(2, f"CommunityAI shutdown failed: {exc}\n")
         if args.self_test:
             _write_json(run_self_test())
             return 0
@@ -150,6 +174,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             token = credential_store.get_or_migrate()
             return DesktopController(NodeClient(node_url, token, timeout=args.timeout))
 
+        qualification_automation = None
+        if args.gate13_ui_playthrough is not None:
+            from communityai_desktop.gate13_playthrough import Gate13Playthrough, PlaythroughPlan
+
+            qualification_automation = Gate13Playthrough(
+                PlaythroughPlan.load(args.gate13_ui_playthrough),
+                args.gate13_ui_evidence,
+                screenshot_path=args.gate13_ui_screenshot,
+            )
+        elif args.resource_ui_playthrough is not None:
+            from communityai_desktop.resource_playthrough import ResourcePlaythrough
+
+            qualification_automation = ResourcePlaythrough(args.resource_ui_playthrough, args.resource_ui_evidence)
+
         if args.probe_only:
             try:
                 _write_json(connect().snapshot())
@@ -160,6 +198,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         from communityai_desktop.pyside_shell import run
 
+        updater = None
+        if qualification_automation is None:
+            from communityai_desktop.updater import UpdateManager, installed_root
+            from PySide6.QtCore import QStandardPaths
+
+            root = installed_root()
+            if root is not None:
+                cache = (
+                    Path(QStandardPaths.writableLocation(QStandardPaths.GenericCacheLocation)) / "CommunityAI/updates"
+                )
+                updater = UpdateManager(cache, root=root)
+
         # Credential and connection errors belong in the window for normal desktop
         # startup. Existing headless installations migrate automatically.
         try:
@@ -169,6 +219,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     start_minimized=args.started_at_login,
                     activate_existing_instance=not args.started_at_login,
                     before_termination_restore=None if lifecycle is None else lifecycle.close,
+                    qualification_automation=qualification_automation,
+                    single_instance=qualification_automation is None,
+                    updater=updater,
                 )
                 or 0
             )

@@ -95,8 +95,10 @@ branches and tags are deliberately invalid. Names and aliases are display and AP
 metadata only; they never select a swarm.
 
 V1 supports the current `hidden-states-v1` tensor boundary, protocol version 1,
-`float32`/`float16`/`bfloat16`, `none`/`int8`/`nf4` quantization, and
-`auto`/`eager`/`sdpa` attention selection. `adapter_profile` is either `none` or a
+`float32`/`float16`/`bfloat16`, `none`/`int8`/`nf4`/`fp8_dequant` quantization, and
+`auto`/`eager`/`sdpa` attention selection. `fp8_dequant` identifies an official
+fine-grained FP8 source checkpoint whose selected blocks are dequantized to the declared
+runtime dtype during loading; it is distinct from native FP8 execution. `adapter_profile` is either `none` or a
 `sha256:<digest>` reference. The parser reserves digest references now, but this
 release refuses to execute them until adapter manifests can pin and verify every
 adapter artifact.

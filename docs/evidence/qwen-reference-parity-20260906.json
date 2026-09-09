@@ -1,0 +1,158 @@
+{
+  "cleanup": {
+    "errors": [],
+    "remaining": {
+      "disks": [],
+      "firewall-rules": [],
+      "instances": []
+    },
+    "verified": true
+  },
+  "duration_seconds": 1343.6327471733093,
+  "evidence": {
+    "atol": 0.5,
+    "cached_decode_steps_per_prompt": 2,
+    "checks": [
+      {
+        "actual_token": 11751,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.1328125,
+        "mean_absolute_error": 0.02063351683318615,
+        "prompt_index": 0,
+        "reference_token": 11751,
+        "seconds": 13.845619147000207,
+        "step": 0
+      },
+      {
+        "actual_token": 13,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.095703125,
+        "mean_absolute_error": 0.014627886936068535,
+        "prompt_index": 0,
+        "reference_token": 13,
+        "seconds": 4.654403945000013,
+        "step": 1
+      },
+      {
+        "actual_token": 198,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.125,
+        "mean_absolute_error": 0.01568158157169819,
+        "prompt_index": 0,
+        "reference_token": 198,
+        "seconds": 4.775757784999996,
+        "step": 2
+      },
+      {
+        "actual_token": 4097,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.15625,
+        "mean_absolute_error": 0.015451163984835148,
+        "prompt_index": 1,
+        "reference_token": 4097,
+        "seconds": 12.06427054400001,
+        "step": 0
+      },
+      {
+        "actual_token": 13,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.09375,
+        "mean_absolute_error": 0.015487470664083958,
+        "prompt_index": 1,
+        "reference_token": 13,
+        "seconds": 4.747066725999957,
+        "step": 1
+      },
+      {
+        "actual_token": 198,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.125,
+        "mean_absolute_error": 0.021709345281124115,
+        "prompt_index": 1,
+        "reference_token": 198,
+        "seconds": 4.669147470000098,
+        "step": 2
+      },
+      {
+        "actual_token": 271,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.25,
+        "mean_absolute_error": 0.027140162885189056,
+        "prompt_index": 2,
+        "reference_token": 271,
+        "seconds": 23.422649428999875,
+        "step": 0
+      },
+      {
+        "actual_token": 248068,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.25,
+        "mean_absolute_error": 0.027111373841762543,
+        "prompt_index": 2,
+        "reference_token": 248068,
+        "seconds": 4.702008863999936,
+        "step": 1
+      },
+      {
+        "actual_token": 198,
+        "all_vocabulary_logits_within_tolerance": true,
+        "finite": true,
+        "greedy_token_equal": true,
+        "max_absolute_error": 0.28125,
+        "mean_absolute_error": 0.03989838436245918,
+        "prompt_index": 2,
+        "reference_token": 198,
+        "seconds": 4.644652351999866,
+        "step": 2
+      }
+    ],
+    "cross_host_qualification": false,
+    "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+    "prompts": [
+      "The capital of France is",
+      "Two plus three equals",
+      "In one sentence, explain why the sky looks blue."
+    ],
+    "result": "passed",
+    "revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+    "rtol": 0.01,
+    "scope": "stock-versus-four-RPC-worker numerical reference on one CPU host",
+    "stock_class": "Qwen3_5ForConditionalGeneration",
+    "stock_dequantizer": "Transformers FineGrainedFP8Config(dequantize=True)",
+    "time": 1788659887.9600813,
+    "torch": "2.6.0+cpu",
+    "transformers": "5.13.1"
+  },
+  "result": "passed",
+  "run_id": "q38r-20260906-013804-f9f3",
+  "scope": "stock-reference-numerical-qualification",
+  "recorded_at": "2026-09-06",
+  "source_bundle_sha256": "a05e07b49d02fe3ee95867f2b2a23d276b87a6224bdeb9c897bdb3636537cb83",
+  "source_files": {
+    "scripts/qwen_reference_inference_host.py": "82e73a1e6552e5e1c9c652f65b51c42df848c924ba845eed6d8d32c29f912258",
+    "src/drift/models/qwen3_5/model.py": "b9092f62eb2a26881e2b2452b74f192bc6bf4e70f9091116cb6f7ac5a0a0dffb",
+    "src/drift/models/qwen3_5/block.py": "cb506f75ad664086ee5e750cfaa0cfd8ebf3b1b289efa210039bb38bf549165f",
+    "src/drift/utils/dht.py": "efeb09884638c54118d3f62aada67a5fa5f1e32e7f2f43cf6e53570e6309e151"
+  },
+  "earlier_failed_attempt": {
+    "run_id": "q38r-20260906-012725-8711",
+    "failure": "harness parallel first materialization raced snapshot root before inference",
+    "cleanup_verified": true
+  }
+}

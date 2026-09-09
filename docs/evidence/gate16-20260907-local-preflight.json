@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "result": "local-prerequisites-passed",
+  "complete_gate16": false,
+  "date_local": "2026-09-07",
+  "source_commit": "e81103663c0c598cdaf43706726fe2a65b4357b6",
+  "source_note": "Source suite uses working src via PYTHONPATH. Relevant file hashes are recorded; the frozen runtime retains its own qualified source identity.",
+  "source_files": {
+    "scripts/gate16_local_preflight.py": "d0100314633d41e376bea2fafc385a27292f5a306e219dd1ce793bc2ee44e5d7",
+    "tests/test_gate16_catalog_drill.py": "cd5b52d78bc0e1fe49f7e8afb9f3dd2a1cdd8b4cef780e1122bef74fccb844e8",
+    "src/drift/server/admission.py": "228021a291ad46ae24eb2e9ee886c71ce263264baa790ddcd8b481808df7d904",
+    "src/drift/server/handler.py": "9aa18b62a7aeaeeb0fda87b9b505e1e513de7dc47ad03c4f3b707bb064b1058d",
+    "src/drift/server/rejection_logging.py": "8b15251165ed65a563cf18e0a807e95d155e9d215fc093c0a282a43768a67f32",
+    "src/drift/protocol_identity.py": "0f35b4729929250875649a835af6b7fb38b9006f8f6e71e494ccbb906488373d",
+    "src/drift/node/catalog_bootstrap.py": "8722bc8b8db4766abf9530425b0a4aa5ce0c95100f304bffb6d9d2bdfeac9be3",
+    "src/drift/node/catalog_refresh.py": "92412ad5915a812b28cff20aabf28e3d3e854cc88dcf7c90f0f93fdc53048bf3",
+    "src/drift/node/model_selection.py": "5eb6dec25116a675490209e3283b33d3eabf70efb4895ba230ceb844f7352f92",
+    "src/drift/node/route_health.py": "8c5ab3ed0f4fb58470650b46e0006305b7d388c7a1fe758ba3b3a38094d5d0b4",
+    "src/drift/node/discovery.py": "f4261f63a0a1ac4058cf898d29b0ab8af2d0baf2c65e6cb537293dad66c2066f",
+    "src/drift/node/server.py": "c1d4029705a0dae1721b0bdedb5c2332836630c368ecd279840eead0d6487f50",
+    "src/drift/node/model_manager.py": "4182962cad854eaf934d29f942a8fc8901370295bdcce84949c910860ba05b61",
+    "src/drift/cli/run_node.py": "fbff54f30906e4481db578cc826bc1e236c9fa2f52438c1c01bd8ed4759c2f7c",
+    "src/drift/node/keys.py": "3bf8d6209b2e8994f86011d4230f2f88e0f051e3f133ab8790f6f3fd4ed6662d"
+  },
+  "frozen_runtime_source_commit": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+  "frozen_runtime_source_tree": "474edae23a04c7be8d55241cab7fdbe8255b215b",
+  "platform": "Windows 10 Pro build 19045, ordinary user, headless node",
+  "source_safety_suite": {
+    "tests": 130,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_seconds": 42.708,
+    "junit_sha256": "8b1e87ac8b5a9e6b1fb34af709e29bdb7ae6ab1bb0ba27c18abcdb0c2bfc25ed",
+    "modules": {
+      "tests.test_server_admission": 55,
+      "tests.test_protocol_identity": 15,
+      "tests.test_protocol_identity_network": 1,
+      "tests.test_public_worker_health": 15,
+      "tests.test_discovery": 14,
+      "tests.test_route_health": 4,
+      "tests.test_measured_model_selection": 5,
+      "tests.test_catalog_refresh": 7,
+      "tests.test_route_metrics": 11,
+      "tests.test_automatic_placement_privacy": 3
+    }
+  },
+  "signed_catalog_drill": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_seconds": 18.187,
+    "junit_sha256": "d5d44eeecd8d80a37dacd30388973ca0645123a75de12a7c7c431a320d7c610e",
+    "modules": {
+      "tests.test_gate16_catalog_drill": 1
+    }
+  },
+  "frozen_local_api": {
+    "schema_version": 1,
+    "result": "passed",
+    "scope": "frozen-node-local-api-preflight",
+    "complete_gate16": false,
+    "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+    "manifest_sha256": "4536ac2bada7242b758db443b9ebb813a614dd167ab364643fc55c7eb657bb74",
+    "packaged": true,
+    "checks": {
+      "control_requires_auth": {
+        "status_code": 401,
+        "duration_seconds": 0.0
+      },
+      "client_cannot_control": {
+        "status_code": 401,
+        "duration_seconds": 0.0
+      },
+      "control_cannot_infer": {
+        "status_code": 401,
+        "duration_seconds": 0.0
+      },
+      "client_requires_auth": {
+        "status_code": 401,
+        "duration_seconds": 0.0
+      },
+      "client_models": {
+        "status_code": 200,
+        "duration_seconds": 0.016
+      },
+      "control_status": {
+        "status_code": 200,
+        "duration_seconds": 0.015
+      },
+      "malformed_json": {
+        "status_code": 422,
+        "duration_seconds": 0.0
+      },
+      "unknown_model_bounded_rejection": {
+        "status_code": 404,
+        "duration_seconds": 0.0
+      },
+      "malformed_chat": {
+        "status_code": 422,
+        "duration_seconds": 0.0
+      },
+      "invalid_inference_mode": {
+        "status_code": 422,
+        "duration_seconds": 0.0
+      },
+      "control_policy_requires_json": {
+        "status_code": 415,
+        "duration_seconds": 0.016
+      },
+      "oversized_control_policy": {
+        "status_code": 413,
+        "duration_seconds": 0.0
+      },
+      "stale_policy_revision": {
+        "status_code": 412,
+        "duration_seconds": 0.0
+      },
+      "mode_auto": {
+        "status_code": 200,
+        "duration_seconds": 0.047
+      },
+      "mode_local_only": {
+        "status_code": 200,
+        "duration_seconds": 0.015
+      },
+      "create_disposable_client_key": {
+        "status_code": 201,
+        "duration_seconds": 0.016
+      },
+      "disposable_key_works": {
+        "status_code": 200,
+        "duration_seconds": 0.016
+      },
+      "revoke_disposable_key": {
+        "status_code": 200,
+        "duration_seconds": 0.0
+      },
+      "revoked_key_rejected": {
+        "status_code": 401,
+        "duration_seconds": 0.0
+      },
+      "original_key_preserved": {
+        "status_code": 200,
+        "duration_seconds": 0.015
+      },
+      "owned_process_images": [
+        "CommunityAI-Node.exe",
+        "conhost.exe"
+      ],
+      "no_model_or_worker_loaded": true,
+      "owned_runtime_process_count": 2
+    },
+    "limitations": [
+      "No public swarm, model load, inference, GPU work, or public mutation was performed.",
+      "HTTP deadlines bound this probe, not stalled generation or worker RPC execution.",
+      "Local inference mode persistence is not signed catalog withdrawal or remote route disable.",
+      "File credentials isolate this headless-node probe; native desktop credential lifecycle is covered separately."
+    ],
+    "cleanup": {
+      "owned_processes_stopped": true,
+      "credential_files_removed": true
+    },
+    "privacy": {
+      "secrets_absent_from_log": true,
+      "synthetic_prompt_absent_from_log": true,
+      "raw_log_exported": false,
+      "prompt_or_output_exported": false
+    },
+    "duration_seconds": 13.657,
+    "independent_cleanup_audit": {
+      "result": "passed",
+      "recorded_process_identities": 2,
+      "live_owned_identities": 0,
+      "credential_files_absent": true,
+      "model_cache_absent": true,
+      "process_identities_exported": false
+    },
+    "result_sha256": "2d7124daab9c0557e7e2d494d50152b4dbeb6f3063e22e16650cb008e4244cbd"
+  },
+  "failed_harness_attempts": [
+    {
+      "result": "failed",
+      "error_code": "unexpected_child_process",
+      "result_sha256": "22f633afa55594460c812b5d0a64135a5bd05fca2919fa5711ee9dd23415f948",
+      "completed_http_checks": 18,
+      "cleanup": {
+        "owned_processes_stopped": true,
+        "credential_files_removed": true
+      },
+      "correction": "The harness incorrectly rejected every child process.",
+      "product_defect": false
+    },
+    {
+      "result": "failed",
+      "error_code": "unexpected_child_image",
+      "result_sha256": "26892b202cb9dfd6678279a7e68d2f294c3b1b09984237ca6418f2d7db66a9ce",
+      "completed_http_checks": 18,
+      "cleanup": {
+        "owned_processes_stopped": true,
+        "credential_files_removed": true
+      },
+      "correction": "The harness incorrectly excluded Windows conhost.exe; it is an owned runtime child.",
+      "product_defect": false
+    }
+  ],
+  "catalog_drill_initial_assertion": {
+    "result": "failed",
+    "reason": "The first test expected withdrawn models to be removed from all configuration. Existing documented behavior retains exact manual selectors while removing automatic priority and contribution approval.",
+    "correction": "The final test checks signed catalog withdrawal, automatic-priority removal, forward restore and preserved local preferences/cache. No product code changed.",
+    "junit_sha256": "0446b74fcee5ea9bd182010dac4d654e764d8fa625b168e99ad2f55078c08be2",
+    "product_defect": false
+  },
+  "privacy": {
+    "credentials_exported": false,
+    "raw_prompts_or_outputs_exported": false,
+    "peer_identities_exported": false,
+    "host_paths_exported": false,
+    "raw_logs_or_junit_exported": false
+  },
+  "remaining_live_requirements": [
+    "Actual installed clients on a monitored, explicitly owned public canary route.",
+    "Finite active-session admission and idle/stalled-worker timeout release under the effective live policy.",
+    "Allowlisted live malformed-RPC injector, rejection counters and post-rejection inference recovery.",
+    "Block-health reconstruction after owned peer removal and return.",
+    "Privacy disclosure observed in the actual installed UI.",
+    "Isolated signed canary-channel withdrawal and higher-sequence restore through ordinary packaged refresh.",
+    "Exact owned route stop, automatic local fallback and explicit-selector unavailability observation.",
+    "Independent full canary process/resource/native-credential cleanup."
+  ]
+}

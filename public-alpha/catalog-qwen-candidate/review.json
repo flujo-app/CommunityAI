@@ -1,0 +1,9 @@
+{
+  "status": "unsigned-candidate",
+  "catalog_digest": "sha256:955ca1f547c9b881163de9d8d92b561199f17e8dbd30250e90705eda778c930d",
+  "requires_existing_trusted_key_ids": [
+    "sha256:a8fb23c4ac71c1f29cc9991d79d16743a2a931c1911b819da0fb5432d5ac8435"
+  ],
+  "publication_performed": false,
+  "release_qualification_complete": false
+}

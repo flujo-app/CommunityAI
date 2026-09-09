@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-run-controller-terminal-and-cleanup",
+  "run_id": "gate13-20260831-c",
+  "gate": 13,
+  "result": "failed_cleaned",
+  "recorded_at": "2026-08-31T21:38:14Z",
+  "source": {
+    "authorization_commit": "0dc2345f7c0880bbb63b1d8951187e4e4b744a84",
+    "authorization_sha256": "sha256:3bb9f79d91d9ef4df2e0082f0358f5edfef199e80f15359560013a10a8b758bd",
+    "provider_plan_digest": "sha256:07b6cd399ef7a9733602dfc19a741feddec8d15e5f4b5bac7347a192675f6d9c"
+  },
+  "controller_terminal": {
+    "phase": "CLEANED_FAILURE",
+    "failure_code": "resources_disappeared_before_completion",
+    "cleanup_verified": true,
+    "revision": 2,
+    "next_action": "none",
+    "windows_consumed": false,
+    "linux_consumed": false
+  },
+  "classification": {
+    "category": "local_orchestration_state",
+    "durable_provider_run_record_present": false,
+    "product_failure_evidenced": false,
+    "reusable_run_id": false,
+    "detail": "The reserved run was armed locally and reached a terminal absence state without a durable provider execution record. It is retired rather than reset or reused."
+  },
+  "provider_reconciliation": {
+    "checked_at": "2026-08-31T21:38:14Z",
+    "route_instance_absent": true,
+    "route_disk_absent": true,
+    "windows_instance_and_disk_absent": true,
+    "linux_instance_and_disk_absent": true,
+    "dht_firewall_absent": true,
+    "iap_firewall_absent": true,
+    "global_gpu_limit": 1,
+    "global_gpu_usage": 0,
+    "protected_bootstrap_running": true
+  },
+  "cost": {
+    "maximum_estimate_usd": "56.00",
+    "observed_cost_usd": null,
+    "maximum_remains_committed": true
+  },
+  "privacy": {
+    "credentials_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false,
+    "endpoints_retained": false
+  },
+  "claims": {
+    "route_accepted": false,
+    "windows_lifecycle_passed": false,
+    "linux_lifecycle_passed": false,
+    "gate_13_passed": false
+  }
+}

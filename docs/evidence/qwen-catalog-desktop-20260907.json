@@ -1,0 +1,78 @@
+{
+  "result": "passed",
+  "scope": "ordinary-user-frozen-Windows-desktop-signed-catalog-startup-migration",
+  "non_elevated": true,
+  "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+  "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+  "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+  "replay_script_sha256": "c8c5623c5a6742948a38312a910c86f14ab5a5a504acb74104b9b5008b608806",
+  "launches": [
+    {
+      "phase": "automatic-migration",
+      "seconds_to_visible_window_and_authenticated_status": 63.406,
+      "visible_native_window": true,
+      "model_ids": [
+        "Gemma 4 E2B IT",
+        "Qwen3.5 2B",
+        "Qwen3.5-0.8B-Local",
+        "Qwen3.8 27B FP8 Dequant"
+      ],
+      "worker_states": [
+        "paused"
+      ],
+      "owned_process_count": 4
+    },
+    {
+      "phase": "repeat-start",
+      "seconds_to_visible_window_and_authenticated_status": 46.781,
+      "visible_native_window": true,
+      "model_ids": [
+        "Gemma 4 E2B IT",
+        "Qwen3.5 2B",
+        "Qwen3.5-0.8B-Local",
+        "Qwen3.8 27B FP8 Dequant"
+      ],
+      "worker_states": [
+        "paused"
+      ],
+      "owned_process_count": 8
+    }
+  ],
+  "legacy_install": {
+    "catalog_digest": "sha256:70937f0aa10aa73f158753386170c27a95c685b468c66945f05bb3929263f195",
+    "catalog_id": "communityai-public-alpha-v1",
+    "catalog_sequence": 1,
+    "created": true,
+    "model_count": 2,
+    "schema_version": 1,
+    "source": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-v1/catalog.signed.json"
+  },
+  "activated_exact_published_sequence_2": true,
+  "preferences_workers_and_cache_preserved": true,
+  "repeat_start_config_and_native_credential_preserved": true,
+  "old_trust_root_rejected_without_config_change": true,
+  "recorded_runtime_trees_gone": true,
+  "native_qualification_credential_removed": true,
+  "limitations": [
+    "Windows startup migration and unchanged-catalog restart, not a fresh Linux update observation.",
+    "The legacy state was installed from the actual signed online catalog, with private test preferences/cache marker.",
+    "No inference, worker execution, periodic newer-sequence activation, or active-generation drain was exercised.",
+    "The existing frozen bundle was launched directly; its installer lifecycle has separate evidence."
+  ],
+  "recorded_at_utc": "2026-09-08T00:55:17.549633+00:00",
+  "runtime_source_commit": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+  "application_source_identical_to_reviewed_head": "e81103663c0c598cdaf43706726fe2a65b4357b6",
+  "replay_binding": {
+    "path": ".gate13-runs/gateq38-windows-catalog-startup-20260907/result.json",
+    "sha256": "5330a3734a53fe8883275f7bd49059d70e2694c2da1e3cc62449a5bbfa139f48",
+    "size_bytes": 2667
+  },
+  "fixture": {
+    "inference_mode": "local_only",
+    "max_vram": "37%",
+    "max_processing_percent": 43,
+    "max_disk_space": "8GiB",
+    "sharing_enabled": false
+  },
+  "full_q38_gate": false
+}

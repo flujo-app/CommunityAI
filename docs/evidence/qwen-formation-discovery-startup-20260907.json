@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-09-07",
+  "run_id": "q38af-20260907-064802-b6b85b",
+  "result": "failed",
+  "entry_point": "Run Qwen Formation.cmd",
+  "wrapper_invoked": true,
+  "source_bundle_sha256": "3fdd2acb6e24ee0b7e6f4cfc3b6b072020175204721a2fb089fd47a95c9b5f88",
+  "catalog_sequence": 2,
+  "catalog_policy_modified": false,
+  "scope": "Five source Linux Qt desktops and nodes; one source Windows Qt desktop with retained v9 node; staggered CPU contributors",
+  "local_answers_passed": 6,
+  "automatic_joins": [
+    {
+      "instance": "q38af-20260907-064802-b6b85b-w0",
+      "range": "48:64",
+      "observed_coverage": 16,
+      "remote_acknowledged": true
+    },
+    {
+      "instance": "q38af-20260907-064802-b6b85b-w1",
+      "range": "0:16",
+      "observed_coverage": 32,
+      "remote_acknowledged": true
+    }
+  ],
+  "slow_growth_retention": {
+    "block_indices": "48:64",
+    "state": "running",
+    "seconds_since_worker_start": 915.4614226818085,
+    "remote_acknowledged": true,
+    "fix_commit": "f496b8d"
+  },
+  "failure": "TypeError: '>=' not supported between instances of 'NoneType' and 'int'",
+  "diagnosis": "Third contributor discovery remained unknown. Live py-spy parent stack showed drift-coverage-0 waiting indefinitely in DHT.wait_until_ready -> MPFuture.result. P2P startup_timeout did not bound that parent future.",
+  "runtime_interventions_before_failure": [],
+  "diagnostics_after_failure": [
+    "Installed py-spy on w2 and captured parent stack while cleanup ran; no application code or policy changed. Child stack capture was interrupted by VM deletion."
+  ],
+  "fix_commit": "17ffeb2",
+  "persisted_fixes": [
+    "DHT startup has an explicit parent readiness timeout and cleans the failed child before retry.",
+    "Unknown coverage cannot crash numeric readiness checks.",
+    "Every client must show a fresh discovery observation before its initial local answer check; bounded to 180 seconds."
+  ],
+  "regression_tests": {
+    "failed_before_fix": 2,
+    "passed_after_fix": 72,
+    "files": [
+      "tests/test_discovery.py",
+      "tests/test_qwen_formation_runner.py",
+      "tests/test_automatic_formation.py",
+      "tests/test_contribution_planner.py",
+      "tests/test_automatic_placement_convergence.py"
+    ]
+  },
+  "cleanup": {
+    "errors": [],
+    "remaining": {
+      "disks": [],
+      "firewall-rules": [],
+      "instances": []
+    },
+    "verified": true
+  },
+  "local_process_cleanup_verified": true,
+  "evidence_directory": ".gate13-runs/qwen-formation/q38af-20260907-064802-b6b85b",
+  "full_formation_passed": false,
+  "promotion_loss_recovery_executed": false
+}

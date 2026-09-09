@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-failed-attempt-and-cleanup",
+  "run_id": "gate13-20260831-e",
+  "recorded_at": "2026-08-31T23:45:44Z",
+  "result": "failed_cleanup_verified",
+  "gate": 13,
+  "route_acceptance": {
+    "completed_before_client_create": true,
+    "result": "passed",
+    "evidence_digest": "sha256:064e1699bff2d0998c37ec6a3be5d37f8b6400a12de9627ea13fddb302508e55",
+    "primary_model": "Qwen3.5 2B",
+    "standby_model": "Gemma 4 E2B IT",
+    "fallback_and_restoration_passed": true,
+    "prompts_retained": false,
+    "outputs_retained": false,
+    "credentials_retained": false
+  },
+  "windows_attempt": {
+    "lifecycle_run_id": "gate13-20260831-e-windows",
+    "attempt_ordinal": 1,
+    "result": "failed",
+    "failure_code": "windows_packaged_lifecycle_failed",
+    "terminal_failure_code": "lifecycle_failed",
+    "terminal_exit_code": 2,
+    "started_at_unix": 1788219070,
+    "finished_at_unix": 1788219581,
+    "elapsed_seconds": 511,
+    "canonical_lifecycle_evidence_present": false,
+    "failure_record_sha256": "sha256:8d44d0f9529cf358e8941d1114265d654f537ab1cdc75a6944abe6a3b7f9b53e",
+    "failure_stderr_bytes": 0,
+    "linux_client_created": false
+  },
+  "pre_start_proofs": {
+    "windows_archive_bytes": 2695065068,
+    "windows_archive_sha256": "45e9cdb439bcb8a6d7ed67914a490f3bc2e12ea1981af944034d62d865f5adc6",
+    "archive_verified_before_attempt": true,
+    "ordinary_ssh_identity_verified": true,
+    "ordinary_ssh_identity_admin": false,
+    "scheduler_task_s4u": true,
+    "scheduler_task_run_level": "Limited",
+    "scheduler_running_observed_before_operator_demoted_account": true
+  },
+  "findings": [
+    {
+      "class": "windows_ssh_authorization",
+      "cause": "The Windows OpenSSH service allowed only Administrators and OpenSSH Users; removing M from Administrators without adding it to OpenSSH Users made the valid public key appear rejected.",
+      "proof": "The OpenSSH operational log reported that M was not allowed because none of the user's groups were listed in AllowGroups. Adding M to OpenSSH Users restored SSH while an independent token check reported is-admin=false.",
+      "correction": "Provision M in the existing OpenSSH Users group before removing it from Administrators.",
+      "gcp_related": false
+    },
+    {
+      "class": "windows_supervisor_boundary",
+      "cause": "Windows Server 2025 denies an ordinary account access to the ScheduledTasks CIM provider and denies task registration in the root folder, even when the task principal is the same ordinary user.",
+      "proof": "Get-ScheduledTask failed with CIM access denied and a direct Task Scheduler COM registration probe failed with E_ACCESSDENIED. A privileged bootstrap could register the exact S4U/Limited task, which then ran durably.",
+      "correction": "Do not ask the ordinary account to provision its own native supervisor. For the next run, keep the bounded host adapter in the ordinary foreground and keep the IAP SSH transport durable at the operator boundary.",
+      "gcp_related": false
+    },
+    {
+      "class": "lifecycle_diagnosability",
+      "cause": "The Windows lifecycle catch path emitted one generic failure record and failure cleanup removed the phase workspace, so the completed attempt could not identify the failed acceptance phase.",
+      "proof": "After 511 seconds the only lifecycle output was the 91-byte generic failure record and stderr was empty.",
+      "correction": "Emit only the hard-coded current phase name with the generic failure code; never emit exception text, paths, endpoints, prompts, outputs, or credentials.",
+      "gcp_related": false
+    }
+  ],
+  "gate11_comparison": {
+    "repeated_gate11_gcp_issue": false,
+    "gate11_quota_fix_reused": true,
+    "route_product_acceptance_passed": true,
+    "gcp_route_or_quota_blocker": false,
+    "delay_class": "gate13_windows_operator_boundary_and_packaged_lifecycle"
+  },
+  "cleanup": {
+    "native_windows_task_absent_with_instance": true,
+    "exact_instances_absent": true,
+    "exact_disks_absent": true,
+    "exact_firewalls_absent": true,
+    "regional_l4_limit": 1,
+    "regional_l4_usage": 0,
+    "verified_at": "2026-08-31T23:45:44Z",
+    "protected_bootstrap_deleted": false
+  },
+  "cost": {
+    "maximum_committed_usd": "56.00",
+    "observed_cost_usd": null
+  },
+  "claims": {
+    "gate_13_passed": false,
+    "windows_lifecycle_passed": false,
+    "linux_lifecycle_started": false,
+    "run_id_reusable": false,
+    "resources_reusable": false
+  }
+}

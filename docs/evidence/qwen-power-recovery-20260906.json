@@ -1,0 +1,91 @@
+{
+  "result": "passed",
+  "scope": "Windows-v9-real-GPU-power-pause-automatic-resumption-and-local-inference",
+  "hardware": "NVIDIA RTX 2070 SUPER, 8 GB VRAM",
+  "install_archive": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "ddc74b7aef1e29615458b930a03c8393a90dd5ec36ebed19528df2f7081d28a3",
+    "size_bytes": 2692402624
+  },
+  "worker_block_indices": "59:60",
+  "threshold_watts": 120.0,
+  "load": {
+    "seconds": 25.0,
+    "matrix_products": 6115
+  },
+  "first_over_threshold_sample_seconds": 9.030999999995402,
+  "paused_sample_seconds": 9.23399999999674,
+  "observed_threshold_crossing_to_paused_seconds": 0.20300000000133878,
+  "peak_observed_watts_before_pause": 134.938,
+  "paused_process_tree_gone": true,
+  "resumed_without_policy_change_or_start_command": true,
+  "local_after_recovery": {
+    "seconds": 0.43800000000192085,
+    "response": {
+      "id": "cmpl-f034a356394c4711a7cb3a44",
+      "object": "text_completion",
+      "created": 1788677673,
+      "model": "Qwen3.5-0.8B-Local",
+      "choices": [
+        {
+          "index": 0,
+          "text": " Paris.\n",
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8
+      }
+    }
+  },
+  "manual_pause_seconds": 0.125,
+  "manual_pause_tree_gone": true,
+  "manual_restart_tree_gone": true,
+  "node_stopped": true,
+  "complete_gate14": false,
+  "limits": [
+    "25-second external CUDA load, one threshold crossing on one Windows GPU",
+    "Sampled aggregate device power; stopping sharing cannot stop unrelated GPU load",
+    "The peak covers samples through worker pause, not the entire load interval",
+    "No bandwidth resumption, native Linux, long-soak, or OS hard-cap claim"
+  ],
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-implementation/sharing-power-recovery-v9/result.json",
+      "sha256": "b25e3e26f2a2418e629a3e8881cb188c9d5d77ca6e1eece179aa866573054338"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/sharing-power-recovery-v9/power-recovery-samples.json",
+      "sha256": "45ece1773f782b8d07a297a303f00822a774df16f5c3d92d302aceccc1831c8f"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/sharing-power-recovery-v9/bounded-gpu-load.log",
+      "sha256": "1dadc8ec52abd7686b4f40ef817e68906210ec2c4a662f0fa6f4f99a2ed6f556"
+    },
+    {
+      "path": "scripts/qualify_qwen_sharing_product.py",
+      "sha256": "06858471bfa883443b1f2170d6878959c4e4795a0090692cee97cb510c18e908"
+    },
+    {
+      "path": "scripts/qwen_bounded_gpu_load.py",
+      "sha256": "4e56a64d9db22813042817ccbf89d1e13ce6bd311f64ca207c72c58f63915294"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-build-v9/CommunityAI/node/CommunityAI-Node.exe",
+      "sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v9-source.json",
+      "sha256": "4566fd0c2dfeb18d3ef4945705ca672d6ff6df492ed4880edda775d51367645a"
+    }
+  ]
+}

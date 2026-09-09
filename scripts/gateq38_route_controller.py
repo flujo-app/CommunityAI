@@ -1,0 +1,3883 @@
+"""Durable no-provider controller for the Qwen3.8 complete-route attempt.
+
+The controller never invokes a provider. Each operation consumes an exact bounded
+observation, persists a source/plan-bound state, and emits at most one allowlisted
+action for a separate provider adapter.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import secrets
+import shutil
+import stat
+import subprocess
+import tempfile
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
+from pathlib import Path, PurePosixPath
+from types import MappingProxyType
+from typing import Any, Iterator, Mapping, Sequence
+
+SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 1
+INSTANCE_KEY_SCHEMA_VERSION = 1
+INSTANCE_KEY_SCOPE = "qwen3.8-instance-generation-key"
+INSTANCE_KEY_ACTIVE_SCOPE = "qwen3.8-active-instance-generation-key"
+INSTANCE_KEY_TOMBSTONE_SCOPE = "qwen3.8-revoked-instance-generation-key"
+INSTANCE_KEY_BYTES = 32
+MAX_INSTANCE_KEY_RECORD_BYTES = 16_384
+_WINDOWS_INSTANCE_KEY_DIRECTORY_ACL = r"""param(
+    [Parameter(Mandatory = $true)][string]$path,
+    [Parameter(Mandatory = $true)][bool]$apply
+)
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($apply) {
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $sid,
+        'FullControl',
+        'ContainerInherit,ObjectInherit',
+        'None',
+        'Allow'
+    )
+    $security.SetAccessRule($rule)
+    [System.IO.Directory]::SetAccessControl($path, $security)
+}
+$verified = [System.IO.Directory]::GetAccessControl(
+    $path,
+    [System.Security.AccessControl.AccessControlSections]::Access
+)
+$rules = @($verified.GetAccessRules(
+    $true,
+    $true,
+    [System.Security.Principal.SecurityIdentifier]
+))
+if (
+    -not $verified.AreAccessRulesProtected -or
+    $rules.Count -ne 1 -or
+    $rules[0].IdentityReference.Value -ne $sid.Value -or
+    $rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+    $rules[0].IsInherited -or
+    $rules[0].FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl
+) {
+    throw 'private directory ACL verification failed'
+}
+"""
+_WINDOWS_INSTANCE_KEY_FILE_ACL = r"""param(
+    [Parameter(Mandatory = $true)][string]$path,
+    [Parameter(Mandatory = $true)][bool]$apply
+)
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($apply) {
+    $security = New-Object System.Security.AccessControl.FileSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $sid,
+        'FullControl',
+        'Allow'
+    )
+    $security.SetAccessRule($rule)
+    [System.IO.File]::SetAccessControl($path, $security)
+}
+$verified = [System.IO.File]::GetAccessControl(
+    $path,
+    [System.Security.AccessControl.AccessControlSections]::Access
+)
+$rules = @($verified.GetAccessRules(
+    $true,
+    $true,
+    [System.Security.Principal.SecurityIdentifier]
+))
+if (
+    -not $verified.AreAccessRulesProtected -or
+    $rules.Count -ne 1 -or
+    $rules[0].IdentityReference.Value -ne $sid.Value -or
+    $rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+    $rules[0].IsInherited -or
+    $rules[0].FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl
+) {
+    throw 'private file ACL verification failed'
+}
+"""
+GATE = "qwen3.8-complete-route"
+MAX_JSON_BYTES = 262_144
+PROTECTED_INSTANCE = "communityai-bootstrap-1"
+EXPECTED_PROVIDER = "gcp"
+EXPECTED_PROJECT = "community-ai-506321"
+EXPECTED_REGION = "us-central1"
+EXPECTED_ZONE = "us-central1-b"
+EXPECTED_WORKER_MACHINE_TYPE = "g2-standard-8"
+EXPECTED_BOOTSTRAP_MACHINE_TYPE = "e2-standard-2"
+EXPECTED_ACCELERATOR_TYPE = "nvidia-l4"
+EXPECTED_SOURCE_IMAGE = "deeplearning-platform-release/common-cu129-ubuntu-2404-nvidia-580-v20260831"
+EXPECTED_DISK_TYPE = "pd-balanced"
+EXPECTED_DISK_SIZE_GB = 50
+EXPECTED_NETWORK = "communityai-discovery"
+EXPECTED_SUBNET = "communityai-us-central1"
+EXPECTED_MAX_LIFETIME_SECONDS = 39_600
+EXPECTED_PRICED_DURATION_HOURS = Decimal("11.00")
+EXPECTED_MANIFEST_DIGEST = "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4"
+EXPECTED_MODEL_REVISION = "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
+EXPECTED_INDEX_DIGEST = "sha256:f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2"
+EXPECTED_BLOCK_PREFIX = "model.language_model.layers"
+EXPECTED_ARTIFACTS_PER_SPAN = 18
+VERIFIER_SOURCE_PATH = "src/drift/model_manifest.py"
+READINESS_LEDGER_PATH = "docs/RELEASE_READINESS.md"
+PROTECTION_SOURCE_PATH = "scripts/gate14_packaged_lifecycle.py"
+GCP_ADAPTER_SOURCE_PATH = "scripts/gateq38_gcp_adapter.py"
+DESKTOP_RELEASE_VERIFIER_SOURCE_PATH = "desktop/build_desktop.py"
+STAGE_PACKAGE_SOURCE_PATH = "scripts/gateq38_stage_package.py"
+LINUX_HOST_RUNTIME_SOURCE_PATH = "scripts/gateq38_linux_host_runtime.py"
+LINUX_HOST_TRANSPORT_SOURCE_PATH = "scripts/gateq38_linux_host_transport.py"
+MAX_RELEASE_PROVENANCE_BYTES = 16 * 1024 * 1024
+MAX_RELEASE_CHECKSUMS_BYTES = 16 * 1024 * 1024
+MAX_RELEASE_METRICS_BYTES = 16 * 1024 * 1024
+RUNTIME_PACKAGE_SCHEMA_VERSION = 1
+RUNTIME_PACKAGE_SCOPE = "qwen3.8-linux-runtime-package"
+RUNTIME_PACKAGE_PLATFORM = "linux"
+RUNTIME_PACKAGE_ARCHIVE = "communityai-desktop-linux.tar.gz"
+RUNTIME_PACKAGE_NODE_ROOT = "CommunityAI/node"
+RUNTIME_PACKAGE_NODE_EXECUTABLE = "CommunityAI/node/CommunityAI-Node"
+REQUIRED_SOURCE_PATHS = {
+    "desktop/build_desktop.py",
+    "docs/RELEASE_READINESS.md",
+    "scripts/gate14_packaged_lifecycle.py",
+    "scripts/gateq38_gcp_adapter.py",
+    "scripts/gateq38_linux_host_runtime.py",
+    "scripts/gateq38_linux_host_transport.py",
+    "scripts/gateq38_route_controller.py",
+    "scripts/gateq38_stage_package.py",
+    "scripts/qualify_model_multimachine.py",
+    "src/drift/model_manifest.py",
+    "src/drift/server/server.py",
+}
+MAX_PLAN_REVALIDATION_AGE_SECONDS = 300
+EXPECTED_SPANS = {
+    "0:16": (
+        6_095_829_165,
+        "sha256:70c0c950845c0c53dc0269d525c755bc72e661cf4ded8a78a7b5f99d8d195d89",
+    ),
+    "16:32": (
+        6_095_829_389,
+        "sha256:01d4ca6e77a9564e6896343b0c8558619fcda78819eeafb0d49393a955460866",
+    ),
+    "32:48": (
+        6_095_829_389,
+        "sha256:4b3ac15527d87d2dbd089fc4ba4ab0dec4610a5e9870df1401473159b55138e5",
+    ),
+    "48:64": (
+        6_095_829_389,
+        "sha256:2e779c52ab2eb5156aa3cfba60e5d08b4dd691e0302101cbc1a39c24d45745e1",
+    ),
+}
+EXPECTED_RESOURCE_KINDS = {
+    "bootstrap_instance": 1,
+    "bootstrap_disk": 1,
+    "worker_instance": 4,
+    "worker_disk": 4,
+    "firewall": 1,
+    "iap_firewall": 1,
+}
+ACTIONS = {"start_route", "collect_route", "cleanup_route", "none"}
+PHASES = {
+    "ABSENT",
+    "STARTING",
+    "READY",
+    "COLLECTING",
+    "CLEANING",
+    "CLEANED_PASS",
+    "CLEANED_FAILURE",
+}
+TERMINAL_PHASES = {"CLEANED_PASS", "CLEANED_FAILURE"}
+WORKER_STATES = {"absent", "starting", "ready", "failed"}
+JOB_STATES = {"absent", "running", "passed", "failed"}
+
+_RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{2,62}")
+_LABEL_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_GCP_RESOURCE_RE = re.compile(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+_REVISION_RE = re.compile(r"[0-9a-f]{40}")
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+_PEER_RE = re.compile(r"[A-Za-z0-9]{20,128}")
+_INSTANCE_ID_RE = re.compile(r"[1-9][0-9]{0,19}")
+_CREATION_TIMESTAMP_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?[+-][0-9]{2}:[0-9]{2}"
+)
+
+_PLAN_FIELDS = {
+    "schema_version",
+    "gate",
+    "run_id",
+    "route_job_id",
+    "source_commit",
+    "manifest_digest",
+    "model_revision",
+    "deadline_unix",
+    "authorization",
+    "source_bindings",
+    "runtime_package",
+    "resources",
+    "workers",
+}
+_RUNTIME_PACKAGE_FIELDS = {
+    "schema_version",
+    "scope",
+    "platform",
+    "source_commit",
+    "source_tree",
+    "source_bindings_digest",
+    "release_archive_name",
+    "release_archive_sha256",
+    "release_archive_bytes",
+    "checksums_sha256",
+    "checksums_bytes",
+    "provenance_sha256",
+    "provenance_bytes",
+    "desktop_metrics_sha256",
+    "desktop_metrics_bytes",
+    "manifest_digest",
+    "manifest_sha256",
+    "manifest_bytes",
+    "node_root",
+    "node_executable",
+    "node_executable_sha256",
+    "node_executable_bytes",
+    "node_runtime_entry_count",
+    "node_runtime_bytes",
+    "node_runtime_inventory_digest",
+    "runtime_package_digest",
+}
+_AUTH_FIELDS = {
+    "combined_cloud_ceiling_usd",
+    "ledger_committed_before_run_usd",
+    "maximum_estimate_usd",
+    "reservation_recorded",
+    "native_auth_revalidated",
+    "inventory_revalidated",
+    "pricing_revalidated",
+    "provisioning_authorized",
+    "reservation_id",
+    "reservation_record_path",
+    "reservation_record_sha256",
+    "reservation_record_byte_size",
+    "preflight_record_path",
+    "preflight_record_sha256",
+    "preflight_record_byte_size",
+    "readiness_ledger_sha256",
+}
+_BINDING_FIELDS = {"relative_path", "sha256", "byte_size"}
+_RESOURCE_FIELDS = {"name", "kind", "provider", "region", "worker_id"}
+_WORKER_FIELDS = {
+    "worker_id",
+    "machine_id",
+    "instance",
+    "disk",
+    "span",
+    "artifact_bytes",
+    "artifact_set_digest",
+    "cache_root",
+}
+_JOURNAL_FIELDS = {
+    "schema_version",
+    "run_id",
+    "plan_digest",
+    "start_action_id",
+    "status",
+    "issued_at_unix",
+    "completed_at_unix",
+    "terminal_phase",
+    "terminal_revision",
+    "failure_code",
+    "evidence_digest",
+    "cleanup_verified",
+}
+_STATE_FIELDS = {
+    "schema_version",
+    "run_id",
+    "plan_digest",
+    "revision",
+    "phase",
+    "failure_code",
+    "evidence_digest",
+    "instance_generations_digest",
+    "cleanup_verified",
+    "next_action",
+}
+_INSTANCE_KEY_RECORD_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "source_commit",
+    "plan_digest",
+    "execution_inventory_digest",
+    "start_action_id",
+    "resource_name",
+    "resource_kind",
+    "instance_id",
+    "creation_timestamp",
+    "instance_generation_digest",
+    "key_epoch",
+    "issued_at_unix",
+    "expires_at_unix",
+    "key_sha256",
+    "key_bytes",
+    "previous_record_digest",
+    "record_digest",
+}
+_INSTANCE_KEY_ACTIVE_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "plan_digest",
+    "resource_name",
+    "instance_generation_digest",
+    "key_epoch",
+    "record_digest",
+    "active_digest",
+}
+_INSTANCE_KEY_TOMBSTONE_FIELDS = {
+    "schema_version",
+    "scope",
+    "run_id",
+    "source_commit",
+    "plan_digest",
+    "execution_inventory_digest",
+    "start_action_id",
+    "resource_name",
+    "instance_generation_digest",
+    "revoked_at_unix",
+    "last_key_epoch",
+    "last_record_digest",
+    "tombstone_digest",
+}
+_OBSERVATION_FIELDS = {
+    "schema_version",
+    "run_id",
+    "observed_at_unix",
+    "protected_bootstrap_running",
+    "artifact_plan_revalidation",
+    "instance_generations_digest",
+    "resources",
+    "workers",
+    "route_job",
+}
+_REVALIDATION_FIELDS = {
+    "verified_at_unix",
+    "source_commit",
+    "manifest_digest",
+    "model_revision",
+    "index_digest",
+    "block_prefix",
+    "worker_plan_digest",
+    "verifier_source_sha256",
+}
+_OBS_RESOURCE_FIELDS = {
+    "present",
+    "kind",
+    "provider",
+    "region",
+    "run_id",
+    "source_commit",
+    "deadline_unix",
+    "plan_digest",
+    "start_action_id",
+    "worker_id",
+    "instance_id",
+    "creation_timestamp",
+    "instance_generation_digest",
+}
+_OBS_WORKER_FIELDS = {
+    "state",
+    "machine_id",
+    "peer_id",
+    "source_commit",
+    "plan_digest",
+    "worker_plan_digest",
+    "start_action_id",
+    "span",
+    "manifest_digest",
+    "artifact_bytes",
+    "artifact_set_digest",
+    "cache_root",
+}
+_ROUTE_JOB_FIELDS = {
+    "state",
+    "job_id",
+    "collect_action_id",
+    "run_id",
+    "plan_digest",
+    "source_commit",
+    "manifest_digest",
+    "worker_plan_digest",
+    "evidence_digest",
+    "route_record",
+}
+_ROUTE_RECORD_FIELDS = {
+    "schema_version",
+    "result",
+    "run_id",
+    "job_id",
+    "collect_action_id",
+    "plan_digest",
+    "source_commit",
+    "manifest_digest",
+    "worker_plan_digest",
+    "route_span",
+    "session_id",
+    "route_rpc_evidence_digest",
+    "cleanup_ready",
+    "worker_results",
+}
+_ROUTE_WORKER_RESULT_FIELDS = {
+    "worker_id",
+    "machine_id",
+    "peer_id",
+    "span",
+    "source_commit",
+    "manifest_digest",
+    "artifact_bytes",
+    "artifact_set_digest",
+    "cache_root",
+    "worker_evidence_digest",
+}
+_RESERVATION_FIELDS = {
+    "schema_version",
+    "reservation_id",
+    "run_id",
+    "combined_cloud_ceiling_usd",
+    "ledger_committed_before_run_usd",
+    "maximum_estimate_usd",
+    "deadline_unix",
+    "plan_digest",
+    "execution_inventory_digest",
+    "worker_plan_digest",
+    "resource_costs",
+    "readiness_ledger_sha256",
+    "recorded_at_unix",
+    "expires_at_unix",
+    "reservation_recorded",
+}
+_COST_FIELDS = {
+    "resource_name",
+    "resource_spec_digest",
+    "unit_rate_usd",
+    "quantity",
+    "duration_hours",
+    "maximum_usd",
+}
+_RESOURCE_SPEC_FIELDS = {
+    "resource_name",
+    "kind",
+    "provider",
+    "region",
+    "project",
+    "zone",
+    "machine_type",
+    "accelerator_type",
+    "accelerator_count",
+    "source_image",
+    "disk_type",
+    "disk_size_gb",
+    "network",
+    "subnet",
+    "max_lifetime_seconds",
+}
+
+
+_RPC_EVIDENCE_FIELDS = {
+    "schema_version",
+    "result",
+    "run_id",
+    "job_id",
+    "collect_action_id",
+    "plan_digest",
+    "source_commit",
+    "manifest_digest",
+    "worker_plan_digest",
+    "route_span",
+    "session_id",
+}
+_WORKER_EVIDENCE_FIELDS = {
+    "schema_version",
+    "result",
+    "run_id",
+    "job_id",
+    "collect_action_id",
+    "plan_digest",
+    "source_commit",
+    "manifest_digest",
+    "worker_plan_digest",
+    "start_action_id",
+    "worker_id",
+    "machine_id",
+    "peer_id",
+    "span",
+    "artifact_bytes",
+    "artifact_set_digest",
+    "cache_root",
+}
+
+
+_PREFLIGHT_FIELDS = {
+    "schema_version",
+    "run_id",
+    "source_commit",
+    "plan_digest",
+    "execution_inventory_digest",
+    "worker_plan_digest",
+    "provider",
+    "resource_names",
+    "resource_specs",
+    "pricing_source",
+    "pricing_currency",
+    "pricing_checked_at_unix",
+    "gpu_quota_limit",
+    "gpu_quota_usage",
+    "required_gpu_count",
+    "checked_at_unix",
+    "native_auth_revalidated",
+    "inventory_revalidated",
+    "pricing_revalidated",
+    "provisioning_authorized",
+    "protected_bootstrap_running",
+    "reservation_record_sha256",
+}
+
+
+class RouteControllerError(ValueError):
+    """The route plan, observation, state, or transition failed closed."""
+
+
+@dataclass(frozen=True)
+class InstanceGenerationKey:
+    """Controller-private key material with a digest-only public record."""
+
+    record: Mapping[str, Any]
+    key: bytes = field(repr=False)
+
+
+@dataclass(frozen=True)
+class WorkerPlan:
+    worker_id: str
+    machine_id: str
+    instance: str
+    disk: str
+    span: str
+    artifact_bytes: int
+    artifact_set_digest: str
+    cache_root: str
+
+
+@dataclass(frozen=True)
+class ResourcePlan:
+    name: str
+    kind: str
+    provider: str
+    region: str
+    worker_id: str | None
+
+
+@dataclass(frozen=True)
+class RoutePlan:
+    run_id: str
+    route_job_id: str
+    source_commit: str
+    manifest_digest: str
+    model_revision: str
+    deadline_unix: int
+    authorization: Mapping[str, Any]
+    source_bindings: tuple[Mapping[str, Any], ...]
+    runtime_package: Mapping[str, Any]
+    resources: tuple[ResourcePlan, ...]
+    workers: tuple[WorkerPlan, ...]
+    plan_digest: str
+
+    @property
+    def resource_by_name(self) -> dict[str, ResourcePlan]:
+        return {resource.name: resource for resource in self.resources}
+
+    @property
+    def worker_by_id(self) -> dict[str, WorkerPlan]:
+        return {worker.worker_id: worker for worker in self.workers}
+
+    @property
+    def worker_plan_digest(self) -> str:
+        return _worker_plan_digest(self.workers)
+
+    @property
+    def execution_inventory_digest(self) -> str:
+        return _canonical_digest(
+            {
+                "run_id": self.run_id,
+                "route_job_id": self.route_job_id,
+                "source_commit": self.source_commit,
+                "manifest_digest": self.manifest_digest,
+                "model_revision": self.model_revision,
+                "deadline_unix": self.deadline_unix,
+                "plan_digest": self.plan_digest,
+                "source_bindings": [dict(binding) for binding in self.source_bindings],
+                "runtime_package": dict(self.runtime_package),
+                "worker_plan_digest": self.worker_plan_digest,
+                "resources": [
+                    {
+                        "name": resource.name,
+                        "kind": resource.kind,
+                        "provider": resource.provider,
+                        "region": resource.region,
+                        "worker_id": resource.worker_id,
+                        "resource_spec_digest": _canonical_digest(_expected_resource_spec(resource)),
+                    }
+                    for resource in self.resources
+                ],
+            }
+        )
+
+
+def _expected_resource_spec(resource: ResourcePlan) -> dict[str, Any]:
+    is_worker_instance = resource.kind == "worker_instance"
+    is_bootstrap_instance = resource.kind == "bootstrap_instance"
+    is_instance = is_worker_instance or is_bootstrap_instance
+    is_disk = resource.kind in {"bootstrap_disk", "worker_disk"}
+    return {
+        "resource_name": resource.name,
+        "kind": resource.kind,
+        "provider": EXPECTED_PROVIDER,
+        "region": EXPECTED_REGION,
+        "project": EXPECTED_PROJECT,
+        "zone": EXPECTED_ZONE,
+        "machine_type": (
+            EXPECTED_WORKER_MACHINE_TYPE
+            if is_worker_instance
+            else EXPECTED_BOOTSTRAP_MACHINE_TYPE
+            if is_bootstrap_instance
+            else "none"
+        ),
+        "accelerator_type": EXPECTED_ACCELERATOR_TYPE if is_worker_instance else "none",
+        "accelerator_count": 1 if is_worker_instance else 0,
+        "source_image": EXPECTED_SOURCE_IMAGE if is_instance else "none",
+        "disk_type": EXPECTED_DISK_TYPE if is_disk else "none",
+        "disk_size_gb": EXPECTED_DISK_SIZE_GB if is_disk else 0,
+        "network": EXPECTED_NETWORK,
+        "subnet": EXPECTED_SUBNET,
+        "max_lifetime_seconds": EXPECTED_MAX_LIFETIME_SECONDS,
+    }
+
+
+def _reject_constant(_value: str) -> None:
+    raise RouteControllerError("invalid JSON constant")
+
+
+def _unique_object(pairs: Sequence[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise RouteControllerError("duplicate JSON field")
+        result[key] = value
+    return result
+
+
+def _regular_bytes(path: Path, maximum: int = MAX_JSON_BYTES) -> bytes:
+    descriptor: int | None = None
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise RouteControllerError("required file is unavailable") from exc
+    reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    if reparse or path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 1 <= metadata.st_size <= maximum:
+        raise RouteControllerError("required file is unsafe")
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        identity = lambda item: (
+            item.st_dev,
+            item.st_ino,
+            item.st_size,
+            getattr(item, "st_mtime_ns", int(item.st_mtime * 1_000_000_000)),
+        )
+        if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(metadata):
+            raise RouteControllerError("required file identity changed while opening")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            payload = handle.read(maximum + 1)
+        after = os.fstat(descriptor)
+        if identity(after) != identity(opened) or len(payload) != opened.st_size:
+            raise RouteControllerError("required file changed while reading")
+        return payload
+    except OSError as exc:
+        raise RouteControllerError("required file is unreadable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _strict_json(payload: bytes) -> Mapping[str, Any]:
+    if not 1 <= len(payload) <= MAX_JSON_BYTES:
+        raise RouteControllerError("JSON size is invalid")
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RouteControllerError("invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise RouteControllerError("JSON root must be an object")
+    return value
+
+
+def _mapping(value: Any, fields: set[str], field: str) -> Mapping[str, Any]:
+    if not isinstance(value, dict) or set(value) != fields:
+        raise RouteControllerError(f"{field} schema is invalid")
+    return value
+
+
+def _string(value: Any, pattern: re.Pattern[str], field: str) -> str:
+    if not isinstance(value, str) or pattern.fullmatch(value) is None:
+        raise RouteControllerError(f"{field} is invalid")
+    return value
+
+
+def _integer(value: Any, field: str, minimum: int = 0) -> int:
+    if type(value) is not int or value < minimum:
+        raise RouteControllerError(f"{field} is invalid")
+    return value
+
+
+def _boolean(value: Any, field: str) -> bool:
+    if type(value) is not bool:
+        raise RouteControllerError(f"{field} is invalid")
+    return value
+
+
+def _money(value: Any, field: str) -> Decimal:
+    if not isinstance(value, str):
+        raise RouteControllerError(f"{field} is invalid")
+    try:
+        result = Decimal(value)
+    except InvalidOperation as exc:
+        raise RouteControllerError(f"{field} is invalid") from exc
+    if not result.is_finite() or result < 0 or result.quantize(Decimal("0.01")) != result:
+        raise RouteControllerError(f"{field} is invalid")
+    return result
+
+
+def _canonical_digest(value: Mapping[str, Any]) -> str:
+    payload = json.dumps(value, allow_nan=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _source_bindings_digest(source_bindings: Sequence[Mapping[str, Any]]) -> str:
+    return _canonical_digest({"source_bindings": [dict(binding) for binding in source_bindings]})
+
+
+def _runtime_package_digest(value: Mapping[str, Any]) -> str:
+    try:
+        payload = (
+            json.dumps(
+                {key: value[key] for key in sorted(value) if key != "runtime_package_digest"},
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RouteControllerError("runtime package record is not canonical JSON") from exc
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def validate_runtime_package_record(
+    value: Any,
+    *,
+    expected_source_commit: str | None = None,
+    expected_manifest_digest: str | None = None,
+    expected_source_bindings: Sequence[Mapping[str, Any]] | None = None,
+) -> Mapping[str, Any]:
+    record = dict(_mapping(value, _RUNTIME_PACKAGE_FIELDS, "runtime_package"))
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != RUNTIME_PACKAGE_SCHEMA_VERSION
+        or record["scope"] != RUNTIME_PACKAGE_SCOPE
+        or record["platform"] != RUNTIME_PACKAGE_PLATFORM
+        or record["release_archive_name"] != RUNTIME_PACKAGE_ARCHIVE
+        or record["node_root"] != RUNTIME_PACKAGE_NODE_ROOT
+        or record["node_executable"] != RUNTIME_PACKAGE_NODE_EXECUTABLE
+    ):
+        raise RouteControllerError("runtime package identity is invalid")
+    source_commit = _string(record["source_commit"], _COMMIT_RE, "runtime package source commit")
+    _string(record["source_tree"], _COMMIT_RE, "runtime package source tree")
+    manifest_digest = _string(record["manifest_digest"], _DIGEST_RE, "runtime package manifest digest")
+    for field in (
+        "source_bindings_digest",
+        "release_archive_sha256",
+        "checksums_sha256",
+        "provenance_sha256",
+        "desktop_metrics_sha256",
+        "manifest_sha256",
+        "node_executable_sha256",
+        "node_runtime_inventory_digest",
+        "runtime_package_digest",
+    ):
+        _string(record[field], _DIGEST_RE, f"runtime package {field}")
+    for field in (
+        "release_archive_bytes",
+        "checksums_bytes",
+        "provenance_bytes",
+        "desktop_metrics_bytes",
+        "manifest_bytes",
+        "node_executable_bytes",
+        "node_runtime_entry_count",
+        "node_runtime_bytes",
+    ):
+        _integer(record[field], f"runtime package {field}", 1)
+    if expected_source_commit is not None and source_commit != expected_source_commit:
+        raise RouteControllerError("runtime package source commit changed")
+    if expected_manifest_digest is not None and manifest_digest != expected_manifest_digest:
+        raise RouteControllerError("runtime package manifest binding changed")
+    if expected_source_bindings is not None and record["source_bindings_digest"] != _source_bindings_digest(
+        expected_source_bindings
+    ):
+        raise RouteControllerError("runtime package source bindings changed")
+    if record["runtime_package_digest"] != _runtime_package_digest(record):
+        raise RouteControllerError("runtime package record digest changed")
+    return MappingProxyType(record)
+
+
+def _stable_plan_digest(raw: Mapping[str, Any]) -> str:
+    """Bind the exact plan without introducing record-hash self-reference."""
+
+    authorization = dict(raw["authorization"])
+    for field in (
+        "reservation_record_sha256",
+        "reservation_record_byte_size",
+        "preflight_record_sha256",
+        "preflight_record_byte_size",
+    ):
+        authorization.pop(field)
+    stable = dict(raw)
+    stable["authorization"] = authorization
+    return _canonical_digest(stable)
+
+
+def _worker_plan_digest(workers: Sequence[WorkerPlan]) -> str:
+    value = {
+        "manifest_digest": EXPECTED_MANIFEST_DIGEST,
+        "model_revision": EXPECTED_MODEL_REVISION,
+        "block_prefix": EXPECTED_BLOCK_PREFIX,
+        "workers": [
+            {
+                "worker_id": worker.worker_id,
+                "machine_id": worker.machine_id,
+                "span": worker.span,
+                "artifact_bytes": worker.artifact_bytes,
+                "artifact_set_digest": worker.artifact_set_digest,
+                "cache_root": worker.cache_root,
+            }
+            for worker in sorted(workers, key=lambda item: item.span)
+        ],
+    }
+    return _canonical_digest(value)
+
+
+def _action_id(plan: RoutePlan, action: str) -> str:
+    if action not in ACTIONS - {"none"}:
+        raise RouteControllerError("action identity is invalid")
+    return _canonical_digest(
+        {
+            "run_id": plan.run_id,
+            "plan_digest": plan.plan_digest,
+            "action": action,
+        }
+    )
+
+
+def _relative_path(value: Any) -> str:
+    if not isinstance(value, str) or not value or len(value) > 256 or "\\" in value:
+        raise RouteControllerError("source binding path is invalid")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise RouteControllerError("source binding path is invalid")
+    return value
+
+
+def _cache_root(value: Any) -> str:
+    if not isinstance(value, str) or len(value) > 512 or not value.startswith("/") or "\\" in value or "//" in value:
+        raise RouteControllerError("worker cache root is invalid")
+    path = PurePosixPath(value)
+    if any(part in {"", ".", ".."} for part in path.parts[1:]):
+        raise RouteControllerError("worker cache root is invalid")
+    return str(path)
+
+
+def _validate_source_bindings(value: Any, source_root: Path) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 32:
+        raise RouteControllerError("source bindings must be a bounded list")
+    bindings: list[Mapping[str, Any]] = []
+    previous = ""
+    resolved_root = source_root.resolve()
+    for index, item in enumerate(value):
+        binding = _mapping(item, _BINDING_FIELDS, f"source_bindings[{index}]")
+        relative = _relative_path(binding["relative_path"])
+        if relative <= previous:
+            raise RouteControllerError("source bindings must be strictly sorted")
+        previous = relative
+        expected_size = _integer(binding["byte_size"], "source binding byte size", 1)
+        expected_digest = _string(binding["sha256"], _DIGEST_RE, "source binding digest")
+        candidate = (resolved_root / Path(*PurePosixPath(relative).parts)).resolve()
+        try:
+            candidate.relative_to(resolved_root)
+        except ValueError as exc:
+            raise RouteControllerError("source binding escapes source root") from exc
+        payload = _regular_bytes(candidate)
+        if len(payload) != expected_size:
+            raise RouteControllerError("source binding size changed")
+        observed_digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+        if observed_digest != expected_digest:
+            raise RouteControllerError("source binding digest changed")
+        bindings.append(MappingProxyType(dict(binding)))
+    return tuple(bindings)
+
+
+def load_plan(path: Path, source_root: Path) -> RoutePlan:
+    raw_bytes = _regular_bytes(path)
+    raw = _mapping(_strict_json(raw_bytes), _PLAN_FIELDS, "plan")
+    if raw["schema_version"] != SCHEMA_VERSION or raw["gate"] != GATE:
+        raise RouteControllerError("plan identity is invalid")
+    run_id = _string(raw["run_id"], _RUN_RE, "run_id")
+    route_job_id = _string(raw["route_job_id"], _LABEL_RE, "route_job_id")
+    source_commit = _string(raw["source_commit"], _COMMIT_RE, "source_commit")
+    manifest_digest = _string(raw["manifest_digest"], _DIGEST_RE, "manifest_digest")
+    model_revision = _string(raw["model_revision"], _REVISION_RE, "model_revision")
+    if manifest_digest != EXPECTED_MANIFEST_DIGEST or model_revision != EXPECTED_MODEL_REVISION:
+        raise RouteControllerError("Qwen3.8 model binding is invalid")
+    deadline_unix = _integer(raw["deadline_unix"], "deadline_unix", 1)
+
+    authorization = dict(_mapping(raw["authorization"], _AUTH_FIELDS, "authorization"))
+    ceiling = _money(authorization["combined_cloud_ceiling_usd"], "combined cloud ceiling")
+    committed = _money(authorization["ledger_committed_before_run_usd"], "ledger committed amount")
+    maximum = _money(authorization["maximum_estimate_usd"], "maximum estimate")
+    if (
+        ceiling != Decimal("100.00")
+        or committed != Decimal("56.00")
+        or maximum > Decimal("44.00")
+        or committed + maximum > ceiling
+    ):
+        raise RouteControllerError("authorization exceeds the current combined cloud ledger")
+    for field in (
+        "reservation_recorded",
+        "native_auth_revalidated",
+        "inventory_revalidated",
+        "pricing_revalidated",
+        "provisioning_authorized",
+    ):
+        _boolean(authorization[field], f"authorization.{field}")
+    _string(authorization["reservation_id"], _LABEL_RE, "authorization.reservation_id")
+    _relative_path(authorization["reservation_record_path"])
+    _integer(
+        authorization["reservation_record_byte_size"],
+        "authorization.reservation_record_byte_size",
+        1,
+    )
+    _string(
+        authorization["reservation_record_sha256"],
+        _DIGEST_RE,
+        "authorization.reservation_record_sha256",
+    )
+    _relative_path(authorization["preflight_record_path"])
+    _integer(
+        authorization["preflight_record_byte_size"],
+        "authorization.preflight_record_byte_size",
+        1,
+    )
+    _string(
+        authorization["preflight_record_sha256"],
+        _DIGEST_RE,
+        "authorization.preflight_record_sha256",
+    )
+    _string(
+        authorization["readiness_ledger_sha256"],
+        _DIGEST_RE,
+        "authorization.readiness_ledger_sha256",
+    )
+    if authorization["provisioning_authorized"] and maximum == 0:
+        raise RouteControllerError("authorized provisioning requires a positive bounded estimate")
+
+    source_bindings = _validate_source_bindings(raw["source_bindings"], source_root)
+    if {binding["relative_path"] for binding in source_bindings} != REQUIRED_SOURCE_PATHS:
+        raise RouteControllerError("exact route execution sources are not bound")
+    ledger_binding = next(binding for binding in source_bindings if binding["relative_path"] == READINESS_LEDGER_PATH)
+    if ledger_binding["sha256"] != authorization["readiness_ledger_sha256"]:
+        raise RouteControllerError("authorization is not bound to the readiness ledger")
+
+    runtime_package = validate_runtime_package_record(
+        raw["runtime_package"],
+        expected_source_commit=source_commit,
+        expected_manifest_digest=manifest_digest,
+        expected_source_bindings=source_bindings,
+    )
+
+    raw_workers = raw["workers"]
+    if not isinstance(raw_workers, list) or len(raw_workers) != 4:
+        raise RouteControllerError("plan must contain exactly four workers")
+    workers: list[WorkerPlan] = []
+    for index, item in enumerate(raw_workers):
+        worker = _mapping(item, _WORKER_FIELDS, f"workers[{index}]")
+        span = worker["span"]
+        if span not in EXPECTED_SPANS:
+            raise RouteControllerError("worker span is not canonical")
+        expected_bytes, expected_digest = EXPECTED_SPANS[span]
+        artifact_bytes = _integer(worker["artifact_bytes"], "artifact_bytes", 1)
+        artifact_digest = _string(worker["artifact_set_digest"], _DIGEST_RE, "artifact_set_digest")
+        if artifact_bytes != expected_bytes or artifact_digest != expected_digest:
+            raise RouteControllerError("worker artifact plan changed")
+        workers.append(
+            WorkerPlan(
+                worker_id=_string(worker["worker_id"], _LABEL_RE, "worker_id"),
+                machine_id=_string(worker["machine_id"], _LABEL_RE, "machine_id"),
+                instance=_string(worker["instance"], _GCP_RESOURCE_RE, "instance"),
+                disk=_string(worker["disk"], _GCP_RESOURCE_RE, "disk"),
+                span=span,
+                artifact_bytes=artifact_bytes,
+                artifact_set_digest=artifact_digest,
+                cache_root=_cache_root(worker["cache_root"]),
+            )
+        )
+    if [worker.span for worker in workers] != list(EXPECTED_SPANS):
+        raise RouteControllerError("worker spans must be the canonical exact route")
+    for field, values in (
+        ("worker_id", [worker.worker_id for worker in workers]),
+        ("machine_id", [worker.machine_id for worker in workers]),
+        ("instance", [worker.instance for worker in workers]),
+        ("disk", [worker.disk for worker in workers]),
+        ("cache_root", [worker.cache_root for worker in workers]),
+    ):
+        if len(set(values)) != len(values):
+            raise RouteControllerError(f"workers must have unique {field}")
+    if PROTECTED_INSTANCE in {value for worker in workers for value in (worker.instance, worker.disk)}:
+        raise RouteControllerError("protected bootstrap is targeted")
+
+    raw_resources = raw["resources"]
+    if not isinstance(raw_resources, list) or len(raw_resources) != 12:
+        raise RouteControllerError("resource inventory must contain exactly 12 resources")
+    resources: list[ResourcePlan] = []
+    kind_counts = {kind: 0 for kind in EXPECTED_RESOURCE_KINDS}
+    worker_by_id = {worker.worker_id: worker for worker in workers}
+    for index, item in enumerate(raw_resources):
+        resource = _mapping(item, _RESOURCE_FIELDS, f"resources[{index}]")
+        kind = resource["kind"]
+        if kind not in EXPECTED_RESOURCE_KINDS:
+            raise RouteControllerError("resource kind is invalid")
+        worker_id = resource["worker_id"]
+        if kind.startswith("worker_"):
+            worker_id = _string(worker_id, _LABEL_RE, "resource worker_id")
+            if worker_id not in worker_by_id:
+                raise RouteControllerError("resource references an unknown worker")
+        elif worker_id is not None:
+            raise RouteControllerError("non-worker resource has a worker_id")
+        name = _string(resource["name"], _GCP_RESOURCE_RE, "resource name")
+        if not name.startswith(f"{run_id}-"):
+            raise RouteControllerError("resource name is not run-scoped")
+        if name == PROTECTED_INSTANCE:
+            raise RouteControllerError("protected bootstrap is targeted")
+        resources.append(
+            ResourcePlan(
+                name=name,
+                kind=kind,
+                provider=_string(resource["provider"], _LABEL_RE, "resource provider"),
+                region=_string(resource["region"], _LABEL_RE, "resource region"),
+                worker_id=worker_id,
+            )
+        )
+        kind_counts[kind] += 1
+    if kind_counts != EXPECTED_RESOURCE_KINDS:
+        raise RouteControllerError("resource kind inventory is invalid")
+    if len({resource.name for resource in resources}) != len(resources):
+        raise RouteControllerError("resource names must be unique")
+    if [resource.name for resource in resources] != sorted(resource.name for resource in resources):
+        raise RouteControllerError("resource inventory must be sorted by name")
+    if {resource.provider for resource in resources} != {EXPECTED_PROVIDER} or {
+        resource.region for resource in resources
+    } != {EXPECTED_REGION}:
+        raise RouteControllerError("route resources must use one exact provider and region")
+    for worker in workers:
+        expected = {
+            ("worker_instance", worker.instance),
+            ("worker_disk", worker.disk),
+        }
+        observed = {(resource.kind, resource.name) for resource in resources if resource.worker_id == worker.worker_id}
+        if observed != expected:
+            raise RouteControllerError("worker resource inventory is inconsistent")
+
+    return RoutePlan(
+        run_id=run_id,
+        route_job_id=route_job_id,
+        source_commit=source_commit,
+        manifest_digest=manifest_digest,
+        model_revision=model_revision,
+        deadline_unix=deadline_unix,
+        authorization=MappingProxyType(authorization),
+        source_bindings=source_bindings,
+        runtime_package=runtime_package,
+        resources=tuple(resources),
+        workers=tuple(workers),
+        plan_digest=_stable_plan_digest(raw),
+    )
+
+
+def _bound_record_bytes(
+    root: Path,
+    relative_path: str,
+    expected_size: int,
+    expected_digest: str,
+) -> bytes:
+    resolved_root = root.resolve()
+    candidate = (resolved_root / Path(*PurePosixPath(relative_path).parts)).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise RouteControllerError("authorization record escapes its root") from exc
+    payload = _regular_bytes(candidate)
+    if len(payload) != expected_size:
+        raise RouteControllerError("authorization record size changed")
+    if "sha256:" + hashlib.sha256(payload).hexdigest() != expected_digest:
+        raise RouteControllerError("authorization record digest changed")
+    return payload
+
+
+def _assert_protected_path_from_bindings(
+    path: Path,
+    source_bindings: Sequence[Mapping[str, Any]],
+    source_root: Path,
+    *,
+    directory: bool,
+) -> None:
+    """Require the controller-owned protection implementation and its native checks."""
+
+    try:
+        from scripts import gate14_packaged_lifecycle as lifecycle
+    except ImportError as exc:
+        raise RouteControllerError("controller protection verifier is unavailable") from exc
+    expected_module = (source_root.resolve() / Path(*PurePosixPath(PROTECTION_SOURCE_PATH).parts)).resolve()
+    imported_module = Path(lifecycle.__file__).resolve()
+    protection_binding = next(
+        (binding for binding in source_bindings if binding["relative_path"] == PROTECTION_SOURCE_PATH),
+        None,
+    )
+    expected_payload = _regular_bytes(expected_module)
+    if (
+        protection_binding is None
+        or imported_module != expected_module
+        or "sha256:" + hashlib.sha256(expected_payload).hexdigest() != protection_binding["sha256"]
+    ):
+        raise RouteControllerError("controller protection verifier is not source-bound")
+    try:
+        lifecycle._assert_controller_owned(path, directory=directory)
+    except (OSError, lifecycle.Gate14LifecycleError) as exc:
+        raise RouteControllerError("controller-managed input is not protected") from exc
+
+
+def _assert_protected_path(
+    path: Path,
+    plan: RoutePlan,
+    source_root: Path,
+    *,
+    directory: bool,
+) -> None:
+    _assert_protected_path_from_bindings(
+        path,
+        plan.source_bindings,
+        source_root,
+        directory=directory,
+    )
+
+
+def _protected_record_bytes(
+    plan: RoutePlan,
+    source_root: Path,
+    root: Path,
+    relative_path: str,
+    expected_size: int,
+    expected_digest: str,
+) -> bytes:
+    _assert_protected_path(root, plan, source_root, directory=True)
+    resolved_root = root.resolve()
+    candidate = (resolved_root / Path(*PurePosixPath(relative_path).parts)).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise RouteControllerError("protected record escapes its root") from exc
+    _assert_protected_path(candidate, plan, source_root, directory=False)
+    return _bound_record_bytes(
+        root,
+        relative_path,
+        expected_size,
+        expected_digest,
+    )
+
+
+def _ledger_reservation_marker(plan: RoutePlan) -> bytes:
+    authorization = plan.authorization
+    return (
+        "Q38_ROUTE_RESERVATION "
+        f"run_id={plan.run_id} "
+        f"reservation_id={authorization['reservation_id']} "
+        f"maximum_usd={authorization['maximum_estimate_usd']} "
+        f"deadline_unix={plan.deadline_unix}"
+    ).encode("ascii")
+
+
+def revalidate_authorization_evidence(
+    plan: RoutePlan,
+    authorization_root: Path,
+    source_root: Path | None = None,
+    *,
+    now_unix: int,
+) -> None:
+    """Open and validate exact ledger, pricing, quota, and provider records."""
+
+    now_unix = _integer(now_unix, "trusted current time", 1)
+    if source_root is None:
+        source_root = authorization_root.parent / "source"
+    authorization = plan.authorization
+    readiness_path = source_root.resolve() / Path(*PurePosixPath(READINESS_LEDGER_PATH).parts)
+    readiness_payload = _regular_bytes(readiness_path)
+    readiness_binding = next(
+        binding for binding in plan.source_bindings if binding["relative_path"] == READINESS_LEDGER_PATH
+    )
+    if (
+        len(readiness_payload) != readiness_binding["byte_size"]
+        or "sha256:" + hashlib.sha256(readiness_payload).hexdigest() != readiness_binding["sha256"]
+    ):
+        raise RouteControllerError("readiness ledger source binding changed")
+    if _ledger_reservation_marker(plan) not in readiness_payload.splitlines():
+        raise RouteControllerError("readiness ledger does not contain the exact reservation")
+    reservation_payload = _protected_record_bytes(
+        plan,
+        source_root,
+        authorization_root,
+        authorization["reservation_record_path"],
+        authorization["reservation_record_byte_size"],
+        authorization["reservation_record_sha256"],
+    )
+    reservation = _mapping(
+        _strict_json(reservation_payload),
+        _RESERVATION_FIELDS,
+        "reservation record",
+    )
+    recorded_at = _integer(
+        reservation["recorded_at_unix"],
+        "reservation recorded_at_unix",
+        1,
+    )
+    expires_at = _integer(
+        reservation["expires_at_unix"],
+        "reservation expires_at_unix",
+        1,
+    )
+    resource_costs = reservation["resource_costs"]
+    if not isinstance(resource_costs, list) or len(resource_costs) != len(plan.resources):
+        raise RouteControllerError("reservation cost inventory is invalid")
+    expected_resource_names = [resource.name for resource in plan.resources]
+    observed_cost_names: list[str] = []
+    observed_cost_spec_digests: list[str] = []
+    total_cost = Decimal("0.00")
+    for index, value in enumerate(resource_costs):
+        item = _mapping(value, _COST_FIELDS, f"resource_costs[{index}]")
+        observed_cost_names.append(_string(item["resource_name"], _GCP_RESOURCE_RE, "cost resource name"))
+        observed_cost_spec_digests.append(
+            _string(item["resource_spec_digest"], _DIGEST_RE, "cost resource spec digest")
+        )
+        unit_rate = _money(item["unit_rate_usd"], "resource unit rate")
+        quantity = _money(item["quantity"], "resource quantity")
+        duration = _money(item["duration_hours"], "resource duration")
+        maximum = _money(item["maximum_usd"], "resource maximum cost")
+        recomputed = (unit_rate * quantity * duration).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_CEILING,
+        )
+        if maximum != recomputed:
+            raise RouteControllerError("reservation resource cost was not recomputed")
+        resource = plan.resources[index]
+        if (
+            quantity != Decimal("1.00")
+            or duration != EXPECTED_PRICED_DURATION_HOURS
+            or (resource.kind.endswith("firewall") and maximum != Decimal("0.00"))
+            or (not resource.kind.endswith("firewall") and maximum <= Decimal("0.00"))
+        ):
+            raise RouteControllerError("reservation pricing horizon or quantity is invalid")
+        total_cost += maximum
+    if observed_cost_names != expected_resource_names:
+        raise RouteControllerError("reservation cost inventory is not exact")
+    if total_cost != _money(
+        authorization["maximum_estimate_usd"],
+        "maximum estimate",
+    ):
+        raise RouteControllerError("reservation cost total changed")
+    if (
+        reservation["schema_version"] != SCHEMA_VERSION
+        or reservation["reservation_id"] != authorization["reservation_id"]
+        or reservation["run_id"] != plan.run_id
+        or reservation["combined_cloud_ceiling_usd"] != authorization["combined_cloud_ceiling_usd"]
+        or reservation["ledger_committed_before_run_usd"] != authorization["ledger_committed_before_run_usd"]
+        or reservation["maximum_estimate_usd"] != authorization["maximum_estimate_usd"]
+        or reservation["deadline_unix"] != plan.deadline_unix
+        or reservation["plan_digest"] != plan.plan_digest
+        or reservation["execution_inventory_digest"] != plan.execution_inventory_digest
+        or reservation["worker_plan_digest"] != plan.worker_plan_digest
+        or reservation["readiness_ledger_sha256"] != authorization["readiness_ledger_sha256"]
+        or reservation["reservation_recorded"] is not True
+        or recorded_at > now_unix
+        or expires_at < plan.deadline_unix
+        or now_unix >= expires_at
+    ):
+        raise RouteControllerError("reservation record is invalid or expired")
+
+    preflight_payload = _protected_record_bytes(
+        plan,
+        source_root,
+        authorization_root,
+        authorization["preflight_record_path"],
+        authorization["preflight_record_byte_size"],
+        authorization["preflight_record_sha256"],
+    )
+    preflight = _mapping(
+        _strict_json(preflight_payload),
+        _PREFLIGHT_FIELDS,
+        "preflight record",
+    )
+    checked_at = _integer(
+        preflight["checked_at_unix"],
+        "preflight checked_at_unix",
+        1,
+    )
+    pricing_checked_at = _integer(
+        preflight["pricing_checked_at_unix"],
+        "preflight pricing_checked_at_unix",
+        1,
+    )
+    _string(preflight["pricing_source"], _LABEL_RE, "preflight pricing_source")
+    if preflight["pricing_currency"] != "USD":
+        raise RouteControllerError("provider pricing currency is invalid")
+    resource_specs = preflight["resource_specs"]
+    if not isinstance(resource_specs, list) or len(resource_specs) != len(plan.resources):
+        raise RouteControllerError("provider resource specification inventory is invalid")
+    observed_spec_names: list[str] = []
+    observed_spec_digests: list[str] = []
+    for index, value in enumerate(resource_specs):
+        spec = _mapping(value, _RESOURCE_SPEC_FIELDS, f"resource_specs[{index}]")
+        name = _string(spec["resource_name"], _GCP_RESOURCE_RE, "spec resource name")
+        observed_spec_names.append(name)
+        resource = plan.resource_by_name.get(name)
+        if (
+            resource is None
+            or spec["kind"] != resource.kind
+            or spec["provider"] != resource.provider
+            or spec["region"] != resource.region
+        ):
+            raise RouteControllerError("provider resource specification binding is invalid")
+        if dict(spec) != _expected_resource_spec(resource):
+            raise RouteControllerError("provider resource specification is not the exact launch profile")
+        if checked_at + EXPECTED_MAX_LIFETIME_SECONDS > plan.deadline_unix:
+            raise RouteControllerError("provider resource lifetime exceeds the route deadline")
+        observed_spec_digests.append(_canonical_digest(spec))
+    if observed_spec_names != expected_resource_names:
+        raise RouteControllerError("provider resource specification inventory is not exact")
+    if observed_cost_spec_digests != observed_spec_digests:
+        raise RouteControllerError("reservation costs are not bound to the resource specifications")
+    quota_limit = _integer(
+        preflight["gpu_quota_limit"],
+        "preflight gpu_quota_limit",
+    )
+    quota_usage = _integer(
+        preflight["gpu_quota_usage"],
+        "preflight gpu_quota_usage",
+    )
+    required_gpu_count = _integer(
+        preflight["required_gpu_count"],
+        "preflight required_gpu_count",
+        1,
+    )
+    providers = {resource.provider for resource in plan.resources}
+    if (
+        preflight["schema_version"] != SCHEMA_VERSION
+        or preflight["run_id"] != plan.run_id
+        or preflight["source_commit"] != plan.source_commit
+        or preflight["plan_digest"] != plan.plan_digest
+        or preflight["execution_inventory_digest"] != plan.execution_inventory_digest
+        or preflight["worker_plan_digest"] != plan.worker_plan_digest
+        or preflight["provider"] != next(iter(providers))
+        or preflight["resource_names"] != expected_resource_names
+        or required_gpu_count != len(plan.workers)
+        or quota_usage > quota_limit
+        or quota_limit - quota_usage < required_gpu_count
+        or preflight["reservation_record_sha256"] != authorization["reservation_record_sha256"]
+        or checked_at > now_unix
+        or pricing_checked_at > now_unix
+        or now_unix - checked_at > MAX_PLAN_REVALIDATION_AGE_SECONDS
+        or now_unix - pricing_checked_at > MAX_PLAN_REVALIDATION_AGE_SECONDS
+        or preflight["protected_bootstrap_running"] is not True
+        or any(
+            preflight[field] is not True or authorization[field] is not True
+            for field in (
+                "native_auth_revalidated",
+                "inventory_revalidated",
+                "pricing_revalidated",
+                "provisioning_authorized",
+            )
+        )
+    ):
+        raise RouteControllerError("provider preflight record is invalid or stale")
+
+
+def revalidate_production_artifact_plan(
+    plan: RoutePlan,
+    manifest_path: Path,
+    artifact_root: Path,
+    source_root: Path,
+    *,
+    verified_at_unix: int,
+) -> dict[str, Any]:
+    """Rederive the exact four span plans through the source-bound production verifier."""
+
+    try:
+        from drift import model_manifest as manifest_module
+    except ImportError as exc:
+        raise RouteControllerError("production artifact planner is unavailable") from exc
+    expected_module = (source_root.resolve() / Path(*PurePosixPath(VERIFIER_SOURCE_PATH).parts)).resolve()
+    imported_module = Path(manifest_module.__file__).resolve()
+    verifier_binding = next(
+        binding for binding in plan.source_bindings if binding["relative_path"] == VERIFIER_SOURCE_PATH
+    )
+    expected_module_payload = _regular_bytes(expected_module)
+    if (
+        imported_module != expected_module
+        or "sha256:" + hashlib.sha256(expected_module_payload).hexdigest() != verifier_binding["sha256"]
+    ):
+        raise RouteControllerError("imported artifact planner is not the source-bound verifier")
+
+    ManifestArtifactVerifier = manifest_module.ManifestArtifactVerifier
+    ManifestError = manifest_module.ManifestError
+    ModelManifest = manifest_module.ModelManifest
+    try:
+        manifest = ModelManifest.load(manifest_path)
+        if (
+            manifest.digest_id != plan.manifest_digest
+            or manifest.source.revision != plan.model_revision
+            or manifest.model.num_blocks != 64
+        ):
+            raise RouteControllerError("production manifest identity is invalid")
+        indices = manifest.artifacts_for_roles({"weight_index"})
+        if len(indices) != 1 or "sha256:" + indices[0].sha256 != EXPECTED_INDEX_DIGEST:
+            raise RouteControllerError("production checkpoint index identity is invalid")
+        metadata_paths = [artifact.path for artifact in manifest.artifacts_for_roles({"config", "weight_index"})]
+        verifier = ManifestArtifactVerifier(
+            manifest,
+            repository=manifest.source.repository,
+            revision=manifest.source.revision,
+            token=False,
+            artifact_root=artifact_root,
+            allowed_paths=metadata_paths,
+        )
+        for worker in plan.workers:
+            start, end = (int(value) for value in worker.span.split(":", 1))
+            derived = verifier.plan_block_artifacts(
+                block_prefix=EXPECTED_BLOCK_PREFIX,
+                start_block=start,
+                end_block=end,
+            )
+            if (
+                derived.artifact_bytes != worker.artifact_bytes
+                or "sha256:" + derived.artifact_set_digest != worker.artifact_set_digest
+                or len(derived.artifacts) != EXPECTED_ARTIFACTS_PER_SPAN
+            ):
+                raise RouteControllerError("production artifact plan differs from the route plan")
+    except RouteControllerError:
+        raise
+    except (ManifestError, OSError, UnicodeError, ValueError) as exc:
+        raise RouteControllerError("production artifact plan could not be revalidated") from exc
+
+    return {
+        "verified_at_unix": _integer(verified_at_unix, "verified_at_unix", 1),
+        "source_commit": plan.source_commit,
+        "manifest_digest": plan.manifest_digest,
+        "model_revision": plan.model_revision,
+        "index_digest": EXPECTED_INDEX_DIGEST,
+        "block_prefix": EXPECTED_BLOCK_PREFIX,
+        "worker_plan_digest": plan.worker_plan_digest,
+        "verifier_source_sha256": verifier_binding["sha256"],
+    }
+
+
+def instance_generation_digest(
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+) -> str:
+    _string(resource_name, _GCP_RESOURCE_RE, "instance generation resource_name")
+    _string(instance_id, _INSTANCE_ID_RE, "instance generation id")
+    if int(instance_id) > 2**64 - 1:
+        raise RouteControllerError("instance generation id is outside uint64")
+    _string(
+        creation_timestamp,
+        _CREATION_TIMESTAMP_RE,
+        "instance generation creation_timestamp",
+    )
+    try:
+        parsed_timestamp = datetime.fromisoformat(creation_timestamp)
+    except ValueError as exc:
+        raise RouteControllerError("instance generation creation_timestamp is invalid") from exc
+    if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
+        raise RouteControllerError("instance generation creation_timestamp lacks an offset")
+    return _canonical_digest(
+        {
+            "project": EXPECTED_PROJECT,
+            "zone": EXPECTED_ZONE,
+            "resource_name": resource_name,
+            "instance_id": instance_id,
+            "creation_timestamp": creation_timestamp,
+        }
+    )
+
+
+def _instance_key_resource(plan: RoutePlan, resource_name: str) -> ResourcePlan:
+    resource = plan.resource_by_name.get(resource_name)
+    if resource is None or resource.kind not in {"bootstrap_instance", "worker_instance"}:
+        raise RouteControllerError("instance key resource is not planned")
+    return resource
+
+
+def _instance_key_record_digest(value: Mapping[str, Any]) -> str:
+    unsigned = dict(value)
+    unsigned.pop("record_digest", None)
+    return _canonical_digest(unsigned)
+
+
+def _instance_key_active_digest(value: Mapping[str, Any]) -> str:
+    unsigned = dict(value)
+    unsigned.pop("active_digest", None)
+    return _canonical_digest(unsigned)
+
+
+def _instance_key_tombstone_digest(value: Mapping[str, Any]) -> str:
+    unsigned = dict(value)
+    unsigned.pop("tombstone_digest", None)
+    return _canonical_digest(unsigned)
+
+
+def validate_instance_generation_key_record(
+    value: Any,
+    plan: RoutePlan,
+    *,
+    expected_resource_name: str | None = None,
+    expected_generation_digest: str | None = None,
+) -> dict[str, Any]:
+    record = dict(_mapping(value, _INSTANCE_KEY_RECORD_FIELDS, "instance key record"))
+    resource = _instance_key_resource(plan, record.get("resource_name"))
+    try:
+        generation = instance_generation_digest(
+            resource.name,
+            record["instance_id"],
+            record["creation_timestamp"],
+        )
+    except (KeyError, TypeError, RouteControllerError) as exc:
+        raise RouteControllerError("instance key generation is invalid") from exc
+    fixed = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "resource_name": resource.name,
+        "resource_kind": resource.kind,
+        "instance_generation_digest": generation,
+        "key_bytes": INSTANCE_KEY_BYTES,
+    }
+    if any(record[field] != expected for field, expected in fixed.items()):
+        raise RouteControllerError("instance key record binding is invalid")
+    if expected_resource_name is not None and resource.name != expected_resource_name:
+        raise RouteControllerError("instance key resource changed")
+    if expected_generation_digest is not None and generation != expected_generation_digest:
+        raise RouteControllerError("instance key provider generation changed")
+    epoch = _integer(record["key_epoch"], "instance key epoch", 1)
+    if epoch > 99_999_999:
+        raise RouteControllerError("instance key epoch is invalid")
+    issued = _integer(record["issued_at_unix"], "instance key issue time", 1)
+    expires = _integer(record["expires_at_unix"], "instance key expiry", 1)
+    if expires <= issued or expires > plan.deadline_unix:
+        raise RouteControllerError("instance key time window is invalid")
+    _string(record["key_sha256"], _DIGEST_RE, "instance key digest")
+    if record["previous_record_digest"] is not None:
+        _string(
+            record["previous_record_digest"],
+            _DIGEST_RE,
+            "previous instance key record digest",
+        )
+    _string(record["record_digest"], _DIGEST_RE, "instance key record digest")
+    if record["record_digest"] != _instance_key_record_digest(record):
+        raise RouteControllerError("instance key record digest changed")
+    return record
+
+
+def _instance_key_record(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    instance_id: str,
+    creation_timestamp: str,
+    *,
+    key: bytes,
+    key_epoch: int,
+    issued_at_unix: int,
+    previous_record_digest: str | None,
+) -> dict[str, Any]:
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    value: dict[str, Any] = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "resource_name": resource.name,
+        "resource_kind": resource.kind,
+        "instance_id": instance_id,
+        "creation_timestamp": creation_timestamp,
+        "instance_generation_digest": generation,
+        "key_epoch": key_epoch,
+        "issued_at_unix": issued_at_unix,
+        "expires_at_unix": plan.deadline_unix,
+        "key_sha256": "sha256:" + hashlib.sha256(key).hexdigest(),
+        "key_bytes": INSTANCE_KEY_BYTES,
+        "previous_record_digest": previous_record_digest,
+        "record_digest": "",
+    }
+    value["record_digest"] = _instance_key_record_digest(value)
+    return validate_instance_generation_key_record(
+        value,
+        plan,
+        expected_resource_name=resource.name,
+        expected_generation_digest=generation,
+    )
+
+
+def _instance_key_active(
+    plan: RoutePlan,
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_ACTIVE_SCOPE,
+        "run_id": plan.run_id,
+        "plan_digest": plan.plan_digest,
+        "resource_name": record["resource_name"],
+        "instance_generation_digest": record["instance_generation_digest"],
+        "key_epoch": record["key_epoch"],
+        "record_digest": record["record_digest"],
+        "active_digest": "",
+    }
+    value["active_digest"] = _instance_key_active_digest(value)
+    return _validate_instance_key_active(value, plan)
+
+
+def _validate_instance_key_active(
+    value: Any,
+    plan: RoutePlan,
+    *,
+    expected_resource_name: str | None = None,
+    expected_generation_digest: str | None = None,
+) -> dict[str, Any]:
+    active = dict(_mapping(value, _INSTANCE_KEY_ACTIVE_FIELDS, "active instance key"))
+    resource = _instance_key_resource(plan, active.get("resource_name"))
+    fixed = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_ACTIVE_SCOPE,
+        "run_id": plan.run_id,
+        "plan_digest": plan.plan_digest,
+        "resource_name": resource.name,
+    }
+    if any(active[field] != expected for field, expected in fixed.items()):
+        raise RouteControllerError("active instance key binding is invalid")
+    _string(active["instance_generation_digest"], _DIGEST_RE, "active instance key generation")
+    epoch = _integer(active["key_epoch"], "active instance key epoch", 1)
+    if epoch > 99_999_999:
+        raise RouteControllerError("active instance key epoch is invalid")
+    _string(active["record_digest"], _DIGEST_RE, "active instance key record digest")
+    _string(active["active_digest"], _DIGEST_RE, "active instance key digest")
+    if active["active_digest"] != _instance_key_active_digest(active):
+        raise RouteControllerError("active instance key digest changed")
+    if expected_resource_name is not None and resource.name != expected_resource_name:
+        raise RouteControllerError("active instance key resource changed")
+    if expected_generation_digest is not None and active["instance_generation_digest"] != expected_generation_digest:
+        raise RouteControllerError("active instance key provider generation changed")
+    return active
+
+
+def _instance_key_tombstone(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    generation: str,
+    *,
+    revoked_at_unix: int,
+    last_key_epoch: int,
+    last_record_digest: str | None,
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_TOMBSTONE_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "resource_name": resource.name,
+        "instance_generation_digest": generation,
+        "revoked_at_unix": revoked_at_unix,
+        "last_key_epoch": last_key_epoch,
+        "last_record_digest": last_record_digest,
+        "tombstone_digest": "",
+    }
+    value["tombstone_digest"] = _instance_key_tombstone_digest(value)
+    return _validate_instance_key_tombstone(
+        value,
+        plan,
+        expected_resource_name=resource.name,
+        expected_generation_digest=generation,
+    )
+
+
+def _validate_instance_key_tombstone(
+    value: Any,
+    plan: RoutePlan,
+    *,
+    expected_resource_name: str,
+    expected_generation_digest: str,
+) -> dict[str, Any]:
+    tombstone = dict(_mapping(value, _INSTANCE_KEY_TOMBSTONE_FIELDS, "instance key tombstone"))
+    resource = _instance_key_resource(plan, tombstone.get("resource_name"))
+    fixed = {
+        "schema_version": INSTANCE_KEY_SCHEMA_VERSION,
+        "scope": INSTANCE_KEY_TOMBSTONE_SCOPE,
+        "run_id": plan.run_id,
+        "source_commit": plan.source_commit,
+        "plan_digest": plan.plan_digest,
+        "execution_inventory_digest": plan.execution_inventory_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "resource_name": resource.name,
+        "instance_generation_digest": expected_generation_digest,
+    }
+    if resource.name != expected_resource_name or any(
+        tombstone[field] != expected for field, expected in fixed.items()
+    ):
+        raise RouteControllerError("instance key tombstone binding is invalid")
+    _integer(tombstone["revoked_at_unix"], "instance key revocation time", 1)
+    _integer(tombstone["last_key_epoch"], "instance key tombstone epoch")
+    if tombstone["last_record_digest"] is not None:
+        _string(
+            tombstone["last_record_digest"],
+            _DIGEST_RE,
+            "instance key tombstone record digest",
+        )
+    _string(tombstone["tombstone_digest"], _DIGEST_RE, "instance key tombstone digest")
+    if tombstone["tombstone_digest"] != _instance_key_tombstone_digest(tombstone):
+        raise RouteControllerError("instance key tombstone digest changed")
+    return tombstone
+
+
+def _instance_key_reparse(path: Path, metadata: os.stat_result) -> bool:
+    return (
+        bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+        or path.is_symlink()
+    )
+
+
+def _assert_windows_instance_key_acl(path: Path, *, directory: bool) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    class SidAndAttributes(ctypes.Structure):
+        _fields_ = [("sid", ctypes.c_void_p), ("attributes", wintypes.DWORD)]
+
+    class TokenUser(ctypes.Structure):
+        _fields_ = [("user", SidAndAttributes)]
+
+    class AclSizeInformation(ctypes.Structure):
+        _fields_ = [
+            ("ace_count", wintypes.DWORD),
+            ("acl_bytes_in_use", wintypes.DWORD),
+            ("acl_bytes_free", wintypes.DWORD),
+        ]
+
+    class AceHeader(ctypes.Structure):
+        _fields_ = [
+            ("ace_type", wintypes.BYTE),
+            ("ace_flags", wintypes.BYTE),
+            ("ace_size", wintypes.WORD),
+        ]
+
+    class AccessAllowedAce(ctypes.Structure):
+        _fields_ = [
+            ("header", AceHeader),
+            ("mask", wintypes.DWORD),
+            ("sid_start", wintypes.DWORD),
+        ]
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+    token = wintypes.HANDLE()
+    open_process_token = advapi32.OpenProcessToken
+    open_process_token.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    )
+    open_process_token.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    if not open_process_token(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+        raise RouteControllerError("instance key vault owner is unavailable")
+    try:
+        get_token_information = advapi32.GetTokenInformation
+        get_token_information.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        get_token_information.restype = wintypes.BOOL
+        required = wintypes.DWORD()
+        get_token_information(token, 1, None, 0, ctypes.byref(required))
+        if required.value == 0:
+            raise RouteControllerError("instance key vault owner is unavailable")
+        token_buffer = ctypes.create_string_buffer(required.value)
+        if not get_token_information(
+            token,
+            1,
+            token_buffer,
+            required,
+            ctypes.byref(required),
+        ):
+            raise RouteControllerError("instance key vault owner is unavailable")
+        current_sid = ctypes.cast(
+            token_buffer,
+            ctypes.POINTER(TokenUser),
+        ).contents.user.sid
+
+        owner = ctypes.c_void_p()
+        dacl = ctypes.c_void_p()
+        descriptor = ctypes.c_void_p()
+        get_security = advapi32.GetNamedSecurityInfoW
+        get_security.argtypes = (
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        get_security.restype = wintypes.DWORD
+        if (
+            get_security(
+                os.fspath(path),
+                1,
+                0x1 | 0x4,
+                ctypes.byref(owner),
+                None,
+                ctypes.byref(dacl),
+                None,
+                ctypes.byref(descriptor),
+            )
+            != 0
+        ):
+            raise RouteControllerError("instance key vault ACL is unavailable")
+        try:
+            if not owner.value or not dacl.value:
+                raise RouteControllerError("instance key vault ACL is unsafe")
+            equal_sid = advapi32.EqualSid
+            equal_sid.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+            equal_sid.restype = wintypes.BOOL
+            if not equal_sid(owner, current_sid):
+                raise RouteControllerError("instance key vault owner is unsafe")
+
+            control = wintypes.WORD()
+            revision = wintypes.DWORD()
+            get_control = advapi32.GetSecurityDescriptorControl
+            get_control.argtypes = (
+                ctypes.c_void_p,
+                ctypes.POINTER(wintypes.WORD),
+                ctypes.POINTER(wintypes.DWORD),
+            )
+            get_control.restype = wintypes.BOOL
+            if (
+                not get_control(
+                    descriptor,
+                    ctypes.byref(control),
+                    ctypes.byref(revision),
+                )
+                or not control.value & 0x1000
+            ):
+                raise RouteControllerError("instance key vault DACL is not protected")
+
+            information = AclSizeInformation()
+            get_acl_information = advapi32.GetAclInformation
+            get_acl_information.argtypes = (
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+                wintypes.DWORD,
+            )
+            get_acl_information.restype = wintypes.BOOL
+            if (
+                not get_acl_information(
+                    dacl,
+                    ctypes.byref(information),
+                    ctypes.sizeof(information),
+                    2,
+                )
+                or information.ace_count != 1
+            ):
+                raise RouteControllerError("instance key vault DACL is not private")
+
+            ace_pointer = ctypes.c_void_p()
+            get_ace = advapi32.GetAce
+            get_ace.argtypes = (
+                ctypes.c_void_p,
+                wintypes.DWORD,
+                ctypes.POINTER(ctypes.c_void_p),
+            )
+            get_ace.restype = wintypes.BOOL
+            if not get_ace(dacl, 0, ctypes.byref(ace_pointer)):
+                raise RouteControllerError("instance key vault DACL is unavailable")
+            ace = ctypes.cast(
+                ace_pointer,
+                ctypes.POINTER(AccessAllowedAce),
+            ).contents
+            expected_flags = 0x1 | 0x2 if directory else 0
+            if (
+                ace.header.ace_type != 0
+                or ace.header.ace_flags != expected_flags
+                or ace.header.ace_size < ctypes.sizeof(AccessAllowedAce)
+                or ace.mask != 0x001F01FF
+            ):
+                raise RouteControllerError("instance key vault DACL is not private")
+            ace_sid = ctypes.c_void_p(ace_pointer.value + AccessAllowedAce.sid_start.offset)
+            is_valid_sid = advapi32.IsValidSid
+            is_valid_sid.argtypes = (ctypes.c_void_p,)
+            is_valid_sid.restype = wintypes.BOOL
+            if not is_valid_sid(ace_sid) or not equal_sid(ace_sid, current_sid):
+                raise RouteControllerError("instance key vault DACL is not private")
+        finally:
+            local_free = kernel32.LocalFree
+            local_free.argtypes = (ctypes.c_void_p,)
+            local_free.restype = ctypes.c_void_p
+            local_free(descriptor)
+    finally:
+        close_handle(token)
+
+
+def _windows_instance_key_acl(
+    path: Path,
+    *,
+    directory: bool,
+    apply: bool,
+) -> None:
+    if os.name != "nt":
+        return
+    if apply:
+        executable = shutil.which("powershell.exe") or shutil.which("powershell")
+        if executable is None:
+            raise RouteControllerError("instance key vault ACL setter is unavailable")
+        script = _WINDOWS_INSTANCE_KEY_DIRECTORY_ACL if directory else _WINDOWS_INSTANCE_KEY_FILE_ACL
+        try:
+            completed = subprocess.run(
+                [
+                    executable,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    f"& {{\n{script}\n}}",
+                    os.fspath(path),
+                    "$true",
+                ],
+                check=False,
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RouteControllerError("instance key vault ACL update failed") from exc
+        if completed.returncode != 0:
+            raise RouteControllerError("instance key vault ACL is not private")
+    _assert_windows_instance_key_acl(path, directory=directory)
+
+
+def _assert_instance_key_directory(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise RouteControllerError("instance key vault directory is unavailable") from exc
+    if _instance_key_reparse(path, metadata) or not stat.S_ISDIR(metadata.st_mode):
+        raise RouteControllerError("instance key vault directory is unsafe")
+    if os.name == "posix" and (metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700):
+        raise RouteControllerError("instance key vault directory is not private")
+    _windows_instance_key_acl(path, directory=True, apply=False)
+
+
+def _ensure_instance_key_directory(path: Path) -> None:
+    if path.exists() or path.is_symlink():
+        _assert_instance_key_directory(path)
+        return
+    try:
+        path.mkdir(mode=0o700)
+    except OSError as exc:
+        raise RouteControllerError("instance key vault directory could not be created") from exc
+    if os.name == "posix":
+        os.chmod(path, 0o700)
+    _windows_instance_key_acl(path, directory=True, apply=True)
+    _assert_instance_key_directory(path)
+
+
+def _instance_key_directory(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    vault_root: Path,
+) -> Path:
+    root = Path(vault_root)
+    if not root.is_absolute() or root == Path(root.anchor) or root == Path.home() or root.name in {"", ".", ".."}:
+        raise RouteControllerError("instance key vault root is invalid")
+    if not root.exists() and not root.is_symlink():
+        try:
+            root.mkdir(mode=0o700, parents=True)
+        except OSError as exc:
+            raise RouteControllerError("instance key vault root could not be created") from exc
+        if os.name == "posix":
+            os.chmod(root, 0o700)
+        _windows_instance_key_acl(root, directory=True, apply=True)
+    _assert_instance_key_directory(root)
+    run_root = root / plan.run_id
+    _ensure_instance_key_directory(run_root)
+    resource_root = run_root / resource.name
+    _ensure_instance_key_directory(resource_root)
+    if resource_root.parent != run_root or run_root.parent != root:
+        raise RouteControllerError("instance key vault layout is invalid")
+    return resource_root
+
+
+def _assert_instance_key_file(path: Path, *, expected_size: int | None = None) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise RouteControllerError("instance key vault file is unavailable") from exc
+    if (
+        _instance_key_reparse(path, metadata)
+        or not stat.S_ISREG(metadata.st_mode)
+        or expected_size is not None
+        and metadata.st_size != expected_size
+    ):
+        raise RouteControllerError("instance key vault file is unsafe")
+    if os.name == "posix" and (metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o600):
+        raise RouteControllerError("instance key vault file is not private")
+    _windows_instance_key_acl(path, directory=False, apply=False)
+
+
+def _read_instance_key_file(
+    path: Path,
+    *,
+    maximum: int,
+    expected_size: int | None = None,
+) -> bytes:
+    _assert_instance_key_file(path, expected_size=expected_size)
+    payload = _regular_bytes(path, maximum=maximum)
+    _assert_instance_key_file(path, expected_size=expected_size)
+    return payload
+
+
+def _instance_key_json(value: Mapping[str, Any]) -> bytes:
+    try:
+        payload = (
+            json.dumps(
+                value,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("ascii")
+    except (TypeError, ValueError) as exc:
+        raise RouteControllerError("instance key metadata is invalid") from exc
+    if not 1 <= len(payload) <= MAX_INSTANCE_KEY_RECORD_BYTES:
+        raise RouteControllerError("instance key metadata exceeded its bound")
+    return payload
+
+
+def _write_instance_key_exclusive(path: Path, payload: bytes) -> None:
+    _assert_instance_key_directory(path.parent)
+    descriptor: int | None = None
+    created = False
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        created = True
+        if os.name == "posix":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _windows_instance_key_acl(path, directory=False, apply=True)
+        _assert_instance_key_file(path, expected_size=len(payload))
+    except RouteControllerError:
+        raise
+    except OSError as exc:
+        raise RouteControllerError("instance key vault commit failed") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if created and (not path.exists() or path.is_symlink()):
+            raise RouteControllerError("instance key vault commit was lost")
+
+
+def _replace_instance_key_json(path: Path, value: Mapping[str, Any]) -> None:
+    payload = _instance_key_json(value)
+    _assert_instance_key_directory(path.parent)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        if os.name == "posix":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _windows_instance_key_acl(temporary, directory=False, apply=True)
+        os.replace(temporary, path)
+        _assert_instance_key_file(path, expected_size=len(payload))
+        _fsync_instance_key_directory(path.parent)
+    except RouteControllerError:
+        raise
+    except OSError as exc:
+        raise RouteControllerError("instance key metadata commit failed") from exc
+    finally:
+        if descriptor not in (None, -1):
+            os.close(descriptor)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _fsync_instance_key_directory(path: Path) -> None:
+    if os.name != "posix":
+        return
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise RouteControllerError("instance key vault could not be synchronized") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+@contextmanager
+def _instance_key_lock(directory: Path) -> Iterator[None]:
+    _assert_instance_key_directory(directory)
+    path = directory / ".instance-key.lock"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        if os.name == "posix":
+            os.fchmod(descriptor, 0o600)
+        opened = os.fstat(descriptor)
+        _windows_instance_key_acl(path, directory=False, apply=True)
+        _assert_instance_key_file(path)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RouteControllerError("instance key vault lock is unsafe")
+        if os.name == "nt":
+            import msvcrt
+
+            if opened.st_size == 0:
+                os.write(descriptor, b"\0")
+                os.fsync(descriptor)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    except RouteControllerError:
+        raise
+    except OSError as exc:
+        raise RouteControllerError("instance key vault is locked or unsafe") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(descriptor)
+
+
+def _instance_key_record_path(directory: Path, generation: str, epoch: int) -> Path:
+    return directory / f"record-v1-{generation.removeprefix('sha256:')}-{epoch:08d}.json"
+
+
+def _instance_key_bytes_path(directory: Path, generation: str, epoch: int) -> Path:
+    return directory / f"key-v1-{generation.removeprefix('sha256:')}-{epoch:08d}.key"
+
+
+def _instance_key_tombstone_path(directory: Path, generation: str) -> Path:
+    return directory / f"revoked-v1-{generation.removeprefix('sha256:')}.json"
+
+
+def _instance_key_epoch_from_name(
+    name: str,
+    *,
+    prefix: str,
+    suffix: str,
+) -> int | None:
+    if not name.startswith(prefix):
+        return None
+    if not name.endswith(suffix):
+        raise RouteControllerError("instance key vault contains an unsafe epoch entry")
+    encoded = name[len(prefix) : -len(suffix)]
+    if len(encoded) != 8 or not encoded.isascii() or not encoded.isdigit():
+        raise RouteControllerError("instance key vault contains an unsafe epoch entry")
+    epoch = int(encoded)
+    if not 1 <= epoch <= 99_999_999:
+        raise RouteControllerError("instance key vault contains an invalid epoch")
+    return epoch
+
+
+def _reconcile_instance_key_epochs(
+    directory: Path,
+    generation: str,
+    active_epoch: int,
+) -> None:
+    """Remove unreferenced key bytes and incomplete future rotation records."""
+
+    generation_value = generation.removeprefix("sha256:")
+    key_prefix = f"key-v1-{generation_value}-"
+    record_prefix = f"record-v1-{generation_value}-"
+    changed = False
+    try:
+        candidates = tuple(directory.iterdir())
+    except OSError as exc:
+        raise RouteControllerError("instance key vault inventory failed") from exc
+    for candidate in candidates:
+        key_epoch = _instance_key_epoch_from_name(
+            candidate.name,
+            prefix=key_prefix,
+            suffix=".key",
+        )
+        if key_epoch is not None:
+            if key_epoch != active_epoch:
+                _unlink_instance_key_file(candidate)
+                changed = True
+            continue
+        record_epoch = _instance_key_epoch_from_name(
+            candidate.name,
+            prefix=record_prefix,
+            suffix=".json",
+        )
+        if record_epoch is not None and record_epoch > active_epoch:
+            _unlink_instance_key_file(candidate)
+            changed = True
+    if changed:
+        _fsync_instance_key_directory(directory)
+
+
+def _load_instance_key_json(path: Path) -> dict[str, Any]:
+    return dict(
+        _strict_json(
+            _read_instance_key_file(
+                path,
+                maximum=MAX_INSTANCE_KEY_RECORD_BYTES,
+            )
+        )
+    )
+
+
+def _load_instance_key_material(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    directory: Path,
+    active: Mapping[str, Any],
+    *,
+    now_unix: int,
+    expected_generation_digest: str,
+) -> InstanceGenerationKey:
+    validated_active = _validate_instance_key_active(
+        active,
+        plan,
+        expected_resource_name=resource.name,
+        expected_generation_digest=expected_generation_digest,
+    )
+    epoch = validated_active["key_epoch"]
+    record = validate_instance_generation_key_record(
+        _load_instance_key_json(_instance_key_record_path(directory, expected_generation_digest, epoch)),
+        plan,
+        expected_resource_name=resource.name,
+        expected_generation_digest=expected_generation_digest,
+    )
+    if record["record_digest"] != validated_active["record_digest"]:
+        raise RouteControllerError("active instance key record changed")
+    if now_unix >= record["expires_at_unix"]:
+        raise RouteControllerError("active instance key expired")
+    key = _read_instance_key_file(
+        _instance_key_bytes_path(directory, expected_generation_digest, epoch),
+        maximum=INSTANCE_KEY_BYTES,
+        expected_size=INSTANCE_KEY_BYTES,
+    )
+    if "sha256:" + hashlib.sha256(key).hexdigest() != record["key_sha256"]:
+        raise RouteControllerError("active instance key digest changed")
+    return InstanceGenerationKey(MappingProxyType(record), key)
+
+
+def _new_instance_key(
+    plan: RoutePlan,
+    resource: ResourcePlan,
+    directory: Path,
+    instance_id: str,
+    creation_timestamp: str,
+    *,
+    key_epoch: int,
+    now_unix: int,
+    previous_record_digest: str | None,
+    key_factory: Any,
+) -> InstanceGenerationKey:
+    try:
+        generated = key_factory(INSTANCE_KEY_BYTES)
+    except Exception as exc:
+        raise RouteControllerError("instance key generation failed") from exc
+    if not isinstance(generated, (bytes, bytearray)) or len(generated) != INSTANCE_KEY_BYTES:
+        raise RouteControllerError("instance key generator returned invalid material")
+    key = bytes(generated)
+    record = _instance_key_record(
+        plan,
+        resource,
+        instance_id,
+        creation_timestamp,
+        key=key,
+        key_epoch=key_epoch,
+        issued_at_unix=now_unix,
+        previous_record_digest=previous_record_digest,
+    )
+    generation = record["instance_generation_digest"]
+    key_path = _instance_key_bytes_path(directory, generation, key_epoch)
+    record_path = _instance_key_record_path(directory, generation, key_epoch)
+    if key_path.exists() or key_path.is_symlink() or record_path.exists() or record_path.is_symlink():
+        raise RouteControllerError("instance key epoch already exists")
+    _write_instance_key_exclusive(key_path, key)
+    try:
+        _write_instance_key_exclusive(record_path, _instance_key_json(record))
+    except BaseException:
+        try:
+            _unlink_instance_key_file(key_path)
+        except RouteControllerError:
+            pass
+        raise
+    _fsync_instance_key_directory(directory)
+    return InstanceGenerationKey(MappingProxyType(record), key)
+
+
+def _unlink_instance_key_file(path: Path) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    _assert_instance_key_file(path)
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise RouteControllerError("instance key vault cleanup failed") from exc
+
+
+def ensure_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+    key_factory: Any = secrets.token_bytes,
+) -> InstanceGenerationKey:
+    resource = _instance_key_resource(plan, resource_name)
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    now = _integer(now_unix, "instance key generation time", 1)
+    if now >= plan.deadline_unix:
+        raise RouteControllerError("instance key generation is outside the route deadline")
+    directory = _instance_key_directory(plan, resource, vault_root)
+    active_path = directory / "active.json"
+    tombstone_path = _instance_key_tombstone_path(directory, generation)
+    with _instance_key_lock(directory):
+        if tombstone_path.exists() or tombstone_path.is_symlink():
+            _validate_instance_key_tombstone(
+                _load_instance_key_json(tombstone_path),
+                plan,
+                expected_resource_name=resource.name,
+                expected_generation_digest=generation,
+            )
+            raise RouteControllerError("instance key generation was revoked")
+        if active_path.exists() or active_path.is_symlink():
+            material = _load_instance_key_material(
+                plan,
+                resource,
+                directory,
+                _load_instance_key_json(active_path),
+                now_unix=now,
+                expected_generation_digest=generation,
+            )
+            _reconcile_instance_key_epochs(
+                directory,
+                generation,
+                material.record["key_epoch"],
+            )
+            return material
+        _reconcile_instance_key_epochs(directory, generation, 0)
+        material = _new_instance_key(
+            plan,
+            resource,
+            directory,
+            instance_id,
+            creation_timestamp,
+            key_epoch=1,
+            now_unix=now,
+            previous_record_digest=None,
+            key_factory=key_factory,
+        )
+        _replace_instance_key_json(active_path, _instance_key_active(plan, material.record))
+        return material
+
+
+def load_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+) -> InstanceGenerationKey:
+    resource = _instance_key_resource(plan, resource_name)
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    now = _integer(now_unix, "instance key load time", 1)
+    directory = _instance_key_directory(plan, resource, vault_root)
+    tombstone_path = _instance_key_tombstone_path(directory, generation)
+    active_path = directory / "active.json"
+    with _instance_key_lock(directory):
+        if tombstone_path.exists() or tombstone_path.is_symlink():
+            _validate_instance_key_tombstone(
+                _load_instance_key_json(tombstone_path),
+                plan,
+                expected_resource_name=resource.name,
+                expected_generation_digest=generation,
+            )
+            raise RouteControllerError("instance key generation was revoked")
+        if not active_path.exists() and not active_path.is_symlink():
+            raise RouteControllerError("active instance key is unavailable")
+        material = _load_instance_key_material(
+            plan,
+            resource,
+            directory,
+            _load_instance_key_json(active_path),
+            now_unix=now,
+            expected_generation_digest=generation,
+        )
+        _reconcile_instance_key_epochs(
+            directory,
+            generation,
+            material.record["key_epoch"],
+        )
+        return material
+
+
+def rotate_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+    expected_record_digest: str,
+    key_factory: Any = secrets.token_bytes,
+) -> InstanceGenerationKey:
+    resource = _instance_key_resource(plan, resource_name)
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    now = _integer(now_unix, "instance key rotation time", 1)
+    _string(
+        expected_record_digest,
+        _DIGEST_RE,
+        "expected instance key record digest",
+    )
+    if now >= plan.deadline_unix:
+        raise RouteControllerError("instance key rotation is outside the route deadline")
+    directory = _instance_key_directory(plan, resource, vault_root)
+    active_path = directory / "active.json"
+    tombstone_path = _instance_key_tombstone_path(directory, generation)
+    with _instance_key_lock(directory):
+        if tombstone_path.exists() or tombstone_path.is_symlink():
+            _validate_instance_key_tombstone(
+                _load_instance_key_json(tombstone_path),
+                plan,
+                expected_resource_name=resource.name,
+                expected_generation_digest=generation,
+            )
+            raise RouteControllerError("instance key generation was revoked")
+        if not active_path.exists() and not active_path.is_symlink():
+            raise RouteControllerError("active instance key is unavailable")
+        current = _load_instance_key_material(
+            plan,
+            resource,
+            directory,
+            _load_instance_key_json(active_path),
+            now_unix=now,
+            expected_generation_digest=generation,
+        )
+        _reconcile_instance_key_epochs(
+            directory,
+            generation,
+            current.record["key_epoch"],
+        )
+        if current.record["record_digest"] != expected_record_digest:
+            if current.record["previous_record_digest"] == expected_record_digest:
+                return current
+            raise RouteControllerError("active instance key changed before rotation")
+        epoch = current.record["key_epoch"] + 1
+        if epoch > 99_999_999:
+            raise RouteControllerError("instance key epoch is exhausted")
+        replacement = _new_instance_key(
+            plan,
+            resource,
+            directory,
+            instance_id,
+            creation_timestamp,
+            key_epoch=epoch,
+            now_unix=now,
+            previous_record_digest=current.record["record_digest"],
+            key_factory=key_factory,
+        )
+        _replace_instance_key_json(
+            active_path,
+            _instance_key_active(plan, replacement.record),
+        )
+        _unlink_instance_key_file(
+            _instance_key_bytes_path(
+                directory,
+                generation,
+                current.record["key_epoch"],
+            )
+        )
+        _fsync_instance_key_directory(directory)
+        return replacement
+
+
+def revoke_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+) -> dict[str, Any]:
+    resource = _instance_key_resource(plan, resource_name)
+    generation = instance_generation_digest(resource.name, instance_id, creation_timestamp)
+    now = _integer(now_unix, "instance key revocation time", 1)
+    directory = _instance_key_directory(plan, resource, vault_root)
+    active_path = directory / "active.json"
+    tombstone_path = _instance_key_tombstone_path(directory, generation)
+    prefix = f"key-v1-{generation.removeprefix('sha256:')}-"
+    with _instance_key_lock(directory):
+        if tombstone_path.exists() or tombstone_path.is_symlink():
+            tombstone = _validate_instance_key_tombstone(
+                _load_instance_key_json(tombstone_path),
+                plan,
+                expected_resource_name=resource.name,
+                expected_generation_digest=generation,
+            )
+        else:
+            epoch = 0
+            record_digest: str | None = None
+            if active_path.exists() or active_path.is_symlink():
+                active = _validate_instance_key_active(
+                    _load_instance_key_json(active_path),
+                    plan,
+                    expected_resource_name=resource.name,
+                )
+                if active["instance_generation_digest"] != generation:
+                    raise RouteControllerError("cannot revoke a different active instance generation")
+                epoch = active["key_epoch"]
+                record_digest = active["record_digest"]
+            tombstone = _instance_key_tombstone(
+                plan,
+                resource,
+                generation,
+                revoked_at_unix=now,
+                last_key_epoch=epoch,
+                last_record_digest=record_digest,
+            )
+            _write_instance_key_exclusive(
+                tombstone_path,
+                _instance_key_json(tombstone),
+            )
+            _fsync_instance_key_directory(directory)
+        for candidate in directory.iterdir():
+            if candidate.name.startswith(prefix) and candidate.name.endswith(".key"):
+                _unlink_instance_key_file(candidate)
+        if active_path.exists() or active_path.is_symlink():
+            active = _validate_instance_key_active(
+                _load_instance_key_json(active_path),
+                plan,
+                expected_resource_name=resource.name,
+            )
+            if active["instance_generation_digest"] == generation:
+                _unlink_instance_key_file(active_path)
+        _fsync_instance_key_directory(directory)
+        return tombstone
+
+
+def cleanup_instance_generation_key(
+    plan: RoutePlan,
+    resource_name: str,
+    instance_id: str,
+    creation_timestamp: str,
+    vault_root: Path,
+    *,
+    now_unix: int,
+) -> dict[str, Any]:
+    """Revoke key bytes idempotently after provider absence is independently proved."""
+
+    return revoke_instance_generation_key(
+        plan,
+        resource_name,
+        instance_id,
+        creation_timestamp,
+        vault_root,
+        now_unix=now_unix,
+    )
+
+
+def observation_instance_generations_digest(
+    resources: Mapping[str, Any],
+    plan: RoutePlan,
+) -> str | None:
+    generations: list[dict[str, str]] = []
+    for resource in plan.resources:
+        if not resource.kind.endswith("instance"):
+            continue
+        observed = resources.get(resource.name)
+        if not isinstance(observed, Mapping) or observed.get("present") is not True:
+            return None
+        digest = observed.get("instance_generation_digest")
+        _string(digest, _DIGEST_RE, "instance generation digest")
+        generations.append(
+            {
+                "resource_name": resource.name,
+                "instance_generation_digest": digest,
+            }
+        )
+    return _canonical_digest({"instances": generations})
+
+
+def initial_state(plan: RoutePlan) -> dict[str, Any]:
+    return {
+        "schema_version": STATE_SCHEMA_VERSION,
+        "run_id": plan.run_id,
+        "plan_digest": plan.plan_digest,
+        "revision": 0,
+        "phase": "ABSENT",
+        "failure_code": None,
+        "evidence_digest": None,
+        "instance_generations_digest": None,
+        "cleanup_verified": False,
+        "next_action": "none",
+    }
+
+
+def validate_state(value: Mapping[str, Any], plan: RoutePlan) -> dict[str, Any]:
+    state = dict(_mapping(value, _STATE_FIELDS, "state"))
+    if (
+        state["schema_version"] != STATE_SCHEMA_VERSION
+        or state["run_id"] != plan.run_id
+        or state["plan_digest"] != plan.plan_digest
+        or state["phase"] not in PHASES
+        or state["next_action"] not in ACTIONS
+    ):
+        raise RouteControllerError("state binding is invalid")
+    _integer(state["revision"], "state revision")
+    if state["failure_code"] is not None:
+        _string(state["failure_code"], _LABEL_RE, "failure_code")
+    if state["evidence_digest"] is not None:
+        _string(state["evidence_digest"], _DIGEST_RE, "evidence_digest")
+    if state["instance_generations_digest"] is not None:
+        _string(
+            state["instance_generations_digest"],
+            _DIGEST_RE,
+            "instance_generations_digest",
+        )
+    if state["phase"] in {"READY", "COLLECTING"} and state["instance_generations_digest"] is None:
+        raise RouteControllerError("active state lacks an instance generation latch")
+    _boolean(state["cleanup_verified"], "cleanup_verified")
+    if state["cleanup_verified"] is not (state["phase"] in TERMINAL_PHASES):
+        raise RouteControllerError("cleanup state is inconsistent")
+    if state["phase"] == "CLEANED_PASS" and state["evidence_digest"] is None:
+        raise RouteControllerError("passing terminal state lacks evidence")
+    if state["phase"] == "CLEANED_FAILURE" and state["failure_code"] is None:
+        raise RouteControllerError("failed terminal state lacks a failure code")
+    if state["evidence_digest"] is not None and state["phase"] not in {
+        "CLEANING",
+        "CLEANED_PASS",
+        "CLEANED_FAILURE",
+    }:
+        raise RouteControllerError("evidence state is inconsistent")
+    if state["phase"] not in {"CLEANING", "CLEANED_FAILURE"} and state["failure_code"] is not None:
+        raise RouteControllerError("failure code is inconsistent")
+    allowed_actions = {
+        "ABSENT": {"none"},
+        "STARTING": {"none", "start_route"},
+        "READY": {"none"},
+        "COLLECTING": {"none", "collect_route"},
+        "CLEANING": {"cleanup_route"},
+        "CLEANED_PASS": {"none"},
+        "CLEANED_FAILURE": {"none"},
+    }
+    if state["next_action"] not in allowed_actions[state["phase"]]:
+        raise RouteControllerError("state action is inconsistent")
+    return state
+
+
+def _validate_route_record(
+    value: Any,
+    plan: RoutePlan,
+    workers: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    record = _mapping(value, _ROUTE_RECORD_FIELDS, "route record")
+    if (
+        record["schema_version"] != SCHEMA_VERSION
+        or record["result"] != "passed"
+        or record["run_id"] != plan.run_id
+        or record["job_id"] != plan.route_job_id
+        or record["collect_action_id"] != _action_id(plan, "collect_route")
+        or record["plan_digest"] != plan.plan_digest
+        or record["source_commit"] != plan.source_commit
+        or record["manifest_digest"] != plan.manifest_digest
+        or record["worker_plan_digest"] != plan.worker_plan_digest
+        or record["route_span"] != "0:64"
+        or record["cleanup_ready"] is not True
+    ):
+        raise RouteControllerError("route record binding is invalid")
+    _string(record["session_id"], _LABEL_RE, "route record session_id")
+    _string(
+        record["route_rpc_evidence_digest"],
+        _DIGEST_RE,
+        "route record RPC evidence digest",
+    )
+    results = record["worker_results"]
+    if not isinstance(results, list) or len(results) != len(plan.workers):
+        raise RouteControllerError("route record worker inventory is invalid")
+    for index, (result_value, worker_plan) in enumerate(zip(results, plan.workers)):
+        result = _mapping(
+            result_value,
+            _ROUTE_WORKER_RESULT_FIELDS,
+            f"route record worker_results[{index}]",
+        )
+        observed_worker = workers[worker_plan.worker_id]
+        if (
+            result["worker_id"] != worker_plan.worker_id
+            or result["machine_id"] != worker_plan.machine_id
+            or result["peer_id"] != observed_worker["peer_id"]
+            or result["span"] != worker_plan.span
+            or result["source_commit"] != plan.source_commit
+            or result["manifest_digest"] != plan.manifest_digest
+            or result["artifact_bytes"] != worker_plan.artifact_bytes
+            or result["artifact_set_digest"] != worker_plan.artifact_set_digest
+            or result["cache_root"] != worker_plan.cache_root
+        ):
+            raise RouteControllerError("route record worker binding is invalid")
+        _string(
+            result["worker_evidence_digest"],
+            _DIGEST_RE,
+            "route record worker evidence digest",
+        )
+    return record
+
+
+def _protected_named_bytes(
+    plan: RoutePlan,
+    source_root: Path,
+    root: Path,
+    name: str,
+) -> bytes:
+    if not _LABEL_RE.fullmatch(name):
+        raise RouteControllerError("protected evidence filename is invalid")
+    _assert_protected_path(root, plan, source_root, directory=True)
+    candidate = root.resolve() / name
+    _assert_protected_path(candidate, plan, source_root, directory=False)
+    return _regular_bytes(candidate)
+
+
+def revalidate_route_evidence(
+    plan: RoutePlan,
+    observation: Mapping[str, Any],
+    evidence_root: Path,
+    source_root: Path,
+) -> str:
+    """Validate protected host-job, RPC, and per-worker evidence records."""
+
+    workers = observation["workers"]
+    route_job = observation["route_job"]
+    if route_job["state"] != "passed":
+        raise RouteControllerError("route evidence is only valid for a passed job")
+    record = _validate_route_record(route_job["route_record"], plan, workers)
+    expected_names = {
+        "route-terminal.json",
+        "route-rpc.json",
+        *(f"{worker.worker_id}-evidence.json" for worker in plan.workers),
+    }
+    _assert_protected_path(evidence_root, plan, source_root, directory=True)
+    try:
+        observed_names = {entry.name for entry in evidence_root.iterdir()}
+    except OSError as exc:
+        raise RouteControllerError("protected route evidence inventory is unavailable") from exc
+    if observed_names != expected_names:
+        raise RouteControllerError("protected route evidence inventory is not exact")
+
+    terminal_payload = _protected_named_bytes(
+        plan,
+        source_root,
+        evidence_root,
+        "route-terminal.json",
+    )
+    terminal_record = _mapping(
+        _strict_json(terminal_payload),
+        _ROUTE_RECORD_FIELDS,
+        "protected route terminal record",
+    )
+    if dict(terminal_record) != dict(record):
+        raise RouteControllerError("protected route terminal record does not match the observation")
+
+    rpc_payload = _protected_named_bytes(
+        plan,
+        source_root,
+        evidence_root,
+        "route-rpc.json",
+    )
+    if "sha256:" + hashlib.sha256(rpc_payload).hexdigest() != record["route_rpc_evidence_digest"]:
+        raise RouteControllerError("protected route RPC evidence digest changed")
+    rpc = _mapping(
+        _strict_json(rpc_payload),
+        _RPC_EVIDENCE_FIELDS,
+        "protected route RPC evidence",
+    )
+    if (
+        rpc["schema_version"] != SCHEMA_VERSION
+        or rpc["result"] != "passed"
+        or rpc["run_id"] != plan.run_id
+        or rpc["job_id"] != plan.route_job_id
+        or rpc["collect_action_id"] != _action_id(plan, "collect_route")
+        or rpc["plan_digest"] != plan.plan_digest
+        or rpc["source_commit"] != plan.source_commit
+        or rpc["manifest_digest"] != plan.manifest_digest
+        or rpc["worker_plan_digest"] != plan.worker_plan_digest
+        or rpc["route_span"] != "0:64"
+        or rpc["session_id"] != record["session_id"]
+    ):
+        raise RouteControllerError("protected route RPC evidence binding is invalid")
+
+    for worker_plan, result in zip(plan.workers, record["worker_results"]):
+        payload = _protected_named_bytes(
+            plan,
+            source_root,
+            evidence_root,
+            f"{worker_plan.worker_id}-evidence.json",
+        )
+        if "sha256:" + hashlib.sha256(payload).hexdigest() != result["worker_evidence_digest"]:
+            raise RouteControllerError("protected worker evidence digest changed")
+        evidence = _mapping(
+            _strict_json(payload),
+            _WORKER_EVIDENCE_FIELDS,
+            "protected worker evidence",
+        )
+        if (
+            evidence["schema_version"] != SCHEMA_VERSION
+            or evidence["result"] != "passed"
+            or evidence["run_id"] != plan.run_id
+            or evidence["job_id"] != plan.route_job_id
+            or evidence["collect_action_id"] != _action_id(plan, "collect_route")
+            or evidence["plan_digest"] != plan.plan_digest
+            or evidence["source_commit"] != plan.source_commit
+            or evidence["manifest_digest"] != plan.manifest_digest
+            or evidence["worker_plan_digest"] != plan.worker_plan_digest
+            or evidence["start_action_id"] != _action_id(plan, "start_route")
+            or evidence["worker_id"] != worker_plan.worker_id
+            or evidence["machine_id"] != worker_plan.machine_id
+            or evidence["peer_id"] != result["peer_id"]
+            or evidence["span"] != worker_plan.span
+            or evidence["artifact_bytes"] != worker_plan.artifact_bytes
+            or evidence["artifact_set_digest"] != worker_plan.artifact_set_digest
+            or evidence["cache_root"] != worker_plan.cache_root
+        ):
+            raise RouteControllerError("protected worker evidence binding is invalid")
+    return route_job["evidence_digest"]
+
+
+def validate_observation(
+    value: Mapping[str, Any],
+    plan: RoutePlan,
+    *,
+    cleanup_only: bool = False,
+) -> dict[str, Any]:
+    observation = dict(_mapping(value, _OBSERVATION_FIELDS, "observation"))
+    if observation["schema_version"] != SCHEMA_VERSION or observation["run_id"] != plan.run_id:
+        raise RouteControllerError("observation identity is invalid")
+    _boolean(
+        observation["protected_bootstrap_running"],
+        "protected_bootstrap_running",
+    )
+    observed_at = _integer(observation["observed_at_unix"], "observed_at_unix", 1)
+
+    if cleanup_only:
+        revalidation = observation["artifact_plan_revalidation"]
+    else:
+        revalidation = _mapping(
+            observation["artifact_plan_revalidation"],
+            _REVALIDATION_FIELDS,
+            "artifact_plan_revalidation",
+        )
+        verified_at = _integer(
+            revalidation["verified_at_unix"],
+            "artifact plan verified_at_unix",
+            1,
+        )
+        verifier_binding = next(
+            (binding for binding in plan.source_bindings if binding["relative_path"] == VERIFIER_SOURCE_PATH),
+            None,
+        )
+        if (
+            verified_at > observed_at
+            or revalidation["source_commit"] != plan.source_commit
+            or revalidation["manifest_digest"] != plan.manifest_digest
+            or revalidation["model_revision"] != plan.model_revision
+            or revalidation["index_digest"] != EXPECTED_INDEX_DIGEST
+            or revalidation["block_prefix"] != EXPECTED_BLOCK_PREFIX
+            or revalidation["worker_plan_digest"] != plan.worker_plan_digest
+            or verifier_binding is None
+            or revalidation["verifier_source_sha256"] != verifier_binding["sha256"]
+        ):
+            raise RouteControllerError("production artifact plan revalidation is invalid")
+
+    resources = observation["resources"]
+    if not isinstance(resources, dict) or set(resources) != set(plan.resource_by_name):
+        raise RouteControllerError("provider resource inventory is not exact")
+    for name, resource_plan in plan.resource_by_name.items():
+        resource = _mapping(resources[name], _OBS_RESOURCE_FIELDS, f"resources[{name!r}]")
+        present = _boolean(resource["present"], "resource present")
+        if (
+            resource["kind"] != resource_plan.kind
+            or resource["provider"] != resource_plan.provider
+            or resource["region"] != resource_plan.region
+        ):
+            raise RouteControllerError("provider resource identity is invalid")
+        if present:
+            if (
+                resource["run_id"] != plan.run_id
+                or resource["source_commit"] != plan.source_commit
+                or _integer(resource["deadline_unix"], "resource deadline", 1) != plan.deadline_unix
+                or resource["plan_digest"] != plan.plan_digest
+                or resource["start_action_id"] != _action_id(plan, "start_route")
+                or resource["worker_id"] != resource_plan.worker_id
+            ):
+                raise RouteControllerError("provider resource binding is invalid")
+            if resource_plan.kind.endswith("instance"):
+                instance_id = _string(
+                    resource["instance_id"],
+                    _INSTANCE_ID_RE,
+                    "provider instance id",
+                )
+                creation_timestamp = _string(
+                    resource["creation_timestamp"],
+                    _CREATION_TIMESTAMP_RE,
+                    "provider instance creation timestamp",
+                )
+                if resource["instance_generation_digest"] != instance_generation_digest(
+                    resource_plan.name,
+                    instance_id,
+                    creation_timestamp,
+                ):
+                    raise RouteControllerError("provider instance generation binding is invalid")
+            elif any(
+                resource[field] is not None
+                for field in (
+                    "instance_id",
+                    "creation_timestamp",
+                    "instance_generation_digest",
+                )
+            ):
+                raise RouteControllerError("non-instance resource exposed generation metadata")
+        elif any(
+            resource[field] is not None
+            for field in (
+                "run_id",
+                "source_commit",
+                "deadline_unix",
+                "plan_digest",
+                "start_action_id",
+                "worker_id",
+                "instance_id",
+                "creation_timestamp",
+                "instance_generation_digest",
+            )
+        ):
+            raise RouteControllerError("absent resource metadata is invalid")
+
+    expected_generations_digest = observation_instance_generations_digest(resources, plan)
+    if observation["instance_generations_digest"] != expected_generations_digest:
+        raise RouteControllerError("provider instance generation inventory is invalid")
+
+    workers = observation["workers"]
+    if not isinstance(workers, dict) or set(workers) != set(plan.worker_by_id):
+        raise RouteControllerError("worker inventory is not exact")
+    if cleanup_only:
+        for worker in workers.values():
+            if not isinstance(worker, dict) or worker.get("state") not in WORKER_STATES:
+                raise RouteControllerError("cleanup worker inventory is invalid")
+            if worker["state"] == "absent" and (
+                set(worker) != _OBS_WORKER_FIELDS
+                or any(value is not None for field, value in worker.items() if field != "state")
+            ):
+                raise RouteControllerError("absent worker metadata is invalid")
+        route_job = observation["route_job"]
+        if not isinstance(route_job, dict) or route_job.get("state") not in JOB_STATES:
+            raise RouteControllerError("cleanup route job inventory is invalid")
+        if route_job["state"] == "absent" and (
+            set(route_job) != _ROUTE_JOB_FIELDS
+            or any(value is not None for field, value in route_job.items() if field != "state")
+        ):
+            raise RouteControllerError("absent route job metadata is invalid")
+        return observation
+    ready_peer_ids: list[str] = []
+    for worker_id, worker_plan in plan.worker_by_id.items():
+        worker = _mapping(workers[worker_id], _OBS_WORKER_FIELDS, f"workers[{worker_id!r}]")
+        state = worker["state"]
+        if state not in WORKER_STATES:
+            raise RouteControllerError("worker state is invalid")
+        if state == "absent":
+            if any(value is not None for field, value in worker.items() if field != "state"):
+                raise RouteControllerError("absent worker metadata is invalid")
+            continue
+        if (
+            worker["machine_id"] != worker_plan.machine_id
+            or worker["source_commit"] != plan.source_commit
+            or worker["plan_digest"] != plan.plan_digest
+            or worker["worker_plan_digest"] != plan.worker_plan_digest
+            or worker["start_action_id"] != _action_id(plan, "start_route")
+            or worker["span"] != worker_plan.span
+            or worker["manifest_digest"] != plan.manifest_digest
+            or worker["artifact_bytes"] != worker_plan.artifact_bytes
+            or worker["artifact_set_digest"] != worker_plan.artifact_set_digest
+            or worker["cache_root"] != worker_plan.cache_root
+        ):
+            raise RouteControllerError("worker binding is invalid")
+        peer_id = worker["peer_id"]
+        if state == "ready":
+            ready_peer_ids.append(_string(peer_id, _PEER_RE, "worker peer_id"))
+        elif peer_id is not None:
+            raise RouteControllerError("unfinished worker exposed a peer identity")
+    if len(set(ready_peer_ids)) != len(ready_peer_ids):
+        raise RouteControllerError("ready workers must have unique peer identities")
+
+    route_job = _mapping(observation["route_job"], _ROUTE_JOB_FIELDS, "route_job")
+    if route_job["state"] not in JOB_STATES:
+        raise RouteControllerError("route job state is invalid")
+    evidence_digest = route_job["evidence_digest"]
+    job_bindings = (
+        "job_id",
+        "collect_action_id",
+        "run_id",
+        "plan_digest",
+        "source_commit",
+        "manifest_digest",
+        "worker_plan_digest",
+    )
+    if route_job["state"] == "absent":
+        if any(route_job[field] is not None for field in (*job_bindings, "evidence_digest", "route_record")):
+            raise RouteControllerError("absent route job metadata is invalid")
+    elif (
+        route_job["job_id"] != plan.route_job_id
+        or route_job["collect_action_id"] != _action_id(plan, "collect_route")
+        or route_job["run_id"] != plan.run_id
+        or route_job["plan_digest"] != plan.plan_digest
+        or route_job["source_commit"] != plan.source_commit
+        or route_job["manifest_digest"] != plan.manifest_digest
+        or route_job["worker_plan_digest"] != plan.worker_plan_digest
+    ):
+        raise RouteControllerError("route job binding is invalid")
+    if route_job["state"] == "passed":
+        _string(evidence_digest, _DIGEST_RE, "route evidence digest")
+        record = _validate_route_record(route_job["route_record"], plan, workers)
+        if evidence_digest != _canonical_digest(record):
+            raise RouteControllerError("route evidence digest does not bind the route record")
+    elif evidence_digest is not None or route_job["route_record"] is not None:
+        raise RouteControllerError("unfinished route job exposed evidence")
+    return observation
+
+
+def _all_absent(observation: Mapping[str, Any]) -> bool:
+    return (
+        all(not resource["present"] for resource in observation["resources"].values())
+        and all(worker["state"] == "absent" for worker in observation["workers"].values())
+        and observation["route_job"]["state"] == "absent"
+    )
+
+
+def _all_resources_present(observation: Mapping[str, Any]) -> bool:
+    return all(resource["present"] for resource in observation["resources"].values())
+
+
+def _all_workers_ready(observation: Mapping[str, Any]) -> bool:
+    return all(worker["state"] == "ready" for worker in observation["workers"].values())
+
+
+def _authorized(plan: RoutePlan) -> bool:
+    return all(
+        plan.authorization[field] is True
+        for field in (
+            "reservation_recorded",
+            "native_auth_revalidated",
+            "inventory_revalidated",
+            "pricing_revalidated",
+            "provisioning_authorized",
+        )
+    )
+
+
+def _next(state: Mapping[str, Any], **changes: Any) -> dict[str, Any]:
+    result = dict(state)
+    result.update(changes)
+    if all(result[key] == state[key] for key in state):
+        return result
+    result["revision"] = int(state["revision"]) + 1
+    return result
+
+
+def _cleanup_state(state: Mapping[str, Any], failure_code: str | None = None) -> dict[str, Any]:
+    changes: dict[str, Any] = {
+        "phase": "CLEANING",
+        "next_action": "cleanup_route",
+    }
+    if failure_code is not None:
+        changes["failure_code"] = failure_code
+    return _next(state, **changes)
+
+
+def reconcile(
+    operation: str,
+    state_value: Mapping[str, Any],
+    observation_value: Mapping[str, Any],
+    plan: RoutePlan,
+    *,
+    now_unix: int | None = None,
+    route_evidence_validated: bool = False,
+    start_was_issued: bool = False,
+) -> dict[str, Any]:
+    if operation not in {"start", "status", "collect", "cleanup"}:
+        raise RouteControllerError("operation is invalid")
+    state = validate_state(state_value, plan)
+    phase = state["phase"]
+    raw_observed_at = observation_value.get("observed_at_unix")
+    effective_now = (
+        _integer(now_unix, "trusted current time", 1)
+        if now_unix is not None
+        else _integer(raw_observed_at, "observed_at_unix", 1)
+    )
+    cleanup_only = (
+        operation == "cleanup"
+        or phase == "CLEANING"
+        or observation_value.get("protected_bootstrap_running") is False
+        or effective_now >= plan.deadline_unix
+    )
+    observation = validate_observation(
+        observation_value,
+        plan,
+        cleanup_only=cleanup_only,
+    )
+    all_absent = _all_absent(observation)
+    resources_present = _all_resources_present(observation)
+    workers_ready = _all_workers_ready(observation)
+    worker_states = {worker["state"] for worker in observation["workers"].values()}
+    job_state = observation["route_job"]["state"]
+    observed_generations_digest = observation["instance_generations_digest"]
+    latched_generations_digest = state["instance_generations_digest"]
+    if (
+        phase not in TERMINAL_PHASES
+        and not cleanup_only
+        and latched_generations_digest is not None
+        and observed_generations_digest != latched_generations_digest
+    ):
+        return _cleanup_state(state, "instance-generation-changed")
+
+    def advance_with_generations(**changes: Any) -> dict[str, Any]:
+        if not cleanup_only and resources_present and latched_generations_digest is None:
+            if observed_generations_digest is None:
+                raise RouteControllerError("complete resources lack instance generations")
+            changes.setdefault(
+                "instance_generations_digest",
+                observed_generations_digest,
+            )
+        return _next(state, **changes)
+
+    if not cleanup_only and job_state == "passed" and not route_evidence_validated:
+        raise RouteControllerError("passed route evidence was not revalidated from protected records")
+
+    if phase in TERMINAL_PHASES:
+        if not all_absent:
+            raise RouteControllerError("resources returned after terminal cleanup")
+        if observation["protected_bootstrap_running"] is not True:
+            raise RouteControllerError("protected bootstrap was lost after terminal cleanup")
+        return state
+
+    if observation["protected_bootstrap_running"] is not True:
+        if all_absent:
+            return _next(
+                state,
+                phase="CLEANED_FAILURE",
+                failure_code="protected-bootstrap-lost",
+                cleanup_verified=True,
+                next_action="none",
+            )
+        return _cleanup_state(state, "protected-bootstrap-lost")
+
+    if effective_now >= plan.deadline_unix:
+        if all_absent:
+            return _next(
+                state,
+                phase="CLEANED_FAILURE",
+                failure_code=state["failure_code"] or "run-expired",
+                cleanup_verified=True,
+                next_action="none",
+            )
+        return _cleanup_state(state, state["failure_code"] or "run-expired")
+
+    if operation == "cleanup":
+        if all_absent:
+            if state["evidence_digest"] is not None and state["failure_code"] is None:
+                return _next(
+                    state,
+                    phase="CLEANED_PASS",
+                    cleanup_verified=True,
+                    next_action="none",
+                )
+            return _next(
+                state,
+                phase="CLEANED_FAILURE",
+                failure_code=state["failure_code"] or "operator-cleanup",
+                cleanup_verified=True,
+                next_action="none",
+            )
+        return _cleanup_state(state)
+
+    if phase == "CLEANING":
+        if all_absent:
+            if state["evidence_digest"] is not None and state["failure_code"] is None:
+                return _next(
+                    state,
+                    phase="CLEANED_PASS",
+                    cleanup_verified=True,
+                    next_action="none",
+                )
+            return _next(
+                state,
+                phase="CLEANED_FAILURE",
+                failure_code=state["failure_code"] or "route-failed",
+                cleanup_verified=True,
+                next_action="none",
+            )
+        return _next(state, next_action="cleanup_route")
+
+    plan_verified_at = observation["artifact_plan_revalidation"]["verified_at_unix"]
+    if (
+        observation["observed_at_unix"] > effective_now
+        or effective_now - observation["observed_at_unix"] > MAX_PLAN_REVALIDATION_AGE_SECONDS
+        or (
+            (operation in {"start", "collect"} or job_state == "passed")
+            and effective_now - plan_verified_at > MAX_PLAN_REVALIDATION_AGE_SECONDS
+        )
+    ):
+        raise RouteControllerError("controller observation or artifact plan is stale")
+
+    if phase == "ABSENT" and not all_absent and not start_was_issued:
+        return _cleanup_state(state, "unrecorded-resources")
+
+    if phase == "ABSENT" and operation == "start" and all_absent and start_was_issued:
+        return _next(
+            state,
+            phase="CLEANED_FAILURE",
+            failure_code="state-lost-after-start",
+            cleanup_verified=True,
+            next_action="none",
+        )
+
+    if phase == "ABSENT" and resources_present and workers_ready and job_state == "passed":
+        return advance_with_generations(
+            phase="CLEANING",
+            evidence_digest=observation["route_job"]["evidence_digest"],
+            next_action="cleanup_route",
+        )
+
+    if operation == "start":
+        if phase == "ABSENT":
+            if not _authorized(plan):
+                raise RouteControllerError("paid provisioning is not authorized")
+            if all_absent:
+                return _next(state, phase="STARTING", next_action="start_route")
+            if resources_present and job_state == "failed":
+                return _cleanup_state(state, "qualification-failed")
+            if resources_present and workers_ready and job_state in {"absent", "running"}:
+                return advance_with_generations(phase="READY", next_action="none")
+            if resources_present and worker_states <= {"starting", "ready"} and job_state == "absent":
+                return advance_with_generations(phase="STARTING", next_action="none")
+            return _cleanup_state(state, "partial-reattach")
+
+    if phase == "ABSENT":
+        if all_absent:
+            return _next(state, next_action="none")
+        return _cleanup_state(state, "unexpected-resources")
+
+    if phase == "STARTING" and all_absent:
+        if state["next_action"] == "start_route":
+            return state
+        return _cleanup_state(state, "route-inventory-lost")
+
+    if not resources_present or "failed" in worker_states or "absent" in worker_states:
+        return _cleanup_state(state, "route-inventory-lost")
+
+    if phase == "STARTING":
+        if workers_ready:
+            return advance_with_generations(phase="READY", next_action="none")
+        if worker_states <= {"starting", "ready"} and job_state == "absent":
+            return advance_with_generations(next_action="none")
+        return _cleanup_state(state, "route-start-failed")
+
+    if phase == "READY":
+        if not workers_ready:
+            return _cleanup_state(state, "route-readiness-lost")
+        if job_state == "passed":
+            return _next(
+                state,
+                phase="CLEANING",
+                evidence_digest=observation["route_job"]["evidence_digest"],
+                next_action="cleanup_route",
+            )
+        if job_state == "failed":
+            return _cleanup_state(state, "qualification-failed")
+        if operation == "collect" and job_state == "absent":
+            return _next(state, phase="COLLECTING", next_action="collect_route")
+        if operation == "collect" and job_state == "running":
+            return _next(state, phase="COLLECTING", next_action="none")
+        return _next(state, next_action="none")
+
+    if phase == "COLLECTING":
+        if not workers_ready:
+            return _cleanup_state(state, "route-readiness-lost")
+        if job_state == "passed":
+            return _next(
+                state,
+                phase="CLEANING",
+                evidence_digest=observation["route_job"]["evidence_digest"],
+                next_action="cleanup_route",
+            )
+        if job_state == "failed":
+            return _cleanup_state(state, "qualification-failed")
+        if job_state == "absent" and state["next_action"] == "collect_route":
+            return state
+        return _next(state, next_action="none")
+
+    raise RouteControllerError("state transition is invalid")
+
+
+def action_record(state: Mapping[str, Any], plan: RoutePlan) -> dict[str, Any]:
+    workers = [
+        {
+            "worker_id": worker.worker_id,
+            "machine_id": worker.machine_id,
+            "instance": worker.instance,
+            "disk": worker.disk,
+            "span": worker.span,
+            "artifact_bytes": worker.artifact_bytes,
+            "artifact_set_digest": worker.artifact_set_digest,
+            "cache_root": worker.cache_root,
+        }
+        for worker in plan.workers
+    ]
+    resources = [
+        {
+            "name": resource.name,
+            "kind": resource.kind,
+            "provider": resource.provider,
+            "region": resource.region,
+            "worker_id": resource.worker_id,
+        }
+        for resource in plan.resources
+    ]
+    action = state["next_action"]
+    action_id = None
+    if action != "none":
+        action_id = _action_id(plan, action)
+    instance_generations_digest = state.get("instance_generations_digest")
+    if instance_generations_digest is not None:
+        _string(
+            instance_generations_digest,
+            _DIGEST_RE,
+            "instance_generations_digest",
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "gate": GATE,
+        "run_id": plan.run_id,
+        "route_job_id": plan.route_job_id,
+        "plan_digest": plan.plan_digest,
+        "source_commit": plan.source_commit,
+        "manifest_digest": plan.manifest_digest,
+        "model_revision": plan.model_revision,
+        "worker_plan_digest": plan.worker_plan_digest,
+        "deadline_unix": plan.deadline_unix,
+        "revision": state["revision"],
+        "instance_generations_digest": instance_generations_digest,
+        "action": action,
+        "action_id": action_id,
+        "authorization": dict(plan.authorization),
+        "source_bindings": [dict(binding) for binding in plan.source_bindings],
+        "runtime_package": dict(plan.runtime_package),
+        "resources": resources,
+        "resource_specs": [_expected_resource_spec(resource) for resource in plan.resources],
+        "workers": workers,
+    }
+
+
+def _prepare_output_path(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parent_metadata = path.parent.lstat()
+    parent_reparse = bool(
+        getattr(parent_metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+    if parent_reparse or path.parent.is_symlink() or not stat.S_ISDIR(parent_metadata.st_mode):
+        raise RouteControllerError("output parent is unsafe")
+    if path.exists() or path.is_symlink():
+        metadata = path.lstat()
+        reparse = bool(getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+        if reparse or path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+            raise RouteControllerError("output target is unsafe")
+
+
+def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
+    payload = (json.dumps(value, allow_nan=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(payload) > MAX_JSON_BYTES:
+        raise RouteControllerError("output is too large")
+    _prepare_output_path(path)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Advance one durable Qwen3.8 complete-route controller operation")
+    parser.add_argument("operation", choices=("start", "status", "collect", "cleanup"))
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--observation", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--artifact-root", type=Path)
+    parser.add_argument("--authorization-root", type=Path)
+    parser.add_argument("--evidence-root", type=Path)
+    parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--decision", type=Path, required=True)
+    return parser
+
+
+def _assert_output_isolation(
+    outputs: Sequence[Path],
+    input_files: Sequence[Path | None],
+    input_roots: Sequence[Path | None],
+) -> None:
+    output_paths = [path.resolve(strict=False) for path in outputs]
+    file_paths = [path.resolve(strict=False) for path in input_files if path is not None]
+    if len(set(map(os.path.normcase, map(os.fspath, output_paths)))) != len(output_paths):
+        raise RouteControllerError("controller output paths must be distinct")
+    if any(
+        os.path.normcase(os.fspath(output)) == os.path.normcase(os.fspath(input_path))
+        for output in output_paths
+        for input_path in file_paths
+    ):
+        raise RouteControllerError("controller input and output paths must be distinct")
+    for root in (path.resolve(strict=False) for path in input_roots if path is not None):
+        for output in output_paths:
+            try:
+                output.relative_to(root)
+            except ValueError:
+                continue
+            raise RouteControllerError("controller output overlaps a protected input root")
+
+
+@contextmanager
+def _controller_lock(path: Path) -> Iterator[None]:
+    _prepare_output_path(path)
+    with path.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\\0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise RouteControllerError("another controller invocation holds the state lock") from exc
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise RouteControllerError("another controller invocation holds the state lock") from exc
+        try:
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+
+
+def _validate_journal(
+    value: Mapping[str, Any],
+    plan: RoutePlan,
+    *,
+    now_unix: int,
+) -> dict[str, Any]:
+    journal = dict(_mapping(value, _JOURNAL_FIELDS, "issuance journal"))
+    issued_at = _integer(
+        journal["issued_at_unix"],
+        "issuance journal issued_at_unix",
+        1,
+    )
+    if (
+        journal["schema_version"] != SCHEMA_VERSION
+        or journal["run_id"] != plan.run_id
+        or journal["plan_digest"] != plan.plan_digest
+        or journal["start_action_id"] != _action_id(plan, "start_route")
+        or issued_at > now_unix
+        or journal["status"] not in {"issued", "completed"}
+    ):
+        raise RouteControllerError("issuance journal binding is invalid")
+    if journal["status"] == "issued":
+        if (
+            any(
+                journal[field] is not None
+                for field in (
+                    "completed_at_unix",
+                    "terminal_phase",
+                    "terminal_revision",
+                    "failure_code",
+                    "evidence_digest",
+                )
+            )
+            or journal["cleanup_verified"] is not False
+        ):
+            raise RouteControllerError("open issuance journal is invalid")
+        return journal
+
+    completed_at = _integer(
+        journal["completed_at_unix"],
+        "issuance journal completed_at_unix",
+        issued_at,
+    )
+    terminal_revision = _integer(
+        journal["terminal_revision"],
+        "issuance journal terminal_revision",
+        1,
+    )
+    phase = journal["terminal_phase"]
+    if completed_at > now_unix or phase not in TERMINAL_PHASES or journal["cleanup_verified"] is not True:
+        raise RouteControllerError("completed issuance journal is invalid")
+    if phase == "CLEANED_PASS":
+        _string(journal["evidence_digest"], _DIGEST_RE, "issuance journal evidence_digest")
+        if journal["failure_code"] is not None:
+            raise RouteControllerError("passing issuance journal is invalid")
+    elif journal["failure_code"] is None or journal["evidence_digest"] is not None:
+        raise RouteControllerError("failing issuance journal is invalid")
+    return journal
+
+
+def _issued_journal(plan: RoutePlan, now_unix: int) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": plan.run_id,
+        "plan_digest": plan.plan_digest,
+        "start_action_id": _action_id(plan, "start_route"),
+        "status": "issued",
+        "issued_at_unix": now_unix,
+        "completed_at_unix": None,
+        "terminal_phase": None,
+        "terminal_revision": None,
+        "failure_code": None,
+        "evidence_digest": None,
+        "cleanup_verified": False,
+    }
+
+
+def _completed_journal(
+    journal: Mapping[str, Any],
+    state: Mapping[str, Any],
+    now_unix: int,
+) -> dict[str, Any]:
+    result = dict(journal)
+    result.update(
+        status="completed",
+        completed_at_unix=now_unix,
+        terminal_phase=state["phase"],
+        terminal_revision=state["revision"],
+        failure_code=state["failure_code"],
+        evidence_digest=state["evidence_digest"],
+        cleanup_verified=state["cleanup_verified"],
+    )
+    return result
+
+
+def _state_from_completed_journal(
+    journal: Mapping[str, Any],
+    plan: RoutePlan,
+) -> dict[str, Any]:
+    state = initial_state(plan)
+    state.update(
+        revision=journal["terminal_revision"],
+        phase=journal["terminal_phase"],
+        failure_code=journal["failure_code"],
+        evidence_digest=journal["evidence_digest"],
+        cleanup_verified=True,
+        next_action="none",
+    )
+    return validate_state(state, plan)
+
+
+def _execute_controller(
+    args: argparse.Namespace,
+    *,
+    now_unix: int,
+    journal_path: Path,
+) -> dict[str, Any]:
+    plan = load_plan(args.plan, args.source_root)
+    observation = _strict_json(_regular_bytes(args.observation))
+    journal = None
+    if journal_path.exists():
+        journal = _validate_journal(
+            _strict_json(_regular_bytes(journal_path)),
+            plan,
+            now_unix=now_unix,
+        )
+    if args.state.exists():
+        state = _strict_json(_regular_bytes(args.state))
+        validated_state = validate_state(state, plan)
+        if (
+            journal is not None
+            and journal["status"] == "completed"
+            and (
+                validated_state["phase"] != journal["terminal_phase"]
+                or validated_state["revision"] != journal["terminal_revision"]
+                or validated_state["failure_code"] != journal["failure_code"]
+                or validated_state["evidence_digest"] != journal["evidence_digest"]
+                or validated_state["cleanup_verified"] is not True
+            )
+        ):
+            raise RouteControllerError("state conflicts with the completed issuance journal")
+    elif journal is not None and journal["status"] == "completed":
+        validated_state = _state_from_completed_journal(journal, plan)
+    else:
+        validated_state = initial_state(plan)
+    raw_observed_at = observation.get("observed_at_unix")
+    cleanup_first = (
+        args.operation == "cleanup"
+        or validated_state["phase"] == "CLEANING"
+        or observation.get("protected_bootstrap_running") is False
+        or now_unix >= plan.deadline_unix
+    )
+    validated_observation = validate_observation(
+        observation,
+        plan,
+        cleanup_only=cleanup_first,
+    )
+    if not cleanup_first and (
+        type(raw_observed_at) is not int
+        or raw_observed_at > now_unix
+        or now_unix - raw_observed_at > MAX_PLAN_REVALIDATION_AGE_SECONDS
+    ):
+        raise RouteControllerError("controller observation is stale")
+    job_state = validated_observation["route_job"]["state"]
+    requires_production_revalidation = not cleanup_first and (
+        args.operation in {"start", "collect"} or job_state == "passed"
+    )
+    requires_start_authorization = (
+        not cleanup_first
+        and args.operation == "start"
+        and _authorized(plan)
+        and journal is None
+        and validated_state["phase"] == "ABSENT"
+        and _all_absent(validated_observation)
+    )
+    if requires_start_authorization:
+        if args.authorization_root is None:
+            raise RouteControllerError("paid start requires controller-owned authorization records")
+        revalidate_authorization_evidence(
+            plan,
+            args.authorization_root,
+            args.source_root,
+            now_unix=now_unix,
+        )
+    if requires_production_revalidation:
+        if args.manifest is None or args.artifact_root is None:
+            raise RouteControllerError("start and collection require production artifact plan inputs")
+        revalidation = validated_observation["artifact_plan_revalidation"]
+        expected_revalidation = revalidate_production_artifact_plan(
+            plan,
+            args.manifest,
+            args.artifact_root,
+            args.source_root,
+            verified_at_unix=revalidation["verified_at_unix"],
+        )
+        if dict(revalidation) != expected_revalidation:
+            raise RouteControllerError("observation was not produced by the revalidated production artifact plan")
+    route_evidence_validated = False
+    if not cleanup_first and job_state == "passed":
+        if args.evidence_root is None:
+            raise RouteControllerError("passed route requires protected evidence records")
+        revalidate_route_evidence(
+            plan,
+            validated_observation,
+            args.evidence_root,
+            args.source_root,
+        )
+        route_evidence_validated = True
+    next_state = reconcile(
+        args.operation,
+        validated_state,
+        validated_observation,
+        plan,
+        now_unix=now_unix,
+        route_evidence_validated=route_evidence_validated,
+        start_was_issued=journal is not None,
+    )
+    decision = action_record(next_state, plan)
+    if decision["action"] == "start_route" and journal is None:
+        journal = _issued_journal(plan, now_unix)
+        _atomic_json(journal_path, journal)
+    if next_state["phase"] in TERMINAL_PHASES and journal is not None and journal["status"] != "completed":
+        journal = _completed_journal(journal, next_state, now_unix)
+        _atomic_json(journal_path, journal)
+    neutral_state = dict(validated_state)
+    neutral_state["next_action"] = "none"
+    _atomic_json(args.decision, action_record(neutral_state, plan))
+    _atomic_json(args.state, next_state)
+    _atomic_json(args.decision, decision)
+    return decision
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    lock_path = args.state.with_name(f".{args.state.name}.lock")
+    journal_path = args.state.with_name(f".{args.state.name}.issuance.json")
+    try:
+        _assert_output_isolation(
+            (args.state, args.decision, lock_path, journal_path),
+            (args.plan, args.observation, args.manifest),
+            (args.source_root, args.artifact_root, args.authorization_root, args.evidence_root),
+        )
+        with _controller_lock(lock_path):
+            decision = _execute_controller(
+                args,
+                now_unix=int(time.time()),
+                journal_path=journal_path,
+            )
+    except (OSError, RouteControllerError) as exc:
+        print(f"Gate Q3.8 route controller failed: {exc}")
+        return 2
+    print(json.dumps(decision, allow_nan=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

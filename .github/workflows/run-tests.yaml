@@ -55,14 +55,22 @@ jobs:
             tests/test_api_keys.py \
             tests/test_cache.py \
             tests/test_catalog_bootstrap.py \
+            tests/test_catalog_desktop_cleanup.py \
             tests/test_catalog_publication.py \
+            tests/test_catalog_refresh.py \
             desktop/tests/test_build_desktop.py \
+            desktop/tests/test_native_runtime_self_test.py \
+            desktop/tests/test_release_downloads.py \
+            desktop/tests/test_runtime_packaging.py \
             desktop/tests/test_startup.py \
+            desktop/tests/test_windows_online_installer.py \
             tests/test_deepseek_v3.py \
             tests/test_discovery.py \
             tests/test_edge_benchmark.py \
             tests/test_external_qualification.py \
             tests/test_device_portability.py \
+            tests/test_gate16_catalog_channel.py \
+            tests/test_gate16_catalog_drill.py \
             tests/test_gemma4_block.py \
             tests/test_gemma4_multimodal_loading.py \
             tests/test_gemma4_unified.py \
@@ -70,6 +78,11 @@ jobs:
             tests/test_join_token.py \
             tests/test_kv_cache_strategy.py \
             tests/test_loading_diagnostics.py \
+            tests/test_linux_online_installer.py \
+            tests/test_login_startup_linux.py \
+            tests/test_login_startup_windows_cycle.py \
+            tests/test_login_startup_windows_safety.py \
+            tests/test_login_startup_windows_state.py \
             tests/test_model_catalog.py \
             tests/test_model_manager.py \
             tests/test_model_manifest.py \
@@ -87,9 +100,11 @@ jobs:
             tests/test_qualification_matrix.py \
             tests/test_qualification_cost_guard.py \
             tests/test_qualification_image_contract.py \
+            tests/test_qualify_catalog_desktop.py \
             tests/test_qwen3_5_block.py \
             tests/test_qwen3_5_multimodal_loading.py \
             tests/test_route_health.py \
+            tests/test_runtime_archive_hardlinks.py \
             tests/test_server_registry.py \
             tests/test_startup_guard.py \
             tests/test_tied_embeddings_from_pretrained.py \
@@ -102,7 +117,10 @@ jobs:
           # Atomic config exchange and shared admission are Windows/Linux public-alpha contracts.
           # The production desktop workflow separately exercises the packaged Windows node.
           # macOS remains outside the supported release matrix.
+          # Gate 16 additionally uses actual loopback-only TLS p2pd and the real handler,
+          # with no model allocation, external peers or public route mutation.
           python -m pytest -v --durations=0 --durations-min=1.0 \
+            tests/test_gate16_live_rpc.py \
             tests/test_policy_store.py \
             tests/test_server_admission.py
 

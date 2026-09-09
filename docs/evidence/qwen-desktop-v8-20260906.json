@@ -1,0 +1,93 @@
+{
+  "result": "passed",
+  "scope": "Windows-v8-build-verification-and-real-local-GPU-chat",
+  "packaged": true,
+  "hardware": "NVIDIA RTX 2070 SUPER, 8 GB VRAM",
+  "install_archive": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "fa4bb6aab41669bda6729041408e79d05ea17e94dee332ce1e37637bab3324c3",
+    "size_bytes": 2692401004
+  },
+  "source_commit": null,
+  "source_scope": "working-tree inputs recorded separately",
+  "ui_smoke_passed": true,
+  "onboarding_ui_smoke_passed": true,
+  "local_completion_seconds": 21.109000000004016,
+  "short_chat": {
+    "id": "chatcmpl-45e9644a1d8c499c9ea29d0d",
+    "object": "chat.completion",
+    "created": 1788672603,
+    "model": "Qwen3.5-0.8B-Local",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Paris\n"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 31,
+      "completion_tokens": 4,
+      "total_tokens": 35
+    }
+  },
+  "token_budget_rejected": true,
+  "local_only_persisted": true,
+  "stream_cancel_released_lease": true,
+  "node_stopped": true,
+  "focused_tests": {
+    "selector_API_ranges_manifest_lifecycle": 109,
+    "desktop_builder": 23
+  },
+  "relocation": "Build completed on E:, moved to repository on C: at owner request; archive digest verified again",
+  "limits": [
+    "Unsigned engineering package",
+    "Community inference remains unqualified",
+    "Source request-transition proof used an earlier recorded bundle",
+    "No Linux or unobserved RTX 30/40/50 hardware claim"
+  ],
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-storage-retry/qwen-product-build-v8/desktop-metrics.json",
+      "sha256": "f98b4c982a849e3cc8fc9ef4c5d05ff8eee96711683a789948be46cc9dccbfab"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-storage-retry/qwen-product-build-v8/CommunityAI/node/CommunityAI-Node.exe",
+      "sha256": "a5ddba56c681cce5c5e1769e5c30d3aac81d08a1209927280119d9c3f36c6db7"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v8-e-source.json",
+      "sha256": "ad12d9261ee2e5c5b7eaadb04f5366f051106f4bc199978d7e1963f2bca08315"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-v8-e-succeeded.json",
+      "sha256": "1e91fe1050b9e65ace9fd6ee4e73b40d9e211a0ed1c514cbdf9116bba1a88cd8"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/local-packaged-v8/result.json",
+      "sha256": "4522107c8da52825807917aa54f884e7f195b1ed76c50abe05046926892ab37a"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/v8-focused-tests.log",
+      "sha256": "15d4550ee4c3b352d4dbdcc55f0b24e4482c134ef407b2cb59fe1fd41754414c"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/build-storage-tests.log",
+      "sha256": "81e61ab5d2d5a2ade66ba5d63599e18f9198091575eb9b2baf1f999ccfe65c26"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/long-generation-repro.log",
+      "sha256": "39d0a34e9f75ddcfe6789eee5e76322504dc1850a6866e6acf5b0df3236f906f"
+    }
+  ]
+}

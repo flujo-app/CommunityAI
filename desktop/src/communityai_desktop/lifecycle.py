@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import subprocess
@@ -67,6 +68,15 @@ def _port_is_open(node_url: str, timeout: float) -> bool:
         return False
 
 
+def _bootstrap_output_detail(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
+    for output in (stderr, stdout):
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        if output and output.strip():
+            return output.strip().splitlines()[-1][:600]
+    return ""
+
+
 class NodeLifecycleSupervisor:
     """Start one native-key node sidecar and stop only the process it owns."""
 
@@ -80,7 +90,7 @@ class NodeLifecycleSupervisor:
         node_command: Optional[Sequence[str]] = None,
         bootstrap_config_path: Optional[Path | str] = None,
         bootstrap_command: Optional[Sequence[str]] = None,
-        bootstrap_timeout: float = 60.0,
+        bootstrap_timeout: float = 300.0,
         startup_timeout: float = 45.0,
         poll_interval: float = 0.2,
         client_timeout: float = 2.0,
@@ -168,7 +178,8 @@ class NodeLifecycleSupervisor:
     def _ensure_config(self) -> None:
         if self.config_path.is_symlink():
             raise NodeLifecycleError(f"CommunityAI refuses the unsafe configuration link {self.config_path.name}")
-        if self.config_path.is_file():
+        existing = self.config_path.is_file()
+        if existing and (self.bootstrap_config_path is None or not self.bootstrap_command):
             return
         if self.bootstrap_config_path is None:
             raise NodeLifecycleError(
@@ -190,12 +201,13 @@ class NodeLifecycleSupervisor:
             str(self.data_dir),
             "--node_config",
             str(self.config_path),
+            *(("--refresh_if_needed",) if existing else ()),
         )
         kwargs = {
             "stdin": subprocess.DEVNULL,
             "capture_output": True,
             "text": True,
-            "timeout": self.bootstrap_timeout,
+            "timeout": min(self.bootstrap_timeout, 30.0) if existing else self.bootstrap_timeout,
             "cwd": str(self.data_dir),
             "close_fds": True,
         }
@@ -204,12 +216,30 @@ class NodeLifecycleSupervisor:
         try:
             result = self._bootstrap_runner(command, **kwargs)
         except subprocess.TimeoutExpired as exc:
-            raise NodeLifecycleError("The signed model catalog installation timed out") from exc
+            if existing:
+                logging.getLogger(__name__).warning(
+                    "Catalog migration timed out; starting the saved node configuration"
+                )
+                return
+            detail = _bootstrap_output_detail(exc.stdout, exc.stderr)
+            suffix = f": {detail}" if detail else ""
+            raise NodeLifecycleError(
+                f"The signed model catalog installation timed out after {self.bootstrap_timeout:g} seconds{suffix}"
+            ) from exc
         except OSError as exc:
+            if existing:
+                logging.getLogger(__name__).warning(
+                    "Catalog migration unavailable; starting the saved node configuration"
+                )
+                return
             raise NodeLifecycleError(f"Could not run the bundled catalog installer: {exc}") from exc
         if result.returncode:
-            output = (result.stderr or result.stdout or "").strip().splitlines()
-            detail = output[-1][:600] if output else f"exit code {result.returncode}"
+            if existing:
+                logging.getLogger(__name__).warning(
+                    "Catalog migration failed verification; starting the saved node configuration"
+                )
+                return
+            detail = _bootstrap_output_detail(result.stdout, result.stderr) or f"exit code {result.returncode}"
             raise NodeLifecycleError(f"The signed model catalog could not be installed: {detail}")
         if not self.config_path.is_file() or self.config_path.is_symlink():
             raise NodeLifecycleError("The signed model catalog installer did not create a safe node configuration")
@@ -243,8 +273,9 @@ class NodeLifecycleSupervisor:
             raise NodeLifecycleError(f"Could not start the bundled local node: {exc}") from exc
 
     def _stop_owned_process(self) -> None:
-        process, self._process = self._process, None
+        process = self._process
         if process is None or process.poll() is not None:
+            self._process = None
             return
         try:
             process.terminate()
@@ -253,10 +284,13 @@ class NodeLifecycleSupervisor:
             try:
                 process.kill()
                 process.wait(timeout=5)
-            except OSError:
+            except (OSError, subprocess.TimeoutExpired):
                 pass
         except OSError:
             pass
+        if process.poll() is None:
+            raise NodeLifecycleError("The owned node did not stop; application files must not be replaced")
+        self._process = None
 
     def _wait_until_ready(self, client: NodeClient) -> None:
         deadline = self._clock() + self.startup_timeout

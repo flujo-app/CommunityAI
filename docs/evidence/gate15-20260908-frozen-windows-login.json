@@ -1,0 +1,249 @@
+{
+  "result": "passed",
+  "scope": "frozen-Windows-private-desktop-login-enable-restart-disable",
+  "explicit_mutation_opt_in": true,
+  "run_entry_original_present": false,
+  "expected_run_type": "REG_SZ",
+  "replay_sha256": "9130c36aef4765a2e812262f04b075bf5b32d0f879ee2908a8a96ef0ba3697ea",
+  "run_state_guard_sha256": "dd6db75b16ee2c4cf36148de8e6212e1dcbf25085aa906b4c3ed93abf7a55f7c",
+  "phases": [
+    {
+      "action": "enable",
+      "result": "passed",
+      "owned_processes_stopped": true,
+      "scope": "frozen-Windows-private-desktop-login-checkbox-enable",
+      "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+      "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+      "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+      "replay_sha256": "9d841ecaa30b1eeeafbf7164852df79fe43a2035992a31d3f04b12e14fb8031c",
+      "uia_source_sha256": "7287870248706850bc31ae9f21cbedcd4fb510356acca7cf8049d28a6893f49a",
+      "non_elevated": true,
+      "run_entry_original_present": false,
+      "registry_mutation": true,
+      "visible_input_desktop_acceptance": false,
+      "gui_probe_deadline_seconds": 120,
+      "helper_containment_required": true,
+      "private_desktop_name": "CommunityAIReadOnly-e32d91cbb52f4bc9a17bbea824ec9f42",
+      "input_desktop_before": "Default",
+      "last_authenticated_status": {
+        "status": "running",
+        "resident_models": 0,
+        "worker_states": [
+          "paused"
+        ]
+      },
+      "seconds_to_uia_and_authenticated_status": 17.359,
+      "uia": {
+        "result": "passed",
+        "checkbox_name": "Start CommunityAI when I sign in",
+        "control_type": "ControlType.CheckBox",
+        "initial_state": "Off",
+        "state": "On",
+        "enabled": "True",
+        "registry_mutation": "True",
+        "login_action": "enable",
+        "enumeration_retries": "2",
+        "last_enumeration_error": "0",
+        "actor_private_desktop_verified": "True",
+        "navigation_control_type": "ControlType.CheckBox",
+        "navigation_supported_patterns": "InvokePatternIdentifiers.Pattern,ValuePatternIdentifiers.Pattern,TogglePatternIdentifiers.Pattern",
+        "navigation_action": "InvokePattern.Invoke"
+      },
+      "resident_models": 0,
+      "private_model_weight_files": 0,
+      "worker_states": [
+        "paused"
+      ],
+      "catalog_sequence": 2,
+      "private_desktop_helper": {
+        "result": "passed",
+        "error": "",
+        "input_before": "Default",
+        "input_after": "Default",
+        "input_desktop_unchanged": "True",
+        "desktop_handle_closed": "True",
+        "job_assigned_before_resume": "True",
+        "actor_job_assigned_before_resume": "True",
+        "job_active_processes_at_close": "0",
+        "job_handle_closed": "True",
+        "job_cleanup_verified": "True"
+      },
+      "gui_launch": {
+        "pid": 34320,
+        "creation_filetime": 134333344965453848
+      },
+      "uia_actor_launch": {
+        "pid": 71432,
+        "creation_filetime": 134333344965494145
+      },
+      "expected_run_state_verified": true,
+      "owned_process_identities": [
+        [
+          10708,
+          1788860897.9718237
+        ],
+        [
+          14956,
+          1788860897.9516923
+        ],
+        [
+          34320,
+          1788860896.545385
+        ],
+        [
+          34356,
+          1788860914.023944
+        ],
+        [
+          51432,
+          1788860906.0571911
+        ],
+        [
+          66904,
+          1788860906.0750787
+        ],
+        [
+          68160,
+          1788860913.477782
+        ],
+        [
+          71432,
+          1788860896.5494144
+        ],
+        [
+          72056,
+          1788860896.511415
+        ]
+      ],
+      "native_credential_unchanged_after_shutdown": true,
+      "private_config_unchanged_after_shutdown": true
+    },
+    {
+      "action": "disable",
+      "result": "passed",
+      "owned_processes_stopped": true,
+      "scope": "frozen-Windows-private-desktop-login-checkbox-disable",
+      "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+      "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+      "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+      "replay_sha256": "9d841ecaa30b1eeeafbf7164852df79fe43a2035992a31d3f04b12e14fb8031c",
+      "uia_source_sha256": "7287870248706850bc31ae9f21cbedcd4fb510356acca7cf8049d28a6893f49a",
+      "non_elevated": true,
+      "run_entry_original_present": true,
+      "registry_mutation": true,
+      "visible_input_desktop_acceptance": false,
+      "gui_probe_deadline_seconds": 120,
+      "helper_containment_required": true,
+      "private_desktop_name": "CommunityAIReadOnly-e055acf1997044258d32a53ad7b26db4",
+      "input_desktop_before": "Default",
+      "last_authenticated_status": {
+        "status": "running",
+        "resident_models": 0,
+        "worker_states": [
+          "paused"
+        ]
+      },
+      "seconds_to_uia_and_authenticated_status": 17.375,
+      "uia": {
+        "result": "passed",
+        "checkbox_name": "Start CommunityAI when I sign in",
+        "control_type": "ControlType.CheckBox",
+        "initial_state": "On",
+        "state": "Off",
+        "enabled": "True",
+        "registry_mutation": "True",
+        "login_action": "disable",
+        "enumeration_retries": "2",
+        "last_enumeration_error": "0",
+        "actor_private_desktop_verified": "True",
+        "navigation_control_type": "ControlType.CheckBox",
+        "navigation_supported_patterns": "InvokePatternIdentifiers.Pattern,ValuePatternIdentifiers.Pattern,TogglePatternIdentifiers.Pattern",
+        "navigation_action": "InvokePattern.Invoke"
+      },
+      "resident_models": 0,
+      "private_model_weight_files": 0,
+      "worker_states": [
+        "paused"
+      ],
+      "catalog_sequence": 2,
+      "private_desktop_helper": {
+        "result": "passed",
+        "error": "",
+        "input_before": "Default",
+        "input_after": "Default",
+        "input_desktop_unchanged": "True",
+        "desktop_handle_closed": "True",
+        "job_assigned_before_resume": "True",
+        "actor_job_assigned_before_resume": "True",
+        "job_active_processes_at_close": "0",
+        "job_handle_closed": "True",
+        "job_cleanup_verified": "True"
+      },
+      "gui_launch": {
+        "pid": 57756,
+        "creation_filetime": 134333345152925017
+      },
+      "uia_actor_launch": {
+        "pid": 26644,
+        "creation_filetime": 134333345152967062
+      },
+      "expected_run_state_verified": true,
+      "owned_process_identities": [
+        [
+          16912,
+          1788860916.683412
+        ],
+        [
+          26644,
+          1788860915.2967062
+        ],
+        [
+          30896,
+          1788860916.7000582
+        ],
+        [
+          41068,
+          1788860932.7433004
+        ],
+        [
+          57756,
+          1788860915.2925017
+        ],
+        [
+          61852,
+          1788860932.2786412
+        ],
+        [
+          66484,
+          1788860915.2590582
+        ],
+        [
+          68904,
+          1788860924.491645
+        ],
+        [
+          69700,
+          1788860924.489276
+        ]
+      ],
+      "native_credential_unchanged_after_shutdown": true,
+      "private_config_unchanged_after_shutdown": true
+    }
+  ],
+  "actual_os_sign_in_exercised": false,
+  "restart_preserved_enabled_checkbox": true,
+  "private_credential_continuity": true,
+  "owned_processes_stopped": true,
+  "original_run_state_restored": true,
+  "restoration_required_registry_write": false,
+  "private_credential_removed": true,
+  "source_result_sha256": "0602540f4a5250768df29ebe9760767c674fb6539d357f8edc30d0a05cd66888",
+  "expected_startup_argv_redacted": [
+    "<exact qualified CommunityAI.exe path>",
+    "--started-at-login"
+  ],
+  "public_redactions": [
+    "Unique private native credential service/account identifiers",
+    "Absolute local qualified executable path"
+  ]
+}

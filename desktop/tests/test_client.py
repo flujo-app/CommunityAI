@@ -86,6 +86,8 @@ class NodeClientTests(unittest.TestCase):
             "selected_whole_shard_bytes": 4_571_197_320,
         }
         self.assertEqual(_normalize_model_download(valid), valid)
+        no_download = {"schema_version": 1, "selected_whole_shard_bytes": 0}
+        self.assertEqual(_normalize_model_download(no_download), no_download)
 
         invalid_values = (
             None,
@@ -94,7 +96,7 @@ class NodeClientTests(unittest.TestCase):
             {"schema_version": True, "selected_whole_shard_bytes": 4_571_197_320},
             {"schema_version": 1.0, "selected_whole_shard_bytes": 4_571_197_320},
             {"schema_version": 1, "selected_whole_shard_bytes": True},
-            {"schema_version": 1, "selected_whole_shard_bytes": 0},
+            {"schema_version": 1, "selected_whole_shard_bytes": -1},
             {"schema_version": 1, "selected_whole_shard_bytes": 64 * 1024**4 + 1},
             {**valid, "credential": "must-not-be-accepted"},
         )
@@ -328,6 +330,14 @@ class NodeClientTests(unittest.TestCase):
         self.assertEqual(blocked["blocked_reason"], "Model is denied by node policy")
         self.assertEqual(snapshot["workers"][0]["state"], "paused")
         self.assertEqual(snapshot["keys"][0]["label"], "bootstrap")
+
+    def test_multishard_model_with_pending_estimate_remains_visible(self):
+        from communityai_desktop.client import _normalize_model_download
+
+        download = _normalize_model_download({"schema_version": 1, "selected_whole_shard_bytes": None})
+        model = DesktopController._model_view({"id": "Qwen3.8", "download": download})
+        self.assertEqual(model["download_storage_estimate"], "Pending verified shard selection")
+        self.assertFalse(model["route_complete"])
 
 
 if __name__ == "__main__":

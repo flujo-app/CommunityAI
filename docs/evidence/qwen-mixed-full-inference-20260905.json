@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "run_id": "q38m-20260905-215111-8174",
+  "result": "passed",
+  "topology": "GCP L4 + Azure T4 + two GCP CPU workers",
+  "regions": {
+    "GCP": "us-central1-b",
+    "Azure": "eastus"
+  },
+  "cpu_prerequisite": {
+    "result_sha256": "7e3c7a4bcc7dc6ca4d1ff861e040d444ee295db0ae79ed4483b335b48eb0808e",
+    "run_id": "q38-20260905-205155-ed78"
+  },
+  "source_bundle_sha256": "c9550a4813e133f1e1e721364fcec737092d2cd2f2feb65dd6859342973377ab",
+  "tested_host_script_sha256": "19b458af4e69c3f2a0b58114f64185d49103d64d578d7909c4f88200b905eeae",
+  "tested_server_sha256": "550a0b9475cca3470510ff02a88c383827a41bb13028f599f66e04ce03861b4f",
+  "retained_client_result_sha256": "df61e318961fe3fdc8c3ddf14f32be3f477baec4ebcb22c9cb44e9552aeb0337",
+  "hosts": [
+    {
+      "role": "c",
+      "provider": "GCP",
+      "machine_type": "e2-standard-4",
+      "instance_id": "1459408393892606281",
+      "runtime_inventory_sha256": "730cbd3e343e204e5218f077565317bd463f2122eb310cd523e9176f0d521603",
+      "gpu_probe": null
+    },
+    {
+      "role": "w0",
+      "provider": "GCP",
+      "machine_type": "g2-standard-8",
+      "instance_id": "1395698738809352483",
+      "runtime_inventory_sha256": "0aa72014559a567c890a5d1a03dab0aaaa8420d3b5be0e240440ea780a854e89",
+      "gpu_probe": {
+        "result": "passed",
+        "gpu_name": "NVIDIA L4",
+        "memory_bytes": 23659151360,
+        "compute_capability": [
+          8,
+          9
+        ],
+        "torch": "2.6.0+cu124",
+        "cuda": "12.4",
+        "bf16_matmul": true,
+        "bf16_convolution": true,
+        "observed_at_unix": 1788646938.1362476
+      }
+    },
+    {
+      "role": "w1",
+      "provider": "Azure",
+      "machine_type": "Standard_NC4as_T4_v3",
+      "instance_id": "f6952d5a-1bee-4054-aed6-b3911f4f7d04",
+      "runtime_inventory_sha256": "ed51736c34a997be5cd0a4a2bb2ee5908fe8823c4327c8129ba06df0a4629cd5",
+      "gpu_probe": {
+        "result": "passed",
+        "gpu_name": "Tesla T4",
+        "memory_bytes": 16703356928,
+        "compute_capability": [
+          7,
+          5
+        ],
+        "torch": "2.6.0+cu124",
+        "cuda": "12.4",
+        "bf16_matmul": true,
+        "bf16_convolution": true,
+        "observed_at_unix": 1788646560.5139458
+      }
+    },
+    {
+      "role": "w2",
+      "provider": "GCP",
+      "machine_type": "e2-highmem-4",
+      "instance_id": "5589617213954928911",
+      "runtime_inventory_sha256": "e21b14a4fa03723804b2300dbdfd2657ce586dda6647c394ee2f1e73458d1791",
+      "gpu_probe": null
+    },
+    {
+      "role": "w3",
+      "provider": "GCP",
+      "machine_type": "e2-highmem-4",
+      "instance_id": "4881313665882599700",
+      "runtime_inventory_sha256": "909a70470fd27324d1415f841353166f8c78ff448677be36fe1d2b1da73c1df9",
+      "gpu_probe": null
+    }
+  ],
+  "workers": [
+    {
+      "span": "0:16",
+      "peer_id": "QmPD5cYHsmodEqmmyzPHmZ4CuDqw31sG5wCLe6okbMzeCn",
+      "hardware": {
+        "compute_capability": [
+          8,
+          9
+        ],
+        "device": "cuda:0",
+        "dtype": "torch.bfloat16",
+        "gpu_memory_bytes": 23659151360,
+        "gpu_name": "NVIDIA L4"
+      }
+    },
+    {
+      "span": "16:32",
+      "peer_id": "QmViwwPXLNeDtgBxYRcsz6u2THLsoR6uumgN92Bhz2Bawo",
+      "hardware": {
+        "compute_capability": [
+          7,
+          5
+        ],
+        "device": "cuda:0",
+        "dtype": "torch.bfloat16",
+        "gpu_memory_bytes": 16703356928,
+        "gpu_name": "Tesla T4"
+      }
+    },
+    {
+      "span": "32:48",
+      "peer_id": "QmWWG4KhhYfEerb13zGfXkfj3uTz87wwWZs2EC3TVQ6QCk",
+      "hardware": {
+        "device": "cpu",
+        "dtype": "torch.bfloat16"
+      }
+    },
+    {
+      "span": "48:64",
+      "peer_id": "QmSu3aGY5zU4bsLkpjZbH53ht9Lyx8nEoXib35sF2CGQWU",
+      "hardware": {
+        "device": "cpu",
+        "dtype": "torch.bfloat16"
+      }
+    }
+  ],
+  "client_evidence": {
+    "baseline": {
+      "route": [
+        {
+          "end": 16,
+          "peer_id": "QmPD5cYHsmodEqmmyzPHmZ4CuDqw31sG5wCLe6okbMzeCn",
+          "session_id": "8b340a88-a904-4cf3-aba8-f8f77472ced4",
+          "start": 0
+        },
+        {
+          "end": 32,
+          "peer_id": "QmViwwPXLNeDtgBxYRcsz6u2THLsoR6uumgN92Bhz2Bawo",
+          "session_id": "d5fdba2e-22da-4153-8416-8c62ade36d6d",
+          "start": 16
+        },
+        {
+          "end": 48,
+          "peer_id": "QmWWG4KhhYfEerb13zGfXkfj3uTz87wwWZs2EC3TVQ6QCk",
+          "session_id": "9132ba61-53c9-4256-bdc6-a9fb8d8618e6",
+          "start": 32
+        },
+        {
+          "end": 64,
+          "peer_id": "QmSu3aGY5zU4bsLkpjZbH53ht9Lyx8nEoXib35sF2CGQWU",
+          "session_id": "acfd2143-d578-4c84-a731-bb365f51a040",
+          "start": 48
+        }
+      ],
+      "seconds": 75.69909206700004,
+      "text": " Paris.\n",
+      "token_ids": [
+        11751,
+        13,
+        198
+      ]
+    },
+    "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+    "model_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+    "observed_at_unix": 1788647585.565859,
+    "recovery": null,
+    "result": "passed",
+    "versions": {
+      "hivemind": "1.1.12",
+      "python": "3.12.3",
+      "torch": "2.6.0+cpu",
+      "transformers": "5.13.1"
+    }
+  },
+  "same_tokens_as_cpu_baseline": true,
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "quota_increases_requested": false,
+  "persistent_configuration_change": "Microsoft.DevTestLab registered for VM auto-shutdown; remains enabled.",
+  "limitations": [
+    "Three generated tokens; no long-context or concurrency qualification.",
+    "BF16 kernel execution does not establish native T4 BF16 tensor-core acceleration.",
+    "No stock-Transformers logit parity or GPU performance qualification."
+  ]
+}

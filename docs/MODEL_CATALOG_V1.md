@@ -1,107 +1,74 @@
 # Signed model catalog and elastic capacity ladder v1
 
-Status: strict schema, independent Ed25519 signing keys, threshold verification,
-expiry, persistent rollback protection, local rung selection, bounded HTTPS fetching,
-exact manifest installation, first-install node configuration, and desktop-sidecar
-consumption are implemented. The model-agnostic qualification runner and an exact
-bootstrap evidence pin are also implemented; Qwen3 1.7B passed full-artifact audit,
-local Windows CPU parity, and selected-worker recovery. That 2025-generation checkpoint
-proves the harness but is not a production-ladder candidate. The production backlog was
-refreshed against official publisher releases on 2026-08-23. The dense Qwen3.5 text
-adapter now has exact synthetic block, cached-decode, nested-wrapper loading, and real
-local Hivemind RPC parity. The exact Qwen3.5 2B and Gemma 4 E2B manifests and the first
-threshold-one alpha catalog/bootstrap are published. Trust-root rotation, periodic
-catalog refresh, larger-rung migration, edge envelopes, and packaged inference remain
-open. Gate 11 route operation passed through the generic product node with direct,
-manifest-verified Hugging Face artifact delivery.
+Reviewed: 2026-09-06. The product order is **local Qwen3.5 → Qwen3.8-27B →
+DeepSeek-V4-Flash → GLM-5.3-Flash**. See
+[COMMUNITY_AI_MODEL_LADDER.md](COMMUNITY_AI_MODEL_LADDER.md) for the current model
+status, consumer hardware constraints, automatic-growth acceptance scenario, and
+missing adapters. The superseded broad candidate inventory is retained in
+[RELEASE_READINESS_HISTORY.md](RELEASE_READINESS_HISTORY.md#original-model-catalog-documentation-snapshot).
 
-`ModelManifest v1` identifies one exact checkpoint and execution profile. A model
-catalog answers a separate question: which immutable manifests does one community
-approve, and when is each capacity rung healthy enough to become the default for a
-new request?
+The published [signed alpha catalog](../public-alpha/catalog-v1/catalog.signed.json)
+is still sequence 1 with Qwen3.5 2B and Gemma 4 E2B. It is historical qualification
+and bootstrap evidence, not an approval of the intended new ladder. Qwen3.8 now
+has a pinned FP8 manifest and [real full-route/recovery evidence](QWEN_FULL_INFERENCE_RESULTS.md),
+but still needs the remaining [product qualification](RELEASE_READINESS.md).
+DeepSeek V4 and GLM 5.3 do not yet have DRIFT adapters or candidate manifests.
+The signed [Qwen sequence 2](../public-alpha/catalog-qwen-v2/catalog.signed.json)
+is now published at its separate qualification path. It adds local 0.8B and community
+27B, with the explicit application trust-root migration documented in
+[CATALOG_SIGNING_KEY.md](CATALOG_SIGNING_KEY.md).
+Clean HTTPS catalog installation and explicit old-root migration passed through
+the current Windows packaged bootstrap; ordinary-user release lifecycle and
+remaining Qwen qualification are still open. [Online evidence](evidence/qwen-catalog-online-20260906.json).
 
-The catalog is advisory and forkable. It cannot change a manifest digest, allocate a
-user's GPU, move an in-flight request to another model, or prevent an installation
-from subscribing to another root or selecting an exact manifest.
+## Implemented boundaries
 
-## Elastic ladder
+`ModelManifest v1` identifies one exact checkpoint and execution profile. The
+catalog separately authorizes immutable manifests and declares when each rung
+may become eligible. Catalog schema validation, independent Ed25519 keys,
+threshold signatures, expiry, persistent rollback protection, bounded HTTPS
+fetching, exact manifest installation, and first-install desktop/node consumption
+are implemented. Periodic authenticated refresh, runtime architecture checks,
+preservation of user settings, immutable catalog/bootstrap files and activation
+after active requests drain are now implemented. Windows/Linux packaged inference
+was proven for the old Qwen/Gemma fixtures; the new local 0.8B profile also passed
+offline packaged Windows GPU inference. Full packaged ladder qualification is open.
 
-The small-model rungs exist to bootstrap and test the network. They are not the
-product destination. The default `auto` policy should advance toward progressively
-larger current-generation models as independently measured network capacity becomes
-sufficient.
+The working-tree schema requires one primary per rung and permits optional
+standbys, explicit local execution, and zero surviving replicas for a declared
+best-effort policy. A different lower rung or local fallback need not be an alternative
+model at the same rung. Preserve the existing signed sequence; changing allowed
+models, profiles, or policies requires a newly signed sequence.
 
-For a profile using `bytes_per_parameter` and two complete replicas, the weight-only
-approximation is:
+The catalog is advisory and forkable. It cannot override a user's resource
+limits, change an exact manifest selection, or move an active generation to a
+different model. Download bytes, resident weights, client-side tensors, context
+cache, and migration capacity are separate budgets. Total stored MoE parameters
+determine weight capacity; active parameters describe token-time computation.
 
-```text
-maximum parameters = usable contributed VRAM bytes / (2 * bytes_per_parameter)
-```
+## Promotion evidence and runtime integration
 
-Raw VRAM is not usable VRAM. Promotion also reserves capacity for local embeddings and
-heads, KV caches, activations, framework overhead, churn, and graceful migration. MoE
-rungs are placed by total stored parameters; active parameters describe token-time
-compute and do not reduce the bytes required to keep two complete routes available.
+The strict `select_highest_eligible_model` helper evaluates each exact manifest
+against signed requirements for fresh observations, continuous stability,
+minimum per-block replicas, independent complete routes, coverage after losing
+the largest peer, p95 first-token latency, and generation throughput. It prefers
+the highest eligible rung, then its primary over an optional standby.
 
-The current qualification backlog is below. Names link to the exact official repository
-that a future manifest must pin. Estimates use total parameters and two unquantized BF16
-replicas; an FP8, INT8, or lower-bit artifact is a separate profile with its own manifest
-and qualification evidence.
+The node now calls that helper through `MeasuredModelSelector`. Bounded synthetic
+generations measure first-token latency and throughput; fresh signed discovery
+observations establish continuous coverage. A changed route invalidates its
+measurements. New `auto` requests remain local until the declared policy passes.
+The live CPU retry found a complete route but initially measured less than one
+token per minute, so promotion remains unproved rather than bypassing the rule.
 
-| Rung by total parameters | Preferred candidate | Standby candidate | Approx. two-replica BF16 weights |
-| --- | --- | --- | ---: |
-| Edge, 2-5B | [`Qwen/Qwen3.5-2B`](https://huggingface.co/Qwen/Qwen3.5-2B) | [`google/gemma-4-E2B-it`](https://huggingface.co/google/gemma-4-E2B-it), 5.1B total / 2.3B effective | 9.1-20.5 GB |
-| Compact, 4-8B | [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B) | [`google/gemma-4-E4B-it`](https://huggingface.co/google/gemma-4-E4B-it), 8.0B total / 4.5B effective | 18.6-32.0 GB |
-| Standard, 9-12B | [`Qwen/Qwen3.5-9B`](https://huggingface.co/Qwen/Qwen3.5-9B) | [`google/gemma-4-12B-it`](https://huggingface.co/google/gemma-4-12B-it) | 38.6-47.8 GB |
-| Collective, 27-31B | [`Qwen/Qwen3.8-27B`](https://huggingface.co/Qwen/Qwen3.8-27B) | [`google/gemma-4-31B-it`](https://huggingface.co/google/gemma-4-31B-it) | 111-125 GB |
-| Cluster MoE, 109-125B | [`Qwen/Qwen3.5-122B-A10B`](https://huggingface.co/Qwen/Qwen3.5-122B-A10B), about 125B total / 10B active | [`meta-llama/Llama-4-Scout-17B-16E-Instruct`](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct), about 109B total / 17B active | 435-500 GB |
-| Frontier MoE, 397-402B | [`Qwen/Qwen3.5-397B-A17B`](https://huggingface.co/Qwen/Qwen3.5-397B-A17B), about 403B total / 17B active | [`meta-llama/Llama-4-Maverick-17B-128E-Instruct`](https://huggingface.co/meta-llama/Llama-4-Maverick-17B-128E-Instruct), about 402B total / 17B active | about 1.61 TB |
+Automatic contribution already scores configured models and under-covered spans,
+checks exact selected-artifact budgets, and applies cooldown/residency and
+anti-herding rules. Remaining integration must stage an upper route without
+destroying a useful lower route and prove zero-to-complete desktop formation.
+The lone-user local 0.8B backend now passes real GPU inference; live
+promotion/downgrade and simultaneous contribution need qualification. Clients may converge at different
+times; an active generation remains on its selected manifest.
 
-These are candidates, not published approvals. Each exact revision, tokenizer,
-runtime profile, quantization, license, artifact inventory, distributed parity,
-failure recovery, and edge envelope must pass qualification before its digest enters
-a catalog. The Qwen3.5 through Qwen3.8 releases use `qwen3_5` or `qwen3_5_moe`, not the
-implemented `qwen3` architecture. Llama 4 uses `llama4`, not the implemented dense
-`llama` adapter. Both families need explicit DRIFT adapters. Gemma 4 and Gemma 4 Unified
-have DRIFT adapters and focused stock-parity tests, but still need exact real-checkpoint
-qualification. Llama 4 artifacts are manually gated on Hugging Face and require a
-distribution and operator-access review before catalog use.
-
-[`Qwen/Qwen3.8-2.4T-A95B`](https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B) is the current
-top Qwen release, with about 2.45T total and 95B active parameters. Two BF16 replicas
-alone require roughly 9.8 TB. It remains a frontier preview rather than an activatable
-rung because it has no comparable standby, uses the separate `qwen3.8-max` license, and
-needs the `qwen3_5_moe_text` adapter plus qualification. Qwen3.5 0.8B may be used for
-adapter bring-up but is not a selectable production rung.
-
-Each rung contains exactly one primary and at least one standby. The standby is an
-approved replacement, not a requirement to keep both choices resident in volunteer
-VRAM. Hosting two alternatives with two replicas each would double the capacity
-requirement and fragment coverage.
-
-## Promotion evidence
-
-The selector uses observations for exact manifest digests. It examines the minimum
-coverage across all blocks rather than summing advertised VRAM. A model is eligible
-only when it simultaneously meets its signed rung policy:
-
-- minimum bottleneck replicas across every block;
-- minimum independent complete routes;
-- minimum surviving coverage after removing the largest peer;
-- a continuous stability soak;
-- a fresh observation window;
-- maximum measured p95 time to first token; and
-- minimum measured generation throughput.
-
-The highest eligible rung wins, with its primary preferred over its standby. If no
-model in a higher rung qualifies, selection remains on the highest lower rung with
-complete evidence. Missing or stale evidence never promotes a model.
-
-The selector only answers which exact manifest a new `auto` request should use. The
-promotion controller still needs to preannounce demand, download and verify artifacts,
-establish two independent routes, soak them, atomically update the default alias, and
-retain the previous rung as a fallback. Explicit manifest requests and in-flight
-requests remain pinned.
 
 ## Catalog trust versus artifact delivery
 
@@ -218,20 +185,16 @@ the required number of distinct signatures is present.
 
 ## Remaining integration work
 
-1. Publish the Qwen3.5 2B and Gemma 4 E2B Windows/Linux Gate 9 acquisition records and
-   steady-state edge envelopes through the direct manifested-artifact path in
-   [`EDGE_RESOURCE_ENVELOPE_RUNBOOK.md`](EDGE_RESOURCE_ENVELOPE_RUNBOOK.md).
-2. Preserve the published threshold-one alpha catalog/bootstrap and migrate its
-   branch-scoped HTTPS mirror only through a newly signed sequence and packaged bootstrap
-   before deleting the branch. Multiple interchangeable mirrors and independently
-   operated seeds are post-alpha hardening.
-3. Bundle that bootstrap and pass the clean-install packaged inference gate. The
-   implemented sidecar consumer fetches manifests, verifies their digest against the
-   catalog, and registers them without trusting catalog display metadata.
-4. Extend placement evidence with selected-shard byte cost and verified cache affinity while
-   preserving user bandwidth/storage ceilings and the existing anti-herding margins.
-5. Reconstruct capacity observations from authenticated DHT records and completed route
-   probes rather than accepting a central capacity total; then add staged promotion,
-   fallback/downgrade drills, and deterministic churn simulation.
-6. Design and validate signed trust-root rotation before the public root has multiple
-   independent maintainers.
+1. Qualify packaged Qwen3.8 and exact local Qwen fallback profiles, including
+   resource envelopes, acquisition/cache reuse, correctness, and recovery.
+2. Publish a new signed sequence after acceptance; preserve the historical
+   Qwen/Gemma catalog and its existing mirror until migration is supported.
+3. Add authenticated refresh for existing installations without overwriting
+   user contribution/privacy settings or disrupting active generations.
+4. Feed authenticated route observations and completed probes into the strict
+   eligibility policy used by the actual node `auto` path.
+5. Prove staged local-to-Qwen promotion, lower-route retention, downgrade,
+   same-model recovery, and repeated growth/churn through real desktops.
+6. After the Qwen alpha, add and qualify DeepSeek-V4 and GLM-5.3 adapters before
+   publishing their manifests. Independent trust-root governance/rotation and
+   mirror/seed redundancy remain separate post-alpha hardening.

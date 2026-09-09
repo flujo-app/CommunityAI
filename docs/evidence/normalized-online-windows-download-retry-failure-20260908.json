@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "result": "failed",
+  "phases": [
+    {
+      "phase": "online-download-install",
+      "timeout_seconds": 8100,
+      "result": "failed",
+      "pid": 18496,
+      "exit_code": 1,
+      "seconds": 479.484,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "started_at_utc": "2026-09-09T00:36:30.854722+00:00",
+  "online_sha256": "c8171619c835877f018dcf305bf70d7b4804535fd6ad548bd682971ecccdda5d",
+  "online_size_bytes": 2099037,
+  "offline_installer": {
+    "filename": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "format": "exe",
+    "kind": "offline-installer",
+    "platform": "windows-x64",
+    "publisher": "Mario Andreschak",
+    "sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+    "size_bytes": 2462345104,
+    "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "version": "0.1.0-alpha.20260908.1"
+  },
+  "manifest_sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+  "metadata_sha256": "1460eb03070e33889ffc783b0bd97eeb48dfb76f44b6ac4b2ef27e81a89a6f1d",
+  "ordinary_user": true,
+  "logical_cpu_limit": 2,
+  "priority": "BELOW_NORMAL",
+  "baseline_before_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+  "owned_processes": [
+    {
+      "pid": 18496,
+      "created_at": 1788914190.8650596,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 28424,
+      "created_at": 1788914191.2163317,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.tmp",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    }
+  ],
+  "updated_at_utc": "2026-09-09T00:44:30.364423+00:00",
+  "error": "RuntimeError: online-download-install exit or owned-process cleanup failed",
+  "installation_present": false,
+  "all_recorded_processes_stopped": true,
+  "scope": "Exact-wrapper Windows production HTTPS retry interrupted before offline handoff",
+  "transport_failure": {
+    "wininet_error": 12030,
+    "bytes_reported_before_failure": 1007128256,
+    "expected_bytes": 2462345104,
+    "offline_installer_launched": false,
+    "log_message": "Error reading data: (12030) Die Serververbindung wurde aufgrund eines Fehlers beendet",
+    "cause_attribution": "Unconfirmed. The native downloader reported a connection termination; origin, network path, client and intermediary causes are not distinguished by this result."
+  },
+  "cleanup_audit": {
+    "result": "passed-cleanup-after-failed-download",
+    "observed_at_utc": "2026-09-09T00:51:18.820755+00:00",
+    "raw_result_sha256": "069ad1fb24fb8ebb9f8c0ea2d5a6d0488ab8ce2023fc0a2c0f3fcc4673b63d0c",
+    "online_log_sha256": "526dcf6002a2c7d9fc31d4005cb06ca37c71965da6afab83a6a80e88a136e76e",
+    "all_recorded_processes_stopped": true,
+    "recorded_process_count": 2,
+    "installation_directory_absent": true,
+    "offline_child_observed": false,
+    "remaining_temporary_entries": [],
+    "persisted_baseline_restored": true,
+    "baseline_before_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+    "baseline_after_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+    "application_state_mutations_performed_by_audit": false,
+    "raw_result_preserved": true
+  },
+  "prior_attempt": "normalized-online-windows-download-failure-20260908.json",
+  "retry_conditions": {
+    "source": "Release operator launch authorization and coordinated download ownership.",
+    "same_production_online_executable": true,
+    "same_pinned_offline_url_hash_and_size": true,
+    "fresh_run_and_install_paths": true,
+    "no_concurrent_full_release_upload_or_download": true,
+    "windows_object_metadata_unchanged_during_retry": true,
+    "last_reported_windows_object_metadata_change_utc": "2026-09-09T00:01:55.375Z",
+    "product_source_changed_for_retry": false
+  },
+  "positive_full_online_handoff_passed": false,
+  "limits": [
+    "The partial bytes were not independently hashed; progress comes from the native download log.",
+    "This attempt did not launch the offline setup, installed diagnostic, uninstall or product GUI.",
+    "The failed retry removes a concurrent metadata update as a variable for this attempt, but does not establish the cause of either connection termination."
+  ],
+  "raw_evidence_sha256": {
+    ".gate13-runs/normalized-online-acceptance-retry-20260908/result.json": "069ad1fb24fb8ebb9f8c0ea2d5a6d0488ab8ce2023fc0a2c0f3fcc4673b63d0c",
+    ".gate13-runs/normalized-online-acceptance-retry-20260908/online.log": "526dcf6002a2c7d9fc31d4005cb06ca37c71965da6afab83a6a80e88a136e76e",
+    ".gate13-runs/normalized-online-acceptance-retry-20260908/download-failure-cleanup-audit.json": "1a67ac604db3f84c5dbd5c2388d30ca43fed08e0a9b9ccda5285c5f322aac846",
+    ".gate13-runs/qualify-online-windows-retry-20260908.py": "6bcef4de294121c0109cb3548891fcfdf982b9a5b1112daeef145f93c0c04820",
+    ".gate13-runs/qualify-normalized-windows-20260908.py": "ed88f48df908119f06a4d063214ede5cb64df094c6b09864f07b69ac26b333f5",
+    ".gate13-runs/record-online-windows-retry-failure-20260908.py": "ce824afe2d1dc01ee2163ffcbab6014004e1dc65f9656d9a1115ad13cf17d2bb",
+    ".gate13-runs/normalized-online-installers-20260908/communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe.json": "1460eb03070e33889ffc783b0bd97eeb48dfb76f44b6ac4b2ef27e81a89a6f1d"
+  },
+  "runtime_source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "source_commit_scope": "The inherited source_commit identifies only the packaged offline runtime.",
+  "online_source_identity": {
+    "scope": "Online builder, Inno script and any downloader helper are identified by the companion build hashes. They are working-tree files at online build time, not implied to exist in runtime_source_commit.",
+    "companion_metadata_sha256": "1460eb03070e33889ffc783b0bd97eeb48dfb76f44b6ac4b2ef27e81a89a6f1d",
+    "build_input_hashes": {}
+  }
+}

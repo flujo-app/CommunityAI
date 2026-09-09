@@ -1,0 +1,14 @@
+{
+  "project": "community-ai-506321",
+  "region": "us-central1",
+  "zone": "us-central1-b",
+  "network": "communityai-discovery",
+  "subnet": "communityai-us-central1",
+  "image": "ubuntu-2404-noble-amd64-v20260826",
+  "image_project": "ubuntu-os-cloud",
+  "worker_machine_type": "n2-highmem-4",
+  "client_machine_type": "e2-standard-4",
+  "capacity_blocks": 16,
+  "disk_gb": 80,
+  "max_duration_seconds": 21600
+}

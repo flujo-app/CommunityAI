@@ -1,0 +1,149 @@
+{
+  "result": "passed",
+  "frozen_gui_and_node": true,
+  "ordinary_uid": 1000,
+  "scope": "Ubuntu 22.04 same-version package replacement, removal and reinstall",
+  "full_gate15": false,
+  "phases": [
+    {
+      "phase": "initial-installation",
+      "verified_download_bytes": 384054157,
+      "block_indices": "60:61",
+      "owned_process_count": 11,
+      "local_tokens": 3
+    },
+    {
+      "phase": "replaced-installation",
+      "verified_download_bytes": 384054157,
+      "block_indices": "60:61",
+      "owned_process_count": 11,
+      "local_tokens": 3
+    },
+    {
+      "phase": "reinstalled",
+      "verified_download_bytes": 384054157,
+      "block_indices": "60:61",
+      "owned_process_count": 11,
+      "local_tokens": 3
+    }
+  ],
+  "replacement_stopped_owned_tree_and_retained_state": true,
+  "removal_stopped_owned_tree_and_retained_state": true,
+  "reinstall_with_retained_settings_cache_and_credentials": true,
+  "native_qualification_credential_removed": true,
+  "installer_sha256": "a2cc0548cd51f98ed7a9c208be18b53a701a9317cbc63293d4bf7d1e14151517",
+  "installer_version": "0.1.0~alpha.20260907.4",
+  "source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+  "installer_builder_source_commit": "61ab7b1df61c82c5a306cefaf4e14b56356f5feb",
+  "installed_executable_removed": true,
+  "package_operation_timings": [
+    {
+      "action": "install",
+      "seconds": 329.971
+    },
+    {
+      "action": "replace",
+      "seconds": 390.383
+    },
+    {
+      "action": "remove",
+      "seconds": 31.038
+    },
+    {
+      "action": "reinstall",
+      "seconds": 349.084
+    },
+    {
+      "action": "final-remove",
+      "seconds": 30.988
+    }
+  ],
+  "date": "2026-09-08",
+  "environment": "Ubuntu 22.04 in WSL2 Docker; ordinary UID 1000; X11/Xvfb and native Secret Service; RTX 2070 SUPER 8 GiB CUDA passthrough",
+  "qualification_container": "communityai-gate15-ubuntu-retry-20260908",
+  "qualification_container_id": "0b24686ae5dd6c38384c978e33e80bf32f39c771ecda1c9a937d485346f1e1ab",
+  "qualification_container_removed": true,
+  "container_absence_independently_verified": true,
+  "qualification_root_capability": "SYS_PTRACE permits cross-user executable inspection",
+  "package_maintenance_interpreter": "Ubuntu system Python 3.10.12",
+  "resource_bounds": {
+    "cpus": 2,
+    "memory_bytes": 6442450944,
+    "swap_bytes": 0,
+    "pids": 512,
+    "package_operation_seconds": 1800,
+    "container_backstop_seconds": 14400
+  },
+  "package_manager": {
+    "dpkg": "Debian 'dpkg' package management program version 1.21.1 (amd64).",
+    "liblzma": "5.2.5-2ubuntu1.1"
+  },
+  "post_run_cleanup_audit": {
+    "result": "passed",
+    "lifecycle_result": "passed",
+    "package_not_installed": true,
+    "installed_executable_absent": true,
+    "native_credential_absent": true,
+    "frozen_runtime_processes_absent": true,
+    "dht_processes_absent": true,
+    "external_cache_sentinel_preserved": true
+  },
+  "manual_login_entry_choice": {
+    "result": "passed",
+    "ordinary_uid": 1000,
+    "scope": "Installed executable registration via production startup functions and real XDG files; no simulated login or frozen UI click claim",
+    "installed_command_registered": true,
+    "registration_file_mode": "0o600",
+    "manual_disable_removed_entry": true,
+    "unrelated_settings_preserved": true,
+    "source_commit": "61ab7b1df61c82c5a306cefaf4e14b56356f5feb"
+  },
+  "previous_failed_attempt": "gate15-20260908-ubuntu-install-timeout.json",
+  "harness_sha256": {
+    "run-ubuntu-retry.py": "9fc300853c8bafa93a750630275f6fd23fbc61dcd959a7a2dfebba70a385a5e4",
+    "qualify-ubuntu-retry.py": "bdcd08bc1dcd9eb0e9ab6f2282c16ccaf884ece349fe35242a74e78cab39004e",
+    "gate15-ubuntu-retry-session.sh": "a59ed2da168a822a6e107ceaf018e9f6c28b644240cf06822f3a9e389f93c203",
+    "audit-ubuntu-retry.py": "2cf4bb2b6e1cc1811dcde8f265489a924fabfa4a980eff7a1c4602d42f1e9cd4",
+    "qualify-ubuntu-retry-login.py": "e0a77f935ef0e9e3e07e7610cad3a9664b5d1a435eb24bb4a1985468bd0c0c67"
+  },
+  "raw_evidence_sha256": {
+    "0-done.json": "113fa6a0d266498cc39a6c1615cd598137534c665d8970a9f41d08d397b370f7",
+    "0-request.json": "547dc9b63adef26218a022f6b1c2d064eb3a18a4e72814ff77128d0e564307cb",
+    "1-done.json": "113fa6a0d266498cc39a6c1615cd598137534c665d8970a9f41d08d397b370f7",
+    "1-request.json": "b48e7a6e05e6cdf2f6fd19f65dfbdc5a928953b541a7e62417194840a4442a36",
+    "2-done.json": "113fa6a0d266498cc39a6c1615cd598137534c665d8970a9f41d08d397b370f7",
+    "2-request.json": "bdb636b7cd572d7788f6f602c1224d8d11610c8b66c4c2203bb7b71dd56e0c49",
+    "3-done.json": "113fa6a0d266498cc39a6c1615cd598137534c665d8970a9f41d08d397b370f7",
+    "3-request.json": "5e7f921f3a5fe2223185dece7bf1be7624caad6f663730eb09746e6e87cdeced",
+    "4-done.json": "113fa6a0d266498cc39a6c1615cd598137534c665d8970a9f41d08d397b370f7",
+    "4-request.json": "9b94a59de206ae406250893a5eec46363f036b770f75103281ca4a083560870c",
+    "environment.json": "a5ca68c45f200133900ed94f2e94987db238fe60fee5ff6d1fdf34df7e61f5cb",
+    "final-remove-dpkg.log": "750e04462f154683fb67a6712a74c3f0f60a03a070134b3ff270b54840eccec7",
+    "final-remove-samples.jsonl": "196b8223bbb2ec6d86a24767e28d78117b5849bf0794a819b65e5307dfc23e64",
+    "initial-installation-gui.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "install-dpkg.log": "f903dbc18d2601619c508a36beb31d05319554df78d3d8faf37a00afee004a5b",
+    "install-samples.jsonl": "da508a8e4bf81b33c2d5970a933c6a6c0362fb0052edfb454064d655898053bc",
+    "login-choice.json": "1525c0a5180e2498144080c6b17812ff2e6b85c437927f76bd85b94e48aa8008",
+    "operation-timings.json": "95c50fc1785e672f3d5682bdd5812443b5d73055fc523d571fdd9366e954dac3",
+    "ordinary-user.log": "a7cd671d3799213071409cde5e9ea88d1af56873cc620a928fa84148477085b4",
+    "post-run-audit.json": "a0080b48def918e276c9ffc4acad6b0461a234bedffdb3bd46fe759953351b56",
+    "reinstall-dpkg.log": "f903dbc18d2601619c508a36beb31d05319554df78d3d8faf37a00afee004a5b",
+    "reinstall-samples.jsonl": "b0b2151b1791eed52941405c7e8256b674c357eadac33f9e52cb807845532d48",
+    "reinstalled-gui.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "remove-dpkg.log": "750e04462f154683fb67a6712a74c3f0f60a03a070134b3ff270b54840eccec7",
+    "remove-samples.jsonl": "1a4bb38ffcc48078aa73a495c1887d56bf4a2de417adfc1ecea446c84d18841d",
+    "replace-dpkg.log": "8504044c27cbd0175686801ca68131f874badc917cc132414a2e6ff11335fb54",
+    "replace-samples.jsonl": "8756771ae4f2582e57d85ab65418b6ce3e8586d48cc512bbc5ebee1b8e65859c",
+    "replaced-installation-gui.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "result.json": "029b320d03220197b94826a66cb1e5190a1edadba36331f085f8dfe16d99d2dd"
+  },
+  "limitations": [
+    "Ubuntu 22.04/Xvfb container with CUDA passthrough, not a physical Wayland desktop, Ubuntu 24.04 or broader GPU qualification.",
+    "Root dpkg installed/replaced/removed the package; the actual installed frozen GUI/node and inference ran as ordinary UID 1000.",
+    "Active replacement used the same version and exact package; different-version Windows upgrade has separate evidence.",
+    "Existing verified model caches and a private loopback DHT were used; this was not cold model acquisition or a complete community route.",
+    "Login registration here used production source functions and real XDG files; frozen checkbox acceptance is a separate record.",
+    "The prior 540-second initial-unpack timeout was not reproduced; host/resource differences prevent a proven causal attribution.",
+    "The installer retains per-user cache/settings/credentials; deletion is the explicit manual alpha workflow in DESKTOP_UNINSTALL.md."
+  ]
+}

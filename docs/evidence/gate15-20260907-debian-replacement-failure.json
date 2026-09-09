@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-07",
+  "result": "failed",
+  "source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+  "installer_version": "0.1.0~alpha.20260907.2",
+  "installer_sha256": "5a7ab8aad0b60121118ea4bac128910280a6fea8977db5708879ae4090895dde",
+  "installer_bytes": 3781591204,
+  "environment": "Debian 12 Docker, root dpkg and ordinary UID 1000 frozen GUI, default container capabilities without SYS_PTRACE",
+  "passed_before_failure": {
+    "initial_install": true,
+    "frozen_gui_and_node": true,
+    "local_qwen_tokens": 3,
+    "verified_worker_bytes": 384054157,
+    "worker_blocks": "60:61"
+  },
+  "failure": "dpkg replacement returned success but the installed GUI remained alive. The lifecycle driver's 60-second exit assertion failed.",
+  "confirmed_cause": "Container root lacked permission to read the ordinary user's /proc/PID/exe. A separate disposable cross-user process probe reproduced PermissionError. The installer snapshot silently skipped that error and selected no application processes.",
+  "correction": "Refuse package maintenance on process-inspection permission errors. The target-desktop-equivalent container rerun grants SYS_PTRACE to root; the GUI remains an ordinary user.",
+  "regression": "Three Linux installer tests passed, including refusal before signaling when executable ownership is unreadable and preservation of unrelated processes/data.",
+  "post_run_cleanup_audit": {
+    "result": "passed",
+    "package_not_installed": true,
+    "installed_executable_absent": true,
+    "native_credential_absent": true,
+    "frozen_runtime_processes_absent": true,
+    "dht_processes_absent": true,
+    "external_cache_sentinel_preserved": true
+  },
+  "failed_container_stopped": true,
+  "private_raw_logs_retained": true,
+  "gate14_resource_acceptance_unchanged": true
+}

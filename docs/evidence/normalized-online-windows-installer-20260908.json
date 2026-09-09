@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "result": "passed",
+  "phases": [
+    {
+      "phase": "online-download-install",
+      "timeout_seconds": 8100,
+      "result": "passed",
+      "pid": 19524,
+      "exit_code": 0,
+      "seconds": 1365.187,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "phase": "installed-native-cpu",
+      "timeout_seconds": 180,
+      "result": "passed",
+      "pid": 27140,
+      "exit_code": 0,
+      "seconds": 2.813,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "a516c1787629cdf689b5a01aad52c83a7b963c31eb936c8ff305059f55fe2cca",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "phase": "uninstall",
+      "timeout_seconds": 300,
+      "result": "passed",
+      "pid": 4872,
+      "exit_code": 0,
+      "seconds": 3.688,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "started_at_utc": "2026-09-09T01:29:46.701131+00:00",
+  "online_sha256": "8ad0b7da83fdc7c32223902ed13d51f5f2946c89e00947e50aae742c1fc37861",
+  "online_size_bytes": 2107751,
+  "offline_installer": {
+    "filename": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "format": "exe",
+    "kind": "offline-installer",
+    "platform": "windows-x64",
+    "publisher": "Mario Andreschak",
+    "sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+    "size_bytes": 2462345104,
+    "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "version": "0.1.0-alpha.20260908.1"
+  },
+  "manifest_sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+  "metadata_sha256": "c3fece282465df8c74907ff4c7c29fd48405b9dc579315a61d340929afe4584e",
+  "ordinary_user": true,
+  "logical_cpu_limit": 2,
+  "priority": "BELOW_NORMAL",
+  "runtime_source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "source_commit_scope": "The inherited source_commit identifies only the packaged offline runtime.",
+  "online_source_identity": {
+    "scope": "Online helper, Inno script and builder are working-tree build inputs bound by companion hashes, not implied to exist in the offline runtime commit.",
+    "companion_metadata_sha256": "c3fece282465df8c74907ff4c7c29fd48405b9dc579315a61d340929afe4584e",
+    "build_input_hashes": {
+      "builder_script_sha256": "e5a33e969a0a4c110d960c4de240418be15d58288c3c4e43678a394f92dd5893",
+      "installer_script_sha256": "d975b6da3a1067e679d9ba55555fa5b6219ae644fce8050225486909600fbbb1",
+      "download_helper_source_sha256": "3bfa36e62f2a160b2e258af6d9d6816e815d8a9c5b918c29dd800eb6e6c20d8a",
+      "download_helper_sha256": "e96c0fce4b71f9236a77625b6af7af2924d5f2004d16d17ca8eb5527b43ec3f1"
+    }
+  },
+  "baseline_before_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+  "owned_processes": [
+    {
+      "pid": 19524,
+      "created_at": 1788917386.7624488,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 27324,
+      "created_at": 1788917387.060789,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.tmp",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 28208,
+      "created_at": 1788917387.2605045,
+      "executable_name": "WindowsDownload.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 12868,
+      "created_at": 1788917387.2676601,
+      "executable_name": "conhost.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 28068,
+      "created_at": 1788918567.1587553,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 6428,
+      "created_at": 1788918567.4603271,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-setup.tmp",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 27140,
+      "created_at": 1788918753.505875,
+      "executable_name": "CommunityAI-Node.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 6972,
+      "created_at": 1788918753.5271788,
+      "executable_name": "conhost.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 4872,
+      "created_at": 1788918756.396247,
+      "executable_name": "unins000.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 27300,
+      "created_at": 1788918756.5527587,
+      "executable_name": "_unins.tmp",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 24172,
+      "created_at": 1788918756.6761663,
+      "executable_name": "CommunityAI.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    }
+  ],
+  "updated_at_utc": "2026-09-09T01:52:40.693693+00:00",
+  "download_helper": {
+    "pid": 28208,
+    "created_at": 1788917387.2605045,
+    "executable_name": "WindowsDownload.exe",
+    "size_bytes": 13824,
+    "sha256": "e96c0fce4b71f9236a77625b6af7af2924d5f2004d16d17ca8eb5527b43ec3f1",
+    "source_sha256": "3bfa36e62f2a160b2e258af6d9d6816e815d8a9c5b918c29dd800eb6e6c20d8a",
+    "observed_owned_helper_matches_companion_metadata": true
+  },
+  "progress_publication_warning": "Skipped progress frame: IOException HRESULT 80070497",
+  "downloaded_offline_file": {
+    "size_bytes": 2462345104,
+    "sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+    "pid": 28068,
+    "created_at": 1788918567.1587543,
+    "verified_after_owned_child_launch": true,
+    "process_handle_identity_verified": true
+  },
+  "offline_child_exit_code": 0,
+  "installed_payload_files": 4936,
+  "installed_payload_bytes": 4263859354,
+  "installed_identities": {
+    "CommunityAI.exe": "c4a500d7b4ca62f26029745e172c2a7fc33465146d7b3ab20b6702411f0f6fd2",
+    "node/CommunityAI-Node.exe": "5696046eff78d5ebf1badd0fcf7a02f5fcfde9f884072eb8c8f2fc5a3e527162",
+    "runtime-packaging.json": "ea551e5fe410260999804392d978600024db45a568770c385ea92eb9d9abf2c4",
+    "node/_internal/bitsandbytes/libbitsandbytes_cuda124.dll": "436aaa9499932fdbb4c447a29d71fcb5cfdadd2e972f932d6fad964eb7b3374f"
+  },
+  "full_download_logged": true,
+  "child_install_success_logged": true,
+  "offline_child_log_path_verified": true,
+  "downloaded_package_and_parent_removed": true,
+  "native_cpu": {
+    "application": "CommunityAI-Native-Runtime",
+    "cpu_matmul_passed": true,
+    "cuda_build": "12.4",
+    "cuda_required": false,
+    "cuda_test_performed": false,
+    "frozen": true,
+    "model_loading_performed": false,
+    "network_join_performed": false,
+    "schema_version": 1,
+    "torch": "2.6.0+cu124"
+  },
+  "baseline_after_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+  "persisted_baseline_restored": true,
+  "installation_directory_removed": true,
+  "all_recorded_processes_stopped": true,
+  "qualification_credential_created": false,
+  "product_desktop_window_launched": false,
+  "models_loaded": false,
+  "model_network_joined": false,
+  "online_log_sha256": "49f93c4a367f3b376b3bd95e8624a255647c9d2a6887c2f3adbe5633aef70ab6",
+  "offline_log_sha256": "10b8d603bb25df45a9ea199848a315d01a14db08eab745ff2007ddfa46e73775",
+  "uninstall_log_sha256": "8e7a8210303c13d099fcc2971bee436c1866ccd69c28d9d28f0f39a9c5ce560b",
+  "offline_child_handle_closed": true,
+  "online_source_commit": "b6c8aad9cea208630785d890cfb966093f809e7e",
+  "online_source_commit_binding": {
+    "online_source_commit": "b6c8aad9cea208630785d890cfb966093f809e7e",
+    "all_three_git_blob_hashes_match_built_wrapper_companion": true,
+    "runtime_source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+    "online_wrapper_sha256": "8ad0b7da83fdc7c32223902ed13d51f5f2946c89e00947e50aae742c1fc37861"
+  },
+  "scope": "Resumable production HTTPS download, verified offline child install, installed CPU diagnostic and uninstall",
+  "online_filename": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe",
+  "raw_evidence_sha256": {
+    ".gate13-runs/normalized-online-acceptance-resumable-v2-20260909/result.json": "19fc08496fb83eda3981d748f8461e54dac42fe1608c03ab3208a1b2b3fce514",
+    ".gate13-runs/normalized-online-acceptance-resumable-v2-20260909/online.log": "49f93c4a367f3b376b3bd95e8624a255647c9d2a6887c2f3adbe5633aef70ab6",
+    ".gate13-runs/normalized-online-acceptance-resumable-v2-20260909/offline.log": "10b8d603bb25df45a9ea199848a315d01a14db08eab745ff2007ddfa46e73775",
+    ".gate13-runs/normalized-online-acceptance-resumable-v2-20260909/uninstall.log": "8e7a8210303c13d099fcc2971bee436c1866ccd69c28d9d28f0f39a9c5ce560b",
+    ".gate13-runs/cloudflare-publication-20260908/online-source-commit-binding.json": "dc871c18c66b8ccfcb61304b9632d151cccb29cb623333055bef355e01419f94",
+    ".gate13-runs/qualify-online-windows-resumable-v2-20260909.py": "da83b28d2288e9ac7264181cd028a5adb2f9077ee24a8dae671d7a0a5636db20",
+    ".gate13-runs/qualify-normalized-windows-20260908.py": "ed88f48df908119f06a4d063214ede5cb64df094c6b09864f07b69ac26b333f5"
+  },
+  "prior_attempts": [
+    "normalized-online-windows-download-failure-20260908.json",
+    "normalized-online-windows-download-retry-failure-20260908.json",
+    "normalized-online-windows-resumable-progress-failure-20260909.json"
+  ],
+  "limits": [
+    "This run uses the exact offline payload already qualified with installed CUDA/NF4 diagnostics; its repeated installed diagnostic is CPU-only.",
+    "No model loading, contribution worker, network join, product GUI or full Gate14/15 replay.",
+    "The offline setup uses its normal shortcut behavior; NOICONS does not suppress these entries because AllowNoIcons is not enabled. Both menu baselines match after uninstall.",
+    "State preservation compares persisted file metadata and native Run/uninstall registry snapshots. No credential was created or changed by the qualification.",
+    "R2 dev-domain delivery is one observed complete download, not a public-load or availability guarantee."
+  ]
+}

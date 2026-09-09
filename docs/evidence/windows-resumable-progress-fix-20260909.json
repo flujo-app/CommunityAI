@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-09T01:33:02.760608+00:00",
+  "result": "passed-bounded-progress-regressions-and-publication-metadata-audit",
+  "scope": "Presentation-only progress fix; small local helper tests and actual hidden Inno integration. Full hosted handoff is separate.",
+  "wrapper": {
+    "version": "0.1.0-alpha.20260908.1",
+    "authenticode_status": "NotSigned",
+    "unsigned_alpha": true,
+    "release_manifest_sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+    "kind": "online-installer",
+    "live_download_verified": false,
+    "offline_installer": {
+      "filename": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+      "format": "exe",
+      "kind": "offline-installer",
+      "platform": "windows-x64",
+      "publisher": "Mario Andreschak",
+      "sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+      "size_bytes": 2462345104,
+      "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+      "version": "0.1.0-alpha.20260908.1"
+    },
+    "download_helper_sha256": "e96c0fce4b71f9236a77625b6af7af2924d5f2004d16d17ca8eb5527b43ec3f1",
+    "installer_script_sha256": "d975b6da3a1067e679d9ba55555fa5b6219ae644fce8050225486909600fbbb1",
+    "builder_script_sha256": "e5a33e969a0a4c110d960c4de240418be15d58288c3c4e43678a394f92dd5893",
+    "platform": "windows-x64",
+    "download_helper_source_sha256": "3bfa36e62f2a160b2e258af6d9d6816e815d8a9c5b918c29dd800eb6e6c20d8a",
+    "schema_version": 1,
+    "size_bytes": 2107751,
+    "filename": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe",
+    "sha256": "8ad0b7da83fdc7c32223902ed13d51f5f2946c89e00947e50aae742c1fc37861"
+  },
+  "companion_sha256": "c3fece282465df8c74907ff4c7c29fd48405b9dc579315a61d340929afe4584e",
+  "source_identity": "Exact working-tree file hashes at build/test time; no online-wrapper source commit is implied by the offline runtime commit.",
+  "source_sha256": {
+    "desktop/installers/WindowsDownload.cs": "3bfa36e62f2a160b2e258af6d9d6816e815d8a9c5b918c29dd800eb6e6c20d8a",
+    "desktop/installers/communityai-online.iss": "d975b6da3a1067e679d9ba55555fa5b6219ae644fce8050225486909600fbbb1",
+    "desktop/installers/build_windows_online_installer.ps1": "e5a33e969a0a4c110d960c4de240418be15d58288c3c4e43678a394f92dd5893",
+    "tests/test_windows_download_helper.py": "6f743863f91d79dacd871be96c2d7de7f8c890a4ab0c0f1bf725a3a312cb24d6",
+    "tests/test_windows_online_integration.py": "54bc2caf163ec8e295920976372aedbf8b277b340e0c477c99dab3670ebe6574"
+  },
+  "behavior": [
+    "Progress publication is best effort, including final frames; bounded sharing-conflict retry is 75ms.",
+    "I/O, access-denied and security exceptions skip the presentation frame and may record sanitized exception type/HRESULT; owned .new files are cleaned.",
+    "Cancellation, exact parent identity, transfer limits, final size and SHA-256 remain authoritative. Exit0 requires successful independent helper verification.",
+    "Inno may display actual partial-file length when the progress frame is stale. It independently verifies complete size and SHA-256 before logging completion or launching the offline setup."
+  ],
+  "helper_tests": {
+    "passed": 24,
+    "failed": 0,
+    "seconds": 22.299,
+    "command": "python -m unittest discover -s tests -p test_windows_download_helper.py -v",
+    "log": ".gate13-runs/windows-download-helper-progress-bounded-final-20260909.log",
+    "log_sha256": "3c6ecdb890a816c7d149ddd9af273519b615da3b304a6d23f6e86f5dc552ccdb",
+    "observation": "Execution reported by release_audit; saved final log and current source hashes independently verified for this record.",
+    "added_coverage": [
+      "Reader denying delete sharing through helper exit",
+      "Read-only progress file causing actual access denial",
+      "Access-denied progress combined with bad SHA still fails"
+    ]
+  },
+  "real_inno_tests": {
+    "passed": 4,
+    "failed": 0,
+    "seconds": 14.589,
+    "command": "python -m unittest discover -s tests -p test_windows_online_integration.py -v",
+    "log": ".gate13-runs/windows-online-integration-progress-bounded-final-20260909.log",
+    "log_sha256": "bdebf2ce6c711e3760bbdcf3c10473887d7406d7f5f030ab0a93772884ec4a67",
+    "observation": "Directly executed by gate15_choices; source SHA checked before and after the complete run.",
+    "coverage": [
+      "Interrupted small download resumes at observed Range offset",
+      "Held response cancellation prevents child launch",
+      "Exact parent engine death stops owned helper and prevents child launch",
+      "Progress reader denies delete sharing for at least 1.4s and a skipped-publication warning is observed; valid child still launches"
+    ],
+    "handoff_assertions": [
+      "Exact forwarded arguments",
+      "Outer exit7 equals harmless child exit7",
+      "Downloaded child exists until its exit",
+      "Owned processes stop and Inno temporary directory is removed"
+    ],
+    "fixtures": "Actual Inno6.7.3 script, separately compiled WINDOWS_DOWNLOAD_TEST loopback helper and tiny harmless winexe; hidden VERYSILENT invocation.",
+    "visible_windows_launched": false,
+    "product_installer_launched": false
+  },
+  "style_checks": {
+    "black": "passed",
+    "isort_root_settings": "passed",
+    "git_diff_check": "passed",
+    "scope": "tests/test_windows_online_integration.py"
+  },
+  "retained_real_failure": {
+    "evidence": "docs/evidence/normalized-online-windows-resumable-progress-failure-20260909.json",
+    "sha256": "f5003a51a4b4de1e64c3492d9b94d4d1b2769fb402fb27249ad56be869393781",
+    "wrapper_sha256": "0d1c31206336b1e8c783a78a6cadbdc8f9e643e91d587b88d78581a85b5d9ef6",
+    "reported_downloaded_bytes": 541341184,
+    "seconds": 263.343,
+    "message": "Progress could not be persisted",
+    "underlying_native_error": "Not recorded by the prior helper; no specific native cause inferred.",
+    "offline_installer_launched": false,
+    "cleanup_passed": true
+  },
+  "publication_staging": {
+    "audit": ".gate13-runs/cloudflare-publication-private-20260909/progress-fix-v2-metadata-audit.json",
+    "audit_sha256": "c04d1c6e689442bf8a4341ce6c6b622b416e81f44d20f9d7c706fd119076ab92",
+    "result": "passed",
+    "combined_manifest_sha256": "3ab88fd1dd7b5ccbb19cb226429c5b3646d241a676280bde55795fdc34c8df6a",
+    "windows_manifest_sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+    "installer_sha256sums_sha256": "ba50a7b4502145303beb69b3f1c4a2b25bd5e297817b33d5c0f6d5428e284274",
+    "staged_windows_companion_sha256": "c3fece282465df8c74907ff4c7c29fd48405b9dc579315a61d340929afe4584e",
+    "other_three_installer_entries_unchanged": true,
+    "other_platform_metadata_and_manifests_unchanged": true,
+    "upload_performed": false,
+    "metadata_file_counts": {
+      "windows": 8,
+      "linux": 9
+    }
+  },
+  "qualification_boundaries": {
+    "complete_hosted_windows_download_passed": false,
+    "real_offline_installer_handoff_passed": false,
+    "full_transfer_performed_by_this_check": false,
+    "model_loading_or_peer_contact": false,
+    "native_credential_access": false
+  },
+  "prior_bounded_evidence_preserved": "docs/evidence/windows-resumable-downloader-20260909.json",
+  "source_commit_binding_followup": {
+    "recorded_at_utc": "2026-09-09T01:36:10.134480+00:00",
+    "metadata_file": "metadata/windows/online-source-commit.json",
+    "metadata_sha256": "dc871c18c66b8ccfcb61304b9632d151cccb29cb623333055bef355e01419f94",
+    "git_blob_hashes_independently_verified": true,
+    "build_scope": "The wrapper was built from working-tree sources. This later commit contains matching bytes for all three production build inputs; it does not assert a clean committed checkout at original build time.",
+    "online_source_commit": "b6c8aad9cea208630785d890cfb966093f809e7e",
+    "all_three_git_blob_hashes_match_built_wrapper_companion": true,
+    "runtime_source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+    "online_wrapper_sha256": "8ad0b7da83fdc7c32223902ed13d51f5f2946c89e00947e50aae742c1fc37861"
+  }
+}

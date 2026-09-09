@@ -14,6 +14,30 @@ from drift.server.health import (
 MANIFEST_DIGEST = "sha256:" + "a" * 64
 
 
+def test_live_container_converts_wire_digest_for_public_health(tmp_path):
+    """The DHT wire hash is bare hex; public health requires the sha256: ID."""
+    from types import SimpleNamespace
+
+    from drift.server.server import ModuleContainer
+
+    alive = SimpleNamespace(is_alive=lambda: True)
+    target = tmp_path / "health.json"
+    container = SimpleNamespace(
+        admission_state=SimpleNamespace(snapshot=_admission),
+        dht_announcer=alive,
+        conn_handlers=[alive],
+        runtime=SimpleNamespace(pools=[alive]),
+        ready=SimpleNamespace(is_set=lambda: True),
+        server_info=SimpleNamespace(manifest_digest="a" * 64, start_block=16, end_block=32),
+        health_state_path=target,
+    )
+
+    assert ModuleContainer.is_healthy(container) is True
+    payload = json.loads(target.read_text())
+    assert payload["worker_healthy"] is True
+    assert payload["route"] == {"manifest_digest": MANIFEST_DIGEST, "start_block": 16, "end_block": 32}
+
+
 def _admission(**overrides):
     snapshot = {
         "active_sessions": 1,

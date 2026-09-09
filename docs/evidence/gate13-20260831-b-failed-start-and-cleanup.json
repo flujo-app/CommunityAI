@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "scope": "gate13-route-start-failure-and-cleanup",
+  "run_id": "gate13-20260831-b",
+  "gate": 13,
+  "result": "failed_cleaned",
+  "recorded_at": "2026-08-31T21:04:21Z",
+  "source": {
+    "controller_commit": "ee0c05f83035ad22015fb089f5cb30f1713076e6",
+    "authorization_commit": "c1e1f86",
+    "provider_plan_digest": "sha256:3f3f921ded6eed1729aff175f5c91b4effe1966a31c82bdbe41ed69075442d64"
+  },
+  "stages": {
+    "native_auth_and_provider_preflight": "passed",
+    "intent_persisted_before_mutation": true,
+    "dht_firewall_create": "passed",
+    "iap_firewall_create": "failed",
+    "route_instance_create": "not_attempted",
+    "client_create": "not_attempted",
+    "cleanup": "passed"
+  },
+  "failure": {
+    "code": "iap_target_tags_collapsed_by_operator_shell",
+    "classification": "operator_command_boundary",
+    "provider_or_environment_failure": false,
+    "detail": "The two exact IAP target tags reached gcloud as one space-joined value. The command failed before route instance creation."
+  },
+  "cleanup": {
+    "route_instance_absent": true,
+    "route_disk_absent": true,
+    "windows_instance_and_disk_absent": true,
+    "linux_instance_and_disk_absent": true,
+    "dht_firewall_absent": true,
+    "iap_firewall_absent": true,
+    "protected_bootstrap_running": true
+  },
+  "controller_terminal": {
+    "phase": "CLEANED_FAILURE",
+    "failure_code": "resources_disappeared_before_completion",
+    "cleanup_verified": true,
+    "revision": 2
+  },
+  "cost": {
+    "maximum_estimate_usd": "56.00",
+    "billable_instance_created": false,
+    "observed_cost_usd": null,
+    "maximum_remains_committed": true
+  },
+  "privacy": {
+    "credentials_retained": false,
+    "provider_output_retained": false,
+    "private_paths_retained": false,
+    "endpoints_retained": false
+  },
+  "claims": {
+    "route_accepted": false,
+    "lifecycle_started": false,
+    "gate_13_passed": false,
+    "credits_work": false,
+    "macos_work": false
+  }
+}

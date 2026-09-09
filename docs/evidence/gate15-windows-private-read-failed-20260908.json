@@ -1,0 +1,39 @@
+{
+  "result": "failed",
+  "scope": "frozen-Windows-private-desktop-read-only-login-checkbox",
+  "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+  "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+  "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+  "replay_sha256": "3625e82647189800d40207acfac81dc5c4e6ea85d261821cfe9f9ab219ff1efa",
+  "uia_source_sha256": "aaefd2fa5a20f831136175325cc036e2a2563714c2c12ec620e2ef491b3b9be4",
+  "non_elevated": true,
+  "run_entry_original_present": false,
+  "registry_mutation": false,
+  "visible_input_desktop_acceptance": false,
+  "gui_probe_deadline_seconds": 120,
+  "helper_containment_required": true,
+  "error_type": "RuntimeError",
+  "cleanup_error_type": "AssertionError",
+  "owned_processes_stopped": true,
+  "private_desktop_helper": {
+    "result": "failed",
+    "error": "Exception:desktop_enumeration",
+    "input_before": "Default",
+    "input_after": "Default",
+    "input_desktop_unchanged": "True",
+    "desktop_handle_closed": "True",
+    "checkbox_state": "",
+    "job_assigned_before_resume": "True",
+    "job_active_processes_at_close": "1",
+    "job_handle_closed": "True",
+    "job_cleanup_verified": "True"
+  },
+  "run_entry_unchanged": true,
+  "private_credential_removed": true,
+  "owned_process_identities": [
+    [
+      29552,
+      1788857813.5293157
+    ]
+  ]
+}

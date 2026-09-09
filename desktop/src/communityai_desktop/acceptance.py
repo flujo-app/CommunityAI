@@ -308,8 +308,10 @@ def _handler(state: _FakeNodeState):
 
 
 @contextmanager
-def fake_node() -> Iterator[Tuple[str, str]]:
+def fake_node(*, all_workers_paused: bool = False) -> Iterator[Tuple[str, str]]:
     state = _FakeNodeState()
+    if all_workers_paused:
+        state.worker_states = {worker_id: (model, "paused") for worker_id, (model, _) in state.worker_states.items()}
     server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(state))
     thread = threading.Thread(target=server.serve_forever, name="desktop-acceptance-node", daemon=True)
     thread.start()

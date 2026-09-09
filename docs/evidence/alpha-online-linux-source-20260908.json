@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-08T23:10:02.208289+00:00",
+  "scope": "Focused Linux source validation of online downloader and runtime archive normalization",
+  "result": "passed-focused-linux-source-tests",
+  "release_ready": false,
+  "new_offline_runtime_built": false,
+  "real_online_download_executed": false,
+  "real_sudo_or_apt_executed": false,
+  "source_base_commit": "076b4b11c7adbca3f0ba5e28bc5586e36e1d696f",
+  "source_binding": "Current source file hashes; shared working tree contains the reviewed new implementation. No model or runtime artifact was rebuilt.",
+  "files_sha256": {
+    "desktop/installers/build_linux_online.py": "a8efe50840786a56e296df72d05b6b378fad3977f2cd2b85e6a6cf12beace68f",
+    "desktop/installers/linux_online_template.py": "5b94ff2ad46735964212f453d6c47ab103cedb9ff9c25d09add084cfc149eeaa",
+    "desktop/installers/linux_online_root.py": "8842faa5e2dcf5da54a1e56e50a2eb6bee97b489026213fe646129227c3e540e",
+    "desktop/installers/release_downloads.py": "393889433822dea2737bdb8fc1026a088869888a1bdc0e9494970c4073323dce",
+    "tests/test_linux_online_installer.py": "ac7f4bb0ef5adfea8e3a6e708ede87b1ead43ddba3f5247b7c9033c5fd3c682a",
+    "desktop/runtime_packaging.py": "dba6424a90ffe49c8fea71ca95c66d2c741c68bc01f3b20783192ee63b6d2fdc",
+    "desktop/tests/test_runtime_packaging.py": "28271054799fddac59180544ae7659137f2c66e146761093229bd0685bbde21d",
+    "desktop/build_desktop.py": "8b77625c92090f540708271743635486098d8384d1f927d4dc0588b939882a4d",
+    "desktop/installers/build_deb.py": "8b26b3d9780fe22b9158b21944b9503636706d524e2b2cc1b763bc1a9add7b57",
+    "scripts/gate13_linux_packaged_lifecycle.py": "6dc53ebbb4f5344803d8b4eda0a09ced41cb7b8803f67b78ac0bca1559d649d8",
+    "scripts/gateq38_linux_host_runtime.py": "b9fe4b3f0bbc09038dc3f267c2ec11b8b21336d113fe51c36fb9379050b23eb9",
+    "tests/test_runtime_archive_hardlinks.py": "0df326ca0a249ac46c75740a369e0bdd028505febe6e8a1fd564ec00f040898e"
+  },
+  "tests": {
+    "files": [
+      "tests/test_linux_online_installer.py",
+      "tests/test_runtime_archive_hardlinks.py",
+      "desktop/tests/test_runtime_packaging.py"
+    ],
+    "passed": 49,
+    "subtests_passed": 54,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "pytest_duration_seconds": 2.29,
+    "junit_duration_seconds": 2.291,
+    "junit_reported_tests_including_subtests": 103,
+    "python": "3.12.14",
+    "pytest": "9.1.1",
+    "platform": "Linux x86_64, glibc 2.35, cached Ubuntu 22.04 builder image",
+    "actual_linux_nofollow_case": "test_protected_helper_rejects_symlink_source_on_linux passed without skip",
+    "command": "python .gate13-runs/run-online-linux-checks-20260908.py",
+    "runner_sha256": "825e72978ebe327cd7e1d268c996fa5e9265952ac43b983489b18918b83f31e3"
+  },
+  "runtime_resolution": {
+    "initial_attempt": "Failed before tests: /environment/venv/bin/python links to /usr/local/bin/python, which is absent in this builder image.",
+    "inspection": "Read-only metadata inspection found an existing matching image interpreter. No venv or volume files changed.",
+    "interpreter": "/opt/communityai-python/cpython-3.12.14-linux-x86_64-gnu/bin/python3.12",
+    "cached_site_packages": "/environment/venv/lib/python3.12/site-packages",
+    "additional_pytest_fallback_used": false
+  },
+  "container": {
+    "image": "communityai-gate14-linux-builder:20260907-ubuntu22",
+    "image_id": "sha256:a8b6f5418183d44d731e01b013146d3cda22ce7d14f2f234c42bcc7a71ff2dc3",
+    "cpus": 2,
+    "memory_bytes": 2147483648,
+    "memory_plus_swap_bytes": 2147483648,
+    "pids_limit": 128,
+    "uid": "1000:1000",
+    "network": "none",
+    "root_filesystem": "read-only",
+    "repository_mount": "read-only /work",
+    "cached_environment_volume": "read-only communityai-gate14-linux-environment-20260907 at /environment",
+    "tmpfs": "/tmp, 128 MiB, rw,nosuid",
+    "qt_platform": "offscreen",
+    "gpu_devices": 0,
+    "dependency_installs": 0,
+    "models_loaded": 0,
+    "gui_launches": 0,
+    "full_builds": 0,
+    "all_owned_containers_removed": true,
+    "docker_service": "Already running under root agent authorization; left running for that agent."
+  },
+  "validated_behavior": [
+    "Exact URL, size/hash, truncated/oversized and encoded body rejection with inert network responses.",
+    "Download cancellation and deadline handler cleanup using bounded test fixtures.",
+    "Protected copy rejects changed source bytes and remains independent when the original file changes afterward.",
+    "Actual Linux O_NOFOLLOW rejects a symlink source before any package-manager call.",
+    "Unconfirmed or interrupted APT spawn/exit retains its input; all package-manager calls are inert fixtures.",
+    "Actual Linux hardlinks preserve inode identity and library lookup paths through normalization, archive writing and both extraction consumers.",
+    "Unsafe hardlink targets, chains, metadata changes and cross-inventory links fail.",
+    "Debian staging preserves inode sharing even through the simulated cross-device copy fallback; Installed-Size counts unique content."
+  ],
+  "private_logs_sha256": {
+    ".gate13-runs/online-linux-focused-20260908.log": "5e6ca54546200ada49f11975d257e751f26257a0cbd7a39087554c123687ba8c",
+    ".gate13-runs/online-linux-path-inspect-20260908.log": "be1a2a4e0cf00358783f2187911eff87bb9535411e0ecfd69db36b6d47cc1c0d",
+    ".gate13-runs/online-linux-focused-final-20260908.log": "e7e09506669efc6523f41ade48693f9d70b5b9d54695af882344b88fccf3af9c"
+  },
+  "limitations": [
+    "The container runs as UID1000. Fixtures emulate the root identity; actual sudo, OS-enforced root-owned staging and APT were not exercised.",
+    "No real HTTPS download, public origin, cancellation of a blocked external socket or installer publication was performed.",
+    "Native libraries and Debian payloads are tiny inert fixtures. No full package size measurement, frozen GPU/model execution or normalized runtime acceptance is claimed.",
+    "The cached Python3.12.14/pytest9.1.1 environment differs from CI environments; CI results remain separate evidence.",
+    "Existing Windows-only source validation records are unchanged; this is an additional Linux result."
+  ]
+}

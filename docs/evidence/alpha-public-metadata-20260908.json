@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "scope": "read-only public release catalog, bootstrap and manifest metadata",
+  "result": "passed",
+  "checked_at_utc": "2026-09-08T23:52:49.375098+00:00",
+  "verifier_source_commit": "fdd8d0b799e42b307450b0f0776a88b4aeffe852",
+  "verifier_source_files_sha256": {
+    "src/drift/model_catalog.py": "7ee7c631435dce02851e032d4a32844a26502e1d2333d0989868600950df19d0",
+    "src/drift/model_manifest.py": "d27b0fe02d8c5a89fba146cf4bf52366d8213c19bae5f72c24ca391172b90ec3"
+  },
+  "verification_method": "Loaded the existing source verifier modules directly, without importing drift package initialization, Torch or Hivemind. Verified the bundled signed catalog first, then used its rollback guard and bundled trust root to verify the public catalog. Parsed each public manifest with the existing ModelManifest verifier and compared its canonical digest with the signed catalog entry.",
+  "catalog": {
+    "catalog_id": "communityai-public-alpha-v1",
+    "sequence": 2,
+    "digest": "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80",
+    "matches_bundled_catalog": true,
+    "signature_algorithm": "ed25519",
+    "trusted_key_id": "sha256:9505d3ac8ec996d4b794bd43d09dd84447acc5da8a0bb1eac1be4e9c9a34b14f",
+    "signature_threshold": 1,
+    "signature_validation": "passed",
+    "time_validation": "passed",
+    "rollback_and_equivocation_validation_against_bundled_catalog": "passed",
+    "issued_at_utc": "2026-09-06T00:33:28.765000+00:00",
+    "expires_at_utc": "2026-09-28T19:35:19.369000+00:00",
+    "remaining_days_at_check": 19.821
+  },
+  "public_bootstrap_matches_bundled_bytes": true,
+  "bundled_bootstrap_path": "public-alpha/catalog-qwen-v2/catalog-bootstrap.json",
+  "responses": [
+    {
+      "kind": "signed-catalog",
+      "url": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-qwen-v2/catalog.signed.json",
+      "http_status": 200,
+      "bytes": 1792,
+      "file_sha256": "315d7c3910fae3de0ba3aee6d1bdc5942bc2655294ab53b6566bbcfd14933315"
+    },
+    {
+      "kind": "bootstrap",
+      "url": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-qwen-v2/catalog-bootstrap.json",
+      "http_status": 200,
+      "bytes": 702,
+      "file_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410"
+    },
+    {
+      "kind": "local-model-manifest",
+      "url": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-qwen-v2/manifests/e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0.json",
+      "http_status": 200,
+      "bytes": 1711,
+      "file_sha256": "4536ac2bada7242b758db443b9ebb813a614dd167ab364643fc55c7eb657bb74",
+      "verified_manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0"
+    },
+    {
+      "kind": "distributed-model-manifest",
+      "url": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-qwen-v2/manifests/c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4.json",
+      "http_status": 200,
+      "bytes": 10936,
+      "file_sha256": "a2621aa34aa47f0c9074f5baa0254b17549424f1c85d828ae9b1bf6ad9e76bb3",
+      "verified_manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4"
+    }
+  ],
+  "privacy_and_scope": {
+    "peer_connections": 0,
+    "model_downloads": 0,
+    "model_loads": 0,
+    "gpu_runtime_imports": 0,
+    "credential_access": false,
+    "private_signing_key_access": false,
+    "external_mutations": false,
+    "http_redirects_followed": false
+  },
+  "operational_dependencies": [
+    "Preserve the codex/gate-v-auto-selection branch while installed bootstrap and signed manifest URLs depend on it. Merging or deleting that branch must not remove the published metadata endpoints.",
+    "Publish a renewed valid signed catalog before 2026-09-28T19:35:19.369Z. Current availability does not establish availability after expiry."
+  ],
+  "reporting_notes": [
+    "The initial read verified all four public endpoints but console result construction failed because it requested a nonexistent ModelCatalog.digest_id attribute. This was a reporting-only failure.",
+    "A bounded retry produced the successful observation recorded here. Its console formatter redundantly prefixed the already-prefixed catalog digest. This record removes that redundant prefix using the verifier's existing digest value; no third network check was performed."
+  ],
+  "limitations": [
+    "This is one point-in-time HTTPS metadata observation, not continuous availability monitoring.",
+    "No bootstrap peer or public worker was probed. Current complete route coverage, usable inference capacity and a combined Gate 16 canary are not established."
+  ]
+}

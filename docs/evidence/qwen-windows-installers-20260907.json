@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-07",
+  "result": "passed",
+  "scope": "bounded Windows packaged Qwen controls and Inno replacement/removal",
+  "complete_gate14": false,
+  "complete_gate15": false,
+  "public_release": false,
+  "source_commit": "0b875c19efd952342671371ddacebc09ca3a774c",
+  "source_tree": "840d9c570d0905cd317f77d723194f00d4fc0b07",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "gpu": "NVIDIA GeForce RTX 2070 SUPER",
+  "gpu_memory_bytes": 8589606912,
+  "runtime": {
+    "application": "CommunityAI-Node",
+    "catalog_bootstrap_schema": 1,
+    "drift": "2.3.0.dev2",
+    "fastapi": "0.141.1",
+    "frozen": true,
+    "hivemind": "1.1.12",
+    "keyring": "25.7.0",
+    "p2pd": "p2pd.exe",
+    "schema_version": 1,
+    "torch": "2.6.0+cu124",
+    "transformers": "5.13.1",
+    "uvicorn": "0.52.4"
+  },
+  "archive": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5948,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "c5d59f4ae8c057315cb50fb0dadc211e36ec3ea58e2952c4493f9e39c4ce29fb",
+    "size_bytes": 2693786190
+  },
+  "installer": {
+    "authenticode_status": "NotSigned",
+    "publisher": "Mario Andreschak",
+    "sha256": "95b2d70382ed91b61079581e3fed0c3b12364ebe70576a25eee3231460f8e4d8",
+    "settings_cache_policy": "Preserved on upgrade and uninstall",
+    "unsigned_engineering": true,
+    "version": "0.1.0-alpha.20260907",
+    "filename": "communityai-0.1.0-alpha.20260907-windows-setup.exe",
+    "size_bytes": 2518829949
+  },
+  "package_checks": {
+    "gui_smoke": true,
+    "onboarding_smoke": true,
+    "node_self_test": true,
+    "worker_self_test": true,
+    "archive_and_provenance_verified": true,
+    "bundle_bytes": 4486446226,
+    "file_count": 4942
+  },
+  "sharing": {
+    "controller": "source DesktopController calling full frozen node and worker",
+    "community_model": "Qwen3.8 27B FP8 Dequant",
+    "block_indices": "16:17",
+    "community_manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+    "local_manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+    "selected_artifact_bytes": 384054157,
+    "verified_artifact_bytes": 384054157,
+    "verified_files": 3,
+    "slider_changes": [
+      {
+        "vram_percent": 20,
+        "processing_percent": 50,
+        "max_vram_bytes": 1717921382,
+        "old_process_tree_gone": true,
+        "policy_persisted": true,
+        "worker_processing_argument_verified": true,
+        "verified_download_bytes": 384054157,
+        "local_inference": {
+          "seconds": 0.5160000000032596,
+          "model": "Qwen3.5-0.8B-Local",
+          "completion_tokens": 3
+        }
+      },
+      {
+        "vram_percent": 25,
+        "processing_percent": 100,
+        "max_vram_bytes": 2147401728,
+        "old_process_tree_gone": true,
+        "policy_persisted": true,
+        "worker_processing_argument_verified": true,
+        "verified_download_bytes": 384054157,
+        "local_inference": {
+          "seconds": 0.42199999999138527,
+          "model": "Qwen3.5-0.8B-Local",
+          "completion_tokens": 3
+        }
+      }
+    ],
+    "inference": {
+      "before_sharing": {
+        "seconds": 10.09399999998277,
+        "model": "Qwen3.5-0.8B-Local",
+        "completion_tokens": 3
+      },
+      "while_sharing": {
+        "seconds": 0.5160000000032596,
+        "model": "Qwen3.5-0.8B-Local",
+        "completion_tokens": 3
+      },
+      "after_pause": {
+        "seconds": 0.29699999999138527,
+        "model": "Qwen3.5-0.8B-Local",
+        "completion_tokens": 3
+      },
+      "after_restart": {
+        "seconds": 0.375,
+        "model": "Qwen3.5-0.8B-Local",
+        "completion_tokens": 3
+      }
+    },
+    "pause_seconds": 0.125,
+    "paused_worker_tree_gone": true,
+    "restarted_worker_tree_gone": true,
+    "node_stopped": true
+  },
+  "installation": {
+    "result": "passed",
+    "packaged_node_worker": true,
+    "gui": "source Qt with production NodeLifecycleSupervisor",
+    "full_gate15": false,
+    "installer_sha256": "95b2d70382ed91b61079581e3fed0c3b12364ebe70576a25eee3231460f8e4d8",
+    "owned_node_worker_tree_gone": true,
+    "block_indices": "3:4",
+    "verified_download_bytes": 372502429,
+    "process_count": 7,
+    "settings_preserved_on_upgrade": true,
+    "uninstall_passed": true,
+    "external_cache_preserved": true,
+    "cleanup_reverified": {
+      "owned_process_tree_absent": true,
+      "probe_native_credential_absent": true,
+      "installer_registration_absent": true,
+      "installed_executable_absent": true
+    }
+  },
+  "probe_scripts_sha256": {
+    "qualify-real-slider-probe.py": "2049481463b6506c14205ceaf7fbdcc1ca4515a9f91055c03112d91a6cdcba1f",
+    "test-full-windows-installer.py": "f9f08a21d40eb8d0998e6ed0fcf5f2e8a2c711827be8530ed1aa5b411ac2aa9a",
+    "full-installer-gui.py": "eb60dec6a152794d12ad1891a19b6bfa757a8389683b8f1385123f909f421a99"
+  },
+  "limitations": [
+    "Source Qt/controller drove the real frozen node; literal frozen-GUI slider interactions were not exercised.",
+    "A ready single Qwen contribution block does not measure processing duty cycle during remote Qwen inference load.",
+    "Windows only; Linux Qwen resource and full installer lifecycle acceptance remain open.",
+    "Installer is explicitly unsigned; signing inquiry is not provider acceptance.",
+    "No broader conversation, context, concurrency or consumer GPU profile acceptance is claimed."
+  ]
+}

@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import collections
+import json
 import logging
 import math
 import os
+import signal
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Sequence, Tuple
+
+from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +142,15 @@ class WorkerLaunch:
     preferred: bool = False
     automatic: bool = False
     block_indices: Optional[str] = None
-    placement_reason: Optional[str] = None
+    # Coverage/demand explanations change without changing the worker assignment.
+    # They must not make the placement reconciler stop a healthy worker.
+    placement_reason: Optional[str] = field(default=None, compare=False)
+    intent_published: bool = False
+    remote_acknowledged: bool = False
+    placement_manifest_digest: Optional[str] = None
+    placement_artifact_bytes: Optional[int] = None
+    placement_artifact_set_digest: Optional[str] = None
+    placement_cache_root: Optional[str] = None
     max_disk_bytes: Optional[int] = None
     max_vram_bytes: Optional[int] = None
     vram_device: Optional[str] = None
@@ -157,6 +172,99 @@ class WorkerLaunch:
             raise ValueError("automatic workers require a block range and placement reason")
         if not self.automatic and (self.block_indices is not None or self.placement_reason is not None):
             raise ValueError("manual workers must not carry automatic placement metadata")
+        if type(self.intent_published) is not bool or type(self.remote_acknowledged) is not bool:
+            raise ValueError("placement intent publication fields must be booleans")
+        if self.intent_published != self.remote_acknowledged:
+            raise ValueError("placement intent publication requires a remote acknowledgement")
+        if not self.automatic and self.intent_published:
+            raise ValueError("manual workers must not carry an acknowledged automatic intent")
+        if self.automatic and self.policy_admitted and not self.remote_acknowledged:
+            raise ValueError("admitted automatic workers require a remotely acknowledged intent")
+        placement_claims = (
+            self.placement_manifest_digest,
+            self.placement_artifact_bytes,
+            self.placement_artifact_set_digest,
+            self.placement_cache_root,
+        )
+        if any(value is not None for value in placement_claims) and not all(
+            value is not None for value in placement_claims
+        ):
+            raise ValueError("automatic placement artifact claims must be configured together")
+        if not self.automatic and any(value is not None for value in placement_claims):
+            raise ValueError("manual workers must not carry automatic placement artifact claims")
+        if self.automatic and self.policy_admitted and not all(value is not None for value in placement_claims):
+            raise ValueError("admitted automatic workers require an exact placement artifact binding")
+        if self.placement_manifest_digest is not None and (
+            not isinstance(self.placement_manifest_digest, str)
+            or len(self.placement_manifest_digest) != 71
+            or not self.placement_manifest_digest.startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in self.placement_manifest_digest[7:])
+        ):
+            raise ValueError("placement manifest digest must be canonical sha256")
+        if self.placement_artifact_bytes is not None and (
+            isinstance(self.placement_artifact_bytes, bool)
+            or not isinstance(self.placement_artifact_bytes, int)
+            or self.placement_artifact_bytes < 0
+        ):
+            raise ValueError("placement artifact bytes must be a non-negative integer")
+        if self.placement_artifact_set_digest is not None and (
+            not isinstance(self.placement_artifact_set_digest, str)
+            or len(self.placement_artifact_set_digest) != 64
+            or any(character not in "0123456789abcdef" for character in self.placement_artifact_set_digest)
+        ):
+            raise ValueError("placement artifact-set digest must be lowercase SHA-256")
+        if self.placement_cache_root is not None:
+            if not isinstance(self.placement_cache_root, str) or not self.placement_cache_root:
+                raise ValueError("placement cache root must be a canonical absolute path")
+            canonical_cache_root = os.path.realpath(os.path.abspath(os.path.expanduser(self.placement_cache_root)))
+            if self.placement_cache_root != canonical_cache_root:
+                raise ValueError("placement cache root must be a canonical absolute path")
+
+            command = self.command
+            if any(not isinstance(value, str) or not value for value in command):
+                raise ValueError("placement-bound worker command arguments must be non-empty strings")
+            if command[0] != sys.executable or os.path.realpath(command[0]) != os.path.realpath(sys.executable):
+                raise ValueError("placement-bound worker command must use the current node executable")
+            forbidden_options = (
+                "-c",
+                "--config",
+                "--custom_module_path",
+                "--allow_training_rpcs",
+                "--token",
+                "--use_auth_token",
+            )
+            if any(
+                value == option or value.startswith(f"{option}=") or (option == "-c" and value.startswith("-c"))
+                for value in command
+                for option in forbidden_options
+            ):
+                raise ValueError("placement-bound worker command contains a forbidden server option")
+            module_entrypoint = len(command) >= 4 and command[1:4] == ("-m", "drift.cli", "server")
+            frozen_entrypoint = len(command) >= 2 and command[1] == "server"
+            if not module_entrypoint and not frozen_entrypoint:
+                raise ValueError("placement-bound worker command must invoke the drift server entrypoint")
+            if any(value == "--num_blocks" or value.startswith("--num_blocks=") for value in command):
+                raise ValueError("placement-bound worker command must not use --num_blocks")
+
+            def bound_option(option: str) -> str:
+                positions = [
+                    index for index, value in enumerate(command) if value == option or value.startswith(f"{option}=")
+                ]
+                if len(positions) != 1 or command[positions[0]] != option or positions[0] + 1 >= len(command):
+                    raise ValueError(f"placement-bound worker command requires exactly one {option}")
+                return command[positions[0] + 1]
+
+            for option, expected in (
+                ("--block_indices", self.block_indices),
+                ("--expected_block_indices", self.block_indices),
+                ("--expected_manifest_digest", self.placement_manifest_digest),
+                ("--expected_artifact_bytes", str(self.placement_artifact_bytes)),
+                ("--expected_artifact_set_digest", self.placement_artifact_set_digest),
+                ("--cache_dir", self.placement_cache_root),
+                ("--expected_cache_root", self.placement_cache_root),
+            ):
+                if bound_option(option) != expected:
+                    raise ValueError(f"placement-bound worker command has a mismatched {option}")
         if self.max_disk_bytes is not None and (
             isinstance(self.max_disk_bytes, bool) or not isinstance(self.max_disk_bytes, int) or self.max_disk_bytes < 1
         ):
@@ -208,6 +316,7 @@ class WorkerSupervisorSettings:
 
 @dataclass
 class _WorkerRecord:
+    progress_directory: Any = field(default=None, init=False, repr=False)
     launch: WorkerLaunch
     state: WorkerState = WorkerState.PAUSED
     desired_running: bool = False
@@ -220,6 +329,7 @@ class _WorkerRecord:
     next_restart_at: float = 0.0
     schedule_suspended: bool = False
     resource_suspended: bool = False
+    memory_rejected_command: Optional[Tuple[str, ...]] = None
     last_power_watts: Optional[float] = None
     suspension_stop_thread: Optional[threading.Thread] = field(default=None, repr=False)
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
@@ -323,6 +433,8 @@ class WorkerSupervisor:
 
     def _resource_status_locked(self, record: _WorkerRecord) -> Tuple[bool, Optional[str]]:
         launch = record.launch
+        if record.memory_rejected_command == launch.command:
+            return False, "selected blocks exceed the VRAM budget; increase VRAM or contribute fewer blocks"
         if launch.max_vram_bytes is not None:
             reserved = sum(
                 other.launch.max_vram_bytes
@@ -387,6 +499,15 @@ class WorkerSupervisor:
         environment = os.environ.copy()
         environment.update(record.launch.environment)
         environment["PYTHONUNBUFFERED"] = "1"
+        environment.pop("DRIFT_DOWNLOAD_PROGRESS", None)
+        try:
+            if record.progress_directory is not None:
+                record.progress_directory.cleanup()
+            record.progress_directory = tempfile.TemporaryDirectory(prefix="communityai-download-")
+            environment["DRIFT_DOWNLOAD_PROGRESS"] = str(Path(record.progress_directory.name) / "progress.json")
+        except OSError:
+            record.progress_directory = None
+            logger.warning("Local download progress is unavailable for worker %s", record.launch.worker_id)
         try:
             process = self._popen(
                 list(record.launch.command),
@@ -399,6 +520,7 @@ class WorkerSupervisor:
                 bufsize=1,
                 env=environment,
                 creationflags=self._creation_flags(),
+                **({"start_new_session": True} if sys.platform.startswith("linux") else {}),
             )
         except Exception as exc:
             record.process = None
@@ -447,9 +569,15 @@ class WorkerSupervisor:
         exit_code = process.poll()
         if exit_code is None:
             return
+        self._kill_linux_worker_group(process)
         record.process = None
         record.last_exit_code = exit_code
-        if record.desired_running:
+        if exit_code == DEVICE_MEMORY_BUDGET_EXIT_CODE:
+            record.memory_rejected_command = record.launch.command
+            record.state = WorkerState.PAUSED
+            record.resource_suspended = record.desired_running
+            record.last_error = self._resource_status_locked(record)[1]
+        elif record.desired_running:
             record.state = WorkerState.CRASHED
             record.last_error = f"worker exited with code {exit_code}"
             record.next_restart_at = time.monotonic() + record.launch.restart_backoff
@@ -579,19 +707,43 @@ class WorkerSupervisor:
         with self._lock:
             if not record.launch.policy_admitted:
                 record.desired_running = False
+                if record.launch.automatic:
+                    # A user's Start clears an earlier Pause even while placement
+                    # is pending. The reconciler may start it only after every
+                    # policy and signed-placement check admits its next launch.
+                    record.operator_paused = False
+                    return False
                 raise WorkerPolicyError(record.launch.policy_reason)
             record.operator_paused = False
             record.desired_running = True
-            return self._spawn_locked(record)
+            return self._spawn_locked(
+                record,
+                defer_outside_schedule=record.launch.automatic,
+                defer_unavailable_resources=record.launch.automatic,
+            )
+
+    @staticmethod
+    def _kill_linux_worker_group(process: subprocess.Popen) -> None:
+        if sys.platform.startswith("linux"):
+            # Each worker owns a new session. Its multiprocessing DHT children
+            # can survive the direct child's exit and otherwise retain p2pd's
+            # identity/port, preventing the replacement worker from starting.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     def _terminate(self, process: subprocess.Popen) -> int:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                return process.wait(timeout=self._stop_timeout)
-            except subprocess.TimeoutExpired:
-                process.kill()
-        return process.wait(timeout=self._stop_timeout)
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    return process.wait(timeout=self._stop_timeout)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            return process.wait(timeout=self._stop_timeout)
+        finally:
+            self._kill_linux_worker_group(process)
 
     def pause_worker(self, worker_id: str) -> bool:
         """Pause a worker and persist the operator's explicit stopped intent."""
@@ -660,6 +812,7 @@ class WorkerSupervisor:
                         "id": record.launch.worker_id,
                         "model": record.launch.model_id,
                         "state": record.state.value,
+                        "download_progress": self._download_snapshot(record),
                         "desired_running": record.desired_running,
                         "operator_paused": record.operator_paused,
                         "auto_restart": record.launch.auto_restart,
@@ -675,6 +828,8 @@ class WorkerSupervisor:
                         "automatic": record.launch.automatic,
                         "block_indices": record.launch.block_indices,
                         "placement_reason": record.launch.placement_reason,
+                        "intent_published": record.launch.intent_published,
+                        "remote_acknowledged": record.launch.remote_acknowledged,
                         "max_disk_bytes": record.launch.max_disk_bytes,
                         "max_vram_bytes": record.launch.max_vram_bytes,
                         "vram_pool_bytes": record.launch.vram_pool_bytes,
@@ -690,7 +845,31 @@ class WorkerSupervisor:
                         "recent_logs": list(record.recent_logs),
                     }
                 )
-            return tuple(result)
+        return tuple(result)
+
+    @staticmethod
+    def _download_snapshot(record):
+        from drift.utils.download_progress import public_progress
+
+        if record.progress_directory is None:
+            return None
+        try:
+            with (Path(record.progress_directory.name) / "progress.json").open("rb") as stream:
+                payload = stream.read(16385)
+            if len(payload) > 16384:
+                return None
+            result = json.loads(payload)
+            if not isinstance(result, dict) or result.get("schema_version") != 1:
+                return None
+            # The fresh per-launch directory binds this report to the worker.
+            # Windows venv launchers may write from a child PID, and frozen
+            # workers may use their own PID; neither changes that ownership.
+            if record.state in (WorkerState.PAUSED, WorkerState.CRASHED, WorkerState.STOPPING):
+                result["state"] = "failed" if record.state is WorkerState.CRASHED else "paused"
+                result["bytes_per_second"] = 0
+            return public_progress(result)
+        except (OSError, ValueError):
+            return None
 
     def snapshot(self, worker_id: str) -> Dict[str, Any]:
         record = self._record(worker_id)
@@ -823,3 +1002,6 @@ class WorkerSupervisor:
                         record.state = WorkerState.PAUSED
         if monitor is not None:
             monitor.join(timeout=5)
+        for record in records:
+            if record.process is None and record.progress_directory is not None:
+                record.progress_directory.cleanup()

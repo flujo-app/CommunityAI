@@ -85,3 +85,5 @@ def test_module_info_health_ignores_joining_workers():
     assert health["status"] == "incomplete"
     assert health["replica_counts"] == [1, 0]
     assert health["missing_blocks"] == [1]
+    assert health["joining_counts"] == [1, 1]
+    assert next(peer for peer in health["peers"] if peer["peer_id"] == str(joining))["joining_blocks"] == [0, 1]

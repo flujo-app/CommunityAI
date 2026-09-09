@@ -1,0 +1,107 @@
+{
+  "result": "passed",
+  "scope": "frozen-Windows-private-desktop-read-only-login-checkbox",
+  "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+  "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+  "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+  "replay_sha256": "0897dd7a943431a3c262b0c925986ab942527c36b149e9d1c4c89e7f7a93bb63",
+  "uia_source_sha256": "1128e841b39d66b15c889c962d4a537207bf0f25395e31d8aa77428d2b01d04a",
+  "non_elevated": true,
+  "run_entry_original_present": false,
+  "registry_mutation": false,
+  "visible_input_desktop_acceptance": false,
+  "gui_probe_deadline_seconds": 120,
+  "helper_containment_required": true,
+  "private_desktop_name": "CommunityAIReadOnly-1d92b2903451485dbf65e46a0a013a95",
+  "input_desktop_before": "Default",
+  "last_authenticated_status": {
+    "status": "running",
+    "resident_models": 0,
+    "worker_states": [
+      "paused"
+    ]
+  },
+  "seconds_to_uia_and_authenticated_status": 16.765,
+  "uia": {
+    "result": "passed",
+    "checkbox_name": "Start CommunityAI when I sign in",
+    "control_type": "ControlType.CheckBox",
+    "state": "Off",
+    "enabled": "True",
+    "registry_mutation": "false",
+    "enumeration_retries": "2",
+    "last_enumeration_error": "0",
+    "actor_private_desktop_verified": "True",
+    "navigation_control_type": "ControlType.CheckBox",
+    "navigation_supported_patterns": "InvokePatternIdentifiers.Pattern,ValuePatternIdentifiers.Pattern,TogglePatternIdentifiers.Pattern",
+    "navigation_action": "InvokePattern.Invoke"
+  },
+  "resident_models": 0,
+  "private_model_weight_files": 0,
+  "worker_states": [
+    "paused"
+  ],
+  "catalog_sequence": 2,
+  "private_desktop_helper": {
+    "result": "passed",
+    "error": "",
+    "input_before": "Default",
+    "input_after": "Default",
+    "input_desktop_unchanged": "True",
+    "desktop_handle_closed": "True",
+    "job_assigned_before_resume": "True",
+    "actor_job_assigned_before_resume": "True",
+    "job_active_processes_at_close": "0",
+    "job_handle_closed": "True",
+    "job_cleanup_verified": "True"
+  },
+  "owned_processes_stopped": true,
+  "gui_launch": {
+    "pid": 49056,
+    "creation_filetime": 134333332766714881
+  },
+  "uia_actor_launch": {
+    "pid": 47620,
+    "creation_filetime": 134333332766751187
+  },
+  "run_entry_unchanged": true,
+  "private_credential_removed": true,
+  "owned_process_identities": [
+    [
+      17384,
+      1788859685.7475908
+    ],
+    [
+      25572,
+      1788859693.5638793
+    ],
+    [
+      33256,
+      1788859676.6390364
+    ],
+    [
+      40536,
+      1788859685.7448056
+    ],
+    [
+      47620,
+      1788859676.6751187
+    ],
+    [
+      49056,
+      1788859676.671488
+    ],
+    [
+      64380,
+      1788859678.0901115
+    ],
+    [
+      66168,
+      1788859678.0877764
+    ],
+    [
+      71432,
+      1788859693.1988335
+    ]
+  ]
+}

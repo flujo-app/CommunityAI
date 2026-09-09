@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-07",
+  "result": "failed attempts retained; superseded by corrected package acceptance",
+  "failed_package": {
+    "source_commit": "55301c12edb3e70460249a00652d75c7d005aed2",
+    "source_tree": "c3c2de877218f63c309df25878911c928439f2d7",
+    "install_archive_sha256": "9d2d2e757281d234bd466461bb31654676bc08c4c733546a8f15afa8be2bf806",
+    "install_archive_bytes": 3275696149,
+    "provenance_verification": "passed after identifying GitHub's README-only PR merge commit"
+  },
+  "attempts": [
+    {
+      "phase": "first frozen X11 launch",
+      "result": "failed before checkpoint 0",
+      "cause": "The Qt X11 plugin required libxcb-shape.so.0, absent on the minimal Debian host and omitted from the installer dependency list.",
+      "correction": "Declare libxcb-shape0 in Debian metadata and build prerequisites; add native X11 UI/onboarding smoke checks.",
+      "gui_stopped": true,
+      "native_test_credential_removed": true
+    },
+    {
+      "phase": "first frozen GPU contribution launch after X11 correction",
+      "result": "failed after defaults and local inference passed",
+      "cause": "PEFT imported bitsandbytes, which initialized optional Triton GPU JIT and failed in its compiler subprocess inside the frozen runtime. The contribution worker repeatedly restarted before readiness.",
+      "correction": "Exclude optional Triton from the frozen Linux runtime used by approved eager/native profiles; preserve native PyTorch/bitsandbytes kernels.",
+      "intervention": "Stopped the owned desktop. The qualification driver's fallback cleanup then encountered its own unreaped GUI PID; the driver now reaps its child, records cleanup failures and fails promptly on repeated startup crashes.",
+      "original_driver_exit": 1,
+      "independent_cleanup_audit": {
+        "result": "passed",
+        "native_credential_already_absent": true,
+        "frozen_runtime_processes_absent": true,
+        "dht_daemons_absent": true
+      }
+    }
+  ],
+  "passing_replacement_source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+  "passing_evidence": "gate14-20260907-final-resource-acceptance.json",
+  "private_raw_logs_retained": true
+}

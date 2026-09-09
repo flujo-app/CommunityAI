@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "admission": {
+    "max_active_sessions": 8,
+    "max_active_sessions_per_peer": 1,
+    "global_session_rate": 2.0,
+    "global_session_burst": 4,
+    "peer_session_rate": 0.25,
+    "peer_session_burst": 1,
+    "max_tracked_peers": 512,
+    "tracked_peer_ttl": 300.0,
+    "max_pending_pushes": 4,
+    "allow_training_rpcs": false
+  },
+  "step_timeout": 30,
+  "session_timeout": 60
+}

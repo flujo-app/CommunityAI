@@ -584,7 +584,7 @@ def test_manifested_container_publishes_machine_readable_aggregate_health(tmp_pa
     container.admission_state = AdmissionState.local(_policy())
     container.health_state_path = tmp_path / "health.json"
     container.server_info = SimpleNamespace(
-        manifest_digest="sha256:" + "a" * 64,
+        manifest_digest="a" * 64,
         start_block=0,
         end_block=24,
     )

@@ -11,6 +11,7 @@ import re
 import secrets
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
@@ -260,6 +261,10 @@ def _default_peer_snapshot(dht: Any) -> Sequence[str]:
     return dht.run_coroutine(_connected_peer_addresses)
 
 
+async def _routing_peer_count(_dht: Any, node: Any) -> int:
+    return len(node.protocol.routing_table.uid_to_peer_id)
+
+
 @dataclass(frozen=True)
 class CoverageTarget:
     manifest: ModelManifest
@@ -280,10 +285,22 @@ class _TargetState:
     remote_route_updated: Optional[float] = None
 
 
-def _default_dht_factory(**kwargs):
+def _default_dht_factory(*, start=True, startup_timeout=15.0, **kwargs):
     from hivemind import DHT
 
-    return DHT(**kwargs)
+    # P2P's startup_timeout does not bound the parent's readiness future.
+    # Keep the child handle so an unresponsive startup can be cleaned and retried.
+    dht = DHT(start=False, startup_timeout=startup_timeout, **kwargs)
+    if start:
+        try:
+            dht.run_in_background(timeout=startup_timeout)
+        except BaseException:
+            try:
+                dht.shutdown()
+            except Exception:
+                logger.exception("Failed to clean an unsuccessful discovery startup")
+            raise
+    return dht
 
 
 class ModelCoverageDiscovery:
@@ -306,6 +323,7 @@ class ModelCoverageDiscovery:
         replay_history_dir: Optional[Path | str] = None,
         route_demand_authority_roots: Sequence[str] = (),
         peer_snapshot: Callable[[Any], Sequence[str]] = _default_peer_snapshot,
+        discover_text: bool = False,
     ) -> None:
         if update_period <= 0 or startup_timeout <= 0:
             raise ValueError("discovery periods must be positive")
@@ -313,6 +331,7 @@ class ModelCoverageDiscovery:
         self._startup_timeout = startup_timeout
         self._dht_factory = dht_factory
         self._lookup = lookup
+        self._discover_text = discover_text
         self._peer_cache = peer_cache
         authority_roots = tuple(route_demand_authority_roots)
         if authority_roots and not 2 <= len(authority_roots) <= _MAX_ROUTE_DEMAND_AUTHORITY_ROOTS:
@@ -356,7 +375,7 @@ class ModelCoverageDiscovery:
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._dhts: Dict[Tuple[str, ...], Any] = {}
-        self._shutdown_dht_ids: set[int] = set()
+        self._shutdown_dhts = weakref.WeakSet()
         self._local_route_demand_keys: set[str] = set()
         self._started = False
         self._closed = False
@@ -405,6 +424,15 @@ class ModelCoverageDiscovery:
                     result["status"] = "unknown"
             result["source"] = "discovery"
             result["last_error"] = state.last_error
+            if self._discover_text:
+                text_peers = [
+                    peer for peer in result.get("text_peers", []) if peer["expires_at_ms"] > time.time() * 1000
+                ]
+                result["text_peers"] = text_peers
+                result["text_peer_count"] = len(text_peers)
+                result["chat_ready"] = result["status"] == "complete" and bool(text_peers)
+            if isinstance(result.get("reservations"), list):
+                result["reservations"] = [r for r in result["reservations"] if r["expires_at"] > time.time()]
             return result
 
     def register_local_route_demand_key(self, key_id: str) -> None:
@@ -494,10 +522,9 @@ class ModelCoverageDiscovery:
 
     def _shutdown_dht_once(self, dht: Any) -> None:
         with self._lock:
-            identity = id(dht)
-            if identity in self._shutdown_dht_ids:
+            if dht in self._shutdown_dhts:
                 return
-            self._shutdown_dht_ids.add(identity)
+            self._shutdown_dhts.add(dht)
         if dht.is_alive():
             dht.shutdown()
 
@@ -510,7 +537,7 @@ class ModelCoverageDiscovery:
                         dht = self._dht_factory(
                             initial_peers=list(initial_peers),
                             client_mode=True,
-                            num_workers=min(max(state.target.manifest.model.num_blocks for state in states), 32),
+                            num_workers=min(max(state.target.manifest.model.num_blocks for state in states), 4),
                             startup_timeout=self._startup_timeout,
                             start=True,
                             tls=True,
@@ -545,7 +572,31 @@ class ModelCoverageDiscovery:
                                 replay_guard=state.replay_guard,
                                 latest=True,
                             )
-                        self._set_success(state, module_infos_route_health(module_infos))
+                            if (
+                                callable(getattr(dht, "run_coroutine", None))
+                                and dht.run_coroutine(_routing_peer_count) == 0
+                            ):
+                                self._set_error(
+                                    states, RuntimeError("Discovery lost all routing peers; reconnecting to seeds")
+                                )
+                                self._shutdown_dht_once(dht)
+                                dht = None
+                                break
+                        health = module_infos_route_health(module_infos)
+                        if self._discover_text:
+                            from drift.text_mesh import discover_text_peers
+
+                            with self._group_io_locks[initial_peers]:
+                                health["text_peers"] = discover_text_peers(
+                                    dht, manifest, revocations=state.revocations, replay_guard=state.replay_guard
+                                )
+                        if callable(getattr(dht, "get", None)):
+                            try:
+                                with self._group_io_locks[initial_peers]:
+                                    health["reservations"] = self._read_intents(state, dht)
+                            except Exception:
+                                health["reservations"] = None
+                        self._set_success(state, health)
                         any_success = True
                         if callable(getattr(dht, "get", None)):
                             try:
@@ -559,7 +610,7 @@ class ModelCoverageDiscovery:
                         self._set_error((state,), exc)
                         logger.warning("Coverage discovery failed for %s: %s", manifest.digest_id, exc)
 
-                if any_success and self._peer_cache is not None:
+                if any_success and dht is not None and self._peer_cache is not None:
                     try:
                         connected_peers = self._peer_snapshot(dht)
                         for cache_scope in dict.fromkeys(state.target.cache_scope or initial_peers for state in states):
@@ -577,6 +628,38 @@ class ModelCoverageDiscovery:
                     self._shutdown_dht_once(dht)
                 except Exception:
                     logger.exception("Failed to close a coverage-discovery DHT")
+
+    def _read_intents(self, state, dht):
+        wrapped = dht.get(f"{state.target.manifest.dht_prefix}.intent-v1", latest=True)
+        container = getattr(wrapped, "value", wrapped)
+        if container is None:
+            return []
+        if not isinstance(container, Mapping) or len(container) > 256:
+            return None
+        reservations = []
+        for subkey, value in container.items():
+            source = getattr(value, "value", value)
+            try:
+                if not isinstance(source, Mapping) or not _bounded_route_demand_source(source):
+                    continue
+                record = verify_intent_lease(
+                    source, expected_manifest_digest=state.target.manifest.digest, revocations=state.revocations
+                )
+                payload = record.payload
+                if subkey != record.key_id or payload["end_block"] > state.target.manifest.model.num_blocks:
+                    continue
+                reservations.append(
+                    {
+                        "peer_id": payload["peer_id"],
+                        "start_block": payload["start_block"],
+                        "end_block": payload["end_block"],
+                        "expires_at": payload["expires_at_ms"] / 1000,
+                        "artifact_bytes": payload["resource_claims"]["artifact_bytes"],
+                    }
+                )
+            except (ProtocolSecurityError, TypeError, ValueError):
+                continue
+        return reservations
 
     def publish_intent(self, digest_id: str, source: Mapping[str, Any]) -> bool:
         """Publish one verified, expiring intent to at least one remote DHT peer."""

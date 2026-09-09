@@ -21,6 +21,7 @@ class QuantType(Enum):
     NONE = 0
     INT8 = 1  # 8-bit as in the LLM.int8() paper
     NF4 = 2  # 4-bit as in the QLoRA paper
+    FP8_DEQUANT = 3  # Official fine-grained FP8 checkpoint, dequantized to the manifested dtype on load
 
 
 def convert_block(
@@ -53,7 +54,7 @@ def convert_block(
 
     block = make_tensor_parallel(block, config, tensor_parallel_devices, output_device=output_device)
 
-    if quant_type != QuantType.NONE:
+    if quant_type in (QuantType.INT8, QuantType.NF4):
         block = quantize_module(block, quant_type=quant_type)
 
     for shard, device in zip(block.module_shards, block.devices):

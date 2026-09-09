@@ -37,7 +37,7 @@ def get_block_size(
         n_params = sum(param.numel() for param in block.parameters())
 
     if location == "memory":
-        if quant_type == QuantType.NONE:
+        if quant_type in (QuantType.NONE, QuantType.FP8_DEQUANT):
             dtype = resolve_block_dtype(config, dtype)
             bytes_per_value = get_size_in_bytes(dtype)
         elif quant_type == QuantType.INT8:

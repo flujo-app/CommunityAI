@@ -1,0 +1,47 @@
+{
+  "result": "failed",
+  "scope": "frozen-Windows-private-desktop-read-only-login-checkbox",
+  "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+  "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+  "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+  "replay_sha256": "0897dd7a943431a3c262b0c925986ab942527c36b149e9d1c4c89e7f7a93bb63",
+  "uia_source_sha256": "0cc3dd8ab9237834373aa6bf425be85003c227df521ae2dcf96cc57234fb0e45",
+  "non_elevated": true,
+  "run_entry_original_present": false,
+  "registry_mutation": false,
+  "visible_input_desktop_acceptance": false,
+  "gui_probe_deadline_seconds": 120,
+  "helper_containment_required": true,
+  "error_type": "RuntimeError",
+  "cleanup_error_type": "AssertionError",
+  "owned_processes_stopped": true,
+  "private_desktop_helper": {
+    "result": "failed",
+    "error": "Exception:actor_read_failed",
+    "input_before": "Default",
+    "input_after": "Default",
+    "input_desktop_unchanged": "True",
+    "desktop_handle_closed": "True",
+    "job_assigned_before_resume": "True",
+    "actor_job_assigned_before_resume": "True",
+    "job_active_processes_at_close": "1",
+    "job_handle_closed": "True",
+    "job_cleanup_verified": "True"
+  },
+  "gui_launch": {
+    "pid": 4440,
+    "creation_filetime": 134333322452412300
+  },
+  "uia_actor_launch": {
+    "pid": 60008,
+    "creation_filetime": 134333322452450044
+  },
+  "run_entry_unchanged": true,
+  "private_credential_removed": true,
+  "owned_process_identities": [
+    [
+      71764,
+      1788858645.2075198
+    ]
+  ]
+}

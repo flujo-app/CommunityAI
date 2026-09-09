@@ -1,0 +1,16 @@
+{
+  "key_id": "sha256:9505d3ac8ec996d4b794bd43d09dd84447acc5da8a0bb1eac1be4e9c9a34b14f",
+  "private_material_printed": false,
+  "project": "community-ai-506321",
+  "recovered_in_memory": true,
+  "result": "passed",
+  "secret": "communityai-catalog-signer-20260906",
+  "signature_verified": true,
+  "version": "1",
+  "schema_version": 1,
+  "three_backups_verified": true,
+  "g_backup_retained": true,
+  "repository_backup_gitignored": true,
+  "new_catalog_published": false,
+  "old_key_recovered": false
+}

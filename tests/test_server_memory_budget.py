@@ -1,3 +1,4 @@
+import argparse
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +7,27 @@ import torch
 from drift.server.block_utils import get_block_size
 from drift.server.server import Server, parse_block_indices
 from drift.utils.convert_block import QuantType
+from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE, DeviceMemoryBudgetError
+
+
+def test_cli_distinguishes_memory_budget_rejection(monkeypatch, capsys):
+    from drift.cli import run_server
+
+    parser = SimpleNamespace(
+        parse_args=lambda: SimpleNamespace(),
+        prog="CommunityAI-Node server",
+    )
+    parser.exit = argparse.ArgumentParser().exit
+    monkeypatch.setattr(run_server, "build_parser", lambda **kwargs: parser)
+
+    def reject(args):
+        raise DeviceMemoryBudgetError("Configured blocks exceed the VRAM budget")
+
+    monkeypatch.setattr(run_server, "server_from_args", reject)
+    with pytest.raises(SystemExit) as stopped:
+        run_server.main()
+    assert stopped.value.code == DEVICE_MEMORY_BUDGET_EXIT_CODE
+    assert "VRAM budget" in capsys.readouterr().err
 
 
 def _budget_server(*, tensor_parallel_devices=(torch.device("cuda:0"),)):
@@ -85,3 +107,23 @@ def test_block_size_uses_the_requested_hybrid_layer_geometry():
 
     assert first == 4
     assert third == 12
+
+
+def test_fp8_dequant_memory_budget_uses_execution_dtype():
+    class Block(torch.nn.Module):
+        def __init__(self, config, layer_idx=0):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.empty(16))
+
+    config = SimpleNamespace(block_class=Block, torch_dtype=torch.bfloat16)
+
+    assert (
+        get_block_size(
+            config,
+            "memory",
+            dtype=torch.bfloat16,
+            quant_type=QuantType.FP8_DEQUANT,
+            eps=0,
+        )
+        == 32
+    )

@@ -1,0 +1,313 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-09-07",
+  "run_id": "q38af-20260907-085527-0e997a",
+  "result": "passed",
+  "entry_point": "Run Qwen Formation.cmd",
+  "actual_wrapper_invoked": true,
+  "unattended_application_flow": true,
+  "operator_runtime_interventions": [],
+  "operator_observations": "Read-only logs, status, source hashes and process checks; no code, policy, range, service or catalog modifications during the passing run.",
+  "source_bundle_sha256": "b0edee241fb0b5dcf25946e4ab9ddf5b9838de3f333757f76539282c1c7e4298",
+  "catalog_sequence": 2,
+  "catalog_policy_modified": false,
+  "assigned_spans": false,
+  "provider": {
+    "project": "community-ai-506321",
+    "zone": "us-central1-b",
+    "contributors": "4 x n2-highmem-4 (4 vCPU, 32 GiB)",
+    "coordinator": "1 x e2-standard-4 (4 vCPU, 16 GiB)",
+    "quota_increase_requested": false
+  },
+  "runtime_scope": {
+    "cloud": "Production source node and actual production Qt windows on Xvfb",
+    "windows": "Retained hash-verified v9 node and actual production Qt source window; RTX 2070 SUPER for local Qwen",
+    "seed": "Isolated test seed; standing bootstrap untouched",
+    "joining": "Staggered contributors, capacity 16 each, model auto, no assigned ranges",
+    "limits": [
+      "Not simultaneous cold-join qualification",
+      "Not GPU contributor formation",
+      "Not fresh installer or fully frozen desktop UI qualification",
+      "New-request fallback/recovery, not in-flight session failover",
+      "Same VM/disk restart, not VM replacement"
+    ]
+  },
+  "local_initial_answers": {
+    "desktop": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 32.13599920272827,
+      "observed_at_unix": 1788773085.330073
+    },
+    "q38af-20260907-085527-0e997a-c": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 80.69041204452515,
+      "observed_at_unix": 1788772610.166737
+    },
+    "q38af-20260907-085527-0e997a-w0": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 59.86133790016174,
+      "observed_at_unix": 1788772694.7006383
+    },
+    "q38af-20260907-085527-0e997a-w1": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 84.99434804916382,
+      "observed_at_unix": 1788772831.793035
+    },
+    "q38af-20260907-085527-0e997a-w2": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 53.66463661193848,
+      "observed_at_unix": 1788772935.8855278
+    },
+    "q38af-20260907-085527-0e997a-w3": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 51.75513482093811,
+      "observed_at_unix": 1788773037.4100401
+    }
+  },
+  "automatic_joins": [
+    {
+      "participant": "q38af-20260907-085527-0e997a-w0",
+      "block_indices": "16:32",
+      "observed_coverage": 16,
+      "remote_acknowledged": true
+    },
+    {
+      "participant": "q38af-20260907-085527-0e997a-w1",
+      "block_indices": "48:64",
+      "observed_coverage": 32,
+      "remote_acknowledged": true
+    },
+    {
+      "participant": "q38af-20260907-085527-0e997a-w2",
+      "block_indices": "32:48",
+      "observed_coverage": 48,
+      "remote_acknowledged": true
+    },
+    {
+      "participant": "q38af-20260907-085527-0e997a-w3",
+      "block_indices": "0:16",
+      "observed_coverage": 64,
+      "remote_acknowledged": true
+    }
+  ],
+  "gate13_ui_start_proofs": [
+    "q38af-20260907-085527-0e997a-w0-desktop-response-c2832362245d00b008e6a55d.json",
+    "q38af-20260907-085527-0e997a-w1-desktop-response-6b507843ec2b252923804ea3.json",
+    "q38af-20260907-085527-0e997a-w2-desktop-response-1e89543c481d694e7841abfd.json",
+    "q38af-20260907-085527-0e997a-w3-desktop-response-1d05f7ca74b9938409492e94.json"
+  ],
+  "windows_recovered_screenshot": {
+    "path": "docs/evidence/qwen-formation-desktop-recovered-20260907.png",
+    "sha256": "2c348f586e59a42857b6f2a1f21ba126717d1544df305d2c183c428fd453ccef",
+    "observed_selection": {
+      "covered_blocks": 64,
+      "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "peer_count": 4,
+      "reason": "Selected catalog priority 1: live discovery reports a complete 64/64-block route from 4 verified peers.",
+      "source": "runtime",
+      "status": "selected",
+      "title": "auto selects Qwen3.8 27B FP8 Dequant",
+      "total_blocks": 64
+    }
+  },
+  "automatic_promotion_and_answers": {
+    "desktop": {
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 30.707194566726685,
+      "observed_at_unix": 1788775682.6931708
+    },
+    "q38af-20260907-085527-0e997a-c": {
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 33.64885878562927,
+      "observed_at_unix": 1788775416.9504063
+    },
+    "q38af-20260907-085527-0e997a-w0": {
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 23.747810125350952,
+      "observed_at_unix": 1788775485.0812094
+    },
+    "q38af-20260907-085527-0e997a-w1": {
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 23.98796534538269,
+      "observed_at_unix": 1788775537.5847306
+    },
+    "q38af-20260907-085527-0e997a-w2": {
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 24.080864191055298,
+      "observed_at_unix": 1788775593.781983
+    },
+    "q38af-20260907-085527-0e997a-w3": {
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 23.963600635528564,
+      "observed_at_unix": 1788775643.9234576
+    }
+  },
+  "windows_local_only_and_return_to_auto_passed": true,
+  "whole_participant_loss": {
+    "before": {
+      "observed_at_unix": 1788772486.0155964,
+      "packaged_node": false,
+      "pid": 4858,
+      "started": 1788772486.0155945
+    },
+    "instance": "q38af-20260907-085527-0e997a-w1",
+    "stopped_service": {
+      "q38-desktop": "MainPID=0\nActiveState=failed\n",
+      "q38-formation": "MainPID=0\nActiveState=failed\n"
+    }
+  },
+  "survivor_local_answers": {
+    "desktop": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 0.6802542209625244,
+      "observed_at_unix": 1788776064.5467405
+    },
+    "q38af-20260907-085527-0e997a-c": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 8.603599309921265,
+      "observed_at_unix": 1788775946.6406784
+    },
+    "q38af-20260907-085527-0e997a-w0": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 0.8529844284057617,
+      "observed_at_unix": 1788775993.2734947
+    },
+    "q38af-20260907-085527-0e997a-w2": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 0.867504358291626,
+      "observed_at_unix": 1788776020.755811
+    },
+    "q38af-20260907-085527-0e997a-w3": {
+      "model": "Qwen3.5-0.8B-Local",
+      "text": " Paris.\n",
+      "completion_tokens": 3,
+      "seconds": 0.861248254776001,
+      "observed_at_unix": 1788776046.784961
+    }
+  },
+  "automatic_recovery": {
+    "participant": "q38af-20260907-085527-0e997a-w1",
+    "restored_process": {
+      "pid": 10820,
+      "started": 1788776084.5410125,
+      "packaged_node": false,
+      "observed_at_unix": 1788776084.5410147
+    },
+    "saved_startup_enabled": true,
+    "saved_policy_enabled": true,
+    "same_peer_identity_verified": true,
+    "peer_identity_sha256": "96af5d44cf82a08a911876e5e3b2160f7e2c9419d49d9a21187ec6ece4d6ecac",
+    "automatically_selected_span": "48:64",
+    "fresh_community_answers": {
+      "desktop": {
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "seconds": 29.94940209388733,
+        "observed_at_unix": 1788776569.7367244
+      },
+      "q38af-20260907-085527-0e997a-c": {
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "seconds": 32.60596323013306,
+        "observed_at_unix": 1788776283.6489537
+      },
+      "q38af-20260907-085527-0e997a-w0": {
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "seconds": 23.924932956695557,
+        "observed_at_unix": 1788776351.1140277
+      },
+      "q38af-20260907-085527-0e997a-w1": {
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "seconds": 28.646197080612183,
+        "observed_at_unix": 1788776409.8571248
+      },
+      "q38af-20260907-085527-0e997a-w2": {
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "seconds": 23.887675523757935,
+        "observed_at_unix": 1788776480.8266537
+      },
+      "q38af-20260907-085527-0e997a-w3": {
+        "model": "Qwen3.8 27B FP8 Dequant",
+        "text": " Paris.\n",
+        "completion_tokens": 3,
+        "seconds": 23.911245584487915,
+        "observed_at_unix": 1788776533.9228458
+      }
+    },
+    "all_six_real_desktop_observations_passed": true
+  },
+  "timing": {
+    "total_run_seconds": 5702.616530418396,
+    "first_validated_fallback_reply_after_kill_phase_seconds": 212.76526713371277,
+    "first_validated_recovery_reply_after_restart_phase_seconds": 204.50843834877014,
+    "interpretation": "Checks are sequential and include polling plus inference; these are checkpoint timings, not per-client detection latency. Fallback took minutes, not an instant switch."
+  },
+  "persisted_fixes": [
+    "f496b8d: retain unique coverage during slow growth",
+    "17ffeb2: bounded discovery startup and unknown-coverage checks",
+    "8d8fedf: Gate 13 policy-gated restart and literal UI normalization, durable checkpoints"
+  ],
+  "regressions": {
+    "latest_related_suite_passed": 60,
+    "discovery_and_formation_suite_preceding_ui_change_passed": 72
+  },
+  "cleanup": {
+    "errors": [],
+    "remaining": {
+      "disks": [],
+      "firewall-rules": [],
+      "instances": []
+    },
+    "verified": true
+  },
+  "local_process_cleanup_verified": true,
+  "evidence_directory": ".gate13-runs/qwen-formation/q38af-20260907-085527-0e997a",
+  "retained_files": {
+    "result.json": "5ad24bf3c01b3f76dac276dc8fa996ca4e396dd5ececce57f3fa02de70041659",
+    "formation-checkpoints.json": "7cbbd77fc35f30502c221be74e71d8aa0b8c8f7e1831b015ab784c3acb9f6184",
+    "source-inventory.json": "b458c7aea0500b4ea551bf459d351eabbc1723a0f3da2bb34079db1ae46eb8aa",
+    "cleanup.json": "6f39cb931f6088fcf9968e8b8b7432fb4e72a1c366a21b15ebe937492ccfc395",
+    "command-journal.jsonl": "f8213615f3a8b3af27bd967ef6d2098935c7bc325df28d99cacb38cd812c20dc"
+  }
+}

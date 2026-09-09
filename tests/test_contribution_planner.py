@@ -1,4 +1,9 @@
-from drift.node.contribution_planner import AutomaticContributionPlanner, PlacementCandidate, PlacementRegistry
+from drift.node.contribution_planner import (
+    AutomaticContributionPlanner,
+    PlacementArtifactPlan,
+    PlacementCandidate,
+    PlacementRegistry,
+)
 
 
 def _candidate(
@@ -12,6 +17,8 @@ def _candidate(
     policy_reason=None,
     route_observation=None,
     remote_route_observation=None,
+    artifact_plans=(),
+    max_artifact_bytes=None,
 ):
     return PlacementCandidate(
         model_id=name,
@@ -28,6 +35,8 @@ def _candidate(
         route_observation=route_observation,
         remote_route_observation=remote_route_observation,
         policy_reason=policy_reason,
+        artifact_plans=artifact_plans,
+        max_artifact_bytes=max_artifact_bytes,
     )
 
 
@@ -72,6 +81,76 @@ def test_planner_selects_preferred_model_and_least_covered_contiguous_range():
     assert plan.decision.block_indices == "1:3"
     assert plan.decision.replica_counts == (0, 1)
     assert "fresh verified coverage" in plan.reason
+
+
+def test_planner_skips_over_budget_window_and_uses_exact_deduplicated_bytes():
+    plans = (
+        PlacementArtifactPlan(0, 2, 30, "a" * 64),
+        PlacementArtifactPlan(1, 3, 50, "b" * 64),
+        PlacementArtifactPlan(2, 4, 40, "c" * 64),
+    )
+    planner = AutomaticContributionPlanner(num_blocks=2, jitter_seed="node-a")
+    candidate = _candidate(
+        "qwen",
+        digest="sha256:" + "1" * 64,
+        counts=(2, 0, 0, 2),
+        artifact_plans=plans,
+        max_artifact_bytes=45,
+    )
+
+    decision = planner.plan((candidate,), sharing_enabled=True, now=10).decision
+
+    assert decision.block_indices != "1:3"
+    selected = next(plan for plan in plans if f"{plan.start_block}:{plan.end_block}" == decision.block_indices)
+    assert decision.artifact_bytes == selected.artifact_bytes
+    assert decision.artifact_set_digest == selected.artifact_set_digest
+
+    rejected = _candidate(
+        "qwen",
+        digest="sha256:" + "1" * 64,
+        counts=(2, 0, 0, 2),
+        artifact_plans=plans,
+        max_artifact_bytes=29,
+    )
+    result = AutomaticContributionPlanner(num_blocks=2, jitter_seed="node-a").plan(
+        (rejected,), sharing_enabled=True, now=10
+    )
+    assert result.decision is None
+    assert "every 2-block artifact set exceeds" in result.reason
+
+
+def test_hysteresis_cannot_retain_a_now_over_budget_range():
+    plans = (
+        PlacementArtifactPlan(0, 1, 30, "a" * 64),
+        PlacementArtifactPlan(1, 2, 10, "b" * 64),
+        PlacementArtifactPlan(2, 3, 10, "c" * 64),
+    )
+    planner = AutomaticContributionPlanner(
+        num_blocks=1,
+        jitter_seed="node-a",
+        minimum_residency_seconds=1_000,
+        cooldown_seconds=1_000,
+    )
+    initial = _candidate(
+        "qwen",
+        digest="sha256:" + "1" * 64,
+        counts=(0, 2, 2),
+        artifact_plans=plans,
+        max_artifact_bytes=100,
+    )
+    assert planner.plan((initial,), sharing_enabled=True, now=0).decision.block_indices == "0:1"
+
+    reduced = _candidate(
+        "qwen",
+        digest="sha256:" + "1" * 64,
+        counts=(0, 2, 2),
+        artifact_plans=plans,
+        max_artifact_bytes=20,
+    )
+    decision = planner.plan((reduced,), sharing_enabled=True, now=1).decision
+
+    assert decision.block_indices != "0:1"
+    assert decision.artifact_bytes == 10
 
 
 def test_completed_route_utility_breaks_only_comparable_coverage_ties():

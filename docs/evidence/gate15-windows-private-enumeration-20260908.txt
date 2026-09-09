@@ -1,0 +1,16 @@
+empty_binding_warmup=False,127,0,0
+empty_0=False,0,0,0
+empty_1=False,0,0,0
+empty_2=False,0,0,0
+populated_binding_warmup=True,0,13,13
+populated_0=True,0,13,13
+populated_1=True,0,13,13
+populated_2=True,0,13,13
+result=passed
+error=
+input_before=Default
+input_after=Default
+owned_child_stopped=True
+desktop_closed=True
+communityai_launched=false
+registry_mutation=false

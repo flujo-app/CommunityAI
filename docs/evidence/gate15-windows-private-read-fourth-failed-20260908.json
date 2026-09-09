@@ -1,0 +1,124 @@
+{
+  "result": "failed",
+  "scope": "frozen-Windows-private-desktop-read-only-login-checkbox",
+  "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+  "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+  "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+  "replay_sha256": "0897dd7a943431a3c262b0c925986ab942527c36b149e9d1c4c89e7f7a93bb63",
+  "uia_source_sha256": "aaaef238deccd25fbbd034393af8c4b622faf8c9e37ba0e5b7637217da22bf9a",
+  "non_elevated": true,
+  "run_entry_original_present": false,
+  "registry_mutation": false,
+  "visible_input_desktop_acceptance": false,
+  "gui_probe_deadline_seconds": 120,
+  "helper_containment_required": true,
+  "private_desktop_name": "CommunityAIReadOnly-84b7cdf08f6a4af092957430db217f50",
+  "input_desktop_before": "Default",
+  "last_authenticated_status": {
+    "status": "running",
+    "resident_models": 0,
+    "worker_states": [
+      "paused"
+    ]
+  },
+  "error_type": "TimeoutError",
+  "cleanup_error_type": "AssertionError",
+  "owned_processes_stopped": true,
+  "private_desktop_helper": {
+    "result": "failed",
+    "error": "Exception:actor_read_failed",
+    "input_before": "Default",
+    "input_after": "Default",
+    "input_desktop_unchanged": "True",
+    "desktop_handle_closed": "True",
+    "job_assigned_before_resume": "True",
+    "actor_job_assigned_before_resume": "True",
+    "job_active_processes_at_close": "0",
+    "job_handle_closed": "True",
+    "job_cleanup_verified": "True"
+  },
+  "gui_launch": {
+    "pid": 67392,
+    "creation_filetime": 134333330402244298
+  },
+  "uia_actor_launch": {
+    "pid": 34808,
+    "creation_filetime": 134333330402280058
+  },
+  "run_entry_unchanged": true,
+  "private_credential_removed": true,
+  "owned_process_identities": [
+    [
+      14596,
+      1788859440.1919928
+    ],
+    [
+      18784,
+      1788859508.8244715
+    ],
+    [
+      24164,
+      1788859514.6049757
+    ],
+    [
+      26916,
+      1788859441.7350175
+    ],
+    [
+      34808,
+      1788859440.228006
+    ],
+    [
+      37712,
+      1788859502.9342039
+    ],
+    [
+      50008,
+      1788859449.6423848
+    ],
+    [
+      50024,
+      1788859481.2508116
+    ],
+    [
+      58480,
+      1788859457.2976267
+    ],
+    [
+      59444,
+      1788859492.788256
+    ],
+    [
+      60216,
+      1788859475.154192
+    ],
+    [
+      62400,
+      1788859487.0274587
+    ],
+    [
+      64416,
+      1788859449.6217396
+    ],
+    [
+      65004,
+      1788859441.75912
+    ],
+    [
+      66964,
+      1788859469.319122
+    ],
+    [
+      67392,
+      1788859440.2244298
+    ],
+    [
+      67952,
+      1788859515.72166
+    ],
+    [
+      71984,
+      1788859463.421945
+    ]
+  ]
+}

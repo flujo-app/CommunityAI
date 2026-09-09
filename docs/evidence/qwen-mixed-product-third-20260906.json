@@ -1,0 +1,90 @@
+{
+  "run_id": "q38pm-20260906-032336-3c38",
+  "result": "failed",
+  "scope": "source-product-test-failed-before-worker-loss",
+  "promotion_passed": true,
+  "product_loss_rejoin_passed": false,
+  "packaged": false,
+  "probe": {
+    "first_token_seconds": 28.775,
+    "duration_seconds": 74.983,
+    "completion_tokens": 3,
+    "retained": true
+  },
+  "local_before_growth": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788665681,
+      "id": "cmpl-b35b2992d01c4e4cafadfc87",
+      "model": "Qwen3.5-0.8B-Local",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 60.02689081699998
+  },
+  "qwen38_baseline": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788667359,
+      "id": "cmpl-06ba80e33c5e43cbae882418",
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 131.35887205200015
+  },
+  "error": "AssertionError: the new community generation was not active before the mode change",
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "failure_analysis": "The next automatic request completed before a community lease was observed. The prior long completion did not guarantee continued fresh eligibility. The harness now waits for fresh readiness and records intervening local fallback, bounded to ten minutes.",
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-032336-3c38/result.json",
+      "sha256": "1687b8e5ef27e0c2a4e06a904f420f5d94d378d7e09c52f2cd559b752146b662"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-032336-3c38/product-result.json",
+      "sha256": "1333ec45abe9b75bc932b2aa3ff7a92bf1602e7309c62be7e1aa0ac9e9e38622"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-032336-3c38/source-inventory.json",
+      "sha256": "eb40abd19695e5ae26e03f05ab7f93ac5787cee086de8f6bcc8c15638f3458ae"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-mixed/q38pm-20260906-032336-3c38/product-node.log",
+      "sha256": "6f0bb63a6d0135fcd050945c57ef70ac3f3fe9db3ffa82b993c3701516cfacd5"
+    }
+  ]
+}

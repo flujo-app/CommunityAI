@@ -1,0 +1,78 @@
+{
+  "result": "passed",
+  "scope": "ordinary-user-frozen-Linux-desktop-signed-catalog-startup-migration",
+  "platform": "Linux",
+  "non_elevated": true,
+  "zombies_treated_as_non_executing": true,
+  "ui_mode": "offscreen",
+  "desktop_sha256": "41383b5e995a2f200f7c96b0fdb8764b7d9edae89ba8efbba0a93d80d883f0aa",
+  "node_sha256": "313f8cbe8b1329b0025e98e64cd12eb2abbadb5e0083f5de5360d997b23d4aa0",
+  "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+  "replay_script_sha256": "68fc574a3b93e222da32a9836a2c09c20384a712d2f4274b06606c9f191844f2",
+  "launches": [
+    {
+      "phase": "automatic-migration",
+      "seconds_to_authenticated_status": 22.835,
+      "visible_native_window": false,
+      "model_ids": [
+        "Gemma 4 E2B IT",
+        "Qwen3.5 2B",
+        "Qwen3.5-0.8B-Local",
+        "Qwen3.8 27B FP8 Dequant"
+      ],
+      "worker_states": [
+        "paused"
+      ],
+      "owned_process_count": 4
+    },
+    {
+      "phase": "repeat-start",
+      "seconds_to_authenticated_status": 24.48,
+      "visible_native_window": false,
+      "model_ids": [
+        "Gemma 4 E2B IT",
+        "Qwen3.5 2B",
+        "Qwen3.5-0.8B-Local",
+        "Qwen3.8 27B FP8 Dequant"
+      ],
+      "worker_states": [
+        "paused"
+      ],
+      "owned_process_count": 8
+    }
+  ],
+  "legacy_install": {
+    "catalog_digest": "sha256:70937f0aa10aa73f158753386170c27a95c685b468c66945f05bb3929263f195",
+    "catalog_id": "communityai-public-alpha-v1",
+    "catalog_sequence": 1,
+    "config_path": "<private-fixture>/state/node-config.json",
+    "created": true,
+    "model_count": 2,
+    "schema_version": 1,
+    "source": "https://raw.githubusercontent.com/flujo-app/CommunityAI/codex/gate-v-auto-selection/public-alpha/catalog-v1/catalog.signed.json"
+  },
+  "activated_exact_published_sequence_2": true,
+  "preferences_workers_and_cache_preserved": true,
+  "repeat_start_config_and_native_credential_preserved": true,
+  "old_trust_root_rejected_without_config_change": true,
+  "recorded_runtime_trees_gone": true,
+  "native_qualification_credential_removed": true,
+  "limitations": [
+    "Linux startup migration and unchanged-catalog restart only; other platforms require separate replay.",
+    "The legacy state was installed from the actual signed online catalog, with private test preferences/cache marker.",
+    "No inference, worker execution, periodic newer-sequence activation, or active-generation drain was exercised.",
+    "The existing frozen bundle was launched directly; its installer lifecycle has separate evidence."
+  ],
+  "raw_result_sha256": "3618f9eef066b1ba65e3e16250a0d3b969a0b56a7185069777249e105296d033",
+  "accepted_catalog_sequence": 2,
+  "accepted_catalog_sha256": "315d7c3910fae3de0ba3aee6d1bdc5942bc2655294ab53b6566bbcfd14933315",
+  "frozen_runtime_source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+  "environment": {
+    "distribution": "Ubuntu 22.04",
+    "uid": 1000,
+    "native_credential_backend": "gnome-keyring Secret Service in private DBus session"
+  },
+  "recorded_at_utc": "2026-09-08T08:29:12.169616+00:00",
+  "prior_failed_attempt": "qwen-catalog-linux-startup-failed-20260908.json",
+  "prior_failure_cause": "Unconfirmed; original bootstrap child stderr not retained by GUI fallback"
+}

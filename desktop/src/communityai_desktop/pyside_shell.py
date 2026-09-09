@@ -12,9 +12,11 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Callable, Dict
 
+from communityai_desktop.presentation import memory_text, model_name, model_summary, sharing_reason, sharing_summary
 from communityai_desktop.startup import LoginStartupError, SingleInstanceError, login_startup_enabled, set_login_startup
 
 APP_STYLESHEET = """
+QLabel { color: #E7EAF0; font-family: "Segoe UI"; font-size: 14px; }
 QMainWindow, QWidget#appShell, QScrollArea, QScrollArea > QWidget > QWidget {
     background: #090C12;
     color: #F4F6FA;
@@ -48,7 +50,7 @@ QLabel#metricValue { color: #FFFFFF; font-size: 28px; font-weight: 760; }
 QLabel#metricLabel { color: #8C96AA; font-size: 12px; }
 QLabel#metricNote { color: #667187; font-size: 11px; }
 QLabel#bodyStrong { color: #EDEFF5; font-size: 14px; font-weight: 650; }
-QLabel#bodyMuted { color: #7F899D; font-size: 12px; }
+QLabel#bodyMuted { color: #A0AABC; font-size: 13px; }
 QLabel#endpointText {
     color: #D9DDFE; background: #111625; border: 1px solid #29304A; border-radius: 9px;
     padding: 11px 13px; font-family: "Consolas"; font-size: 12px;
@@ -188,10 +190,14 @@ def run(
     activate_existing_instance: bool = True,
     instance_name: str | None = None,
     before_termination_restore: Callable[[], None] | None = None,
+    qualification_automation=None,  # noqa: ANN001
+    updater=None,  # noqa: ANN001
 ) -> int:
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
 
+    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
+    from communityai_desktop.resource_controls import ResourceControls
     from PySide6.QtCore import QLockFile, QObject, QRunnable, QStandardPaths, Qt, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -221,6 +227,7 @@ def run(
 
     def label(text: str = "", name: str | None = None) -> QLabel:
         item = QLabel(text)
+        item.setTextFormat(Qt.PlainText)
         if name:
             item.setObjectName(name)
         return item
@@ -262,9 +269,17 @@ def run(
         @Slot()
         def run(self):
             try:
-                self.signals.result.emit(self.operation())
+                result = self.operation()
             except Exception as exc:  # GUI boundary: show a friendly state and remain responsive.
-                self.signals.error.emit(str(exc))
+                signal, result = self.signals.error, str(exc)
+            else:
+                signal = self.signals.result
+            try:
+                signal.emit(result)
+            except RuntimeError as exc:
+                # A bounded node request may finish after the user has closed Qt.
+                if "deleted" not in str(exc):
+                    raise
 
     class MainWindow(QMainWindow):
         def __init__(self):
@@ -275,6 +290,15 @@ def run(
             self._pool = QThreadPool.globalInstance()
             self._tasks = set()
             self._busy = 0
+            self._refreshing = False
+            self._change_version = 0
+            self._sharing_pending = None
+            self._awaiting_sharing_snapshot = False
+            self._sharing_error = None
+            self._mode_pending = False
+            self._awaiting_mode_snapshot = False
+            self._closing = False
+            self._update_notice = ""
             self._controller = controller
             self._snapshot: Dict[str, Any] = {
                 "models": [],
@@ -312,6 +336,16 @@ def run(
             self._timer.timeout.connect(self.refresh)
             self._timer.start()
             self.refresh()
+            if updater is not None:
+                self._update_timer = QTimer(self)
+                self._update_timer.setInterval(500)
+                self._update_timer.timeout.connect(self._render_update)
+                self._update_timer.start()
+                self._update_check_timer = QTimer(self)
+                self._update_check_timer.setInterval(6 * 60 * 60 * 1000)
+                self._update_check_timer.timeout.connect(updater.check)
+                self._update_check_timer.start()
+                QTimer.singleShot(10_000, updater.check)
 
         def _build_sidebar(self) -> QFrame:
             sidebar = QFrame()
@@ -349,17 +383,15 @@ def run(
                 layout.addWidget(button)
 
             layout.addStretch(1)
-            privacy_card, privacy_layout = card()
-            privacy_card.setStyleSheet("QFrame#card { background: #0B1018; }")
-            privacy_layout.setContentsMargins(13, 12, 13, 12)
-            privacy_layout.setSpacing(4)
-            privacy_layout.addWidget(label("A note on privacy", "bodyStrong"))
-            note = label("Computers helping with a request may be able to see what was sent.", "privacySmall")
-            note.setWordWrap(True)
-            privacy_layout.addWidget(note)
-            layout.addWidget(privacy_card)
-            layout.addSpacing(12)
-
+            if updater is not None:
+                self.update_detail = label("", "bodyMuted")
+                self.update_detail.setWordWrap(True)
+                self.update_detail.hide()
+                self.update_button = QPushButton("Check for updates")
+                self.update_button.setObjectName("textButton")
+                self.update_button.clicked.connect(self._update_clicked)
+                layout.addWidget(self.update_detail)
+                layout.addWidget(self.update_button)
             status_row = QHBoxLayout()
             self.sidebar_dot = label("●", "sidebarDot")
             self.sidebar_status = label("Connecting", "sidebarStatus")
@@ -368,6 +400,30 @@ def run(
             status_row.addStretch(1)
             layout.addLayout(status_row)
             return sidebar
+
+        def _render_update(self):
+            state = updater.snapshot()
+            busy = state["status"] in ("checking", "downloading", "installing")
+            self.update_button.setEnabled(not busy)
+            self.update_button.setText(state["message"] if state["status"] != "error" else "Retry update")
+            detail = self._update_notice or (state["message"] if state["status"] == "error" else "")
+            self.update_detail.setText(detail)
+            self.update_detail.setVisible(bool(detail))
+
+        def _update_clicked(self):
+            self._update_notice = ""
+            if updater.snapshot()["status"] == "ready":
+                if any(model.get("active_requests", 0) for model in self._snapshot.get("models", [])):
+                    self._update_notice = "Wait for the current answer to finish, then try again."
+                    self._render_update()
+                    return
+                try:
+                    updater.install()
+                except ValueError as exc:
+                    self._update_notice = str(exc)
+            else:
+                updater.check()
+            self._render_update()
 
         def _scroll_page(self, title: str, subtitle: str) -> tuple[QScrollArea, QVBoxLayout]:
             scroll = QScrollArea()
@@ -380,10 +436,10 @@ def run(
             layout.setContentsMargins(28, 27, 28, 32)
             layout.setSpacing(20)
             layout.addWidget(label(title, "pageTitle"))
-            subtitle_label = label(subtitle, "pageSubtitle")
-            subtitle_label.setWordWrap(True)
-            layout.addWidget(subtitle_label)
-            layout.addSpacing(3)
+            if subtitle:
+                subtitle_label = label(subtitle, "pageSubtitle")
+                subtitle_label.setWordWrap(True)
+                layout.addWidget(subtitle_label)
             scroll.setWidget(content)
             return scroll, layout
 
@@ -406,123 +462,123 @@ def run(
             return frame, value
 
         def _build_home_page(self) -> QScrollArea:
-            page, layout = self._scroll_page("Welcome home", "Everything you need, without the network homework.")
-
-            self.connection_banner = QFrame()
-            self.connection_banner.setObjectName("connectionBanner")
-            banner_layout = QHBoxLayout(self.connection_banner)
-            banner_layout.setContentsMargins(16, 13, 14, 13)
-            banner_copy = QVBoxLayout()
-            banner_copy.setSpacing(2)
-            self.connection_title = label("Getting things ready…", "bodyStrong")
-            self.connection_detail = label("CommunityAI connects automatically.", "bodyMuted")
-            banner_copy.addWidget(self.connection_title)
-            banner_copy.addWidget(self.connection_detail)
-            banner_layout.addLayout(banner_copy, 1)
+            page, layout = self._scroll_page("Home", "")
+            self.connection_banner, banner_layout = card("connectionBanner")
+            self.connection_title = label("Connecting…", "bodyStrong")
+            self.connection_detail = label("Starting CommunityAI.", "bodyMuted")
+            self.connection_detail.setWordWrap(True)
+            banner_layout.addWidget(self.connection_title)
+            banner_layout.addWidget(self.connection_detail)
             self.retry_button = QPushButton("Try again")
-            self.retry_button.setObjectName("ghostButton")
             self.retry_button.clicked.connect(self._reset_connection)
-            self.retry_button.hide()
             banner_layout.addWidget(self.retry_button)
             layout.addWidget(self.connection_banner)
 
             hero, hero_layout = card("heroCard")
-            hero_row = QHBoxLayout()
-            hero_copy = QVBoxLayout()
-            hero_copy.setSpacing(5)
-            hero_copy.addWidget(label("LOCAL AI", "eyebrow"))
-            self.hero_title = label("Your AI is getting ready", "pageTitle")
-            self.hero_title.setStyleSheet("font-size: 23px;")
-            hero_copy.addWidget(self.hero_title)
-            self.hero_subtitle = label("Your apps will connect here automatically.", "pageSubtitle")
-            hero_copy.addWidget(self.hero_subtitle)
-            hero_row.addLayout(hero_copy, 1)
-            endpoint_box = QVBoxLayout()
-            endpoint_box.setSpacing(7)
-            endpoint_box.addWidget(label("ENDPOINT URL", "eyebrow"))
-            endpoint_row = QHBoxLayout()
-            self.endpoint = label("http://127.0.0.1:8080/v1", "endpointText")
-            self.endpoint.setMinimumWidth(0)
-            self.endpoint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-            self.endpoint.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
-            self.endpoint.setAccessibleName("Local API endpoint URL")
-            endpoint_row.addWidget(self.endpoint, 1)
-            copy_button = QPushButton("Copy")
-            copy_button.clicked.connect(self._copy_endpoint)
-            endpoint_row.addWidget(copy_button)
-            endpoint_box.addLayout(endpoint_row)
-            hero_row.addLayout(endpoint_box, 1)
-            hero_layout.addLayout(hero_row)
+            model_header = QHBoxLayout()
+            model_header.addWidget(label("YOUR MODEL", "eyebrow"), 1)
+            self.home_model_location = label("", "bodyMuted")
+            model_header.addWidget(self.home_model_location)
+            hero_layout.addLayout(model_header)
+            self.hero_title = label("Checking your model…", "pageTitle")
+            self.hero_title.setAccessibleName("Selected model")
+            self.hero_subtitle = label("", "pageSubtitle")
+            self.hero_subtitle.setWordWrap(True)
+            hero_layout.addWidget(self.hero_title)
+            hero_layout.addWidget(self.hero_subtitle)
             layout.addWidget(hero)
 
-            metrics = QHBoxLayout()
-            model_metric, self.models_metric = self._metric_card("Models ready", "Available to your apps")
-            peer_metric, self.peers_metric = self._metric_card("Peers online", "Across the community")
-            region_metric, self.regions_metric = self._metric_card("World regions", "Community around the world")
-            metrics.addWidget(model_metric)
-            metrics.addWidget(peer_metric)
-            metrics.addWidget(region_metric)
-            layout.addLayout(metrics)
+            hardware, hardware_layout = card()
+            hardware_layout.addWidget(label("Your hardware", "sectionTitle"))
+            hardware_grid = QFormLayout()
+            hardware_grid.setVerticalSpacing(16)
+            hardware_grid.setHorizontalSpacing(26)
+            self.home_gpu = label("Checking…", "bodyStrong")
+            self.home_cpu = label("Checking…", "bodyStrong")
+            self.home_gpu.setWordWrap(True)
+            self.home_cpu.setWordWrap(True)
+            self.home_gpu.setAccessibleName("Graphics card")
+            self.home_cpu.setAccessibleName("Processor")
+            hardware_grid.addRow(label("Graphics card", "bodyMuted"), self.home_gpu)
+            hardware_grid.addRow(label("Processor", "bodyMuted"), self.home_cpu)
+            hardware_layout.addLayout(hardware_grid)
+            self.home_hardware_detail = label("", "bodyMuted")
+            self.home_hardware_detail.hide()
+            hardware_layout.addWidget(self.home_hardware_detail)
+            layout.addWidget(hardware)
 
-            lower = QHBoxLayout()
-            models_card, models_layout = card()
-            models_header = QHBoxLayout()
-            models_header.addLayout(self._section_header("Ready to use", "Available models"), 1)
-            view_models = QPushButton("View all")
-            view_models.setObjectName("textButton")
-            view_models.clicked.connect(lambda: self._show_page(1))
-            models_header.addWidget(view_models)
-            models_layout.addLayout(models_header)
-            self.home_models_layout = QVBoxLayout()
-            self.home_models_layout.setSpacing(8)
-            models_layout.addLayout(self.home_models_layout)
-            models_layout.addStretch(1)
-
-            regions_card, regions_layout = card()
-            regions_layout.addLayout(self._section_header("Around the world", "Peers by region"))
-            self.region_layout = QVBoxLayout()
-            self.region_layout.setSpacing(6)
-            regions_layout.addLayout(self.region_layout)
-            regions_layout.addStretch(1)
-            lower.addWidget(models_card, 3)
-            lower.addWidget(regions_card, 2)
-            layout.addLayout(lower)
+            sharing, sharing_layout = card()
+            row = QHBoxLayout()
+            self.home_sharing_title = label("Sharing is off", "sectionTitle")
+            row.addWidget(self.home_sharing_title, 1)
+            self.home_share_button = QPushButton("Start sharing")
+            self.home_share_button.setObjectName("primaryButton")
+            self.home_share_button.setAccessibleName("Home sharing control")
+            self.home_share_button.clicked.connect(self._toggle_all_sharing)
+            row.addWidget(self.home_share_button)
+            sharing_layout.addLayout(row)
+            self.home_sharing_detail = label("", "bodyMuted")
+            self.home_sharing_detail.setWordWrap(True)
+            self.home_sharing_detail.hide()
+            sharing_layout.addWidget(self.home_sharing_detail)
+            limits = QHBoxLayout()
+            vram = QVBoxLayout()
+            vram.addWidget(label("GPU memory for sharing", "bodyMuted"))
+            self.home_vram = label("Checking…", "sectionTitle")
+            self.home_vram.setAccessibleName("GPU memory limit")
+            vram.addWidget(self.home_vram)
+            processing = QVBoxLayout()
+            processing.addWidget(label("Computing power", "bodyMuted"))
+            self.home_processing = label("100%", "sectionTitle")
+            self.home_processing.setAccessibleName("Computing power limit")
+            processing.addWidget(self.home_processing)
+            limits.addLayout(vram, 1)
+            limits.addLayout(processing, 1)
+            settings = QPushButton("Change limits")
+            settings.setObjectName("textButton")
+            settings.clicked.connect(lambda: self._show_page(2))
+            limits.addWidget(settings, 0, Qt.AlignBottom)
+            sharing_layout.addLayout(limits)
+            layout.addWidget(sharing)
             layout.addStretch(1)
             return page
 
         def _build_models_page(self) -> QScrollArea:
-            page, layout = self._scroll_page(
-                "Models", "Pick a model in your AI app. CommunityAI connects you automatically."
-            )
-            info, info_layout = card("heroCard")
-            info_layout.addWidget(label("COMMUNITY LIBRARY", "eyebrow"))
-            info_layout.addWidget(label("One place. Every available model.", "sectionTitle"))
-            info_layout.addWidget(
-                label("Models appear here when enough community computers are online to run them.", "sectionSubtitle")
-            )
-            info_layout.addSpacing(8)
-            self.auto_selection_title = label("auto is waiting for a complete route", "bodyStrong")
+            page, layout = self._scroll_page("Models", "")
+            selection, selection_layout = card()
+            selection_row = QHBoxLayout()
+            summary = QVBoxLayout()
+            self.auto_selection_title = label("Checking your model…", "sectionTitle")
             self.auto_selection_title.setAccessibleName("Automatic model selection")
-            self.auto_selection_detail = label("CommunityAI checks live route coverage before choosing.", "bodyMuted")
+            self.auto_selection_detail = label("", "bodyMuted")
             self.auto_selection_detail.setWordWrap(True)
-            info_layout.addWidget(self.auto_selection_title)
-            info_layout.addWidget(self.auto_selection_detail)
-            layout.addWidget(info)
+            summary.addWidget(self.auto_selection_title)
+            summary.addWidget(self.auto_selection_detail)
+            selection_row.addLayout(summary, 1)
+            self.inference_mode_button = QPushButton("Use only this computer")
+            self.inference_mode_button.setAccessibleName("Switch local-only inference")
+            self.inference_mode_button.clicked.connect(self._toggle_inference_mode)
+            selection_row.addWidget(self.inference_mode_button)
+            selection_layout.addLayout(selection_row)
+            layout.addWidget(selection)
             self.models_list_layout = QVBoxLayout()
+            self.model_health_cards = {}
             self.models_list_layout.setSpacing(10)
             layout.addLayout(self.models_list_layout)
+            privacy = label("Community members helping with your messages may see their contents.", "bodyMuted")
+            privacy.setWordWrap(True)
+            layout.addWidget(privacy)
             layout.addStretch(1)
             return page
 
         def _build_sharing_page(self) -> QScrollArea:
-            page, layout = self._scroll_page("Sharing", "Help the community when it suits you. You stay in control.")
+            page, layout = self._scroll_page("Sharing", "")
             hero, hero_layout = card("heroCard")
             top = QHBoxLayout()
             copy = QVBoxLayout()
-            copy.setSpacing(4)
-            copy.addWidget(label("SHARING", "eyebrow"))
-            self.sharing_title = label("Your GPU is not sharing right now", "sectionTitle")
-            self.sharing_detail = label("Choose models below, then start whenever you're ready.", "sectionSubtitle")
+            self.sharing_title = label("Sharing is off", "sectionTitle")
+            self.sharing_detail = label("", "bodyMuted")
+            self.sharing_detail.setWordWrap(True)
             copy.addWidget(self.sharing_title)
             copy.addWidget(self.sharing_detail)
             top.addLayout(copy, 1)
@@ -532,104 +588,61 @@ def run(
             top.addWidget(self.master_share_button)
             hero_layout.addLayout(top)
             layout.addWidget(hero)
+            self.sharing_downloads_layout = QVBoxLayout()
+            self.sharing_download_cards = {}
+            layout.addLayout(self.sharing_downloads_layout)
 
             memory_card, memory_layout = card()
-            memory_header = QHBoxLayout()
-            memory_header.addLayout(
-                self._section_header(
-                    "Configured GPU memory budget",
-                    "Read from the node's enforced policy; unavailable data never becomes an invented default.",
-                ),
-                1,
-            )
-            self.memory_value = label("Unavailable", "metricValue")
-            self.memory_value.setStyleSheet("font-size: 22px;")
-            memory_header.addWidget(self.memory_value)
-            memory_layout.addLayout(memory_header)
-            self.memory_detail = label("No accelerator budget is reported.", "bodyMuted")
+            memory_layout.addWidget(label("How much to share", "sectionTitle"))
+            self.memory_value = label("", "bodyStrong")
+            self.memory_detail = label("", "bodyMuted")
+            self.memory_detail.setWordWrap(True)
+            memory_layout.addWidget(self.memory_value)
             memory_layout.addWidget(self.memory_detail)
-            self.memory_bar = QProgressBar()
-            self.memory_bar.setRange(0, 100)
-            self.memory_bar.setValue(0)
-            self.memory_bar.setTextVisible(False)
-            self.memory_bar.setAccessibleName("Configured GPU memory budget")
-            memory_layout.addWidget(self.memory_bar)
+            self.resource_controls = ResourceControls()
+            self.resource_controls.apply_requested.connect(self._apply_resource_limits)
+            memory_layout.addWidget(self.resource_controls)
             layout.addWidget(memory_card)
 
-            policy_card, policy_layout = card()
-            policy_header = QHBoxLayout()
-            policy_header.addLayout(
-                self._section_header(
-                    "Node-enforced sharing limits",
-                    "These values and admission decisions come from the authenticated local node.",
-                ),
-                1,
-            )
-            self.edit_policy_button = QPushButton("Edit sharing limits")
-            self.edit_policy_button.setObjectName("ghostButton")
-            self.edit_policy_button.clicked.connect(self._edit_contribution_policy)
-            policy_header.addWidget(self.edit_policy_button)
-            policy_layout.addLayout(policy_header)
-            self.policy_status = label("Contribution policy is unavailable.", "bodyStrong")
-            self.policy_status.setWordWrap(True)
-            policy_layout.addWidget(self.policy_status)
-            self.disk_policy = label("Storage: unavailable", "bodyMuted")
-            self.bandwidth_policy = label("Bandwidth: unavailable", "bodyMuted")
-            self.power_policy = label("Power: unavailable", "bodyMuted")
-            self.schedule_policy = label("Schedule: unavailable", "bodyMuted")
-            for policy_line in (
-                self.disk_policy,
-                self.bandwidth_policy,
-                self.power_policy,
-                self.schedule_policy,
-            ):
-                policy_line.setWordWrap(True)
-                policy_layout.addWidget(policy_line)
-            layout.addWidget(policy_card)
-
-            startup_card, startup_layout = card()
-            startup_header = QHBoxLayout()
-            startup_copy = self._section_header(
-                "Start after sign-in",
-                "CommunityAI can reconnect your local service automatically when you sign in.",
-            )
-            startup_header.addLayout(startup_copy, 1)
-            self.login_startup_toggle = QCheckBox("Start CommunityAI when I sign in")
+            advanced, advanced_layout = card()
+            more = QPushButton("More settings")
+            more.setCheckable(True)
+            more.setObjectName("textButton")
+            more.setAccessibleName("More sharing settings")
+            advanced_layout.addWidget(more)
+            body = QWidget()
+            body_layout = QVBoxLayout(body)
+            body_layout.setContentsMargins(0, 8, 0, 0)
+            body_layout.setSpacing(14)
+            self.login_startup_toggle = QCheckBox("Open CommunityAI when I sign in")
             self.login_startup_toggle.setAccessibleName("Start CommunityAI when I sign in")
             try:
                 startup_enabled = login_startup_enabled()
-                startup_detail = "Enabled for this user" if startup_enabled else "Off"
-            except LoginStartupError as exc:
+                startup_detail = ""
+            except LoginStartupError:
                 startup_enabled = False
-                startup_detail = f"Unavailable: {str(exc)[:180]}"
+                startup_detail = "Sign-in settings could not be read."
                 self.login_startup_toggle.setDisabled(True)
             self.login_startup_toggle.setChecked(startup_enabled)
-            startup_header.addWidget(self.login_startup_toggle)
-            startup_layout.addLayout(startup_header)
             self.login_startup_detail = label(startup_detail, "bodyMuted")
-            startup_layout.addWidget(self.login_startup_detail)
+            self.login_startup_detail.setVisible(bool(startup_detail))
             self.login_startup_toggle.toggled.connect(self._set_login_startup)
-            layout.addWidget(startup_card)
-
-            selection_card, selection_layout = card()
-            selection_layout.addLayout(
-                self._section_header("Models you want to help", "Turn models on or off. CommunityAI handles the rest.")
-            )
+            body_layout.addWidget(self.login_startup_toggle)
+            body_layout.addWidget(self.login_startup_detail)
+            self.edit_policy_button = QPushButton("Storage, internet and schedule…")
+            self.edit_policy_button.clicked.connect(self._edit_contribution_policy)
+            body_layout.addWidget(self.edit_policy_button)
             self.contribution_models_layout = QVBoxLayout()
-            self.contribution_models_layout.setSpacing(9)
-            selection_layout.addLayout(self.contribution_models_layout)
-            layout.addWidget(selection_card)
+            body_layout.addLayout(self.contribution_models_layout)
+            advanced_layout.addWidget(body)
+            body.hide()
 
-            privacy, privacy_layout = card()
-            privacy_layout.addWidget(label("A quick privacy note", "bodyStrong"))
-            privacy_text = label(
-                "When sharing is on, your computer helps process requests. Their content may be visible to you or "
-                "software running on your computer.",
-                "bodyMuted",
-            )
-            privacy_text.setWordWrap(True)
-            privacy_layout.addWidget(privacy_text)
-            layout.addWidget(privacy)
+            def expand_settings(expanded):
+                body.setVisible(expanded)
+                more.setText("Hide settings" if expanded else "More settings")
+
+            more.toggled.connect(expand_settings)
+            layout.addWidget(advanced)
             layout.addStretch(1)
             return page
 
@@ -646,10 +659,10 @@ def run(
             self.api_endpoint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             self.api_endpoint.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
             endpoint_row.addWidget(self.api_endpoint, 1)
-            copy = QPushButton("Copy URL")
-            copy.setObjectName("primaryButton")
-            copy.clicked.connect(self._copy_endpoint)
-            endpoint_row.addWidget(copy)
+            self.copy_endpoint_button = QPushButton("Copy URL")
+            self.copy_endpoint_button.setObjectName("primaryButton")
+            self.copy_endpoint_button.clicked.connect(self._copy_endpoint)
+            endpoint_row.addWidget(self.copy_endpoint_button)
             endpoint_layout.addLayout(endpoint_row)
             layout.addWidget(endpoint_card)
 
@@ -676,59 +689,80 @@ def run(
                 button.setChecked(button_index == index)
 
         def _set_connection_state(self, connected: bool) -> None:
-            self.connection_banner.setProperty("connectionState", "online" if connected else "offline")
-            self.connection_banner.style().unpolish(self.connection_banner)
-            self.connection_banner.style().polish(self.connection_banner)
-            if connected:
-                self.connection_title.setText("Everything is connected")
-                self.connection_detail.setText("Your local AI is ready for apps and sharing.")
-                self.retry_button.hide()
-                self.sidebar_dot.setStyleSheet("color: #5EE1A2;")
-                self.sidebar_status.setText("Online")
-            else:
-                self.connection_title.setText("CommunityAI is still getting ready")
-                self.connection_detail.setText("It isn't ready yet. We'll keep trying automatically.")
-                self.retry_button.show()
-                self.sidebar_dot.setStyleSheet("color: #F3B76A;")
-                self.sidebar_status.setText("Getting ready")
+            self.connection_banner.setVisible(not connected)
+            self.retry_button.setVisible(not connected)
+            self.sidebar_dot.setStyleSheet("color: #5EE1A2;" if connected else "color: #F3B76A;")
+            self.sidebar_status.setText("Connected" if connected else "Connecting…")
 
         def _set_busy(self, change: int) -> None:
-            self._busy += change
+            self._busy = max(0, self._busy + change)
             busy = self._busy > 0
             self.retry_button.setDisabled(busy)
             self.create_key_button.setDisabled(busy or self._controller is None)
+            self.inference_mode_button.setDisabled(
+                busy
+                or self._mode_pending
+                or self._controller is None
+                or not self._snapshot.get("inference_mode_editable", False)
+            )
             contribution = self._snapshot.get("contribution", {})
+            self.resource_controls.set_state(
+                contribution, busy=busy or self._controller is None or self._sharing_pending is not None
+            )
             self.edit_policy_button.setDisabled(
                 busy
                 or self._controller is None
                 or not contribution.get("editable", False)
                 or contribution.get("intent_enabled", False)
             )
-            action_available = (
-                contribution.get("can_pause") if contribution.get("intent_enabled") else contribution.get("can_start")
-            )
-            self.master_share_button.setDisabled(
-                busy or self._controller is None or not self._snapshot.get("workers") or not action_available
-            )
+            for button in (self.master_share_button, self.home_share_button):
+                button.setDisabled(
+                    busy
+                    or self._sharing_pending is not None
+                    or self._controller is None
+                    or not contribution.get("editable", False)
+                )
+            for index in range(self.contribution_models_layout.count()):
+                widget = self.contribution_models_layout.itemAt(index).widget()
+                if widget is not None:
+                    widget.setDisabled(busy or self._sharing_pending is not None or self._controller is None)
 
         def _submit(
             self,
             operation: Callable[[], Any],
             on_result: Callable[[Any], None],
             on_error: Callable[[str], None] | None = None,
+            *,
+            background: bool = False,
         ) -> None:
-            self._set_busy(1)
+            if self._closing:
+                return
+            if background:
+                self._refreshing = True
+            else:
+                self._change_version += 1
+                self._set_busy(1)
             task = Task(operation)
             self._tasks.add(task)
 
             def finish(result: Any) -> None:
                 self._tasks.discard(task)
-                self._set_busy(-1)
+                if self._closing:
+                    return
+                if background:
+                    self._refreshing = False
+                else:
+                    self._set_busy(-1)
                 on_result(result)
 
             def fail(message: str) -> None:
                 self._tasks.discard(task)
-                self._set_busy(-1)
+                if self._closing:
+                    return
+                if background:
+                    self._refreshing = False
+                else:
+                    self._set_busy(-1)
                 (on_error or self._connection_failed)(message)
 
             task.signals.result.connect(finish)
@@ -736,13 +770,27 @@ def run(
             self._pool.start(task)
 
         def refresh(self) -> None:
-            if self._busy:
+            if self._busy or self._refreshing:
                 return
             if self._controller is None:
                 self.sidebar_status.setText("Connecting")
                 self._submit(connect, self._connected)
                 return
-            self._submit(self._controller.snapshot, self._render, self._snapshot_failed)
+            version = self._change_version
+
+            def refreshed(snapshot):
+                if version == self._change_version:
+                    self._render(snapshot)
+                else:
+                    QTimer.singleShot(0, self.refresh)
+
+            def refresh_failed(message):
+                if version == self._change_version:
+                    self._snapshot_failed(message)
+                else:
+                    QTimer.singleShot(0, self.refresh)
+
+            self._submit(self._controller.snapshot, refreshed, refresh_failed, background=True)
 
         def _connected(self, connected_controller) -> None:  # noqa: ANN001
             self._controller = connected_controller
@@ -750,9 +798,18 @@ def run(
 
         def _connection_failed(self, message: str) -> None:
             self._set_connection_state(False)
-            self.connection_detail.setText(str(message)[:300])
-            self.hero_title.setText("Your AI will appear here")
-            self.hero_subtitle.setText("CommunityAI connects automatically as soon as it is ready.")
+            self.connection_title.setText("Could not connect to CommunityAI")
+            self.connection_detail.setText("Try again. If this keeps happening, restart CommunityAI.")
+            self.connection_detail.setToolTip(str(message)[:300])
+            self.hero_title.setText("Model unavailable")
+            self.hero_subtitle.setText("Waiting for CommunityAI to reconnect.")
+            for widget in (self.sharing_title, self.home_sharing_title):
+                widget.setText("Checking sharing…")
+                widget.setStyleSheet("color: #F3C46C;")
+            for widget in (self.sharing_detail, self.home_sharing_detail):
+                widget.setText("Waiting for CommunityAI to reconnect.")
+                widget.show()
+            self._set_busy(0)
 
         def _snapshot_failed(self, message: str) -> None:
             self._controller = None
@@ -764,244 +821,152 @@ def run(
 
         def _render(self, snapshot: Dict[str, Any]) -> None:
             self._snapshot = snapshot
+            if self._awaiting_sharing_snapshot:
+                self._awaiting_sharing_snapshot = False
+                self._sharing_pending = None
+                self._sharing_error = None
+            if self._awaiting_mode_snapshot:
+                self._awaiting_mode_snapshot = False
+                self._mode_pending = False
             self._set_busy(0)
             self._set_connection_state(True)
-            self.hero_title.setText("Your local AI is ready")
-            self.hero_subtitle.setText("Use community models from any compatible app on this computer.")
-            endpoint = snapshot["openai_base_url"]
-            self.endpoint.setText(endpoint)
-            self.api_endpoint.setText(endpoint)
-
-            auto_selection = snapshot["auto_selection"]
-            self.auto_selection_title.setText(auto_selection["title"])
-            self.auto_selection_detail.setText(auto_selection["reason"])
-            ready_models = [model for model in snapshot["models"] if model["route_complete"]]
-            self.models_metric.setText(str(len(ready_models)))
-            network = snapshot["network"]
-            self.peers_metric.setText(str(network["peer_count"]))
-            self.regions_metric.setText(str(len(network["regions"])))
-            self._render_home_models(snapshot["models"])
-            self._render_regions(network["regions"])
+            name, reason, location = model_summary(snapshot)
+            self.hero_title.setText(name)
+            self.hero_subtitle.setText(reason)
+            self.home_model_location.setText(location)
+            self.auto_selection_title.setText(name)
+            self.auto_selection_detail.setText(reason)
+            self.api_endpoint.setText(snapshot["openai_base_url"])
+            hardware = snapshot.get("hardware", {})
+            self.home_gpu.setText(hardware.get("gpu_name") or "No supported graphics card detected")
+            self.home_cpu.setText(hardware.get("cpu_name") or "Processor name unavailable")
+            device = hardware.get("inference_device") or ""
+            device_text = (
+                (
+                    "Your model runs on the graphics card."
+                    if device.startswith("cuda")
+                    else "Your model runs on the processor."
+                    if device == "cpu"
+                    else ""
+                )
+                if location == "On this computer"
+                else ""
+            )
+            self.home_hardware_detail.setText(device_text)
+            self.home_hardware_detail.setVisible(bool(device_text))
+            self.inference_mode_button.setText(
+                "Changing…"
+                if self._mode_pending
+                else "Use community models too"
+                if snapshot.get("inference_mode") == "local_only"
+                else "Use only this computer"
+            )
             self._render_models(snapshot["models"])
             self._render_sharing(snapshot)
             self._render_keys(snapshot["keys"])
 
-        def _model_row(self, model: Dict[str, Any]) -> QFrame:
-            row = QFrame()
-            row.setObjectName("listRow")
-            layout = QHBoxLayout(row)
-            layout.setContentsMargins(12, 10, 12, 10)
-            layout.setSpacing(12)
-            avatar = label(model["id"][:1].upper(), "avatar")
-            avatar.setFixedSize(38, 38)
-            layout.addWidget(avatar)
-            copy = QVBoxLayout()
-            copy.setSpacing(2)
-            copy.addWidget(label(model["id"], "bodyStrong"))
-            peers = model.get("peer_count")
-            detail = f"{model['coverage']} blocks"
-            availability = "Available now" if model["route_complete"] else "Incomplete route"
-            if isinstance(peers, int):
-                peer_label = "peer" if peers == 1 else "peers"
-                detail = f"{detail}  •  {peers} {peer_label}  •  {availability}"
-            else:
-                detail = f"{detail}  •  {availability}"
-            copy.addWidget(label(detail, "bodyMuted"))
-            copy.addWidget(
-                label(
-                    f"First-use download/storage: {model['download_storage_estimate']}",
-                    "bodyMuted",
-                )
-            )
-            layout.addLayout(copy, 1)
-            tone = "good" if model["route_complete"] else "warn"
-            badge = "Auto choice" if model.get("auto_selected") else "Ready" if tone == "good" else "Limited"
-            layout.addWidget(pill(badge, tone))
-            return row
-
-        def _render_home_models(self, models: list[Dict[str, Any]]) -> None:
-            clear_layout(self.home_models_layout)
-            if not models:
-                self.home_models_layout.addWidget(label("Models will appear when the network is ready.", "bodyMuted"))
-                return
-            for model in models[:3]:
-                self.home_models_layout.addWidget(self._model_row(model))
-
         def _render_models(self, models: list[Dict[str, Any]]) -> None:
-            clear_layout(self.models_list_layout)
-            if not models:
-                self.models_list_layout.addWidget(label("No models are available yet.", "bodyMuted"))
-                return
+            keys = {model["id"] for model in models}
+            for key in list(self.model_health_cards):
+                if key not in keys:
+                    self.models_list_layout.removeWidget(self.model_health_cards[key])
+                    self.model_health_cards.pop(key).deleteLater()
             for model in models:
-                self.models_list_layout.addWidget(self._model_row(model))
-
-        def _render_regions(self, regions: list[Dict[str, Any]]) -> None:
-            clear_layout(self.region_layout)
-            if not regions:
-                self.region_layout.addWidget(label("Region view is warming up.", "bodyMuted"))
-                return
-            maximum = max((region["peers"] for region in regions), default=1)
-            for region in regions:
-                line = QVBoxLayout()
-                header = QHBoxLayout()
-                header.addWidget(label(region["name"], "bodyMuted"))
-                header.addStretch(1)
-                header.addWidget(label(str(region["peers"]), "bodyStrong"))
-                line.addLayout(header)
-                bar = QProgressBar()
-                bar.setRange(0, maximum)
-                bar.setValue(region["peers"])
-                bar.setTextVisible(False)
-                line.addWidget(bar)
-                self.region_layout.addLayout(line)
+                if model["id"] not in self.model_health_cards:
+                    self.model_health_cards[model["id"]] = ModelHealthCard()
+                    self.models_list_layout.addWidget(self.model_health_cards[model["id"]])
+                self.model_health_cards[model["id"]].set_state(model, self._snapshot["workers"])
 
         def _render_sharing(self, snapshot: Dict[str, Any]) -> None:
             contribution = snapshot["contribution"]
-            workers = snapshot["workers"]
-            enabled = contribution["enabled"]
-            intent_enabled = contribution["intent_enabled"]
-            active_models = contribution["active_models"]
-            if enabled:
-                self.sharing_title.setText(f"You're helping with {', '.join(active_models)}")
-                self.sharing_detail.setText("The node is enforcing every configured sharing limit.")
-            elif intent_enabled:
-                self.sharing_title.setText("Sharing is waiting on the node policy")
-                self.sharing_detail.setText(
-                    contribution["selected_blocked_reasons"][0]
-                    if contribution["selected_blocked_reasons"]
-                    else "The selected worker is paused or stopping."
+            title, detail, state = sharing_summary(snapshot)
+            if self._sharing_pending is not None:
+                title = "Starting sharing…" if self._sharing_pending else "Stopping sharing…"
+                detail = ""
+            elif self._sharing_error:
+                title, detail = "Sharing could not change", self._sharing_error
+                state = "error"
+            if self._sharing_pending is not None:
+                state = "starting"
+            for widget in (self.sharing_title, self.home_sharing_title):
+                widget.setText(title)
+                widget.setStyleSheet(
+                    "color: "
+                    + {
+                        "running": "#72E7AE",
+                        "starting": "#B6A5FF",
+                        "waiting": "#F3C46C",
+                        "error": "#EF8E9D",
+                        "off": "#F4F6FA",
+                        "paused": "#F4F6FA",
+                    }[state]
+                    + ";"
                 )
-            else:
-                self.sharing_title.setText("Your computer is not sharing right now")
-                self.sharing_detail.setText(
-                    "Choose an admitted model below, then start whenever you're ready."
-                    if contribution["can_start"]
-                    else (
-                        contribution["blocked_reasons"][0]
-                        if contribution["blocked_reasons"]
-                        else "No contribution worker is available."
+            for widget in (self.sharing_detail, self.home_sharing_detail):
+                widget.setText(detail)
+                widget.setVisible(bool(detail))
+            for button in (self.master_share_button, self.home_share_button):
+                if self._sharing_pending is not None:
+                    button.setText("Starting…" if self._sharing_pending else "Stopping…")
+                else:
+                    button.setText(
+                        "Pause sharing" if contribution.get("intent_enabled") and state != "paused" else "Start sharing"
                     )
+                button.setObjectName(
+                    "ghostButton" if contribution.get("intent_enabled") and state != "paused" else "primaryButton"
                 )
-            if intent_enabled:
-                self.master_share_button.setText("Pause sharing")
-                self.master_share_button.setObjectName("ghostButton")
+                button.style().unpolish(button)
+                button.style().polish(button)
+            self.resource_controls.set_state(
+                contribution, busy=self._busy > 0 or self._controller is None or self._sharing_pending is not None
+            )
+            hardware = snapshot.get("hardware", {})
+            total = hardware.get("gpu_total_bytes") or contribution.get("vram_pool_bytes")
+            allowed = contribution.get("vram_bytes")
+            if allowed is not None and total:
+                self.home_vram.setText(f"{memory_text(allowed)} of {memory_text(total)}")
+            elif not total:
+                self.home_vram.setText("No GPU memory available")
             else:
-                self.master_share_button.setText("Start sharing")
-                self.master_share_button.setObjectName("primaryButton")
-            self.master_share_button.style().unpolish(self.master_share_button)
-            self.master_share_button.style().polish(self.master_share_button)
-
-            vram_status = contribution["vram_status"]
-            if vram_status == "configured":
-                percent = contribution["vram_percent"]
-                shared = _gib_text(contribution["vram_bytes"])
-                pool = _gib_text(contribution["vram_pool_bytes"])
-                self.memory_value.setText(f"{percent}%")
-                self.memory_detail.setText(f"{shared} of {pool} is reserved per configured worker.")
-                self.memory_bar.setValue(percent)
-            elif vram_status == "varies":
-                self.memory_value.setText("Varies")
-                self.memory_detail.setText("Configured accelerator limits differ between workers.")
-                self.memory_bar.setValue(0)
-            else:
-                self.memory_value.setText("Unavailable")
-                self.memory_detail.setText("No accelerator budget is reported; no default is assumed.")
-                self.memory_bar.setValue(0)
-
-            def limit_summary(key: str, unit: str, *, byte_size: bool = False) -> str:
-                values = [worker["limits"][key] for worker in workers]
-                configured = {value for value in values if value is not None}
-                if not configured:
-                    return "not configured"
-                if len(configured) != 1 or len(configured) != len(values) and any(value is None for value in values):
-                    return "varies by worker"
-                value = next(iter(configured))
-                return _gib_text(value) if byte_size else f"{value:g} {unit}"
-
-            def measurement_summary(key: str, unit: str) -> str:
-                values = [worker["measurements"][key] for worker in workers]
-                present = {value for value in values if value is not None}
-                if not present:
-                    return "telemetry unavailable"
-                if len(present) != 1 or any(value is None for value in values):
-                    return "telemetry varies or is unavailable"
-                return f"{next(iter(present)):g} {unit} measured"
-
-            admitted_models = sum(worker["policy_admitted"] for worker in workers)
-            policy_text = (
-                f"Model policy admits {admitted_models} of {len(workers)} configured workers."
-                if workers
-                else "No contribution workers are configured."
+                self.home_vram.setText("Checking memory limit…")
+            percent = contribution.get(
+                "processing_percent", (contribution.get("policy") or {}).get("max_processing_percent", 100)
             )
-            if contribution["blocked_reasons"]:
-                policy_text += f" {contribution['blocked_reasons'][0]}"
-            self.policy_status.setText(policy_text)
-            self.disk_policy.setText(f"Storage ceiling: {limit_summary('disk_bytes', '', byte_size=True)}")
-            self.bandwidth_policy.setText(
-                "Bandwidth ceiling: "
-                f"{limit_summary('bandwidth_mbps', 'Mbps')} · "
-                f"{measurement_summary('bandwidth_mbps', 'Mbps')}"
-            )
-            self.power_policy.setText(
-                "Power ceiling: " f"{limit_summary('power_watts', 'W')} · " f"{measurement_summary('power_watts', 'W')}"
-            )
-            closed_reasons = []
-            for worker in workers:
-                if not worker["schedule_admitted"] and worker["schedule_reason"] not in closed_reasons:
-                    closed_reasons.append(worker["schedule_reason"])
-            self.schedule_policy.setText(
-                "Schedule: unavailable"
-                if not workers
-                else (f"Schedule: {closed_reasons[0]}" if closed_reasons else "Schedule: open now")
-            )
-
+            self.home_processing.setText(f"{percent:g}%")
+            self.memory_value.setText(hardware.get("gpu_name") or "")
+            self.memory_value.setVisible(bool(hardware.get("gpu_name")))
+            self.memory_detail.setText("")
+            self.memory_detail.hide()
+            downloads = {
+                worker["id"]: worker
+                for worker in snapshot.get("workers", [])
+                if worker.get("download_progress")
+                and worker["download_progress"].get("state") not in ("ready", "paused")
+            }
+            for key in list(self.sharing_download_cards):
+                if key not in downloads:
+                    self.sharing_downloads_layout.removeWidget(self.sharing_download_cards[key])
+                    self.sharing_download_cards.pop(key).deleteLater()
+            for key, worker in downloads.items():
+                if key not in self.sharing_download_cards:
+                    self.sharing_download_cards[key] = DownloadCard()
+                    self.sharing_downloads_layout.addWidget(self.sharing_download_cards[key])
+                name = "Sharing download" if worker["model"] == "auto" else model_name(worker["model"])
+                self.sharing_download_cards[key].set_state(name, worker["download_progress"], worker["state"])
             clear_layout(self.contribution_models_layout)
-            workers_by_model: Dict[str, list[Dict[str, Any]]] = {}
-            for worker in workers:
-                workers_by_model.setdefault(worker["model"], []).append(worker)
-            for model in snapshot["models"]:
-                model_workers = workers_by_model.get(model["id"], [])
-                row = QFrame()
-                row.setObjectName("listRow")
-                row_layout = QHBoxLayout(row)
-                row_layout.setContentsMargins(14, 12, 14, 12)
-                avatar = label(model["id"][:1].upper(), "avatar")
-                avatar.setFixedSize(38, 38)
-                row_layout.addWidget(avatar)
-                copy = QVBoxLayout()
-                copy.setSpacing(2)
-                copy.addWidget(label(model["id"], "bodyStrong"))
-                selected = any(worker["desired_running"] for worker in model_workers)
-                statuses = list(dict.fromkeys(worker["display_status"] for worker in model_workers))
-                detail = "; ".join(statuses) if statuses else "Available after sharing setup"
-                status_label = label(detail, "bodyMuted")
-                status_label.setWordWrap(True)
-                copy.addWidget(status_label)
-                copy.addWidget(
-                    label(
-                        f"First-use download/storage: {model['download_storage_estimate']}",
-                        "bodyMuted",
-                    )
+            # Explicit per-model overrides remain in More settings; automatic
+            # contribution needs only the main sharing switch.
+            for worker in snapshot.get("workers", []):
+                if (worker.get("placement") or {}).get("automatic"):
+                    continue
+                toggle = QCheckBox(model_name(worker.get("model")))
+                toggle.setChecked(worker.get("desired_running", False))
+                toggle.setEnabled(not self._busy and self._sharing_pending is None and self._controller is not None)
+                toggle.setAccessibleName(f"Share compute with {worker['model']}")
+                toggle.toggled.connect(
+                    lambda enabled, worker_id=worker["id"]: self._set_model_sharing([worker_id], enabled)
                 )
-                row_layout.addLayout(copy, 1)
-                toggle = QCheckBox()
-                toggle.setChecked(selected)
-                toggle.setEnabled(
-                    bool(model_workers)
-                    and self._busy == 0
-                    and (selected or any(worker["can_start"] for worker in model_workers))
-                )
-                toggle.setAccessibleName(f"Share compute with {model['id']}")
-                worker_ids = [worker["id"] for worker in model_workers]
-                startable_ids = [worker["id"] for worker in model_workers if worker["can_start"]]
-                toggle.stateChanged.connect(
-                    lambda state, all_ids=worker_ids, start_ids=startable_ids: self._set_model_sharing(
-                        start_ids if state == Qt.Checked.value else all_ids,
-                        state == Qt.Checked.value,
-                    )
-                )
-                row_layout.addWidget(toggle)
-                self.contribution_models_layout.addWidget(row)
+                self.contribution_models_layout.addWidget(toggle)
 
         def _render_keys(self, keys: list[Dict[str, Any]]) -> None:
             clear_layout(self.keys_layout)
@@ -1038,10 +1003,34 @@ def run(
                 self.login_startup_toggle.blockSignals(True)
                 self.login_startup_toggle.setChecked(not enabled)
                 self.login_startup_toggle.blockSignals(False)
-                self.login_startup_detail.setText(f"Could not change login startup: {str(exc)[:180]}")
+                self.login_startup_detail.setText("Could not save this setting. Try again.")
+                self.login_startup_detail.setToolTip(str(exc)[:180])
+                self.login_startup_detail.show()
                 QMessageBox.warning(self, "Login startup", str(exc)[:300])
                 return
-            self.login_startup_detail.setText("Enabled for this user" if enabled else "Off")
+            self.login_startup_detail.setText(
+                "CommunityAI will open when you sign in." if enabled else "Automatic opening is off."
+            )
+            self.login_startup_detail.show()
+
+        def _apply_resource_limits(self, changes, revision) -> None:
+            if self._controller is None or self._busy:
+                return
+
+            def applied(result):
+                self.resource_controls.applied(result)
+                self.refresh()
+
+            def failed(message):
+                self.resource_controls.failed(sharing_reason(message))
+                self.resource_controls.message.setToolTip(str(message)[:300])
+                self.refresh()
+
+            self._submit(
+                lambda: self._controller.update_resource_limits(changes, expected_revision=revision),
+                applied,
+                failed,
+            )
 
         def _edit_contribution_policy(self) -> None:
             contribution = self._snapshot.get("contribution", {})
@@ -1060,6 +1049,7 @@ def run(
                 return
 
             dialog = QDialog(self)
+            dialog.setObjectName("sharingPolicyDialog")
             dialog.setWindowTitle("Edit sharing limits")
             dialog.setMinimumWidth(620)
             layout = QVBoxLayout(dialog)
@@ -1072,6 +1062,7 @@ def run(
             form = QFormLayout()
 
             sharing_enabled = QCheckBox("Allow this node to share compute")
+            sharing_enabled.setObjectName("policy_sharing_enabled")
             sharing_enabled.setChecked(policy["sharing_enabled"])
             form.addRow("Sharing", sharing_enabled)
 
@@ -1082,6 +1073,7 @@ def run(
                 ("denied_models", "Denied models"),
             ):
                 editor = QPlainTextEdit()
+                editor.setObjectName(f"policy_{field}")
                 editor.setPlainText("\n".join(policy[field]))
                 editor.setPlaceholderText("One exact model selector per line")
                 editor.setFixedHeight(64)
@@ -1098,6 +1090,7 @@ def run(
                 ("pause_timeout", "Pause timeout (seconds)", "10"),
             ):
                 editor = QLineEdit()
+                editor.setObjectName(f"policy_{field}")
                 value = policy[field]
                 editor.setText("" if value is None else f"{value:g}" if isinstance(value, float) else str(value))
                 editor.setPlaceholderText(placeholder)
@@ -1106,6 +1099,7 @@ def run(
                 form.addRow(title, editor)
 
             schedule = QPlainTextEdit()
+            schedule.setObjectName("policy_schedule")
             schedule.setPlainText("" if policy["schedule"] is None else json.dumps(policy["schedule"], indent=2))
             schedule.setPlaceholderText(
                 '{"timezone":"local","windows":[{"days":["mon"],"start":"22:00","end":"06:00"}]}'
@@ -1116,6 +1110,7 @@ def run(
             layout.addLayout(form)
 
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+            buttons.setObjectName("sharingPolicyButtons")
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
@@ -1128,6 +1123,7 @@ def run(
 
             try:
                 updated = {
+                    **policy,
                     "sharing_enabled": sharing_enabled.isChecked(),
                     **{
                         field: [line for line in editor.toPlainText().splitlines() if line.strip()]
@@ -1158,38 +1154,77 @@ def run(
             )
 
         def _sharing_action_failed(self, message: str) -> None:
-            self.sharing_title.setText("The node rejected the sharing change")
-            self.sharing_detail.setText(str(message)[:300])
+            self._sharing_pending = None
+            self._awaiting_sharing_snapshot = False
+            self._sharing_error = sharing_reason(message)
+            self._render_sharing(self._snapshot)
+            self.sharing_detail.setToolTip(str(message)[:300])
+            self.home_sharing_detail.setToolTip(str(message)[:300])
+            self._set_busy(0)
+            self.refresh()
+
+        def _sharing_changed(self, result) -> None:
+            self._awaiting_sharing_snapshot = True
+            self.refresh()
 
         def _set_model_sharing(self, worker_ids: list[str], enabled: bool) -> None:
             if not worker_ids or self._controller is None or self._busy:
                 return
+            self._sharing_pending = enabled
+            self._sharing_error = None
+            self._render_sharing(self._snapshot)
+            controller = self._controller
             self._submit(
-                lambda: self._controller.set_workers_enabled(worker_ids, enabled),
-                lambda result: self.refresh(),
+                lambda: controller.set_workers_enabled(worker_ids, enabled),
+                self._sharing_changed,
                 self._sharing_action_failed,
             )
 
-        def _toggle_all_sharing(self) -> None:
-            workers = self._snapshot.get("workers", [])
-            contribution = self._snapshot.get("contribution", {})
-            if not workers or self._controller is None:
+        def _toggle_inference_mode(self) -> None:
+            if self._controller is None or self._busy or self._mode_pending:
                 return
-            enable = not contribution.get("intent_enabled", False)
-            worker_ids = [
-                worker["id"] for worker in workers if (worker["can_start"] if enable else worker["desired_running"])
-            ]
-            if not worker_ids:
-                return
+            mode = "auto" if self._snapshot.get("inference_mode") == "local_only" else "local_only"
+            controller = self._controller
+            self._mode_pending = True
+            self.inference_mode_button.setText("Changing…")
+
+            def changed(_):
+                self._awaiting_mode_snapshot = True
+                self.refresh()
+
+            def failed(message):
+                self._mode_pending = False
+                self._render(self._snapshot)
+                self.auto_selection_detail.setText("Could not change this setting. Try again.")
+                self.auto_selection_detail.setToolTip(str(message)[:300])
+
             self._submit(
-                lambda: self._controller.set_workers_enabled(worker_ids, enable),
-                lambda result: self.refresh(),
+                lambda: controller.client.set_inference_mode(mode),
+                changed,
+                failed,
+            )
+
+        def _toggle_all_sharing(self) -> None:
+            if self._controller is None or self._busy or self._sharing_pending is not None:
+                return
+            enable = (
+                not self._snapshot.get("contribution", {}).get("intent_enabled", False)
+                or sharing_summary(self._snapshot)[2] == "paused"
+            )
+            self._sharing_pending = enable
+            self._sharing_error = None
+            self._render_sharing(self._snapshot)
+            controller = self._controller
+            self._submit(
+                lambda: controller.set_sharing_enabled(enable),
+                self._sharing_changed,
                 self._sharing_action_failed,
             )
 
         def _copy_endpoint(self) -> None:
-            QGuiApplication.clipboard().setText(self.endpoint.text())
-            self.connection_detail.setText("Endpoint URL copied")
+            QGuiApplication.clipboard().setText(self.api_endpoint.text())
+            self.copy_endpoint_button.setText("Copied")
+            QTimer.singleShot(2000, lambda: self.copy_endpoint_button.setText("Copy URL"))
 
         def _create_key(self) -> None:
             if self._controller is None:
@@ -1243,6 +1278,7 @@ def run(
     instance_server = None
     instance_lock = None
     instance_server_name = None
+    shutdown_sockets = []
     if single_instance:
         data_location = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
         if not data_location:
@@ -1305,16 +1341,39 @@ def run(
             raise SingleInstanceError(f"could not establish the per-user CommunityAI instance endpoint: {error}")
 
     window = MainWindow()
+
+    def stop_window_refreshes():
+        window._closing = True
+        window._timer.stop()
+        if updater is not None:
+            updater.close()
+
+    application.aboutToQuit.connect(stop_window_refreshes)
     window._show_page(max(0, min(3, screenshot_page)))
     if start_minimized:
         window.showMinimized()
     else:
         window.show()
 
+    if qualification_automation is not None:
+        qualification_automation.install(
+            window,
+            application,
+            {
+                "QTimer": QTimer,
+                "QDialog": QDialog,
+                "QDialogButtonBox": QDialogButtonBox,
+                "QCheckBox": QCheckBox,
+                "QPlainTextEdit": QPlainTextEdit,
+                "QLineEdit": QLineEdit,
+            },
+        )
+
     if instance_server is not None:
 
         def activate_window() -> None:
             should_activate = False
+            should_shutdown = False
             while instance_server.hasPendingConnections():
                 socket = instance_server.nextPendingConnection()
                 socket.setReadBufferSize(64)
@@ -1322,8 +1381,15 @@ def run(
                 raw_message = bytes(socket.read(64))
                 message = raw_message.strip() if len(raw_message) <= 32 and socket.bytesAvailable() == 0 else b""
                 should_activate = should_activate or message == b"activate"
-                socket.abort()
-                socket.deleteLater()
+                if message == b"shutdown":
+                    shutdown_sockets.append(socket)
+                    should_shutdown = True
+                else:
+                    socket.abort()
+                    socket.deleteLater()
+            if should_shutdown:
+                application.quit()
+                return
             if should_activate:
                 window.showNormal()
                 window.raise_()
@@ -1337,7 +1403,6 @@ def run(
                 instance_lock.unlock()
 
         instance_server.newConnection.connect(activate_window)
-        application.aboutToQuit.connect(close_instance_server)
         if instance_server.hasPendingConnections():
             QTimer.singleShot(0, activate_window)
 
@@ -1353,8 +1418,24 @@ def run(
     if auto_close_seconds is not None:
         QTimer.singleShot(max(1, int(float(auto_close_seconds) * 1000)), application.quit)
     restore_termination_handlers = _install_posix_termination_bridge(application, QTimer)
+
+    def finish_desktop_cleanup():
+        response = b"failed\n"
+        try:
+            if before_termination_restore is not None:
+                before_termination_restore()
+            response = b"stopped\n"
+        finally:
+            for socket in shutdown_sockets:
+                socket.write(response)
+                socket.flush()
+                socket.waitForBytesWritten(1000)
+                socket.disconnectFromServer()
+            if instance_server is not None:
+                close_instance_server()
+
     return _exec_with_termination_cleanup(
         application,
         restore_termination_handlers,
-        before_termination_restore,
+        finish_desktop_cleanup,
     )

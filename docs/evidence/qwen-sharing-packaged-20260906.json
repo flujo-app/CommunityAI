@@ -1,0 +1,149 @@
+{
+  "result": "passed",
+  "scope": "local-inference-and-one-automatic-contribution-worker",
+  "packaged": true,
+  "complete_gate14": false,
+  "worker_budget_bytes": 2147483648,
+  "local_budget_bytes": 3221225472,
+  "before_sharing": {
+    "seconds": 6.8439999999973224,
+    "response": {
+      "id": "cmpl-b69e106fd01042c7873d0061",
+      "object": "text_completion",
+      "created": 1788667698,
+      "model": "Qwen3.5-0.8B-Local",
+      "choices": [
+        {
+          "index": 0,
+          "text": " Paris.\n",
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8
+      }
+    }
+  },
+  "while_sharing": {
+    "seconds": 0.5,
+    "response": {
+      "id": "cmpl-7e5332a53fb24b8e884a8a2b",
+      "object": "text_completion",
+      "created": 1788667738,
+      "model": "Qwen3.5-0.8B-Local",
+      "choices": [
+        {
+          "index": 0,
+          "text": " Paris.\n",
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8
+      }
+    }
+  },
+  "after_pause": {
+    "seconds": 0.4219999999986612,
+    "response": {
+      "id": "cmpl-1c0f81410811480699e5bb42",
+      "object": "text_completion",
+      "created": 1788667739,
+      "model": "Qwen3.5-0.8B-Local",
+      "choices": [
+        {
+          "index": 0,
+          "text": " Paris.\n",
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8
+      }
+    }
+  },
+  "after_restart": {
+    "seconds": 0.4530000000013388,
+    "response": {
+      "id": "cmpl-4e64fa9c752a478fa9ff6f53",
+      "object": "text_completion",
+      "created": 1788667764,
+      "model": "Qwen3.5-0.8B-Local",
+      "choices": [
+        {
+          "index": 0,
+          "text": " Paris.\n",
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8
+      }
+    }
+  },
+  "pause_seconds": 0.11000000000058208,
+  "paused_worker_tree_gone": true,
+  "restarted_worker_tree_gone": true,
+  "node_stopped": true,
+  "recorded_at": "2026-09-06",
+  "hardware": "Windows, NVIDIA RTX 2070 SUPER, 8 GB",
+  "limitations": [
+    "One automatic block using verified existing cache; not full consumer swarm formation.",
+    "Does not qualify bandwidth, power, schedules, Linux or all Gate 14 controls.",
+    "Explicit test configuration; not clean online catalog onboarding."
+  ],
+  "package": {
+    "artifact_root": "CommunityAI",
+    "entry_count": 5924,
+    "format": "zip",
+    "path": "communityai-desktop-windows.zip",
+    "platform": "Windows",
+    "preserves_executable_modes": false,
+    "preserves_internal_file_symlinks": false,
+    "schema_version": 1,
+    "sha256": "c95c1b1f94eba68a04ffc54b8dc17a49e425390eca053ef8f3996efdcc9dbf1d",
+    "size_bytes": 2692398749,
+    "binding": {
+      "path": ".gate13-runs/qwen-product-build-v6/desktop-metrics.json",
+      "sha256": "fe79b3477766ff6d28744553b7e49da45dda5190aebacdb6cb9378f47900a0b2"
+    },
+    "real_local_result_binding": {
+      "path": ".gate13-runs/qwen-product-implementation/local-packaged-v6/result.json",
+      "sha256": "7d8379681c985e1ea3371806cfdce187d911e6552cf1eed68850fdef46da3102"
+    }
+  },
+  "automatic_ready": {
+    "state": "running",
+    "model": "Qwen3.8 27B FP8 Dequant",
+    "block_indices": "59:60",
+    "remote_acknowledged": true
+  },
+  "restarted": {
+    "state": "running",
+    "model": "Qwen3.8 27B FP8 Dequant",
+    "block_indices": "59:60",
+    "remote_acknowledged": true
+  },
+  "bindings": [
+    {
+      "path": ".gate13-runs/qwen-product-implementation/sharing-packaged-v6/result.json",
+      "sha256": "8eaa4867be54c142186d9b240fd2af150e890780e9deca373b3c8262b331aa96"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-implementation/sharing-packaged-v6/node.log",
+      "sha256": "2acbc1d93636af2400de8379dd290fd7e352995e2ec61f1f8c01501f2ca477c5"
+    },
+    {
+      "path": ".gate13-runs/qwen-product-build-v6/desktop-metrics.json",
+      "sha256": "fe79b3477766ff6d28744553b7e49da45dda5190aebacdb6cb9378f47900a0b2"
+    }
+  ]
+}

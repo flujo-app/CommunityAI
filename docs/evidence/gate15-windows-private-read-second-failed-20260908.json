@@ -1,0 +1,105 @@
+{
+  "result": "failed",
+  "scope": "frozen-Windows-private-desktop-read-only-login-checkbox",
+  "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+  "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+  "bootstrap_sha256": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+  "replay_sha256": "3625e82647189800d40207acfac81dc5c4e6ea85d261821cfe9f9ab219ff1efa",
+  "uia_source_sha256": "4c263219299f6ac6523ef04ca70d5382b5ecaf7bd869ae42ce3fa1678561db58",
+  "non_elevated": true,
+  "run_entry_original_present": false,
+  "registry_mutation": false,
+  "visible_input_desktop_acceptance": false,
+  "gui_probe_deadline_seconds": 120,
+  "helper_containment_required": true,
+  "private_desktop_name": "CommunityAIReadOnly-499f9598228047739adf0eafddc474ef",
+  "input_desktop_before": "Default",
+  "error_type": "TimeoutError",
+  "cleanup_error_type": "AssertionError",
+  "owned_processes_stopped": true,
+  "private_desktop_helper": {
+    "result": "failed",
+    "error": "ElementNotAvailableException:Das Zielelement entspricht einer Benutzeroberfl\u00c3\u00a4che, die nicht mehr verf\u00c3\u00bcgbar ist (z. B., weil das \u00c3\u00bcbergeordnete Fenster geschlossen wurde).",
+    "input_before": "Default",
+    "input_after": "Default",
+    "input_desktop_unchanged": "True",
+    "desktop_handle_closed": "True",
+    "checkbox_state": "",
+    "job_assigned_before_resume": "True",
+    "job_active_processes_at_close": "0",
+    "job_handle_closed": "True",
+    "job_cleanup_verified": "True"
+  },
+  "run_entry_unchanged": true,
+  "private_credential_removed": true,
+  "owned_process_identities": [
+    [
+      23780,
+      1788858024.280406
+    ],
+    [
+      30012,
+      1788858018.4529374
+    ],
+    [
+      31332,
+      1788858041.1007996
+    ],
+    [
+      35312,
+      1788857989.1070948
+    ],
+    [
+      35648,
+      1788858000.8867
+    ],
+    [
+      42760,
+      1788857965.8523092
+    ],
+    [
+      45244,
+      1788857967.345239
+    ],
+    [
+      50988,
+      1788857965.8843665
+    ],
+    [
+      54820,
+      1788857982.9737396
+    ],
+    [
+      58824,
+      1788858012.5469985
+    ],
+    [
+      59608,
+      1788858036.046422
+    ],
+    [
+      59720,
+      1788857967.3484116
+    ],
+    [
+      65028,
+      1788858030.2094517
+    ],
+    [
+      65600,
+      1788857975.481908
+    ],
+    [
+      70516,
+      1788857975.4994905
+    ],
+    [
+      70948,
+      1788857994.9033594
+    ],
+    [
+      71756,
+      1788858006.7285523
+    ]
+  ]
+}

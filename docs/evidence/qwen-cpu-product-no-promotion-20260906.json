@@ -1,0 +1,65 @@
+{
+  "result": "failed",
+  "reason": "Two retained probes failed the unchanged minimum one token/minute policy",
+  "measurements": [
+    {
+      "first_token_seconds": 71.997,
+      "completion_tokens": 3,
+      "duration_seconds": 189.713
+    },
+    {
+      "first_token_seconds": 85.101,
+      "completion_tokens": 3,
+      "duration_seconds": 199.981
+    }
+  ],
+  "local_fallback_retained": true,
+  "signed_policy_weakened": false,
+  "run_id": "q38p-20260906-002616-580c",
+  "cleanup": {
+    "errors": [],
+    "remaining": {
+      "disks": [],
+      "firewall-rules": [],
+      "instances": []
+    },
+    "verified": true
+  },
+  "retry_source": {
+    "reason": "Live lightweight discovery reset eligibility on mixed signed-announcement generations",
+    "original_result": "local fallback passed; promotion did not complete",
+    "original_inventory": "ce538f6f6123231b3f3f3856601c947649154596badfc82666db12a21ee07db2",
+    "patched_files": {
+      "src/drift/utils/dht.py": "96b0cd8102cb9fc089d6f3497521752d6b686c77008d47ed4467f2380cca99c1",
+      "src/drift/node/model_selection.py": "f30f7360cdb1ffdf37a8edc5ba89aceac349a234ace93d8778e8eb8040f7905c"
+    },
+    "changed_policy_thresholds": false,
+    "time": 1788657331.406534,
+    "installed_hashes": {
+      "drift.utils.dht": "96b0cd8102cb9fc089d6f3497521752d6b686c77008d47ed4467f2380cca99c1",
+      "drift.node.model_selection": "f30f7360cdb1ffdf37a8edc5ba89aceac349a234ace93d8778e8eb8040f7905c"
+    }
+  },
+  "original_local_inference": {
+    "response": {
+      "id": "cmpl-486b6b2a7cde41a1b781d450",
+      "object": "text_completion",
+      "created": 1788654804,
+      "model": "Qwen3.5-0.8B-Local",
+      "choices": [
+        {
+          "index": 0,
+          "text": " Paris.\n",
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 46.573782101999996,
+    "observed_at_unix": 1788654804.7331543
+  }
+}

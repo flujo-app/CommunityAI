@@ -1,0 +1,1028 @@
+{
+  "date": "2026-09-07",
+  "feature_source_commit": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+  "scope": "Gate 14 bounded Windows/Linux resource acceptance",
+  "result": "passed",
+  "platforms": {
+    "windows": {
+      "scope": "native-packaged-Qwen-resource-controls",
+      "result": "passed",
+      "platform": "nt",
+      "device": "cuda:0",
+      "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+      "desktop_sha256": "abe961023597c70c095ebbabe067ec5077ba7b6451c4d68db18fc0144f587228",
+      "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+      "observations": [
+        {
+          "stage": "initial",
+          "step": 0,
+          "action": "observe",
+          "vram_percent": 100,
+          "processing_percent": 100,
+          "worker_state": "paused",
+          "policy_persisted": true,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 1,
+          "action": "limits",
+          "vram_percent": 25,
+          "processing_percent": 100,
+          "worker_state": "paused",
+          "policy_persisted": true,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 2,
+          "action": "start",
+          "worker_state": "running",
+          "block_indices": "60:61",
+          "max_vram_bytes": 2147401728,
+          "verified_download_bytes": 384054157,
+          "rpc_load": {
+            "block_indices": "60:61",
+            "tokens_per_request": 128,
+            "pattern": "repeated prefill in one admitted session, rewound before each request",
+            "median_seconds": 0.062000000005355105,
+            "finite_outputs": true,
+            "gpu_utilization": {
+              "scope": "whole GPU; other applications remain untouched",
+              "sample_interval_seconds": 0.2,
+              "workload_mean_percent": 46.329787234042556,
+              "baseline_sample_count": 15,
+              "baseline_mean_percent": 9,
+              "workload_sample_count": 94
+            },
+            "request_count": 325,
+            "mean_seconds": 0.0588553846157335,
+            "unique_output_hashes": [
+              "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+            ]
+          },
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 3,
+          "action": "limits",
+          "vram_percent": 25,
+          "processing_percent": 50,
+          "old_worker_tree_gone": true,
+          "worker_state": "running",
+          "policy_persisted": true,
+          "block_indices": "60:61",
+          "max_vram_bytes": 2147401728,
+          "verified_download_bytes": 384054157,
+          "rpc_load": {
+            "block_indices": "60:61",
+            "tokens_per_request": 128,
+            "pattern": "repeated prefill in one admitted session, rewound before each request",
+            "median_seconds": 0.09400000001187436,
+            "finite_outputs": true,
+            "gpu_utilization": {
+              "scope": "whole GPU; other applications remain untouched",
+              "sample_interval_seconds": 0.2,
+              "workload_mean_percent": 33.361702127659576,
+              "baseline_sample_count": 15,
+              "baseline_mean_percent": 8.733333333333333,
+              "workload_sample_count": 94
+            },
+            "request_count": 173,
+            "mean_seconds": 0.1095606936422793,
+            "unique_output_hashes": [
+              "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+            ]
+          },
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 4,
+          "action": "limits",
+          "vram_percent": 20,
+          "processing_percent": 25,
+          "old_worker_tree_gone": true,
+          "worker_state": "running",
+          "policy_persisted": true,
+          "block_indices": "60:61",
+          "max_vram_bytes": 1717921382,
+          "verified_download_bytes": 384054157,
+          "rpc_load": {
+            "block_indices": "60:61",
+            "tokens_per_request": 128,
+            "pattern": "repeated prefill in one admitted session, rewound before each request",
+            "median_seconds": 0.21899999998277053,
+            "finite_outputs": true,
+            "gpu_utilization": {
+              "scope": "whole GPU; other applications remain untouched",
+              "sample_interval_seconds": 0.2,
+              "workload_mean_percent": 23.412371134020617,
+              "baseline_sample_count": 15,
+              "baseline_mean_percent": 11.533333333333333,
+              "workload_sample_count": 97
+            },
+            "request_count": 77,
+            "mean_seconds": 0.2582857142861739,
+            "unique_output_hashes": [
+              "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+            ]
+          },
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 5,
+          "action": "limits",
+          "vram_percent": 1,
+          "processing_percent": 25,
+          "old_worker_tree_gone": true,
+          "worker_state": "paused",
+          "policy_persisted": true,
+          "low_memory_blocked_without_worker": true,
+          "resource_reason": "selected blocks exceed the VRAM budget; increase VRAM or contribute fewer blocks",
+          "no_restart_loop": true,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 6,
+          "action": "limits",
+          "vram_percent": 25,
+          "processing_percent": 100,
+          "worker_state": "running",
+          "policy_persisted": true,
+          "block_indices": "60:61",
+          "max_vram_bytes": 2147401728,
+          "verified_download_bytes": 384054157,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 7,
+          "action": "pause",
+          "old_worker_tree_gone": true,
+          "worker_state": "paused",
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 8,
+          "action": "start",
+          "worker_state": "running",
+          "block_indices": "60:61",
+          "max_vram_bytes": 2147401728,
+          "verified_download_bytes": 384054157,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 9,
+          "action": "pause",
+          "old_worker_tree_gone": true,
+          "worker_state": "paused",
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "restart",
+          "step": 0,
+          "action": "observe",
+          "vram_percent": 25,
+          "processing_percent": 100,
+          "worker_state": "paused",
+          "policy_persisted": true,
+          "local_inference_tokens": 3
+        }
+      ],
+      "initial_owned_tree_gone": true,
+      "restart_owned_tree_gone": true,
+      "same_Qwen_outputs_at_all_processing_limits": true,
+      "admission_guards": {
+        "result": "passed",
+        "packaged": true,
+        "scope": "resource-admission-guards",
+        "checks": {
+          "schedule": {
+            "state": "paused",
+            "pid": null,
+            "policy_admitted": true,
+            "policy_reason": null,
+            "resource_admitted": true,
+            "resource_reason": null,
+            "schedule_admitted": false,
+            "schedule_reason": "outside the configured contribution schedule",
+            "current_bandwidth_mbps": null,
+            "current_power_watts": null,
+            "max_disk_space_bytes": null,
+            "max_vram_bytes": 2147401728,
+            "start_rejected": true,
+            "local_tokens": 3
+          },
+          "power": {
+            "state": "paused",
+            "pid": null,
+            "policy_admitted": true,
+            "policy_reason": null,
+            "resource_admitted": false,
+            "resource_reason": "power usage 63.95 W exceeds the 1.00 W contribution budget",
+            "schedule_admitted": true,
+            "schedule_reason": null,
+            "current_bandwidth_mbps": null,
+            "current_power_watts": 63.955,
+            "max_disk_space_bytes": null,
+            "max_vram_bytes": 2147401728,
+            "start_rejected": true,
+            "local_tokens": 3
+          },
+          "bandwidth": {
+            "state": "paused",
+            "pid": null,
+            "policy_admitted": true,
+            "policy_reason": null,
+            "resource_admitted": false,
+            "resource_reason": "bandwidth usage 19.31 Mbps exceeds the 0.00 Mbps contribution budget",
+            "schedule_admitted": true,
+            "schedule_reason": null,
+            "current_bandwidth_mbps": 19.306816,
+            "current_power_watts": null,
+            "max_disk_space_bytes": null,
+            "max_vram_bytes": 2147401728,
+            "start_rejected": true,
+            "local_tokens": 3
+          },
+          "storage": {
+            "state": "paused",
+            "pid": null,
+            "policy_admitted": false,
+            "policy_reason": "Qwen3.8 27B FP8 Dequant: exact block artifact planning failed: ManifestError",
+            "resource_admitted": true,
+            "resource_reason": null,
+            "schedule_admitted": true,
+            "schedule_reason": null,
+            "current_bandwidth_mbps": null,
+            "current_power_watts": null,
+            "max_disk_space_bytes": null,
+            "max_vram_bytes": 2147401728,
+            "start_rejected": true,
+            "local_tokens": 3
+          }
+        },
+        "node_sha256": "158d4b8940b5e322a951819abbb31631a6cb059647a73e7a313a8c7f6e21955a",
+        "complete_gate14": false,
+        "limitations": [
+          "Power and bandwidth are sampled host telemetry pause guards, not OS hard caps or traffic shapers.",
+          "Tiny thresholds prove blocked admission; sustained load, overshoot and automatic resumption are separate checks.",
+          "Storage checks declared manifested artifact admission, not total disk-cache quota.",
+          "Control API admission test; literal desktop slider acceptance is recorded separately."
+        ],
+        "platform": "nt",
+        "node_stopped": true
+      },
+      "test_credential_removed": true,
+      "gui_stopped": true,
+      "ui": {
+        "initial": {
+          "scope": "packaged-resource-controls",
+          "frozen": true,
+          "result": "passed",
+          "steps": [
+            {
+              "index": 0,
+              "action": "observe",
+              "vram_percent": 100,
+              "processing_percent": 100,
+              "seconds": 21.031,
+              "action_seconds": 0.203,
+              "saved_vram": "100%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "100%",
+              "processing_display": "100%",
+              "message": "Sharing stays off until you start it. Use Pause sharing to stop completely."
+            },
+            {
+              "index": 1,
+              "action": "limits",
+              "vram_percent": 25,
+              "processing_percent": 100,
+              "seconds": 34.031,
+              "action_seconds": 0.203,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Sharing remains paused."
+            },
+            {
+              "index": 2,
+              "action": "start",
+              "seconds": 40.734,
+              "action_seconds": 0.203,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": true,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Sharing remains paused."
+            },
+            {
+              "index": 3,
+              "action": "limits",
+              "vram_percent": 25,
+              "processing_percent": 50,
+              "seconds": 83.187,
+              "action_seconds": 0.406,
+              "saved_vram": "25%",
+              "saved_processing_percent": 50.0,
+              "sharing_intent": true,
+              "vram_display": "25%",
+              "processing_display": "50%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 4,
+              "action": "limits",
+              "vram_percent": 20,
+              "processing_percent": 25,
+              "seconds": 130.515,
+              "action_seconds": 0.406,
+              "saved_vram": "20%",
+              "saved_processing_percent": 25.0,
+              "sharing_intent": true,
+              "vram_display": "20%",
+              "processing_display": "25%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 5,
+              "action": "limits",
+              "vram_percent": 1,
+              "processing_percent": 25,
+              "seconds": 182.109,
+              "action_seconds": 1.016,
+              "saved_vram": "1%",
+              "saved_processing_percent": 25.0,
+              "sharing_intent": true,
+              "vram_display": "1%",
+              "processing_display": "25%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 6,
+              "action": "limits",
+              "vram_percent": 25,
+              "processing_percent": 100,
+              "seconds": 208.718,
+              "action_seconds": 0.203,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": true,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 7,
+              "action": "pause",
+              "seconds": 228.218,
+              "action_seconds": 0.203,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 8,
+              "action": "start",
+              "seconds": 229.64,
+              "action_seconds": 0.203,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": true,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 9,
+              "action": "pause",
+              "seconds": 249.14,
+              "action_seconds": 0.203,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            }
+          ],
+          "opt_in_policy_dialog": true
+        },
+        "restart": {
+          "scope": "packaged-resource-controls",
+          "frozen": true,
+          "result": "passed",
+          "steps": [
+            {
+              "index": 0,
+              "action": "observe",
+              "vram_percent": 25,
+              "processing_percent": 100,
+              "seconds": 17.297,
+              "action_seconds": 0.203,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Sharing stays off until you start it. Use Pause sharing to stop completely."
+            }
+          ]
+        }
+      },
+      "package": {
+        "source_commit": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+        "source_tree": "474edae23a04c7be8d55241cab7fdbe8255b215b",
+        "install_archive": {
+          "artifact_root": "CommunityAI",
+          "entry_count": 5950,
+          "format": "zip",
+          "path": "communityai-desktop-windows.zip",
+          "platform": "Windows",
+          "preserves_executable_modes": false,
+          "preserves_internal_file_symlinks": false,
+          "schema_version": 1,
+          "sha256": "6a56cbc578f08e6fc56643767240c25a2bbf6ad8c16a79b575a970746c6a562e",
+          "size_bytes": 2694038865
+        }
+      },
+      "environment": "Windows 10 Pro 10.0.19045; non-elevated user; RTX 2070 SUPER 8 GiB"
+    },
+    "linux": {
+      "scope": "native-packaged-Qwen-resource-controls",
+      "result": "passed",
+      "platform": "posix",
+      "device": "cuda:0",
+      "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+      "desktop_sha256": "41383b5e995a2f200f7c96b0fdb8764b7d9edae89ba8efbba0a93d80d883f0aa",
+      "node_sha256": "313f8cbe8b1329b0025e98e64cd12eb2abbadb5e0083f5de5360d997b23d4aa0",
+      "observations": [
+        {
+          "stage": "initial",
+          "step": 0,
+          "action": "observe",
+          "vram_percent": 100,
+          "processing_percent": 100,
+          "worker_state": "paused",
+          "policy_persisted": true,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 1,
+          "action": "limits",
+          "vram_percent": 25,
+          "processing_percent": 100,
+          "worker_state": "paused",
+          "policy_persisted": true,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 2,
+          "action": "start",
+          "worker_state": "running",
+          "block_indices": "60:61",
+          "max_vram_bytes": 2147401728,
+          "verified_download_bytes": 384054157,
+          "rpc_load": {
+            "block_indices": "60:61",
+            "tokens_per_request": 128,
+            "pattern": "repeated prefill in one admitted session, rewound before each request",
+            "median_seconds": 0.04737583298992831,
+            "finite_outputs": true,
+            "gpu_utilization": {
+              "scope": "whole GPU; other applications remain untouched",
+              "sample_interval_seconds": 0.2,
+              "workload_mean_percent": 56.45263157894737,
+              "baseline_sample_count": 15,
+              "baseline_mean_percent": 13.866666666666667,
+              "workload_sample_count": 95
+            },
+            "request_count": 384,
+            "mean_seconds": 0.0486751173381208,
+            "unique_output_hashes": [
+              "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+            ]
+          },
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 3,
+          "action": "limits",
+          "vram_percent": 25,
+          "processing_percent": 50,
+          "old_worker_tree_gone": true,
+          "worker_state": "running",
+          "policy_persisted": true,
+          "block_indices": "60:61",
+          "max_vram_bytes": 2147401728,
+          "verified_download_bytes": 384054157,
+          "rpc_load": {
+            "block_indices": "60:61",
+            "tokens_per_request": 128,
+            "pattern": "repeated prefill in one admitted session, rewound before each request",
+            "median_seconds": 0.07881049650313798,
+            "finite_outputs": true,
+            "gpu_utilization": {
+              "scope": "whole GPU; other applications remain untouched",
+              "sample_interval_seconds": 0.2,
+              "workload_mean_percent": 36.126315789473686,
+              "baseline_sample_count": 15,
+              "baseline_mean_percent": 10.733333333333333,
+              "workload_sample_count": 95
+            },
+            "request_count": 238,
+            "mean_seconds": 0.08113217690312441,
+            "unique_output_hashes": [
+              "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+            ]
+          },
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 4,
+          "action": "limits",
+          "vram_percent": 20,
+          "processing_percent": 25,
+          "old_worker_tree_gone": true,
+          "worker_state": "running",
+          "policy_persisted": true,
+          "block_indices": "60:61",
+          "max_vram_bytes": 1717921382,
+          "verified_download_bytes": 384054157,
+          "rpc_load": {
+            "block_indices": "60:61",
+            "tokens_per_request": 128,
+            "pattern": "repeated prefill in one admitted session, rewound before each request",
+            "median_seconds": 0.2036138964976999,
+            "finite_outputs": true,
+            "gpu_utilization": {
+              "scope": "whole GPU; other applications remain untouched",
+              "sample_interval_seconds": 0.2,
+              "workload_mean_percent": 25.63157894736842,
+              "baseline_sample_count": 15,
+              "baseline_mean_percent": 12,
+              "workload_sample_count": 95
+            },
+            "request_count": 86,
+            "mean_seconds": 0.23134880359311652,
+            "unique_output_hashes": [
+              "b28f7f6a078101062dfac452f23f36d5414efb8cdd2b9e3330df0b01557d7ae0"
+            ]
+          },
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 5,
+          "action": "limits",
+          "vram_percent": 1,
+          "processing_percent": 25,
+          "old_worker_tree_gone": true,
+          "worker_state": "paused",
+          "policy_persisted": true,
+          "low_memory_blocked_without_worker": true,
+          "resource_reason": "selected blocks exceed the VRAM budget; increase VRAM or contribute fewer blocks",
+          "no_restart_loop": true,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 6,
+          "action": "limits",
+          "vram_percent": 25,
+          "processing_percent": 100,
+          "worker_state": "running",
+          "policy_persisted": true,
+          "block_indices": "60:61",
+          "max_vram_bytes": 2147401728,
+          "verified_download_bytes": 384054157,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 7,
+          "action": "pause",
+          "old_worker_tree_gone": true,
+          "worker_state": "paused",
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 8,
+          "action": "start",
+          "worker_state": "running",
+          "block_indices": "60:61",
+          "max_vram_bytes": 2147401728,
+          "verified_download_bytes": 384054157,
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "initial",
+          "step": 9,
+          "action": "pause",
+          "old_worker_tree_gone": true,
+          "worker_state": "paused",
+          "local_inference_tokens": 3
+        },
+        {
+          "stage": "restart",
+          "step": 0,
+          "action": "observe",
+          "vram_percent": 25,
+          "processing_percent": 100,
+          "worker_state": "paused",
+          "policy_persisted": true,
+          "local_inference_tokens": 3
+        }
+      ],
+      "initial_owned_tree_gone": true,
+      "restart_owned_tree_gone": true,
+      "same_Qwen_outputs_at_all_processing_limits": true,
+      "admission_guards": {
+        "result": "passed",
+        "packaged": true,
+        "scope": "resource-admission-guards",
+        "checks": {
+          "schedule": {
+            "state": "paused",
+            "pid": null,
+            "policy_admitted": true,
+            "policy_reason": null,
+            "resource_admitted": true,
+            "resource_reason": null,
+            "schedule_admitted": false,
+            "schedule_reason": "outside the configured contribution schedule",
+            "current_bandwidth_mbps": null,
+            "current_power_watts": null,
+            "max_disk_space_bytes": null,
+            "max_vram_bytes": 2147401728,
+            "start_rejected": true,
+            "local_tokens": 3
+          },
+          "power": {
+            "state": "paused",
+            "pid": null,
+            "policy_admitted": true,
+            "policy_reason": null,
+            "resource_admitted": false,
+            "resource_reason": "power usage 53.81 W exceeds the 1.00 W contribution budget",
+            "schedule_admitted": true,
+            "schedule_reason": null,
+            "current_bandwidth_mbps": null,
+            "current_power_watts": 53.808,
+            "max_disk_space_bytes": null,
+            "max_vram_bytes": 2147401728,
+            "start_rejected": true,
+            "local_tokens": 3
+          },
+          "bandwidth": {
+            "state": "paused",
+            "pid": null,
+            "policy_admitted": true,
+            "policy_reason": null,
+            "resource_admitted": false,
+            "resource_reason": "bandwidth usage 0.05 Mbps exceeds the 0.00 Mbps contribution budget",
+            "schedule_admitted": true,
+            "schedule_reason": null,
+            "current_bandwidth_mbps": 0.04778019502166443,
+            "current_power_watts": null,
+            "max_disk_space_bytes": null,
+            "max_vram_bytes": 2147401728,
+            "start_rejected": true,
+            "local_tokens": 3
+          },
+          "storage": {
+            "state": "paused",
+            "pid": null,
+            "policy_admitted": false,
+            "policy_reason": "Qwen3.8 27B FP8 Dequant: exact block artifact planning failed: ManifestError",
+            "resource_admitted": true,
+            "resource_reason": null,
+            "schedule_admitted": true,
+            "schedule_reason": null,
+            "current_bandwidth_mbps": null,
+            "current_power_watts": null,
+            "max_disk_space_bytes": null,
+            "max_vram_bytes": 2147401728,
+            "start_rejected": true,
+            "local_tokens": 3
+          }
+        },
+        "node_sha256": "313f8cbe8b1329b0025e98e64cd12eb2abbadb5e0083f5de5360d997b23d4aa0",
+        "complete_gate14": false,
+        "limitations": [
+          "Power and bandwidth are sampled host telemetry pause guards, not OS hard caps or traffic shapers.",
+          "Tiny thresholds prove blocked admission; sustained load, overshoot and automatic resumption are separate checks.",
+          "Storage checks declared manifested artifact admission, not total disk-cache quota.",
+          "Control API admission test; literal desktop slider acceptance is recorded separately."
+        ],
+        "platform": "posix",
+        "node_stopped": true
+      },
+      "test_credential_removed": true,
+      "gui_stopped": true,
+      "ui": {
+        "initial": {
+          "scope": "packaged-resource-controls",
+          "frozen": true,
+          "result": "passed",
+          "steps": [
+            {
+              "index": 0,
+              "action": "observe",
+              "vram_percent": 100,
+              "processing_percent": 100,
+              "seconds": 11.906,
+              "action_seconds": 0.2,
+              "saved_vram": "100%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "100%",
+              "processing_display": "100%",
+              "message": "Sharing stays off until you start it. Use Pause sharing to stop completely."
+            },
+            {
+              "index": 1,
+              "action": "limits",
+              "vram_percent": 25,
+              "processing_percent": 100,
+              "seconds": 59.505,
+              "action_seconds": 0.199,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Sharing remains paused."
+            },
+            {
+              "index": 2,
+              "action": "start",
+              "seconds": 64.521,
+              "action_seconds": 0.215,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": true,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Sharing remains paused."
+            },
+            {
+              "index": 3,
+              "action": "limits",
+              "vram_percent": 25,
+              "processing_percent": 50,
+              "seconds": 109.506,
+              "action_seconds": 1.6,
+              "saved_vram": "25%",
+              "saved_processing_percent": 50.0,
+              "sharing_intent": true,
+              "vram_display": "25%",
+              "processing_display": "50%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 4,
+              "action": "limits",
+              "vram_percent": 20,
+              "processing_percent": 25,
+              "seconds": 149.105,
+              "action_seconds": 1.199,
+              "saved_vram": "20%",
+              "saved_processing_percent": 25.0,
+              "sharing_intent": true,
+              "vram_display": "20%",
+              "processing_display": "25%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 5,
+              "action": "limits",
+              "vram_percent": 1,
+              "processing_percent": 25,
+              "seconds": 188.706,
+              "action_seconds": 1.2,
+              "saved_vram": "1%",
+              "saved_processing_percent": 25.0,
+              "sharing_intent": true,
+              "vram_display": "1%",
+              "processing_display": "25%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 6,
+              "action": "limits",
+              "vram_percent": 25,
+              "processing_percent": 100,
+              "seconds": 201.712,
+              "action_seconds": 0.207,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": true,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 7,
+              "action": "pause",
+              "seconds": 215.905,
+              "action_seconds": 1.399,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 8,
+              "action": "start",
+              "seconds": 216.905,
+              "action_seconds": 0.2,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": true,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            },
+            {
+              "index": 9,
+              "action": "pause",
+              "seconds": 230.905,
+              "action_seconds": 1.399,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Limits saved. Previously selected sharing resumed."
+            }
+          ],
+          "opt_in_policy_dialog": true
+        },
+        "restart": {
+          "scope": "packaged-resource-controls",
+          "frozen": true,
+          "result": "passed",
+          "steps": [
+            {
+              "index": 0,
+              "action": "observe",
+              "vram_percent": 25,
+              "processing_percent": 100,
+              "seconds": 11.256,
+              "action_seconds": 0.2,
+              "saved_vram": "25%",
+              "saved_processing_percent": 100.0,
+              "sharing_intent": false,
+              "vram_display": "25%",
+              "processing_display": "100%",
+              "message": "Sharing stays off until you start it. Use Pause sharing to stop completely."
+            }
+          ]
+        }
+      },
+      "package": {
+        "source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+        "source_tree": "436c44cc1aa0ae4f4e05fdefb7bf17caa39d9a5f",
+        "install_archive": {
+          "artifact_root": "CommunityAI",
+          "entry_count": 5957,
+          "format": "tar.gz",
+          "path": "communityai-desktop-linux.tar.gz",
+          "platform": "Linux",
+          "preserves_executable_modes": true,
+          "preserves_internal_file_symlinks": true,
+          "schema_version": 1,
+          "sha256": "e554d38e53fa75361b91c60da949f92d6f04c9067d493899e2c77846a9201bbc",
+          "size_bytes": 5007861125
+        }
+      },
+      "environment": "Debian 12 container on WSL2; ordinary UID 1000; X11/Xvfb; native Secret Service; RTX 2070 SUPER GPU passthrough. Archive built locally on Ubuntu 22.04 with Python 3.12.14; libxcb-shape0 installed and optional Triton JIT excluded from the frozen runtime.",
+      "supplemental_runtime_probes": {
+        "cpu": {
+          "scope": "synthetic-production-runtime-processing-budget",
+          "device": "cpu",
+          "complete_gate14": false,
+          "runs": [
+            {
+              "requested_percent": 100,
+              "measured_compute_duty_percent": 95.08319450571467,
+              "wall_seconds": 4.016823772995849,
+              "compute_seconds": 3.8193243610294303,
+              "steps": 137
+            },
+            {
+              "requested_percent": 50,
+              "measured_compute_duty_percent": 48.2654796181736,
+              "wall_seconds": 4.003402884001844,
+              "compute_seconds": 1.932261603011284,
+              "steps": 69
+            },
+            {
+              "requested_percent": 25,
+              "measured_compute_duty_percent": 24.566197332666366,
+              "wall_seconds": 4.0159086149942596,
+              "compute_seconds": 0.9865560350590385,
+              "steps": 36
+            }
+          ],
+          "result": "passed",
+          "limitations": [
+            "Compute duty cycle, not an instantaneous whole-device utilization guarantee",
+            "No Qwen model, download, cold startup or final-package lifecycle exercised",
+            "Local inference, downloads and other applications are outside the sharing compute budget"
+          ]
+        },
+        "gpu": {
+          "scope": "synthetic-production-runtime-processing-budget",
+          "device": "cuda:0",
+          "complete_gate14": false,
+          "runs": [
+            {
+              "requested_percent": 100,
+              "measured_compute_duty_percent": 96.55541056562619,
+              "wall_seconds": 4.020132609002758,
+              "compute_seconds": 3.8816555459052324,
+              "steps": 153
+            },
+            {
+              "requested_percent": 50,
+              "measured_compute_duty_percent": 48.83378123868669,
+              "wall_seconds": 4.0422293479932705,
+              "compute_seconds": 1.973973436965025,
+              "steps": 78
+            },
+            {
+              "requested_percent": 25,
+              "measured_compute_duty_percent": 24.487676398175363,
+              "wall_seconds": 4.0381050940050045,
+              "compute_seconds": 0.9888381080381805,
+              "steps": 39
+            }
+          ],
+          "hardware": "NVIDIA GeForce RTX 2070 SUPER",
+          "memory_allocator": {
+            "cap_bytes": 268435456,
+            "under_limit_succeeded": true,
+            "over_limit_rejected": true,
+            "device_total_bytes": 8589606912
+          },
+          "result": "passed",
+          "limitations": [
+            "Compute duty cycle, not an instantaneous whole-device utilization guarantee",
+            "No Qwen model, download, cold startup or final-package lifecycle exercised",
+            "Local inference, downloads and other applications are outside the sharing compute budget"
+          ]
+        }
+      }
+    }
+  },
+  "source_comparison": {
+    "windows_commit": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+    "linux_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+    "linux_parents": [
+      "d2608aed6e89b82c34c6f769341559103c517d19"
+    ],
+    "changed_paths": [
+      ".github/workflows/desktop.yaml",
+      "desktop/build_desktop.py",
+      "desktop/installers/README.md",
+      "desktop/installers/build_deb.py",
+      "docs/NODE_CONFIG_V1.md",
+      "docs/evidence/gate14-20260907-codeql-triage.md",
+      "docs/evidence/gate15-20260907-frozen-windows-installer.json",
+      "scripts/qualify_qwen_resource_desktop.py"
+    ],
+    "application_and_catalog_inputs_identical": true,
+    "linux_packaging_changes": "Declare libxcb-shape0 and exclude optional Triton JIT; add X11 CI smoke and bounded qualification cleanup."
+  },
+  "limitations": [
+    "Real Qwen load uses one assigned block, repeated 128-token prefill in one admitted session; full-route/conversation evidence belongs to Q3.8.",
+    "Processing limits pace sharing compute, with brief bursts; whole-GPU samples include other applications.",
+    "VRAM bounds cover the contribution allocator; driver/context overhead and local inference are separate.",
+    "Power and bandwidth use sampled host pause guards; these are not OS traffic shapers or hard power caps.",
+    "Linux graphical acceptance used Xvfb in a Debian/WSL2 container, not a physical Ubuntu desktop or Wayland session.",
+    "Installer lifecycle, broader hardware coverage and the release canary have separate acceptance boundaries."
+  ]
+}

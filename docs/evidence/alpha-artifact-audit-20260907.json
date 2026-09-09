@@ -1,0 +1,130 @@
+{
+  "recorded_at_utc": "2026-09-08T00:55:19.206139+00:00",
+  "scope": "qualified alpha candidates and independent current PR audit; no publication",
+  "reviewed_head": "e81103663c0c598cdaf43706726fe2a65b4357b6",
+  "result": "passed-with-distribution-blocker",
+  "installers": [
+    {
+      "path": ".gate13-runs/gate14-public-windows-installers/communityai-0.1.0-alpha.20260907.2-windows-setup.exe",
+      "sha256": "c4e8df599f3a6118eab5718a5ad50655b0e07fd6c270aacf7dbb0b3065c5c399",
+      "size_bytes": 2519046440,
+      "platform": "windows",
+      "version": "0.1.0-alpha.20260907.2",
+      "github_release_asset_eligible": false,
+      "publisher_signed": false,
+      "lifecycle_evidence": {
+        "path": "docs/evidence/gate15-20260907-frozen-windows-installer.json",
+        "sha256": "ed422c5a313a3e5330ad236d7e8baed9724ccb552b584cbcd81af24eeb621381",
+        "size_bytes": 2405
+      },
+      "runtime_source_commit": "76b6d84fc52342af4fd2315926b187aaa36b1378",
+      "publisher": "Mario Andreschak"
+    },
+    {
+      "path": ".gate13-runs/gate14-public-linux-installers/communityai_0.1.0~alpha.20260907.4_amd64.deb",
+      "sha256": "a2cc0548cd51f98ed7a9c208be18b53a701a9317cbc63293d4bf7d1e14151517",
+      "size_bytes": 3781591484,
+      "platform": "linux",
+      "version": "0.1.0~alpha.20260907.4",
+      "github_release_asset_eligible": false,
+      "publisher_signed": false,
+      "lifecycle_evidence": {
+        "path": "docs/evidence/gate15-20260907-frozen-debian-installer.json",
+        "sha256": "d721d22f9c03fe0f2020061c13fca12defa39ff491094e7df455a8a0a3848784",
+        "size_bytes": 3640
+      },
+      "runtime_source_commit": "bf67f0d68df067f43797b4cd47a98f1fea49b2bc",
+      "installer_control_source_commit": "61ab7b1df61c82c5a306cefaf4e14b56356f5feb",
+      "maintainer": "Mario Andreschak <flujo.com.co@gmail.com>"
+    }
+  ],
+  "github_release_asset_limit_bytes_exclusive": 2147483648,
+  "github_release_limit_source": "https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#storage-and-bandwidth-quotas",
+  "ci": {
+    "run_id": 34171118914,
+    "head_sha": "e81103663c0c598cdaf43706726fe2a65b4357b6",
+    "conclusion": "success",
+    "artifact_provenance": [
+      {
+        "path": ".gate13-runs/release-audit-20260907/ci-windows/provenance.json",
+        "sha256": "6666ddaebcd185220a2ebf0b7a892840471a512de59fc8fd6c8e616b870f3b80",
+        "size_bytes": 1220945,
+        "platform": "windows",
+        "source_commit": "b4ed322d86e5019d526ee7f5c6c2ccd87a9a9be2",
+        "source_tree": "0c4032b09b85c8b71b74447d7362a1e47818fd9a",
+        "archive": {
+          "artifact_root": "CommunityAI",
+          "entry_count": 5851,
+          "format": "zip",
+          "path": "communityai-desktop-windows.zip",
+          "platform": "Windows",
+          "preserves_executable_modes": false,
+          "preserves_internal_file_symlinks": false,
+          "schema_version": 1,
+          "sha256": "c9e7269616d2db17185722fd5b5e2d89d78ede96bea313e612aee46035397cda",
+          "size_bytes": 2690877285
+        },
+        "catalog_digest": "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80"
+      },
+      {
+        "path": ".gate13-runs/release-audit-20260907/ci-linux/provenance.json",
+        "sha256": "1e3410ce09d81944f210b5e2d01a86eb2a0b80616f05bb634408909a74c18219",
+        "size_bytes": 1283127,
+        "platform": "linux",
+        "source_commit": "b4ed322d86e5019d526ee7f5c6c2ccd87a9a9be2",
+        "source_tree": "0c4032b09b85c8b71b74447d7362a1e47818fd9a",
+        "archive": {
+          "artifact_root": "CommunityAI",
+          "entry_count": 6118,
+          "format": "tar.gz",
+          "path": "communityai-desktop-linux.tar.gz",
+          "platform": "Linux",
+          "preserves_executable_modes": true,
+          "preserves_internal_file_symlinks": true,
+          "schema_version": 1,
+          "sha256": "7991b90984fb4900c482fd6487b3e4e658027e1770171878bc1f2d551fca7238",
+          "size_bytes": 3109948549
+        },
+        "catalog_digest": "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80"
+      }
+    ],
+    "merge_commit_delta_from_reviewed_head": [
+      "README.md"
+    ]
+  },
+  "limitations": [
+    "Current CI artifacts are separate engineering rebuilds; existing installed/runtime qualification does not transfer by filename.",
+    "Both qualified installers exceed GitHub Releases single-asset size limit; permanent direct-download HTTPS host is not configured.",
+    "No package upload, release creation, paid service, or catalog mutation occurred."
+  ],
+  "qualified_runtime_application_delta_from_reviewed_head": [],
+  "source_comparison_paths": [
+    "desktop/src",
+    "src",
+    "public-alpha",
+    "manifests"
+  ],
+  "cloud_storage_read_only_preflight": {
+    "project": "community-ai-506321",
+    "result": "authentication-refresh-failed",
+    "reason": "Reauthentication required; non-interactive gcloud cannot prompt. No buckets or IAM permissions verified."
+  },
+  "preferred_distribution_candidate": {
+    "provider": "Cloudflare R2",
+    "storage_class": "Standard",
+    "installer_total_bytes": 6300637924,
+    "included_storage_gb_month": 10,
+    "included_class_a_requests_per_month": 1000000,
+    "included_class_b_requests_per_month": 10000000,
+    "direct_egress_charge": 0,
+    "single_part_upload_limit_bytes": 5368709120,
+    "public_origin": "custom domain required for production recommendation; not configured",
+    "existing_account_or_remaining_allowance_verified": false,
+    "source_urls": [
+      "https://developers.cloudflare.com/r2/pricing/",
+      "https://developers.cloudflare.com/r2/platform/limits/",
+      "https://developers.cloudflare.com/r2/buckets/public-buckets/"
+    ],
+    "decision": "candidate only; no service enabled, bucket created, domain configured or artifact uploaded"
+  }
+}

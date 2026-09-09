@@ -12,6 +12,16 @@ register one physical or virtual machine under multiple opaque machine identitie
 Deferred macOS qualification is a separate operation that requires distinct
 `macos-cpu` and `macos-mps` hosts and does not gate the public alpha.
 
+## GCP login in this workspace
+
+The owner completes Google Cloud authentication in a specific browser profile.
+**Agents must not run `gcloud auth login`, open a replacement login flow, or
+restart a pending login session.** Verify access with a read-only provider query.
+If reauthentication is required, let the owner handle sign-in, then recheck access.
+Overlapping browser flows can produce a callback state mismatch. Existing test
+controllers may resume with refreshed credentials; inspect their progress before
+restarting any harness or provisioning another run.
+
 ## Combined-cloud cost guard
 
 Run `scripts/qualification_cost_guard.py` before any new GCP or Fly resource is

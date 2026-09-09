@@ -15,6 +15,7 @@ from drift.node.discovery import (
     ModelCoverageDiscovery,
     PeerCache,
     _connected_peer_addresses,
+    _default_dht_factory,
 )
 from drift.protocol_identity import NodeIdentity, create_intent_lease, create_route_demand
 
@@ -24,6 +25,33 @@ DNS_PEER = "/dns4/seed.example.com/tcp/31337/p2p/Qm" + "B" * 44
 PRIVATE_PEER = "/ip4/10.0.0.4/tcp/31337/p2p/Qm" + "C" * 44
 INVALID_PEER_ID = "/ip4/8.8.4.4/tcp/31337/p2p/" + "0" * 20
 CACHE_SCOPE = ("shipped-seed",)
+
+
+def test_stalled_dht_startup_has_a_parent_timeout_and_cleans_the_child(monkeypatch):
+    import hivemind
+
+    instances = []
+
+    class StalledDHT:
+        def __init__(self, *, start, **kwargs):
+            instances.append(self)
+            self.stopped = False
+            if start:
+                self.run_in_background()
+
+        def run_in_background(self, *, timeout=None):
+            if timeout is None:
+                raise AssertionError("DHT constructor waits forever without a parent timeout")
+            assert timeout == 0.01
+            raise TimeoutError("startup readiness never arrived")
+
+        def shutdown(self):
+            self.stopped = True
+
+    monkeypatch.setattr(hivemind, "DHT", StalledDHT)
+    with pytest.raises(TimeoutError, match="readiness never arrived"):
+        _default_dht_factory(start=True, startup_timeout=0.01, initial_peers=[])
+    assert instances[0].stopped
 
 
 class FakeDHT:
@@ -93,6 +121,24 @@ def test_intent_publication_requires_a_remote_dht_store(tmp_path):
     assert call["exclude_self"] is True
     assert call["expiration_time"] == record.payload["expires_at_ms"] / 1000
     assert call["value"] == record.to_dict()
+
+    observed_dht = SimpleNamespace(
+        get=lambda *args, **kwargs: SimpleNamespace(
+            value={
+                record.key_id: SimpleNamespace(value=record.to_dict()),
+                "wrong-key": SimpleNamespace(value=record.to_dict()),
+                "malformed": SimpleNamespace(value={"payload": "not a signed record"}),
+            }
+        )
+    )
+    state = discovery._states[manifest.digest_id]
+    reservations = discovery._read_intents(state, observed_dht)
+    assert len(reservations) == 1
+    assert reservations[0]["peer_id"] == identity.peer_id.to_base58()
+    assert reservations[0]["start_block"] == 1
+    health = {"status": "incomplete", "reservations": [dict(reservations[0], expires_at=now - 1)]}
+    discovery._set_success(state, health)
+    assert discovery.snapshot(manifest.digest_id)["reservations"] == []
 
     dht.store_result = False
     record = create_intent_lease(
@@ -345,6 +391,43 @@ def test_discovery_shutdown_calls_each_dht_only_once_across_thread_race():
     discovery.close()
 
     assert dht.shutdown_calls == 1
+
+
+def test_discovery_rejoins_seeds_when_live_dht_loses_all_routing_peers():
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    disconnected, replacement = FakeDHT(), FakeDHT()
+    disconnected.run_coroutine = lambda callback: 0
+    replacement.run_coroutine = lambda callback: 1
+    created = []
+    refreshed = threading.Event()
+
+    def factory(**kwargs):
+        assert kwargs["initial_peers"] == ["seed"]
+        current = disconnected if not created else replacement
+        created.append(current)
+        return current
+
+    def lookup(dht, uids, **kwargs):
+        if dht is replacement:
+            refreshed.set()
+        return [RemoteModuleInfo(uid, {}) for uid in uids]
+
+    discovery = ModelCoverageDiscovery(
+        [CoverageTarget(manifest, ("seed",))],
+        update_period=0.01,
+        startup_timeout=1,
+        dht_factory=factory,
+        lookup=lookup,
+        peer_snapshot=lambda dht: (),
+    )
+    try:
+        discovery.start()
+        assert refreshed.wait(timeout=2)
+        assert created == [disconnected, replacement]
+        assert disconnected.shutdown_calls == 1
+    finally:
+        discovery.close()
+    assert replacement.shutdown_calls == 1
 
 
 def _route_demand_record(identity, manifest, *, now, attempts, successes, sequence):

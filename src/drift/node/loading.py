@@ -8,11 +8,53 @@ from typing import Callable, Optional, Sequence
 
 from hivemind.utils.logging import get_logger
 
-from drift.model_manifest import ManifestArtifactVerifier, ModelManifest
+from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest
 from drift.node.model_manager import ModelRuntime
 from drift.node.route_health import sequence_manager_route_health
 
 logger = get_logger(__name__)
+
+
+def make_text_peer_loader(manifest, *, initial_peers, revocation_files=(), request_timeout=30):
+    """Build a consumer with no tokenizer, model tensors or weight downloads."""
+
+    def load():
+        from drift.protocol_identity import RevocationStore
+        from drift.text_mesh import TextPeerClient
+
+        client = TextPeerClient(
+            manifest,
+            initial_peers=initial_peers,
+            revocations=RevocationStore.from_files(revocation_files),
+            request_timeout=request_timeout,
+        )
+        return ModelRuntime(model=None, tokenizer=None, text_client=client, close=client.close)
+
+    return load
+
+
+def validate_manifest_execution(manifest: ModelManifest, execution: str) -> None:
+    """Reject catalog architectures absent from this runtime without fetching weights."""
+    from transformers.models.auto.modeling_auto import (
+        MODEL_FOR_CAUSAL_LM_MAPPING_NAMES,
+        MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES,
+    )
+
+    from drift.utils.auto_config import _CLASS_MAPPING
+
+    if execution == "local":
+        from drift.node.local_inference import local_weight_bytes
+
+        local_weight_bytes(manifest)
+        mappings = [*MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values(), *MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values()]
+        architecture = manifest.model.architecture
+    else:
+        mappings = [MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.get(model_type, ()) for model_type in _CLASS_MAPPING]
+        # Supported multimodal checkpoints use the registered text-only adapter.
+        architecture = manifest.model.architecture.replace("ForConditionalGeneration", "ForCausalLM")
+    supported = {name for value in mappings for name in ((value,) if isinstance(value, str) else value)}
+    if architecture not in supported:
+        raise ManifestError(f"This runtime cannot execute {manifest.model.architecture!r} in {execution} mode")
 
 
 def make_manifest_loader(

@@ -1,0 +1,11 @@
+{
+  "node": ".gate13-runs/qwen-product-build-v9/CommunityAI/node/CommunityAI-Node.exe",
+  "node_sha256": "981e0a713deeb341ac3c7dfb2359c28b965935461659cc63942ca1613654bb45",
+  "package_provenance": ".gate13-runs/qwen-product-build-v9/provenance.json",
+  "local_cache": ".gate13-runs/qwen-product-model-cache",
+  "remote_cache": ".gate13-runs/qwen-product-client-acquisition-v7/cache",
+  "cache_provenance": ".gate13-runs/qwen-product-client-acquisition-v7/result.json",
+  "cloud_config": "config/qwen_mixed_inference.json",
+  "device": "cuda:0",
+  "port": 18089
+}

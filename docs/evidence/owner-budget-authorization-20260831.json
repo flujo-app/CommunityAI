@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "scope": "combined-cloud-budget-epoch-authorization",
+  "recorded_at": "2026-08-31",
+  "timezone": "America/Bogota",
+  "result": "authorized",
+  "owner_decision": {
+    "combined_cloud_ceiling_usd": "500.00",
+    "authorized_on": "2026-08-31",
+    "providers": [
+      "GCP",
+      "Fly"
+    ],
+    "purpose": "CommunityAI public inference alpha critical-path infrastructure and qualification"
+  },
+  "epoch_state_at_authorization": {
+    "prior_ceiling_usd": "100.00",
+    "committed_maximum_usd": "52.00",
+    "unreserved_maximum_usd": "448.00",
+    "committed_run": "gate13-20260831-a"
+  },
+  "controls_unchanged": {
+    "exact_source_bound_authorization_per_paid_run": true,
+    "fresh_native_auth_and_fail_closed_preflight_before_create": true,
+    "exact_run_scoped_resources_only": true,
+    "cleanup_and_absence_proof_required": true,
+    "protected_bootstrap_must_remain": "communityai-bootstrap-1",
+    "observed_cost_tracking_required": true
+  },
+  "prohibited": {
+    "credits_or_payments_work": true,
+    "macos_work": true
+  },
+  "claims": {
+    "specific_provider_run_authorized_by_this_record": false,
+    "budget_is_observed_spend": false,
+    "prior_committed_maximum_released": false
+  }
+}

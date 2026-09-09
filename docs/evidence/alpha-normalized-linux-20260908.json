@@ -1,0 +1,523 @@
+{
+  "acceptance_environment": {
+    "cpus": 2,
+    "dependencies": "Official Ubuntu python3 and sudo installed with --no-install-recommends before network disconnect",
+    "distribution": "Ubuntu22.04",
+    "gpu_access": "CUDA device0 for tiny native operations only",
+    "memory_bytes": 3221225472,
+    "offline_network_interfaces": {},
+    "ordinary_uid": 1000,
+    "source_and_release_mounts_readonly": true,
+    "sudo_fixture": "NOPASSWD rule for qualifier inside this disposable container only"
+  },
+  "build": {
+    "build_network": "none",
+    "bundled_offscreen_contract_checks_passed": true,
+    "cpus": 2,
+    "independent_release_verification_passed": true,
+    "memory_bytes": 6442450944,
+    "result": {
+      "exit_code": 0,
+      "full_runtime_qualification": false,
+      "output": "/environment/release-linux-v3",
+      "phase": "complete",
+      "recorded_at_utc": "2026-09-08T23:48:58.108366+00:00",
+      "result": "passed",
+      "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e"
+    }
+  },
+  "build_image_id": "sha256:0042575ad9d57e21900044ed3227ca15bb5017b033d84781d6a57f16e9db51a3",
+  "cleanup": {
+    "acceptance_container": "retained idle and disconnected for separate online acceptance",
+    "app_or_package_processes_remaining": 0,
+    "build_containers": "retained stopped; new output retained in named volume",
+    "installed_runtime_removed": true,
+    "native_check_container_removed": true,
+    "previous_bundles_or_artifacts_changed": false
+  },
+  "frozen_native_checks": {
+    "checks": [
+      {
+        "arguments": [
+          "--native-self-test"
+        ],
+        "contract": {
+          "application": "CommunityAI-Native-Runtime",
+          "cpu_matmul_passed": true,
+          "cuda_build": "12.4",
+          "cuda_required": false,
+          "cuda_test_performed": false,
+          "frozen": true,
+          "model_loading_performed": false,
+          "network_join_performed": false,
+          "schema_version": 1,
+          "torch": "2.6.0+cu124"
+        },
+        "elapsed_seconds": 1.961,
+        "exit_code": 0,
+        "name": "frozen-native-cpu",
+        "passed": true,
+        "stderr": "",
+        "stdout": "{\"application\": \"CommunityAI-Native-Runtime\", \"cpu_matmul_passed\": true, \"cuda_build\": \"12.4\", \"cuda_required\": false, \"cuda_test_performed\": false, \"frozen\": true, \"model_loading_performed\": false, \"network_join_performed\": false, \"schema_version\": 1, \"torch\": \"2.6.0+cu124\"}\n"
+      },
+      {
+        "arguments": [
+          "--native-self-test",
+          "--require-cuda"
+        ],
+        "contract": {
+          "application": "CommunityAI-Native-Runtime",
+          "bitsandbytes_native_library": "libbitsandbytes_cuda124.so",
+          "bitsandbytes_nf4_maximum_absolute_error": 0.14501953125,
+          "bitsandbytes_nf4_roundtrip_passed": true,
+          "cpu_matmul_passed": true,
+          "cuda_build": "12.4",
+          "cuda_linalg_passed": true,
+          "cuda_matmul_passed": true,
+          "cuda_required": true,
+          "cuda_test_performed": true,
+          "frozen": true,
+          "model_loading_performed": false,
+          "network_join_performed": false,
+          "schema_version": 1,
+          "torch": "2.6.0+cu124"
+        },
+        "elapsed_seconds": 2.275,
+        "exit_code": 0,
+        "name": "frozen-native-cuda",
+        "passed": true,
+        "stderr": "",
+        "stdout": "{\"application\": \"CommunityAI-Native-Runtime\", \"bitsandbytes_native_library\": \"libbitsandbytes_cuda124.so\", \"bitsandbytes_nf4_maximum_absolute_error\": 0.14501953125, \"bitsandbytes_nf4_roundtrip_passed\": true, \"cpu_matmul_passed\": true, \"cuda_build\": \"12.4\", \"cuda_linalg_passed\": true, \"cuda_matmul_passed\": true, \"cuda_required\": true, \"cuda_test_performed\": true, \"frozen\": true, \"model_loading_performed\": false, \"network_join_performed\": false, \"schema_version\": 1, \"torch\": \"2.6.0+cu124\"}\n"
+      },
+      {
+        "arguments": [
+          "server",
+          "--self-test"
+        ],
+        "contract": {
+          "application": "CommunityAI-Worker",
+          "entrypoint": "server",
+          "frozen": true,
+          "model_loading_performed": false,
+          "network_join_performed": false,
+          "process_lifetime_guard_armed": true,
+          "schema_version": 1,
+          "server_class": "Server",
+          "throughput_mode": "dry_run",
+          "training_rpcs_enabled": false
+        },
+        "elapsed_seconds": 6.812,
+        "exit_code": 0,
+        "name": "frozen-server-contract",
+        "passed": true,
+        "stderr": "Sep 08 23:50:06.759 [INFO] p2pd daemons will now receive SIGKILL when the process that spawned them dies (PR_SET_PDEATHSIG)\n",
+        "stdout": "{\"application\": \"CommunityAI-Worker\", \"entrypoint\": \"server\", \"frozen\": true, \"model_loading_performed\": false, \"network_join_performed\": false, \"process_lifetime_guard_armed\": true, \"schema_version\": 1, \"server_class\": \"Server\", \"throughput_mode\": \"dry_run\", \"training_rpcs_enabled\": false}\n"
+      }
+    ],
+    "full_runtime_qualification": false,
+    "gpu_access": "all; required-CUDA check selects device 0",
+    "models_loaded": false,
+    "network": "none",
+    "node_executable_sha256": "1e19876ea4f2d7c85336def4a11350c2d8d3b04689c6fa95657f2ecb77746ab7",
+    "provenance_sha256": "3f8ac9de9f61f663b1c7573a1200aa4c26e5d0e18aa38d0f004d96e95e341db9",
+    "result": "passed",
+    "schema_version": 1,
+    "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e"
+  },
+  "installer": {
+    "build_seconds": 514.229,
+    "download_bytes_saved": 1479162696,
+    "filename": "communityai_0.1.0~alpha.20260908.1_amd64.deb",
+    "host_copy_verified": true,
+    "host_copy_verified_at_utc": "2026-09-09T00:03:16.0689473Z",
+    "installed_size_kib": 5040152,
+    "previous_installer_bytes": 3781591484,
+    "sha256": "714b9a7ac9121f3cf3b85f9677d541b488c2f00020bc6e1ce73ba7081f851576",
+    "size_bytes": 2302428788,
+    "version": "0.1.0~alpha.20260908.1"
+  },
+  "limitations": [
+    "No model load, generation, public peer join, cloud mutation or public canary was performed.",
+    "Installed application checks exercised frozen native and server self-test modes; this is not a full Gate15 GUI/worker lifecycle replay.",
+    "External user-state sentinel retention was checked; no native credential store was created or changed.",
+    "Actual Linux online download/sudo/APT acceptance is separate and remains pending in this record.",
+    "This replay covers Ubuntu22.04 under the stated WSL2/Docker host; it does not claim a new Debian12 or bare-metal OS replay.",
+    "Signing remains deferred until after alpha."
+  ],
+  "normalization": {
+    "after": {
+      "logical_file_bytes": 4960280412,
+      "regular_file_count": 4616,
+      "symlink_count": 9,
+      "unique_file_bytes": 4960280412,
+      "unique_file_count": 4616
+    },
+    "before": {
+      "logical_file_bytes": 5185185572,
+      "regular_file_count": 4625,
+      "symlink_count": 9,
+      "unique_file_bytes": 5185185572,
+      "unique_file_count": 4625
+    },
+    "bitsandbytes_cuda_version": "124",
+    "hardlinked_native_libraries": [],
+    "platform": "Linux",
+    "removed_bitsandbytes_variants": [
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda117.so",
+        "size_bytes": 20878944
+      },
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda118.so",
+        "size_bytes": 26498656
+      },
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda120.so",
+        "size_bytes": 25785952
+      },
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda121.so",
+        "size_bytes": 25794144
+      },
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda122.so",
+        "size_bytes": 25814856
+      },
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda123.so",
+        "size_bytes": 25855816
+      },
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda125.so",
+        "size_bytes": 25185760
+      },
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda126.so",
+        "size_bytes": 25258352
+      },
+      {
+        "path": "_internal/bitsandbytes/libbitsandbytes_cuda128.so",
+        "size_bytes": 23832680
+      }
+    ],
+    "schema_version": 1,
+    "scope": "frozen-node-runtime",
+    "torch_version": "2.6.0+cu124"
+  },
+  "offline_acceptance": {
+    "checks": [
+      {
+        "elapsed_seconds": 132.119,
+        "exit_code": 0,
+        "name": "install"
+      },
+      {
+        "contract": {
+          "application": "CommunityAI-Native-Runtime",
+          "cpu_matmul_passed": true,
+          "cuda_build": "12.4",
+          "cuda_required": false,
+          "cuda_test_performed": false,
+          "frozen": true,
+          "model_loading_performed": false,
+          "network_join_performed": false,
+          "schema_version": 1,
+          "torch": "2.6.0+cu124"
+        },
+        "elapsed_seconds": 3.265,
+        "exit_code": 0,
+        "name": "installed-native-cpu",
+        "ordinary_uid": 1000
+      },
+      {
+        "contract": {
+          "application": "CommunityAI-Native-Runtime",
+          "bitsandbytes_native_library": "libbitsandbytes_cuda124.so",
+          "bitsandbytes_nf4_maximum_absolute_error": 0.14501953125,
+          "bitsandbytes_nf4_roundtrip_passed": true,
+          "cpu_matmul_passed": true,
+          "cuda_build": "12.4",
+          "cuda_linalg_passed": true,
+          "cuda_matmul_passed": true,
+          "cuda_required": true,
+          "cuda_test_performed": true,
+          "frozen": true,
+          "model_loading_performed": false,
+          "network_join_performed": false,
+          "schema_version": 1,
+          "torch": "2.6.0+cu124"
+        },
+        "elapsed_seconds": 3.902,
+        "exit_code": 0,
+        "name": "installed-native-cuda",
+        "ordinary_uid": 1000
+      },
+      {
+        "contract": {
+          "application": "CommunityAI-Worker",
+          "entrypoint": "server",
+          "frozen": true,
+          "model_loading_performed": false,
+          "network_join_performed": false,
+          "process_lifetime_guard_armed": true,
+          "schema_version": 1,
+          "server_class": "Server",
+          "throughput_mode": "dry_run",
+          "training_rpcs_enabled": false
+        },
+        "elapsed_seconds": 7.355,
+        "exit_code": 0,
+        "name": "installed-server-contract",
+        "ordinary_uid": 1000
+      },
+      {
+        "elapsed_seconds": 0.767,
+        "exit_code": 0,
+        "name": "remove"
+      }
+    ],
+    "credential_store_touched": false,
+    "external_user_state_sentinel_preserved": true,
+    "full_gate15_replay": false,
+    "gui_launch_performed": false,
+    "installed_inventory": {
+      "every_file_sha256_and_mode_matched": true,
+      "regular_files": 4900,
+      "symlinks": [
+        {
+          "path": "_internal/libQt6Core.so.6",
+          "target": "PySide6/Qt/lib/libQt6Core.so.6"
+        },
+        {
+          "path": "_internal/libQt6DBus.so.6",
+          "target": "PySide6/Qt/lib/libQt6DBus.so.6"
+        },
+        {
+          "path": "_internal/libQt6EglFSDeviceIntegration.so.6",
+          "target": "PySide6/Qt/lib/libQt6EglFSDeviceIntegration.so.6"
+        },
+        {
+          "path": "_internal/libQt6EglFsKmsSupport.so.6",
+          "target": "PySide6/Qt/lib/libQt6EglFsKmsSupport.so.6"
+        },
+        {
+          "path": "_internal/libQt6Gui.so.6",
+          "target": "PySide6/Qt/lib/libQt6Gui.so.6"
+        },
+        {
+          "path": "_internal/libQt6Network.so.6",
+          "target": "PySide6/Qt/lib/libQt6Network.so.6"
+        },
+        {
+          "path": "_internal/libQt6OpenGL.so.6",
+          "target": "PySide6/Qt/lib/libQt6OpenGL.so.6"
+        },
+        {
+          "path": "_internal/libQt6Pdf.so.6",
+          "target": "PySide6/Qt/lib/libQt6Pdf.so.6"
+        },
+        {
+          "path": "_internal/libQt6Qml.so.6",
+          "target": "PySide6/Qt/lib/libQt6Qml.so.6"
+        },
+        {
+          "path": "_internal/libQt6QmlMeta.so.6",
+          "target": "PySide6/Qt/lib/libQt6QmlMeta.so.6"
+        },
+        {
+          "path": "_internal/libQt6QmlModels.so.6",
+          "target": "PySide6/Qt/lib/libQt6QmlModels.so.6"
+        },
+        {
+          "path": "_internal/libQt6QmlWorkerScript.so.6",
+          "target": "PySide6/Qt/lib/libQt6QmlWorkerScript.so.6"
+        },
+        {
+          "path": "_internal/libQt6Quick.so.6",
+          "target": "PySide6/Qt/lib/libQt6Quick.so.6"
+        },
+        {
+          "path": "_internal/libQt6Svg.so.6",
+          "target": "PySide6/Qt/lib/libQt6Svg.so.6"
+        },
+        {
+          "path": "_internal/libQt6Test.so.6",
+          "target": "PySide6/Qt/lib/libQt6Test.so.6"
+        },
+        {
+          "path": "_internal/libQt6VirtualKeyboard.so.6",
+          "target": "PySide6/Qt/lib/libQt6VirtualKeyboard.so.6"
+        },
+        {
+          "path": "_internal/libQt6VirtualKeyboardQml.so.6",
+          "target": "PySide6/Qt/lib/libQt6VirtualKeyboardQml.so.6"
+        },
+        {
+          "path": "_internal/libQt6WaylandClient.so.6",
+          "target": "PySide6/Qt/lib/libQt6WaylandClient.so.6"
+        },
+        {
+          "path": "_internal/libQt6Widgets.so.6",
+          "target": "PySide6/Qt/lib/libQt6Widgets.so.6"
+        },
+        {
+          "path": "_internal/libQt6WlShellIntegration.so.6",
+          "target": "PySide6/Qt/lib/libQt6WlShellIntegration.so.6"
+        },
+        {
+          "path": "_internal/libQt6XcbQpa.so.6",
+          "target": "PySide6/Qt/lib/libQt6XcbQpa.so.6"
+        },
+        {
+          "path": "_internal/libicudata.so.73",
+          "target": "PySide6/Qt/lib/libicudata.so.73"
+        },
+        {
+          "path": "_internal/libicui18n.so.73",
+          "target": "PySide6/Qt/lib/libicui18n.so.73"
+        },
+        {
+          "path": "_internal/libicuuc.so.73",
+          "target": "PySide6/Qt/lib/libicuuc.so.73"
+        },
+        {
+          "path": "_internal/libpyside6.abi3.so.6.11",
+          "target": "PySide6/libpyside6.abi3.so.6.11"
+        },
+        {
+          "path": "_internal/libshiboken6.abi3.so.6.11",
+          "target": "shiboken6/libshiboken6.abi3.so.6.11"
+        },
+        {
+          "path": "node/_internal/libcusparseLt.so.0",
+          "target": "cusparselt/lib/libcusparseLt.so.0"
+        },
+        {
+          "path": "node/_internal/libgfortran-040039e1-0352e75f.so.5.0.0",
+          "target": "scipy.libs/libgfortran-040039e1-0352e75f.so.5.0.0"
+        },
+        {
+          "path": "node/_internal/libgfortran-83c28eba-468e71e5.so.5.0.0",
+          "target": "numpy.libs/libgfortran-83c28eba-468e71e5.so.5.0.0"
+        },
+        {
+          "path": "node/_internal/libgfortran-83c28eba.so.5.0.0",
+          "target": "scipy.libs/libgfortran-83c28eba.so.5.0.0"
+        },
+        {
+          "path": "node/_internal/libquadmath-2284e583-a9307bba.so.0.0.0",
+          "target": "numpy.libs/libquadmath-2284e583-a9307bba.so.0.0.0"
+        },
+        {
+          "path": "node/_internal/libquadmath-2284e583.so.0.0.0",
+          "target": "scipy.libs/libquadmath-2284e583.so.0.0.0"
+        },
+        {
+          "path": "node/_internal/libquadmath-96973f99-934c22de.so.0.0.0",
+          "target": "scipy.libs/libquadmath-96973f99-934c22de.so.0.0.0"
+        },
+        {
+          "path": "node/_internal/libscipy_openblas-5f890258.so",
+          "target": "scipy.libs/libscipy_openblas-5f890258.so"
+        },
+        {
+          "path": "node/_internal/libscipy_openblas64_-f48b354e.so",
+          "target": "numpy.libs/libscipy_openblas64_-f48b354e.so"
+        }
+      ],
+      "unique_regular_bytes": 5161115250
+    },
+    "installed_runtime_removed": true,
+    "installer_bytes": 2302428788,
+    "installer_sha256": "714b9a7ac9121f3cf3b85f9677d541b488c2f00020bc6e1ce73ba7081f851576",
+    "installer_version": "0.1.0~alpha.20260908.1",
+    "model_loading_performed": false,
+    "network": "disconnected before this script",
+    "online_installer_acceptance": false,
+    "provenance_sha256": "3f8ac9de9f61f663b1c7573a1200aa4c26e5d0e18aa38d0f004d96e95e341db9",
+    "result": "passed",
+    "scope": "Ubuntu 22.04 exact offline installer, installed native checks, removal",
+    "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e"
+  },
+  "payload": {
+    "artifact_logical_bytes_including_symlink_targets": 5528581899,
+    "install_archive": {
+      "artifact_root": "CommunityAI",
+      "entry_count": 5967,
+      "format": "tar.gz",
+      "path": "communityai-desktop-linux.tar.gz",
+      "platform": "Linux",
+      "preserves_executable_modes": true,
+      "preserves_internal_file_symlinks": true,
+      "schema_version": 1,
+      "sha256": "28f24f55c2e53c44d9235dbc150223e9bbc7b532945dc72ff28298cd82c55c79",
+      "size_bytes": 3017723439
+    },
+    "provenance_sha256": "3f8ac9de9f61f663b1c7573a1200aa4c26e5d0e18aa38d0f004d96e95e341db9",
+    "regular_files": 4900,
+    "symlinks": 35,
+    "unique_regular_file_bytes": 5161115250
+  },
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+  "post_removal_audit": {
+    "dpkg_audit_exit": 0,
+    "dpkg_audit_stdout": "",
+    "offline_result_sha256": "accfb1fcb70e0f6afdb7921bfea2498913d3b1643d42a374123f70eb37be176c",
+    "package_query_exit": 1,
+    "package_status": "",
+    "resident_app_or_package_processes": [],
+    "result": "passed",
+    "runtime_present": false,
+    "scope": "post-removal filesystem/package/process observation",
+    "sentinel_preserved": true
+  },
+  "python": "3.12.14",
+  "raw_evidence_directory": ".gate13-runs/linux-v3-build-20260908",
+  "raw_evidence_sha256": {
+    "build-result.json": "a7481793b371b1a24db1c2a39d693da3ad208f33c19e0f62599e6aab96d6e225",
+    "build.log": "eff1850ef143f4c1afa1f6d00ebd8704870b3cf28dec07ae8fbc655751d26c46",
+    "deb-build-container-state.json": "6360ff39876974551fbccdee1d22c1996498248f2718fa37d8ee2824c65b1677",
+    "deb-build-result.json": "091325f0b1dfd8a4879d46d700e7ed20c878f5a10c615ca26e12ce9ecf888bc3",
+    "deb-build.log": "f61d223f67296486b37039862dd62e15563adf5d295715507ce6438cf526b20c",
+    "deb-control.txt": "80ae635207c46a4728b2a9c09e1efa3aa12e65945db64bcc3eae85e4d3f0d336",
+    "dependency-setup.log": "8c6d8bf3f11c3ab650e85e730cbd5493238a842910ecf88385ec24b423343fbc",
+    "desktop-metrics.json": "46e0332d0cd8de383d9bd4f60edc31e801b1508dd297fb7e52d79ae62242fde6",
+    "install.log": "c4540878753958947ba99670c2c67eab6ce2253d7dfb06a4c2f5c50d1a5834ba",
+    "installed-native-cpu.log": "0d3a5fe8f9716612233f980fb6b31e172e31602bc12b25328d29e332833c72df",
+    "installed-native-cuda.log": "a758fec37e2bdbe2aa182217986fc65f279ccab2b0765072cf893af0c098ec69",
+    "installed-server-contract.log": "b5fe0b02287b4bc04bebb8b2789fdeb264a73de01ed60c49c421ea8d1168cab9",
+    "native-check.json": "68ed740f2b42b37fdfebbf9f381714ab09db670f6e8ff4c4ef79f8d43bae3f0d",
+    "native-container-state.json": "b8f4e63c3e80471e8f1aea70b574a06d1e5016d53e8ad3edf3f8760aaa966c33",
+    "offline-network-state-after.json": "e3566b3a06430868d71e9287dfd6c6c520a3da027aabea01951d407ee131dc2f",
+    "offline-network-state.json": "e3566b3a06430868d71e9287dfd6c6c520a3da027aabea01951d407ee131dc2f",
+    "offline-post-removal-audit.json": "74e74cbecc75c263369eef79953111622e0302390d1073a13410ce33da64218a",
+    "offline-result.json": "accfb1fcb70e0f6afdb7921bfea2498913d3b1643d42a374123f70eb37be176c",
+    "provenance.json": "3f8ac9de9f61f663b1c7573a1200aa4c26e5d0e18aa38d0f004d96e95e341db9",
+    "readonly-pycompile-preflight.json": "886f9d4a2de1ca39caf91a869c3de1a71c217e6b47babdb19d64b17acf17e934",
+    "remove.log": "248064b6ca6d6e128ce74b97bc6ad5bcae52e7dc2be7ebd3e59c959f0b9b20c4",
+    "runtime-packaging.json": "e5d71cf23a900193d7ab8005291bd22763edb320c64e3a21327ce906ab9e1ade",
+    "source-preflight.json": "86ef7ecda2e898907c46545637dea0c6d8004acbb8ca7c94f0e269b5cf8c55d6",
+    "verification.log": "ca81dcf0f4d4ad864e56a3e3d4af323088782552ef6a5a5dd328fda4c929f5ee"
+  },
+  "result": "passed",
+  "retained_preflight_failure": "Explicit py_compile attempted a bytecode write to the read-only source mount; a read-only Python3.10 AST parse then passed without weakening the mount.",
+  "runtime_versions": {
+    "PyInstaller": "6.22.2",
+    "PySide6": "6.11.2",
+    "bitsandbytes": "0.45.5",
+    "hivemind": "1.1.12",
+    "torch": "2.6.0+cu124"
+  },
+  "schema_version": 1,
+  "scope": "Fresh normalized Ubuntu22 Linux bundle, finite CPU/CUDA native checks, exact offline installer acceptance",
+  "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "source_sha256_at_commit": {
+    "desktop/build_desktop.py": "2ff8469e637639d9978965a3bcd292c714c0e579d4c52d9331e65a4a179c8afd",
+    "desktop/installers/build_deb.py": "8b26b3d9780fe22b9158b21944b9503636706d524e2b2cc1b763bc1a9add7b57",
+    "desktop/installers/installation-marker.txt": "517250bef51c65699c4be85617615debd872c06b116fc04f543644063d0c1874",
+    "desktop/installers/linux_maintenance.py": "4841b09a2a0c60f9e7def7cff7f081da5b82c139d3dbf49363d6e611e7f65fd1",
+    "desktop/launch_node.py": "b8a9c7418e9691372dd607da2f9a68b911460b2fb2870fca4df7cfe9f931c85c",
+    "desktop/runtime_packaging.py": "dba6424a90ffe49c8fea71ca95c66d2c741c68bc01f3b20783192ee63b6d2fdc"
+  },
+  "source_tree": "5bd44e4afb6b6911f5ddd1bb3d492dad438883e8"
+}

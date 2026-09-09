@@ -1,5 +1,82 @@
 # Petals revival: public inference alpha roadmap
 
+September 9 product correction, release `0.1.0-alpha.20260909.3`: consumers send text
+without loading input/output model weights. A complete block grid did not prove
+that behavior in the earlier released client. Input/output processing runs on contributing
+text peers; the small local Qwen fallback stays when the mesh cannot answer.
+See [ADR 0004](adr/0004-text-only-community-consumers.md). Earlier generation
+proofs remain valid for their tested tensor-client scope and do not establish
+fresh, weight-free consumer readiness.
+
+Current release status and execution order are maintained in
+[RELEASE_READINESS.md](RELEASE_READINESS.md), reviewed 2026-09-09. The Qwen3.8
+64-block route, same-session replacement, reference comparison and Windows
+packaged short chat, worker-loss recovery and HTTP-blocked cache restart passed
+on assigned cloud routes. Bounded autonomous CPU desktop formation and recovery
+also passed on September 7. Gate 14 resource controls now pass the bounded
+Windows/Linux frozen-package acceptance. Gate 15 installers and login controls
+also pass their bounded Windows/Debian/Ubuntu acceptance. The owner accepts the
+existing Qwen conversation proof for alpha; additional measurements and frozen
+periodic catalog-update qualification are deferred. The smaller September 8
+installers passed installed native checks and removal. Both online installers
+passed complete hosted download, verified installation and removal; all four
+download options and release metadata are public and verified. Qualified
+candidate links and a draft release can proceed during Gate 16 scope review;
+the combined public canary remains unexecuted. The [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
+candidate lists in historical implementation snapshots below.
+
+September 7 Gate 14 update: **PASSED for the bounded alpha scope.** The
+[final Windows/Linux acceptance](evidence/gate14-20260907-final-resource-acceptance.md)
+used complete frozen packages and real Qwen load. Both sliders default to 100%,
+sharing remains opt-in, lower limits are enforced, Pause removes worker trees,
+and settings persist across restart. Low-VRAM rejection now waits without a
+restart loop; signed-manifest migration retains cache/resource preferences.
+Windows ran non-elevated; Linux used an ordinary Debian/Xvfb session with CUDA
+passthrough. Broader hardware and physical desktop coverage are not implied.
+
+September 8 release continuation: **Gate 15 PASSED for the bounded alpha scope.**
+Windows, Debian and Ubuntu installed lifecycles, both frozen sign-in controls,
+and normal Windows/Linux signed-catalog startup migration passed.
+Earlier failed attempts are retained separately; local canary checks do
+not replace the live public route exercise. See the
+[current evidence and remaining work](RELEASE_READINESS.md#next-work-in-useful-product-order).
+
+September 8 owner scope clarification: additional conversation/performance
+qualification is not required before alpha. Frozen periodic catalog activation
+and active-answer draining tests follow in beta; the owner expects only one or
+two more catalog changes this year. Existing real recovery and safety results
+must be credited when deciding whether Gate 16 adds useful new evidence. Its
+combined public deployment drill remains unexecuted, not passed.
+
+September 8–9 distribution refresh: both runtimes identify `84205f93`. The new
+Windows setup is 2,462,345,104 bytes and passed installed native CUDA checks and
+removal. The Linux package is 2,302,428,788 bytes and passed installation,
+installed CPU/CUDA/worker checks and removal on Ubuntu 22.04. All nine CI checks passed at
+the import-formatting follow-up `fdd8d0b`. Both offline packages are public on
+the owner-authorized R2 origin and passed complete hosted download/hash checks.
+The 2,107,751-byte Windows online setup passed actual ordinary-user handoff,
+installed CPU diagnostics and removal with exact child exit, temporary cleanup
+and persisted baseline verified. Its helper, Inno script and builder match the
+subsequent source commit `b6c8aad9`; this is separate from runtime source `84205f93`.
+[Windows hosted acceptance](evidence/normalized-online-windows-installer-20260908.md).
+Linux's 13,662-byte online installer passed its actual hosted download,
+protected-copy/APT installation and removal and is published with hash-verified
+metadata. [Linux hosted acceptance](evidence/alpha-online-linux-hosted-20260908.md).
+Earlier failed attempts remain recorded. Both online files, all 19 curated
+platform records, the combined manifest, checksums and metadata ZIP are now
+public; all 24 small object bodies matched their hashes. The
+[publication audit](evidence/alpha-cloudflare-publication-20260909.json) records
+that result. No broad availability guarantee is implied by these single complete
+handoffs.
+Exact versions, hashes and availability are in the
+[installation guide](ALPHA_INSTALL.md); earlier Gate 14/15 evidence is retained.
+
+The public signed catalog/bootstrap/manifests passed a bounded metadata check
+on September 8. The catalog expires on September 28 at 19:35 UTC and its URLs
+depend on preserving `codex/gate-v-auto-selection`. This check establishes no
+current public worker capacity; community inference remains best effort.
+[Metadata evidence](evidence/alpha-public-metadata-20260908.json).
+
 This repository starts from DRIFT-LLM, the most practical maintained continuation
 of Petals found during the August 2026 fork audit. It preserves the parts that are
 most valuable for a revival: transformer-block sharding, Hivemind DHT discovery,
@@ -48,22 +125,29 @@ agent:
 - The first supported desktop and qualification matrix is Windows and Linux. macOS is
   explicitly deferred and must not be claimed as supported until later tests on real
   Apple devices pass.
-- Qwen3.5 2B is the first-rung primary candidate and Gemma 4 E2B is its standby.
+- Qwen3.8-27B FP8 is the first community-model release target, with a qualified
+  local Qwen3.5 fallback. Qwen3.5 2B and Gemma 4 E2B remain historical qualification
+  fixtures. DeepSeek-V4-Flash and GLM-5.3-Flash are the later community targets.
 - GCP and Fly Machines are authorized for bounded qualification and public-alpha
   infrastructure. GCP/local hosts cover the Windows/Linux CPU/CUDA platform matrix.
   As of 2026-08-27, Fly is authorized only for the existing **CPU-only** Linux
   separate-machine recovery adapter; Fly supplies no GPU qualification capacity, and a
   Fly recovery result must never be presented as CUDA or GPU-performance evidence.
-- After the first-rung alpha is stable, do not climb every intermediate model size merely
-  to prove that block sharding scales. Use the accumulated Petals and
-  TinyLlama/Qwen/Gemma implementation evidence to attempt a real 27-32B split route
-  directly, then attempt roughly 70B if that passes. This is permission to test those
-  sizes, not permission to claim that an exact larger checkpoint works before its own
-  model-specific evidence passes.
-- New temporary GCP and Fly test resources share one combined **USD 100 maximum**.
-  Track conservative estimates and observed cost in
-  [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that could exceed
-  the remaining balance.
+- Complete the useful Qwen desktop path before implementing the larger model
+  adapters. Do not qualify arbitrary intermediate sizes merely to demonstrate
+  sharding. Each actual ladder entry needs its own correctness, memory, recovery,
+  packaged-delivery, and performance evidence before activation.
+- For the September 8 alpha scope, accept the existing packaged Qwen conversation,
+  performance observations and recovery proof. Additional representative chat or
+  hardware measurements and frozen periodic catalog activation/draining are
+  deferred after alpha (catalog-update qualification to beta). Preserve the
+  measured limits and do not reintroduce these deferred checks as release gates.
+- New temporary GCP and Fly test resources share one live owner-authorized combined
+  ceiling. The baseline is USD 100; on 2026-08-31 the owner raised the current accounting
+  epoch to **USD 500 maximum**. The already committed USD 52 maximum remains charged to
+  that epoch, leaving USD 448 before a new reservation. Track conservative estimates and
+  observed cost in [`RELEASE_READINESS.md`](RELEASE_READINESS.md). Do not start a run that
+  could exceed the remaining balance.
 - Use the existing `gcloud`, `flyctl`, and `gh` logins. Do not require the owner to copy
   provider tokens into environment variables when native CLI authentication works.
 - On Windows, every registry token, remote credential, and Linux script must follow the
@@ -91,8 +175,9 @@ The public alpha still requires:
 - the client automatically selects an eligible catalog model, while an opted-in
   contributor automatically selects a model and block range within the user's VRAM,
   storage, bandwidth, power, schedule, and model-policy limits;
-- Qwen3.5 2B and Gemma 4 E2B pass the declared Windows/Linux CPU/CUDA qualification and
-  real CPU-only separate-machine recovery gates before they are advertised as qualified;
+- Qwen3.8 and the selected local Qwen fallback pass their declared product
+  qualification before being advertised; preserve the prior Qwen3.5/Gemma results
+  without treating them as qualification for a different model or package;
 - an alpha catalog is authenticated by at least one pinned CommunityAI release key,
   manifests and artifacts are content-verified, peer announcements are authenticated,
   public requests have finite admission/time limits, and operators can disable a bad
@@ -109,7 +194,7 @@ The following are post-alpha hardening, not reasons to delay first public use:
   seed/mirror operators, and multi-provider outage survival;
 - independent threshold catalog key holders, key-compromise/rotation drills, and
   interchangeable-mirror governance beyond the alpha's pinned signed catalog;
-- operating-system publisher signing/notarization, an authenticated automatic updater,
+- macOS notarization, an authenticated automatic updater,
   automatic rollback, and polished retained-data migration beyond the alpha's manual path;
 - exhaustive malicious-load, Sybil/collusion, partition, herd-switching, long-soak, and
   production-style evidence-retention programs; and
@@ -139,20 +224,33 @@ shard granularity limit are recorded in
 
 ### Non-negotiable launch sequence
 
-The signed catalog and product-node Gate 11 route have passed. Gate 9 is the immediate
-critical path:
+Gate V and Gates 1-13 passed for their recorded scopes. On September 7 the owner
+selected **Gate 14 resource sliders → installers/lifecycle (15) → canary (16) →
+release (17)** as the next product sequence:
 
-1. split each Windows/Linux edge measurement into resumable direct-Hub acquisition and a
-   supervised steady-state benchmark from the verified persistent cache;
-2. publish the four Qwen/Gemma Windows/Linux client envelopes without building or pulling a
-   model-specific image;
-3. pass clean packaged install and inference against a product-node route, including cache
-   reuse, restart, manual upgrade/reinstall, uninstall, and retained-data choice;
-4. prove automatic contribution and resource controls on real packaged Windows/Linux
-   hardware; and
-5. run the bounded public canary and publish the explicitly best-effort alpha.
+1. deliver two desktop sliders: VRAM and processing usage, both defaulting to
+   100% on a new installation. Sharing stays opt-in. Verify lower limits under
+   load, persistence, live changes, and complete worker shutdown on Pause.
+   VRAM controls the contribution allocator budget, preserving local-inference
+   reservations; processing controls contribution compute duty cycle, with
+   explicit per-step bursts rather than an instantaneous whole-device guarantee.
+2. build the Windows and Linux setup artifacts described below with the proven
+   formation fixes. Verify ordinary startup, upgrade/reinstall, catalog migration,
+   uninstall, and retain/delete-cache choices. Upgrades must stop the node and
+   its complete worker trees before replacing files and preserve settings/cache.
+3. retain the passed Qwen/resource-control observations and declare their tested
+   hardware and conversation limits; the September 8 owner decision defers broader
+   measurements and frozen periodic catalog-update qualification; and
+4. resolve Gate 16's remaining deployment scope using the existing recovery/safety
+   evidence, then publish the best-effort Qwen alpha. The owner has asked why a
+   further integrated run is needed; do not repeat proven recovery solely to
+   complete a gate number.
 
-Do not resume post-alpha redundancy, publisher-signing/updater, independent-governance, or
+Combine overlapping product checks in the same real desktop sessions. The full
+Qwen runtime and tested same-session recovery already passed; repeat them only
+where new source/profile changes or product integration require verification.
+
+Do not resume post-alpha redundancy, automatic-updater, independent-governance, or
 exhaustive hostile-network programs while an earlier alpha outcome is unfinished. Preserve
 completed foundations for those programs, but do not polish them ahead of the usable path.
 
@@ -166,10 +264,67 @@ temporary host. Native `gcloud`,
 `flyctl`, and `gh` authentication is currently available; re-check it immediately before
 use rather than relying on an older evidence note.
 
-The next external deliverable is not another image, mirror, harness, or unit-test expansion.
-It is the four real Gate 9 client envelopes using the product artifact path. Supporting code
-is justified only when it implements the bounded acquisition record, process-supervised
-cleanup, or another concrete gap exposed by that real run.
+The next external deliverable is the usable Qwen3.8 desktop/local-fallback path.
+Supporting code must address a concrete product or observed-run gap; the existing
+one-click runners and evidence machinery are the starting point.
+
+### Distribution decision, September 7
+
+The owner's latest decision on September 7 makes working Windows/Linux installers
+the alpha requirement and defers Windows publisher signing until after alpha.
+Unsigned setup must be clearly labelled and ship checksums/provenance. Existing
+engineering packages still need the remaining product acceptance before release.
+
+| Channel | Deliverable |
+| --- | --- |
+| Windows download | Inno Setup, ordinary-user installation and working upgrade/uninstall. Unsigned alpha is authorized; trusted setup/uninstaller signing follows after alpha. [Inno Setup capabilities](https://jrsoftware.org/isinfo.php). |
+| Microsoft Store | Submit the same installer through the MSI/EXE route. Provide a standalone offline, silent-capable installer at an immutable versioned HTTPS URL; sign installer and PE payloads with a trusted code-signing identity. This route does not provide Store-managed updates. [Package requirements](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/upload-app-packages), [distribution/signing requirements](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/choose-distribution-path). |
+| Ubuntu/Debian | Build a `.deb` and publish a signed HTTPS APT repository, with its key scoped using `Signed-By`. After repository setup, install with `sudo apt install communityai`. [Debian repository guidance](https://wiki.debian.org/DebianRepository/UseThirdParty). |
+
+Store submission follows trusted signing and is no longer an alpha blocker.
+Direct `.deb` installation can precede the hosted APT channel; APT metadata must
+still be signed before that repository is offered. A generated installer script
+alone does not satisfy install/upgrade/removal acceptance. Model weights
+remain verified on-demand data, separate from the bundled executable runtime.
+
+The owner authorized the block-health grid, available peer details and the user's
+own download progress on September 7. The source implementation and bounded
+[HTTP/process/Qt checks](evidence/desktop-health-downloads-20260907.md) are complete;
+carry this into final packages. Coverage/replicas, signed reservations, joining and
+offline/failure states remain separate. Remote download percentages and unused
+capacity are unreported. Local progress separates transferred/cached bytes from
+verified artifacts and model loading. This is not an additional release gate.
+
+The owner explicitly deferred Windows publisher signing until after alpha.
+Working unsigned direct-download setup files with checksums/provenance are
+accepted. Mario Andreschak is an individual based in Colombia; Azure Artifact
+Signing Public Trust does not currently support that individual location.
+The authorized SignPath eligibility inquiry was sent September 7, with no
+enrollment or approval yet. See [signing status](WINDOWS_SIGNING.md). Store and
+hosted signed APT distribution follow after alpha; signing does not block Gate 14.
+
+The final [Gate 14 package matrix](evidence/gate14-20260907-final-resource-acceptance.md)
+passed at `76b6d84` on Windows and `bf67f0d` on Linux, with Linux packaging
+fixes and unchanged application/catalog source. Acceptance included real Qwen processing load,
+both literal sliders, persistence, repeated Pause/Start, four independent
+admission guards, local inference and complete owned-process/native-key cleanup.
+The [fully frozen Windows installer lifecycle](evidence/gate15-20260907-frozen-windows-installer.json)
+also passed product install/upgrade/removal/reinstall assertions and an independent
+cleanup audit; its redundant final test-cleanup error is retained explicitly.
+The Debian lifecycle and the [Ubuntu retry](evidence/gate15-20260908-frozen-ubuntu-installer.md)
+also passed with the same final `.4` package. The earlier Ubuntu unpack timeout
+remains recorded. The [Linux frozen sign-in checkbox](evidence/gate15-20260908-frozen-linux-login.md)
+passed enable, restart and disable on a private Xvfb display. The
+[Windows frozen checkbox](evidence/gate15-20260908-frozen-windows-login.md) then
+passed the same cycle on unswitched private desktops, with exact native Run
+registration and independent process/credential/original-state cleanup verified.
+The [combined Gate 15 acceptance](evidence/gate15-20260908-final-installer-acceptance.md)
+records the passed scope and remaining platform limits.
+Manual retained-data choices now have a [runbook](DESKTOP_UNINSTALL.md) and
+bounded Windows evidence.
+The earlier [installer checkpoint](evidence/desktop-installers-20260907.md) includes
+the disposable-key APT acceptance/tamper test. No public installer release, Store
+submission or production signed APT repository has been published.
 
 ### Execution loop
 
@@ -200,10 +355,34 @@ On every implementation run:
    ends, the release is complete, or that narrow definition applies to every permitted
    task on the current critical path.
 
+### Durable paid-run contract
+
+A multi-hour paid qualification must not depend on an operator terminal, SSH/IAP session,
+or untracked repair script remaining alive. Before its first create, it must have one
+source-bound, persisted, idempotent controller with `start`, `status`, `collect`, and
+`cleanup` operations. Every operation begins by inventorying the exact authorized
+instances, disks, firewalls, ownership metadata, and absolute deadlines. Matching resources
+are reattached; foreign or ambiguous exact-name resources fail closed; missing resources are
+never recreated merely because local state was lost.
+
+Long-running work runs as one named host-local durable service or task and writes only a
+bounded sanitized status plus a digest-bound terminal record. Repeating `start` observes the
+existing job; it does not launch a second lifecycle. Once a packaged product lifecycle or a
+diagnostic product launch begins, any non-pass consumes that client for acceptance. Removing
+its files or credentials does not make it fresh again, and phase-level lifecycle resumption
+is prohibited.
+
+For Gate 13, accept the complete product route before creating a client. Run the higher-risk
+Windows/Qwen lifecycle first; collect its canonical 16-phase record and delete that client
+before creating Linux/Gemma. This is an operational cost/risk sequence, not a relaxation of
+the two-platform acceptance contract. Any route failure, ambiguous host job, expired runway,
+or client failure goes directly to exact cleanup. A gate passes only after both complete
+fresh-host records and final provider absence proof exist.
+
 ### Cloud safety rules
 
 - Before provisioning, record a conservative maximum estimate in the spend ledger and
-  confirm it fits under the combined USD 100 ceiling.
+  confirm it fits under the live combined ceiling recorded in the readiness tracker.
 - An explicit owner budget reset starts a new USD 100 accounting epoch only after every
   prior run is cleanup-proved. Preserve those historical rows as `CLEANED-RELEASED` rather
   than pretending their actual cost was zero; their maxima no longer consume the new epoch,
@@ -225,7 +404,7 @@ Do not block on these while another roadmap item can proceed. Ask the owner only
 input is on the critical path:
 
 - a provider login expires and native CLI reauthentication is required;
-- the next bounded cloud run does not fit under the remaining USD 100 ceiling;
+- the next bounded cloud run does not fit under the remaining live owner-authorized ceiling;
 - platform code-signing/notarization credentials or a publisher identity are required;
 - production catalog signing needs independent human key holders;
 - an independent seed or mirror operator must accept operational responsibility; or
@@ -570,41 +749,32 @@ and then delegates block placement to the existing algorithm.
 
 ### Elastic model ladder
 
-Small checkpoints are bootstrap and test rungs, not the distributed network's product
-ceiling. Community `auto` selection should move monotonically toward larger qualified
-models as measured capacity grows: approximately 1-2B, 3-4B, 8B, 27-32B, 70B, and
-400B-plus. Each rung approves exactly one primary and at least one standby so the
-catalog can replace a model without requiring both alternatives to fragment live VRAM.
+The product progression is **local Qwen3.5 → community Qwen3.8-27B →
+DeepSeek-V4-Flash → GLM-5.3-Flash**, as recorded in
+[COMMUNITY_AI_MODEL_LADDER.md](COMMUNITY_AI_MODEL_LADDER.md). The first Qwen3.8
+full-route and tested worker-replacement results passed on 2026-09-05. DeepSeek
+and GLM require their own adapters and qualification before activation.
 
-These are catalog capacity classes, not a mandatory sequential qualification staircase.
-The original Petals demonstrations and successful TinyLlama, Qwen, and Gemma bring-up
-make larger block-sharded inference plausible enough to test directly. They do **not**
-prove that an exact 30B or 70B checkpoint is compatible, fits the intended worker/client
-memory envelopes, recovers correctly, or performs well enough to use.
+Growth is measured by complete, reachable, sufficiently stable and useful model
+routes, not connected-PC count or summed advertised VRAM. Actual per-block
+memory, client tensors, context/cache, and migration headroom must fit the
+contributors' budgets. Total MoE weights remain relevant even when only a small
+subset of experts computes each token.
 
-The first post-alpha scaling experiment should therefore use an exact 27-32B candidate
-split across independent workers, with no worker required to hold the full model. If one
-complete block fits the target worker envelope and that run passes manifest/artifact
-checks, stock parity, two complete routes, selected-worker interruption, client and
-worker memory limits, TTFT, and decode throughput, proceed directly to an exact roughly
-70B candidate. Test a smaller intermediate rung only when it is a useful product fallback
-or helps diagnose a concrete failure; do not spend milestones on 4B -> 8B -> 12B merely
-as confidence-building prerequisites.
+The node must keep local fallback useful while opted-in workers stage missing
+community spans. After measured readiness, eligible new `auto` requests may move
+up; explicit selections and active generations stay pinned. Existing chat text
+must be retokenized/prefilled when a later turn changes model. When capacity
+falls, selection may move down. Retain lower-route capacity during larger-rung
+migration and prevent repeated switching/download storms.
 
-At INT8, two complete weight replicas require roughly two bytes of aggregate usable
-VRAM per parameter: 10 GB for a 5B model, 60 GB for a 30B model, 140 GB for 70B, and
-810 GB for 405B before KV-cache, activation, framework, churn, and migration headroom.
-Promotion is never inferred from that aggregate alone. The selector requires minimum
-per-block replica coverage, independent complete routes, survival after the largest
-peer loss, a stability soak, fresh observations, and measured latency and throughput
-limits. Total parameters determine MoE storage; active parameters describe per-token
-compute and do not make the other expert weights disappear.
-
-The first candidate ladder and the implemented signed format are specified in
-[`MODEL_CATALOG_V1.md`](MODEL_CATALOG_V1.md). The local selector may resolve an `auto`
-request to the highest eligible exact manifest, but it never changes an explicit model
-selection or an in-flight request. Catalog fetching, DHT-derived observations, staged
-worker migration, fallback, and automatic alias updates remain integration work.
+The working-tree catalog permits one primary and optional standbys per rung.
+Measured catalog eligibility is now wired into the desktop node. Verified local
+Qwen3.5-0.8B fallback, local-only preference, cancellation and periodic authenticated
+catalog refresh are implemented; offline source and packaged Windows GPU inference
+passed. Real automatic formation, promotion/downgrade and shared resource-limit
+qualification remain open. See [MODEL_CATALOG_V1.md](MODEL_CATALOG_V1.md) and
+[QWEN_DESKTOP_PRODUCT_RESULTS.md](QWEN_DESKTOP_PRODUCT_RESULTS.md) for current evidence.
 
 ### Canonical model manifest
 

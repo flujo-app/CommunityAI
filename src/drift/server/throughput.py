@@ -238,6 +238,8 @@ def measure_compute_rps(
 
 def get_dtype_name(dtype: torch.dtype, quant_type: QuantType) -> str:
     name = str(dtype).replace("torch.", "")
-    if quant_type != QuantType.NONE:
+    if quant_type == QuantType.FP8_DEQUANT:
+        name += ", loaded from fine-grained fp8"
+    elif quant_type != QuantType.NONE:
         name += f", quantized to {quant_type.name.lower()}"
     return name

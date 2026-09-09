@@ -1,0 +1,103 @@
+{
+  "run_id": "q38pm-20260906-015639-3c59",
+  "result": "failed",
+  "scope": "source-node-local-to-measured-community-promotion; transition harness failed before worker loss",
+  "promotion_passed": true,
+  "product_loss_rejoin_passed": false,
+  "packaged": false,
+  "local_before_growth": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788660227,
+      "id": "cmpl-9587d33e1c0444cdafa7aa2d",
+      "model": "Qwen3.5-0.8B-Local",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 35.95786051499999
+  },
+  "qwen38_baseline": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788661360,
+      "id": "cmpl-b05d2083006a441f853ff3b9",
+      "model": "Qwen3.8 27B FP8 Dequant",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 64.27441845199996
+  },
+  "selected_manifest": {
+    "covered_blocks": 64,
+    "manifest_digest": "sha256:c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4",
+    "model": "Qwen3.8 27B FP8 Dequant",
+    "peer_count": 4,
+    "reason": "Selected catalog priority 1: live discovery reports a complete 64/64-block route from 4 verified peers.",
+    "selector": "auto",
+    "source": "runtime",
+    "status": "selected",
+    "total_blocks": 64
+  },
+  "failed_transition_actual_response": {
+    "response": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "text": " Paris.\n"
+        }
+      ],
+      "created": 1788661363,
+      "id": "cmpl-94548333c95e4ee7be165bc2",
+      "model": "Qwen3.5-0.8B-Local",
+      "object": "text_completion",
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 5,
+        "total_tokens": 8
+      }
+    },
+    "seconds": 3.6298966919998747
+  },
+  "failure_analysis": "The harness observed the previous completion lease before it drained, then switched mode before the newly submitted request acquired a model. That new request correctly used local Qwen. Corrected harness drains old leases and observes the new Qwen3.8 lease before changing mode.",
+  "cleanup": {
+    "azure_group_absent": true,
+    "errors": [],
+    "gcp": {
+      "errors": [],
+      "remaining": {
+        "disks": [],
+        "firewall-rules": [],
+        "instances": []
+      },
+      "verified": true
+    },
+    "verified": true
+  },
+  "files": {
+    "result.json": "90a962f61509228b7a23c5de48dbab43dec44c413d300a5ddb66b30892383d10",
+    "product-result.json": "92d56a2cd8cee8d4375be3da19df1cec6328697735bec33e5c55b40f2283535e",
+    "product-node.log": "8e0e41b2722375d2a4916e3653a65cd6b3de7d0cb154ebdf755f0e387f49f163",
+    "source-inventory.json": "e1472f71b140b981c4df3cb47e409aa95475433667594a6a94bcabc9eacb1302"
+  }
+}

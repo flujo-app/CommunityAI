@@ -13,6 +13,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from drift.catalog_release import catalog_publication_bundle_index_digest, write_catalog_publication_bundle
 from drift.model_catalog import CATALOG_SCHEMA_VERSION, CatalogSigningKey, ModelCatalog, SignedModelCatalog
@@ -106,6 +107,19 @@ class DesktopReleaseInputTests(unittest.TestCase):
         self._temporary_directory = TemporaryDirectory()
         self.addCleanup(self._temporary_directory.cleanup)
         self.tmp_path = Path(self._temporary_directory.name)
+
+    def test_build_storage_combines_same_volume_staging_and_archive_before_writing(self):
+        usage = shutil.disk_usage(self.tmp_path)
+        with patch.object(build_desktop.shutil, "disk_usage", return_value=usage._replace(free=14 * 1024**3)):
+            with self.assertRaisesRegex(RuntimeError, "15.0 GiB is required"):
+                build_desktop._check_build_storage(self.tmp_path / "output", self.tmp_path / "build")
+        self.assertEqual(list(self.tmp_path.iterdir()), [])
+
+    def test_build_storage_accepts_capacity_without_creating_output_directories(self):
+        usage = shutil.disk_usage(self.tmp_path)
+        with patch.object(build_desktop.shutil, "disk_usage", return_value=usage._replace(free=16 * 1024**3)):
+            build_desktop._check_build_storage(self.tmp_path / "output", self.tmp_path / "build")
+        self.assertEqual(list(self.tmp_path.iterdir()), [])
 
     def test_release_inputs_require_complete_verified_bundle_and_record_identity(self):
         bootstrap, envelope, bundle_path, index = _release_bundle(self.tmp_path)

@@ -32,6 +32,7 @@ registration does not download tokenizers or client-side weights.
     "denied_models": [],
     "max_disk_space": "20GiB",
     "max_vram": "50%",
+    "max_processing_percent": 100,
     "max_bandwidth_mbps": 25,
     "max_power_watts": 180,
     "pause_timeout": 10,
@@ -94,6 +95,21 @@ allow/prefer/deny selector must resolve to a configured exact model. A nonempty
 happens before worker launch, so changing between a name, alias, or manifest digest
 cannot bypass policy.
 
+`max_processing_percent` is a finite value from 1 to 100, defaulting to 100 for
+older configs. Below 100, contribution runtimes synchronize device work and add
+cooldown between steps. Capped workers from one node share a lock across compute
+and cooldown, so their budgets do not multiply with worker count. Pause/shutdown
+interrupts waits. This limits compute duty cycle; it does not promise a flat
+instantaneous utilization percentage, and excludes downloads, model loading,
+local inference and other applications. At 100 no pacing or shared lock is added.
+
+Fresh desktop catalog installs set both VRAM and processing budgets to 100% and
+leave sharing disabled. Existing settings are preserved during catalog refresh.
+The desktop's Apply limits action pauses every worker before the revision-bound
+policy transaction, then resumes only previously selected workers after success.
+Failed persistence never resumes sharing with the old budget. Sliders cover
+1–100%; use Pause sharing to stop completely.
+
 For accelerator workers, an enabled policy also requires a finite `max_vram`.
 The value is either an absolute byte size such as `8GiB` or a percentage of the
 selected accelerator's usable memory such as `50%`. A worker inherits that ceiling
@@ -140,6 +156,12 @@ The parser rejects unknown fields, duplicate JSON keys, non-finite numbers,
 duplicate manifest paths, empty peer sets, and invalid resource limits. Every
 manifest is loaded and runtime-validated at startup. Names, aliases, and manifest
 digests must be unique case-insensitively across the entire node.
+
+Ordinary desktop API keys and bootstrap/control credentials are generated from
+32 cryptographically random bytes. When importing an advanced headless
+`--api-key`, supply an independently generated token of at least that entropy;
+do not use a human password or a short memorable string. The API-key store
+hashes opaque bearer tokens, and hashing cannot strengthen a weak imported key.
 
 Provider tokens, local API keys, control credentials, and identity private material
 are deliberately absent from this format. A Hugging Face token may currently be

@@ -1,0 +1,558 @@
+{
+  "reviewed_utc": "2026-09-07",
+  "result": "blocked-on-modal-filesystem",
+  "formation_pass": false,
+  "run_id": "q38mf-20260907-054716-44636d",
+  "result_sha256": "e4b7c6f8e3ff1f17962b9c644d0eb1a6fe273b1259c2b35310ae1e5ead1e0706",
+  "source_inventory": {
+    "bundle_sha256": "98c4e3b354c3cda7c6f7f4518d8304ac12ef37f5be45f0618131e306fb901f2c",
+    "files": {
+      "LICENSE": "d8576c8fbb92cdceedbee2d6c5bd62cc2fbcb188263b67c5b3edf45513c0988f",
+      "README.md": "3d4faa6f06ce5b8e2c39bb723efbf3a0fe4ea785594c81a9ba34a4db230714bc",
+      "config/qwen_formation.json": "6103e47844b894a5cd942591d1cb7a111c73a777261d554a16d3ae78fea0c93a",
+      "desktop/pyproject.toml": "b55984e8b2bda3ac943a763651f7a64b8f6a3edb1c29c5882602ed35c5addf26",
+      "desktop/src/communityai_desktop.egg-info/PKG-INFO": "effd2051c2765dc067b91aba3e65edf89ad20e4d21437c924a12fb9cacd5a537",
+      "desktop/src/communityai_desktop.egg-info/SOURCES.txt": "2d1381583b49fa03096aa9612bc7c7df57c8e3f59314bf0614c5649f8dac91a3",
+      "desktop/src/communityai_desktop.egg-info/dependency_links.txt": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "desktop/src/communityai_desktop.egg-info/entry_points.txt": "2b4446dfcc9f5a635692ad26edd88707d0eb7732cec570c1b9d0e74ebde654aa",
+      "desktop/src/communityai_desktop.egg-info/requires.txt": "1f7cc2e9e6166d70095eb76dbaef21faa9056aac993917b0dbe6fdf81753bab6",
+      "desktop/src/communityai_desktop.egg-info/top_level.txt": "c07d6499cb77347a40a3a73e1e4472305b23a38857a34f58b801ce0ae3e7b5a3",
+      "desktop/src/communityai_desktop/__init__.py": "c9facc4a758ef2b06881b8c3181f55791878633caa9498e7d2a5f92a5471e378",
+      "desktop/src/communityai_desktop/__main__.py": "67bfba4e3e7c93da8d6ea1e7ab05c5856809b2ba2057a2304c6efa417a176bc3",
+      "desktop/src/communityai_desktop/acceptance.py": "387a28a87d860dc422af8bb072d0d3c248d2678c2d344d9bb9e679b972d024a2",
+      "desktop/src/communityai_desktop/app.py": "8d37cb83685efa90b454f3f76976bd453ea90178752452edeabfc68958e70767",
+      "desktop/src/communityai_desktop/assets/communityai.ico": "0fcbedf7da4c5255670885ac4adbe910993d0b56e1fdee26157f6b1ff94633c5",
+      "desktop/src/communityai_desktop/client.py": "b7554fa84330c9d89d9903ceb5cc8c720ad01e29d46bf13804384f9cf4415639",
+      "desktop/src/communityai_desktop/controller.py": "72ea7b9825257a755a1c3ba7404642360274ac510c8e9f4de0a01a98155660e4",
+      "desktop/src/communityai_desktop/credentials.py": "2b5c7e53ddbbb4ac0703163dbb14fa3c13b1fb0a31deb6db48fbe3d2bc1ea066",
+      "desktop/src/communityai_desktop/gate13_playthrough.py": "73084cbb6abd0659a577c5423ad55f9d3df2fa8a7c0653861fd75e686a6ce593",
+      "desktop/src/communityai_desktop/lifecycle.py": "6fd21b14774e3b7a16ca97421d743a59fd971e3f28c11c674c7084360a748e13",
+      "desktop/src/communityai_desktop/pyside_shell.py": "b9a66717b8d1bffb8bac7dbd4c723b4fcda39c9d8bf44e68095c4c91340fa299",
+      "desktop/src/communityai_desktop/startup.py": "e3bf0370e05dcd978f0084ce3ce03ce80ce64f8f98d3c43438f8069347dc70d1",
+      "manifests/candidates/qwen3.5-0.8b-local-bfloat16-eager.json": "31f3424423e1dc632a08dd029c72cd68b0952b06ec34ad70ed36d80e93840d5d",
+      "manifests/candidates/qwen3.8-27b-fp8-dequant-eager.json": "0591317317adf4752425725658732997597c51150a7b165bcd674cbc319bf2a1",
+      "public-alpha/catalog-qwen-v2/bundle.json": "a904ed1b8487762507fcd35c4a125f03f0f71ee6c164bcacb993fbab677e0be9",
+      "public-alpha/catalog-qwen-v2/catalog-bootstrap.json": "79a08b5a703283b75da89d7e1ac6406e1fc36ac1b76eecd81a7231f4f3ab5410",
+      "public-alpha/catalog-qwen-v2/catalog.signed.json": "315d7c3910fae3de0ba3aee6d1bdc5942bc2655294ab53b6566bbcfd14933315",
+      "public-alpha/catalog-qwen-v2/manifests/c4dfe76969bd769bf4b6bd28d08961a97eb2d73d588187c8dd4b9aa40b1055a4.json": "a2621aa34aa47f0c9074f5baa0254b17549424f1c85d828ae9b1bf6ad9e76bb3",
+      "public-alpha/catalog-qwen-v2/manifests/e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0.json": "4536ac2bada7242b758db443b9ebb813a614dd167ab364643fc55c7eb657bb74",
+      "public-alpha/catalog-qwen-v2/publication-preflight.json": "b80f6c4a8d0b87a1d365fc4be01e643429759cc52eda5c200dbf236f2073f538",
+      "pyproject.toml": "082842d4be0720e96163014443ca992e72fcc68b2ac60a938de3959f9d3a2307",
+      "scripts/qualify_qwen_formation_local.py": "677d69ffc182db0cc7ef2ed24a769c209d8db48d897399b7717b2f008a4d42b2",
+      "scripts/qualify_qwen_modal_transport.py": "cda2bde6b094b72514c083fa03e4b1e10cd479b089e00c6d36675f6d5072b20d",
+      "scripts/qwen_formation_desktop.py": "9abd693997a3e1a5afd0f946b12c7a3b273a066344bd0fd62338a98d7314e449",
+      "scripts/qwen_formation_node.py": "0b64ef5c3de4981068e62d0283e27276b489dc703690c38cecf6c8c547393829",
+      "scripts/qwen_full_inference_host.py": "9b2f854ed8b1360c8947a679dfe0ad71261e53a686a2f71de785da475a936a25",
+      "scripts/qwen_modal_participant.py": "913023e9e563fb42bfe8962eed0ca9085306ae3c90268afd7f32e5f74af0c825",
+      "scripts/qwen_product_inference_host.py": "759be6507f6e74efd6760116d49bd2602666752b7f36c1799501fb84b4bd5150",
+      "scripts/qwen_product_recovery.py": "d1a51391234d423e984dc8270ad8c8e3690643e7c8e5a377a139d9950247800d",
+      "scripts/run_qwen_formation.py": "d8cba93541c4edc0ac4ab8746a42be6985525e4d868d9f82026f0f5d55fdedb9",
+      "scripts/run_qwen_formation_modal.py": "9d3e6359c87714c0644ccf5f76a5007ca36191b294c5025f672ce08c09f7e18f",
+      "src/drift/__init__.py": "25413cb38a8cbd8d9903301d2da628e39cc91769d564b6c1838f6252a7f3de6e",
+      "src/drift/api/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/drift/api/server.py": "3a996d1f94fd5a52835ff3eaab6d6c4ea06a3361be3469624f6febc60323d598",
+      "src/drift/catalog_release.py": "f4351c727b38b399eaac19b4543b6326b6c62646b3a12701317619fbc05b0d38",
+      "src/drift/cli/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/drift/cli/__main__.py": "995060738b41c25af633a81e4819a3c01b85af143d8878e06c69100dc44d2323",
+      "src/drift/cli/run_api.py": "ea5d2476066fce4c03e3d339523f809fcab871dc8c5204049bd8671c48e44fe5",
+      "src/drift/cli/run_bootstrap.py": "7c54cba9244a171d88d52614589ad43a635cf60c7f3647236911eb746f7dc996",
+      "src/drift/cli/run_catalog.py": "9c06e36ca010bfd81c240e77f0ed738a39219e7ca1bd44486202fc8f157cfefe",
+      "src/drift/cli/run_dht.py": "afc5f812e5a720177560b81ca6b2471f09c745399eff8b37ee9788675f35cbb3",
+      "src/drift/cli/run_down.py": "7ecda1be0dee49619d96de33677bedd83ce3d91e44de234a8124237fc6c91ea5",
+      "src/drift/cli/run_edge_acquisition.py": "dd8cedf3ef10e231e01aae3049bc542235d1f3ec39dea2ad3a01b130639359c2",
+      "src/drift/cli/run_edge_benchmark.py": "34acaa625f8e38caca0085dcfd8e47011303ddbe37c3c10cd22e9bdf6a18c0af",
+      "src/drift/cli/run_identity.py": "e22b266476399fe04a535971d410c5cf000b9bab1c2f3d7cfc4b8cc3e4d36346",
+      "src/drift/cli/run_manifest.py": "b0c462079debe002ff660bb861c5cb99bae124fe8bb47f1060575ea4fcc7fec9",
+      "src/drift/cli/run_node.py": "6af55b74674ad882c51d8d2d94975b936b787002c232e6653b9275ee013b0286",
+      "src/drift/cli/run_prod_server.sh": "a0f39efa6b101b4f05b4f941fe12785c56f416beb265d178110ac2c194bd7ed4",
+      "src/drift/cli/run_server.py": "0ac20e620e0d94a13dd81f19dec679e926a99d6f46b163f00e218774763749d3",
+      "src/drift/cli/run_up.py": "5dbcf8d17394903941341d5b56df5a01b5d327d55ce28efb89762375ff7ac8df",
+      "src/drift/client/__init__.py": "51c204cabf56fddb8bbab110041df34f9c5df9b09dabfd958705b2d389332d97",
+      "src/drift/client/config.py": "b05f476f59bf4bd7ec9d89d9facda83b85c677eda8adecad6cd1a0b5038c79a5",
+      "src/drift/client/from_pretrained.py": "c9ba0f108b16efa875a590d7dec2a7c6ebffc3be9f3efe4871de64cc5ad59f21",
+      "src/drift/client/inference_session.py": "57d1d11953a35f4c0c50e1078eee8c82e52e4103002bfa6f6dcc22fb0f48e749",
+      "src/drift/client/lm_head.py": "79bd28679b13863f7b2143414023be468263f3e69ddcbdd85742fa5a13f5feec",
+      "src/drift/client/ptune.py": "2d12ce9beac06ed076d8a41a6f6b3d85f69e5f37e0c842420bfbdf4d787fef3b",
+      "src/drift/client/remote_forward_backward.py": "93757c9b00c92d766d5edbdb6d729006f74baf34c97d9cdc0fb822d830d4c4a1",
+      "src/drift/client/remote_generation.py": "17eb8a822d14cb69995be5d5931e4f2a45dfb0ce789f602d239e9ce5cf933134",
+      "src/drift/client/remote_sequential.py": "40d4042db011531a15953e16c6cb685d7bfdbeb6667a28f26e6593ae1dc9af82",
+      "src/drift/client/routing/__init__.py": "e3ccf601afc13c57b3e7e7df31ff16673c7764b2af5a08dc654e4fca0750f378",
+      "src/drift/client/routing/sequence_info.py": "58e9bd1f312d73bbad6c234ada5fbcad888214e87d339cab249979077377d3b3",
+      "src/drift/client/routing/sequence_manager.py": "080e4798bdb21a9c1941c9f2b926169b84b363b0f8cdb31e07cb1bf819b979ea",
+      "src/drift/client/routing/spending_policy.py": "e5cd8570fe215e1441c5312fd7859b3600bf440a31a4c435c9406e638b6e262c",
+      "src/drift/client/sequential_autograd.py": "81e1729f258fc7830aa7cd77d0d58452618b8f4cb18362e4b848fb1a1ac70c90",
+      "src/drift/constants.py": "abf3737fe372622a178bf16b1b8e3e86f4a8e8c134ee0776398ccad7c272e89a",
+      "src/drift/data_structures.py": "ba4ee49792105f583143413a51f6077ebed10ef2143259f72e0afb0add1de405",
+      "src/drift/dht_utils.py": "16a02b934d144b46e6d824d265f267f8bb176c2a2d462d2d5add0f853cf4fa91",
+      "src/drift/model_catalog.py": "7ee7c631435dce02851e032d4a32844a26502e1d2333d0989868600950df19d0",
+      "src/drift/model_manifest.py": "2edf59430f9e3864f557b9c474e1775e73fab3a96d6aaa27b20fd889146454c5",
+      "src/drift/models/__init__.py": "ece5852c7907a00d6f6921b3d8b868e42b19f5a474c131d25e5cd7ebc8231fef",
+      "src/drift/models/_gemma_block.py": "60b53b5ac228a315446328f47adc9f20a43919fcda658cb8c51c529e4e9c42b0",
+      "src/drift/models/_gqa_block.py": "2c55a1e99a8eeba6528981d852209488bf3f25bb1423cdc4d90399d60c8b29d2",
+      "src/drift/models/bloom/__init__.py": "4ce43ff3770b4ede96eed7ffb2d11290fd036d57235198a1573aa199782c8612",
+      "src/drift/models/bloom/block.py": "df290e8ceb288cd26c3e11abb030b385692a4aa3504856defded7b5122742691",
+      "src/drift/models/bloom/config.py": "0861a6046afa9bc7e49123ed8cc113e2deb0c9ac74e2631c55745c6129a5c6ef",
+      "src/drift/models/bloom/model.py": "ecbb53aa163e1b714f35c78830a41f5391d85d5a36e6d0d44cc4711f57353d8d",
+      "src/drift/models/deepseek_v3/__init__.py": "6c9348e12520648e2ce4b01b25054ac1063062d82c2a74ad4ba5df3b680e1c14",
+      "src/drift/models/deepseek_v3/block.py": "2ece6b49dc12c5fa38c76501f90712b7c4e39b2251afe56ee0e602f52e567c29",
+      "src/drift/models/deepseek_v3/config.py": "a3bda63103eb2f74ba2f3ca6cf205b873ddbd522ce4a75ae800f1b3cf14a10f2",
+      "src/drift/models/deepseek_v3/model.py": "e9ceb1c6946dfeb9aa4625cc667c6aae73fc7aeebea7f7af85b66ef6d66f97e9",
+      "src/drift/models/falcon/__init__.py": "8aa9717c72ba2716637758532faff818f5a7364397007f937fe05226c721c628",
+      "src/drift/models/falcon/block.py": "0de3ecf8a7314ded90daf2f633fce3caea6d6f1dc468c2a5049e42b11de99d40",
+      "src/drift/models/falcon/config.py": "3cb1c5d1094980ebc27197d5d8983b2b0619c233151344d10b972c3079ae5619",
+      "src/drift/models/falcon/model.py": "4aa9e47c4427a82c61d058128aa56fa9722f0a47b57004e4d6a8705688dd9565",
+      "src/drift/models/gemma2/__init__.py": "3c86c608eca0bc82302254d978ef3f0853f43079f2288855fa4bda0849312f9b",
+      "src/drift/models/gemma2/block.py": "2bb0037d7838a65b4c9e20a8c2dfafbeddf6587fcff84d73e68ab0dbc341d548",
+      "src/drift/models/gemma2/config.py": "82bf127d782318ccc72247d2d4f7a984a575b7b640d0048962cd8c29563d6488",
+      "src/drift/models/gemma2/model.py": "35506cca302317b97563864d26416c450028985e71a41f124e3bd2db4f139522",
+      "src/drift/models/gemma3/__init__.py": "dd417bbd3146d83cefdd8e5061ce7b3ff6db4d223d7826120e9179f7244e0086",
+      "src/drift/models/gemma3/block.py": "cc1d53103ef2456deda030ca1a372e39d24d298dc23951aa86765ecc678a5e90",
+      "src/drift/models/gemma3/config.py": "75171fd0d6893db8a16e90b03edac09c6b34b21124dd4b7cdecd4f3a01c9cc39",
+      "src/drift/models/gemma3/model.py": "b9ef922d55ed379c4eff68f6449d246610958372c38ea729a561df0d19949ec1",
+      "src/drift/models/gemma4/__init__.py": "540a79396363ecdb585e8a6f5e4faa63f1cf25fa68d99651b6f87d14c481177d",
+      "src/drift/models/gemma4/block.py": "c60227d2ba31bb13632e4fc69f47497f5d51e3c51dfbcf71a8463ab954ff954a",
+      "src/drift/models/gemma4/cache.py": "2799a7141d62c3de37d162280bc985e389aff5121e00cb2df3c0ddc936adbe0e",
+      "src/drift/models/gemma4/config.py": "ae6bd6c756ba0f848682acc3f30595919d3b3fc0e8ac045b45e66e528b29c77f",
+      "src/drift/models/gemma4/model.py": "9931be0d59f68feb5501a2ef0a4f29ab703712cc484fd3d8ce2443a7695dad79",
+      "src/drift/models/gemma4_unified/__init__.py": "5454dadd3559a90a9ba6a16a0ea10d91fa1112febe8bcfa7a1abd5b2bb1cd038",
+      "src/drift/models/gemma4_unified/block.py": "aaafd573d3fb70b91eeb5d6887b64392a68f1911e0b2c366b381002d826fda82",
+      "src/drift/models/gemma4_unified/config.py": "94ec0bb04de04082f7ac630bf75986bdcfa4675b75ac798a595f2707b632beb0",
+      "src/drift/models/gemma4_unified/model.py": "a81e81be2fa5240783ace0da2dd53a70e9640e12b6adcd8da3e787891b788dbf",
+      "src/drift/models/llama/__init__.py": "e2dffa3d41153bd0c5cba79f8a48ef8dfbfc524ac53aca1321caadd4ddef5ce5",
+      "src/drift/models/llama/block.py": "40c455f5d801429839e6afc779d99d4a02dedec9f31ae3e7e88bf813d5175dac",
+      "src/drift/models/llama/config.py": "3e3492d577fd2798e1b017e6add6bb6efa791bf191d3a47a0f0638b38fffd6f4",
+      "src/drift/models/llama/model.py": "16c698ac15950345c2365eb0da9948c03338dbd226a885b3a19d37c82dd1eb1b",
+      "src/drift/models/llama/speculative_model.py": "fdc1973349065678615eeeed192fadd5036a915d4bb6e3571add1e6a0b9cf087",
+      "src/drift/models/mistral/__init__.py": "89794392643711595b9077e2c02580d07bb7c481dd79200ba09ab5a03d3a915c",
+      "src/drift/models/mistral/block.py": "008e07d94e0e00141f37acf1b50fbac900a40212a5fac267678320ab809f03d2",
+      "src/drift/models/mistral/config.py": "14b4893781d930a3024d6e9a0287acf6465fbb4c46576e786ef5fed47bc24a86",
+      "src/drift/models/mistral/model.py": "52d4a4ec95cf4f4af0f2a548c07ed70aea25c6951d1fd97606199d65468dccbb",
+      "src/drift/models/mixtral/__init__.py": "eac8ec3a91d60b9b1ec5d2ecf2d932b66ee1e63e962b75410245e78c38f402af",
+      "src/drift/models/mixtral/block.py": "d44709364ac009baba3ff5c3328fdc12a96995d5ee6cb10e8fee7bb3cd7e1063",
+      "src/drift/models/mixtral/config.py": "1e7f0481749ff27b5032f8d251af6b770ffd3563a1150409afcc8ff3df5e73dc",
+      "src/drift/models/mixtral/model.py": "eb28dced7bcc6c09941b9bcf52e1245eb8f7523f41e9ca9d3bc3e6f4df511582",
+      "src/drift/models/qwen2/__init__.py": "b270bfc8e3d7c77fceb485614638cafb5866410fd6abdc669f36cdb1cb7d2e0d",
+      "src/drift/models/qwen2/block.py": "5b44ba67bd9b9499aed2fd9f2ae7cd8e2972ee0b38adbf72f64f4a53b1279b1a",
+      "src/drift/models/qwen2/config.py": "80bcfb41558ac0c032bc10f0c300eae9410de685422ccd87d954f07d28075f7c",
+      "src/drift/models/qwen2/model.py": "5ba1423a919bc62e3c82fab5d7e9fb4082eb5bd93a5e2e1ac7720d8ae3780c1f",
+      "src/drift/models/qwen3/__init__.py": "3383af165a62159090d54359dadba7b1e22e4b2b899bda883e84b530766e18a7",
+      "src/drift/models/qwen3/block.py": "14eeda65e40022486f14648c065432362c6b1348b072355e7bd30476dd248c42",
+      "src/drift/models/qwen3/config.py": "e11179215162b48cc3f2ef8fde31a17dcb9c6aa76b2651eae3c3067741d5528a",
+      "src/drift/models/qwen3/model.py": "7e6b416a8d84e6688db21c8bba2538b4b734c553721c9b682447d6f35ff14bbf",
+      "src/drift/models/qwen3_5/__init__.py": "7a5c3bc89c45a882832adced740b8d19c2dded51218a5d31fccaf098fc7408a5",
+      "src/drift/models/qwen3_5/block.py": "cb506f75ad664086ee5e750cfaa0cfd8ebf3b1b289efa210039bb38bf549165f",
+      "src/drift/models/qwen3_5/cache.py": "e7455ea6d38d30c0ca7dbdc8486697351cbfe6173ed00fd1022533e4d9fdb196",
+      "src/drift/models/qwen3_5/config.py": "6c467fc6948a2f06e2a7068864b473fa00b7d5cc6c5824420693a183d8a5a726",
+      "src/drift/models/qwen3_5/model.py": "b9092f62eb2a26881e2b2452b74f192bc6bf4e70f9091116cb6f7ac5a0a0dffb",
+      "src/drift/node/__init__.py": "4224d8431ac378cad874c88f9002da5585438cc2e514e5915777628c8fbc90bc",
+      "src/drift/node/catalog_bootstrap.py": "af426b0cadc1f5ddf2949e42d100883c761874324e04e07254ca8b5cd423442d",
+      "src/drift/node/catalog_refresh.py": "92412ad5915a812b28cff20aabf28e3d3e854cc88dcf7c90f0f93fdc53048bf3",
+      "src/drift/node/config.py": "699e7cb7a91c5d77dfc122aba09fbe0c431eb8c0660458fcc61729e35b065535",
+      "src/drift/node/config_lock.py": "c5f894e433d5d8ad3812c76940ca407674203880b258ab2c8e721e6d61f84108",
+      "src/drift/node/contribution_planner.py": "89792399821a5ed01e4a1cec42c0bcfce949eb8df05f2f8033e0f57a2f78be7d",
+      "src/drift/node/discovery.py": "6b9b36e777eb13d2331855429d15b0a4885066b43bed76d44492ee2cdfc3da18",
+      "src/drift/node/edge_acquisition.py": "4390bcdbe6172ac1633c45ea8991c2369677685c3e5c8c70d3be2baa9aeaca2f",
+      "src/drift/node/edge_benchmark.py": "ceea4869c93706a5b0162b71652aab96aaca4add953b331cf0dab4e90d6f05e7",
+      "src/drift/node/edge_supervisor.py": "34fafac20cba1daad65c8e09fe55bd67635fc6238904e1d96df66a1243fc9ff9",
+      "src/drift/node/keys.py": "3bf8d6209b2e8994f86011d4230f2f88e0f051e3f133ab8790f6f3fd4ed6662d",
+      "src/drift/node/loading.py": "dba38d80902782edbf7432c4c40423f5a49e1a54acc647c9001400d9aec41327",
+      "src/drift/node/local_inference.py": "0866368b4eab9fbcecd3311b6760fedba9369d0b3b4aa4dbcb71caf40c65fa78",
+      "src/drift/node/model_manager.py": "bfb97b0bb5ff39d69b28c4379dcd251c536219ebae5ea359f350319b92aee0ce",
+      "src/drift/node/model_selection.py": "5eb6dec25116a675490209e3283b33d3eabf70efb4895ba230ceb844f7352f92",
+      "src/drift/node/native_credentials.py": "c34bc1d01783eb3fc933911abbb87c191a5c4e4f60f3395920d5d3cd03e4dbf8",
+      "src/drift/node/policy_store.py": "bd88c40b1b610349c3718ff1ce9dd12c1901b83af5bce97976858cfe7846839f",
+      "src/drift/node/route_health.py": "2d5f5b8d5deb8a363eff50412646a3252a02869e7ce725964d63b0ae30ea32ec",
+      "src/drift/node/route_metrics.py": "2280fa0affb938856e54dc613cd3cadc1c671fe03635c2213a4a4e2905de473c",
+      "src/drift/node/server.py": "f8715f41dffc2e312eda3d83fb5ac26cac866d3264a3a0b3dced38ce93f9c101",
+      "src/drift/node/worker_supervisor.py": "ee5348d3ca6e632cd844830f1263222ede41ed21d4f39f233eb10e627e81f2bf",
+      "src/drift/protocol_identity.py": "0f35b4729929250875649a835af6b7fb38b9006f8f6e71e494ccbb906488373d",
+      "src/drift/server/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/drift/server/admission.py": "228021a291ad46ae24eb2e9ee886c71ce263264baa790ddcd8b481808df7d904",
+      "src/drift/server/backend.py": "38858453c0bd28c9941a0f9f9a88d1dfb0c04b363b19ef0cf1fac30776aa70da",
+      "src/drift/server/block_functions.py": "b9663eed654f339517162a279556336c556352ed195c70d33a1f55c7e841377e",
+      "src/drift/server/block_selection.py": "3f30f47c234352f5e0b087f8ae5790c91ea490c429bcf10a056ab608d29a4dca",
+      "src/drift/server/block_utils.py": "8968d8461edd11eff34a2c4bb189ccc251eaeae4b5a160b4bb834186023b4dcf",
+      "src/drift/server/from_pretrained.py": "9333d3a6c83bbe9b48854bbdc1e5cb0ce0849968f049043c58bca6b8b9b71271",
+      "src/drift/server/handler.py": "9aa18b62a7aeaeeb0fda87b9b505e1e513de7dc47ad03c4f3b707bb064b1058d",
+      "src/drift/server/health.py": "5442ed30c17daa6d2755ccb99c63b1f50a2a68a06290bc9aef33e617b14aff32",
+      "src/drift/server/memory_cache.py": "213c16fa03663e5eca120977a565225a291ba150227c72286891e0ca02a3d280",
+      "src/drift/server/reachability.py": "bea5c2889c1c2ceaf1ebcca2c6a34b5c6ae3623e81ff1d849797f8200a5bdac8",
+      "src/drift/server/rejection_logging.py": "8b15251165ed65a563cf18e0a807e95d155e9d215fc093c0a282a43768a67f32",
+      "src/drift/server/server.py": "02acea42248c07ff379ae5cab6eb14c40ef422b885c306cb5ef8ca1fb0b1d810",
+      "src/drift/server/task_pool.py": "6961c24ee8ecabf789322dfb28fb2f43b52e9aea77833670b24e78c341138d64",
+      "src/drift/server/task_prioritizer.py": "333c620a317d7c88aab4ebb099681212f55d7e22536e18da41f27e467ed93669",
+      "src/drift/server/throughput.py": "82bea37188e4f51947eec0c00660179a83d9c6b461d9bdb2b9b22a337dabbfc9",
+      "src/drift/utils/__init__.py": "83f00a50e5ec190e2c75552dd6ab81523f18b8c121b1dbf19ac7d23cf847fb55",
+      "src/drift/utils/asyncio.py": "3f45ab9fcd9e84c82691b7ffe9b8958d6e32b3cf62247d9ec802abb29681181a",
+      "src/drift/utils/auto_config.py": "641c04c2692349ed606d15e53da63e3cf628a5497049bd3e28dc508c2d6be3ad",
+      "src/drift/utils/convert_block.py": "15622a0a4a8fb887d686fd4e1a340d5f5044cf84ed0a40b3d0f119365d0609bf",
+      "src/drift/utils/dht.py": "3da5c73f0c81609681ee94a60dee541ceffcce7c8ead37ef2e360012d83c190e",
+      "src/drift/utils/disk_cache.py": "b85ffab6973593ffc5a1b49541d77e6ec07d0efbeaaaa1a407fe7530ac6beb42",
+      "src/drift/utils/file_lock.py": "f8530419e2419fefd7d6f89cb3ea6afcc135a9c39a0b6d711bc3eb2467cd8ce9",
+      "src/drift/utils/hardware.py": "39da5961f43b562bd151f861389a26abf4aba806021058a441f163481b5a217f",
+      "src/drift/utils/hub_ranges.py": "c548c8402dbeebf003b47f8fad7d59fb195d0035808c239a449e2140c7f4efed",
+      "src/drift/utils/join_token.py": "dc826a66cce14e830a2c03d7cc273f9cd9cc4c2678eb54d83fe86947961457c1",
+      "src/drift/utils/kv_cache.py": "a0c6d8796ac67c78b652d6c83113f189a2c6cbd8d934206dc782786b9167b74e",
+      "src/drift/utils/logging.py": "7ba375161fcc21b4972a70d7a40a645e782bd69d25f76e7f3ec4d2c8ce6fda96",
+      "src/drift/utils/misc.py": "4c1975f3353ddf8ad3e69fc3b8b11ffe47664c5bfc7962fa647ca32b0a2aed3b",
+      "src/drift/utils/packaging.py": "f20d92f013c0436baa34c3785643e33a7e2fc0912ddb90369ff5558e116f9765",
+      "src/drift/utils/peft.py": "a584251e0434d11dbe442292b37b627a4cd1cc30a52eeab82aa460a8d9ce3e64",
+      "src/drift/utils/ping.py": "d07b84504473d1fe00c0242ab6c1ae7774959291654a52e67113bb796c15eff4",
+      "src/drift/utils/process_lifetime.py": "2c254546516e7b6ae70eeeddfd597831c47f66cfe5a255e03c842f319119d0cc",
+      "src/drift/utils/random.py": "0b8a704a57dfdb28ffbf6d13c13374d7eb9aa4d316fbe596d5d46df2bae420cf",
+      "src/drift/utils/reference_model.py": "f32974976022ce342f21d87ac1c2fea980191b47abc78217e3d87f44c4b2b56b",
+      "src/drift/utils/server_registry.py": "82540da14725c9800a0a7971dce612ee3b1dfd0eafc6d16298c0502c81aee20c",
+      "src/drift/utils/shared_kv.py": "f08aa9320e2c147fa00ad5f982b0f51c573ab9736db4c886101cd62a2a5ae0b1",
+      "src/drift/utils/tensor_parallel/__init__.py": "4e98d8d0943c6c7cb7de15ac559fd5a1cb47c9370923d18155a958337df26b29",
+      "src/drift/utils/tensor_parallel/communications.py": "17115399ced4da75871c137236dd335eb5a71bf0d5f0e62674bf8f173b8241b0",
+      "src/drift/utils/tensor_parallel/configs.py": "1471f543381b9f85ddba902a111ee9b50a3c0b3ea6a76329c8309c88d3e15ae4",
+      "src/drift/utils/tensor_parallel/cross_device_ops.py": "968c01a5d54b86cdbbd9fdae5a374b94de99aa9e0546c12012e5674417de868b",
+      "src/drift/utils/tensor_parallel/slicer.py": "61c5c420dc72b7231727cfeace8dcbf46c8d65f04689a4e8ac7c2f1fefd53c0a",
+      "src/drift/utils/tensor_parallel/utils.py": "12727f9c9ba09e6049bb0128178af9a2e7ac2a7e9225ac845bea076c6cecc9b1",
+      "src/drift/utils/tensor_parallel/wrapper.py": "0e5f0e228dd80461871d514bbfd9f01ca2ee34cdfddf92d8c537b086147f2c83",
+      "src/drift/utils/version.py": "8d9520a26fa93f0ff733f6735ab2615328b2581d490e36f9eb701a6733c08b9f",
+      "src/drift/utils/weight_conversion.py": "64aceff28cd038d1529cdad0f52633d4680c2e50be9710decbc3accee21d10b7"
+    },
+    "scope": "Current source snapshot; source cloud nodes, retained frozen Windows node, production Qt source"
+  },
+  "cause": "Actual production Qt sharing-policy Save returned HTTP 503. renameat2(RENAME_EXCHANGE) failed with errno 22 in /srv/q38, /tmp and /dev/shm. Atomic persistence was retained.",
+  "local_answers": {
+    "desktop-formation-response-3428add90658b9b9603b0f24.json": {
+      "id": "3428add90658b9b9603b0f24",
+      "observed_at_unix": 1788760476.7144344,
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788760466,
+        "id": "cmpl-8e5c190389f74101bbae702c",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "result": "passed",
+      "seconds": 15.453490972518921
+    },
+    "q38mf-20260907-054716-44636d-c-formation-response-b1c54863432e87784971ab1e.json": {
+      "id": "b1c54863432e87784971ab1e",
+      "observed_at_unix": 1788760210.7421823,
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788760204,
+        "id": "cmpl-02061afa863f49f69f878a0e",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "result": "passed",
+      "seconds": 35.318546533584595
+    },
+    "q38mf-20260907-054716-44636d-w0-formation-response-b44766e35726261346b0c095.json": {
+      "id": "b44766e35726261346b0c095",
+      "observed_at_unix": 1788760267.0684235,
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788760258,
+        "id": "cmpl-682876d42d654636a265b9a5",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "result": "passed",
+      "seconds": 39.64627528190613
+    },
+    "q38mf-20260907-054716-44636d-w1-formation-response-79bc13d256943c5b0c94b8ad.json": {
+      "id": "79bc13d256943c5b0c94b8ad",
+      "observed_at_unix": 1788760325.5024073,
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788760320,
+        "id": "cmpl-9c14eec7ebbb45ba80e96373",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "result": "passed",
+      "seconds": 47.743013858795166
+    },
+    "q38mf-20260907-054716-44636d-w2-formation-response-db9df9c907b1f93c7a2e74a9.json": {
+      "id": "db9df9c907b1f93c7a2e74a9",
+      "observed_at_unix": 1788760392.9267492,
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788760385,
+        "id": "cmpl-4c902c64df234f628f2b85bd",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "result": "passed",
+      "seconds": 48.40693664550781
+    },
+    "q38mf-20260907-054716-44636d-w3-formation-response-22f81a51de9a18a55bc49963.json": {
+      "id": "22f81a51de9a18a55bc49963",
+      "observed_at_unix": 1788760443.824954,
+      "response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "text": " Paris.\n"
+          }
+        ],
+        "created": 1788760436,
+        "id": "cmpl-736348ced70b4c0c8dcadf6b",
+        "model": "Qwen3.5-0.8B-Local",
+        "object": "text_completion",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 5,
+          "total_tokens": 8
+        }
+      },
+      "result": "passed",
+      "seconds": 38.21051907539368
+    }
+  },
+  "desktop_observations": {
+    "desktop-desktop-response-b98a6f184237e3516fe59ce4.json": {
+      "button_clicked": false,
+      "detail": "Selected a verified standalone model on this computer.",
+      "fake_node": false,
+      "id": "b98a6f184237e3516fe59ce4",
+      "inference_mode": "auto",
+      "observed_at_unix": 1788760486.150406,
+      "real_window_visible": true,
+      "result": "passed",
+      "screenshot": "desktop-b98a6f184237e3516fe59ce4.png",
+      "selection": {
+        "covered_blocks": 24,
+        "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+        "model": "Qwen3.5-0.8B-Local",
+        "peer_count": 0,
+        "reason": "Selected a verified standalone model on this computer.",
+        "source": "local",
+        "status": "selected",
+        "title": "auto selects Qwen3.5-0.8B-Local",
+        "total_blocks": 24
+      },
+      "source": "local",
+      "title": "auto selects Qwen3.5-0.8B-Local",
+      "ui_runtime": "production Qt source"
+    },
+    "q38mf-20260907-054716-44636d-c-desktop-response-0ff68cfef716ab4c915fbba0.json": {
+      "button_clicked": false,
+      "detail": "Selected a verified standalone model on this computer.",
+      "fake_node": false,
+      "id": "0ff68cfef716ab4c915fbba0",
+      "inference_mode": "auto",
+      "observed_at_unix": 1788760221.9401457,
+      "real_window_visible": true,
+      "result": "passed",
+      "screenshot": "desktop-0ff68cfef716ab4c915fbba0.png",
+      "selection": {
+        "covered_blocks": 24,
+        "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+        "model": "Qwen3.5-0.8B-Local",
+        "peer_count": 0,
+        "reason": "Selected a verified standalone model on this computer.",
+        "source": "local",
+        "status": "selected",
+        "title": "auto selects Qwen3.5-0.8B-Local",
+        "total_blocks": 24
+      },
+      "source": "local",
+      "title": "auto selects Qwen3.5-0.8B-Local",
+      "ui_runtime": "production Qt source"
+    },
+    "q38mf-20260907-054716-44636d-w0-desktop-response-cdd4e7b6624da33b5dae86a1.json": {
+      "button_clicked": false,
+      "detail": "Selected a verified standalone model on this computer.",
+      "fake_node": false,
+      "id": "cdd4e7b6624da33b5dae86a1",
+      "inference_mode": "auto",
+      "observed_at_unix": 1788760272.7169282,
+      "real_window_visible": true,
+      "result": "passed",
+      "screenshot": "desktop-cdd4e7b6624da33b5dae86a1.png",
+      "selection": {
+        "covered_blocks": 24,
+        "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+        "model": "Qwen3.5-0.8B-Local",
+        "peer_count": 0,
+        "reason": "Selected a verified standalone model on this computer.",
+        "source": "local",
+        "status": "selected",
+        "title": "auto selects Qwen3.5-0.8B-Local",
+        "total_blocks": 24
+      },
+      "source": "local",
+      "title": "auto selects Qwen3.5-0.8B-Local",
+      "ui_runtime": "production Qt source"
+    },
+    "q38mf-20260907-054716-44636d-w1-desktop-response-cb9a3d60f625989ef84eb1db.json": {
+      "button_clicked": false,
+      "detail": "Selected a verified standalone model on this computer.",
+      "fake_node": false,
+      "id": "cb9a3d60f625989ef84eb1db",
+      "inference_mode": "auto",
+      "observed_at_unix": 1788760335.9681635,
+      "real_window_visible": true,
+      "result": "passed",
+      "screenshot": "desktop-cb9a3d60f625989ef84eb1db.png",
+      "selection": {
+        "covered_blocks": 24,
+        "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+        "model": "Qwen3.5-0.8B-Local",
+        "peer_count": 0,
+        "reason": "Selected a verified standalone model on this computer.",
+        "source": "local",
+        "status": "selected",
+        "title": "auto selects Qwen3.5-0.8B-Local",
+        "total_blocks": 24
+      },
+      "source": "local",
+      "title": "auto selects Qwen3.5-0.8B-Local",
+      "ui_runtime": "production Qt source"
+    },
+    "q38mf-20260907-054716-44636d-w2-desktop-response-3cec0a281cfd910866308ec1.json": {
+      "button_clicked": false,
+      "detail": "Selected a verified standalone model on this computer.",
+      "fake_node": false,
+      "id": "3cec0a281cfd910866308ec1",
+      "inference_mode": "auto",
+      "observed_at_unix": 1788760400.019935,
+      "real_window_visible": true,
+      "result": "passed",
+      "screenshot": "desktop-3cec0a281cfd910866308ec1.png",
+      "selection": {
+        "covered_blocks": 24,
+        "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+        "model": "Qwen3.5-0.8B-Local",
+        "peer_count": 0,
+        "reason": "Selected a verified standalone model on this computer.",
+        "source": "local",
+        "status": "selected",
+        "title": "auto selects Qwen3.5-0.8B-Local",
+        "total_blocks": 24
+      },
+      "source": "local",
+      "title": "auto selects Qwen3.5-0.8B-Local",
+      "ui_runtime": "production Qt source"
+    },
+    "q38mf-20260907-054716-44636d-w3-desktop-response-0cb7dcded7ff0555c429193a.json": {
+      "button_clicked": false,
+      "detail": "Selected a verified standalone model on this computer.",
+      "fake_node": false,
+      "id": "0cb7dcded7ff0555c429193a",
+      "inference_mode": "auto",
+      "observed_at_unix": 1788760451.623794,
+      "real_window_visible": true,
+      "result": "passed",
+      "screenshot": "desktop-0cb7dcded7ff0555c429193a.png",
+      "selection": {
+        "covered_blocks": 24,
+        "manifest_digest": "sha256:e62b19ad7d0c6af3dabe730105aefd4cf067ddc50063ffa74c00bd94a29bd7d0",
+        "model": "Qwen3.5-0.8B-Local",
+        "peer_count": 0,
+        "reason": "Selected a verified standalone model on this computer.",
+        "source": "local",
+        "status": "selected",
+        "title": "auto selects Qwen3.5-0.8B-Local",
+        "total_blocks": 24
+      },
+      "source": "local",
+      "title": "auto selects Qwen3.5-0.8B-Local",
+      "ui_runtime": "production Qt source"
+    }
+  },
+  "cleanup": {
+    "sandboxes": {
+      "q38mf-20260907-054716-44636d-c": {
+        "exit_code": 137,
+        "sandbox_id": "sb-XpGl6rHTKRudxsBpcfKFX3"
+      },
+      "q38mf-20260907-054716-44636d-w0": {
+        "exit_code": 137,
+        "sandbox_id": "sb-ttc0l5OLeuwjtEpjvyEWbR"
+      },
+      "q38mf-20260907-054716-44636d-w1": {
+        "exit_code": 137,
+        "sandbox_id": "sb-Pxc6BxDXEDgKQXRv3UD8Gd"
+      },
+      "q38mf-20260907-054716-44636d-w2": {
+        "exit_code": 137,
+        "sandbox_id": "sb-41vQhHWB3GwtcgvoPL3Ll3"
+      },
+      "q38mf-20260907-054716-44636d-w3": {
+        "exit_code": 137,
+        "sandbox_id": "sb-E3FBDFNwVZf4EqE4YDC9pi"
+      }
+    },
+    "verified": true
+  },
+  "app_cleanup": {
+    "observations": [
+      {
+        "app_id": "ap-jzX96NEvA2MzUDK0YCtBhe",
+        "created_at": "2026-09-07 00:47:16-05:00",
+        "description": "q38mf-20260907-054716-44636d",
+        "state": "stopped",
+        "stopped_at": "2026-09-07 01:01:40-05:00",
+        "tasks": "0"
+      }
+    ],
+    "verified": true
+  },
+  "local_cleanup_verified": true,
+  "operator_intervention": "Read-only diagnostics identified the platform incompatibility; an explicit error marker aborted the attempt. No successful formation is claimed.",
+  "persisted_followup": "Real-window and atomic-settings-exchange setup probe; immediate capture of production Qt sharing-action errors; GCP runner now also uses five actual remote Qt windows and their Save/Start controls."
+}
