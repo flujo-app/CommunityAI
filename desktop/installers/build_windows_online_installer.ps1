@@ -38,6 +38,19 @@ $outputPath = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $filename = "communityai-$($artifact.version)-windows-online-setup.exe"
 $installerPath = Join-Path $outputPath $filename
 if (Test-Path -LiteralPath $installerPath) { throw 'Refusing to overwrite an existing online installer' }
+$helperSource = Join-Path $PSScriptRoot 'WindowsDownload.cs'
+$frameworkCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+if (-not (Test-Path -LiteralPath $frameworkCompiler -PathType Leaf)) {
+    $frameworkCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+}
+if (-not (Test-Path -LiteralPath $frameworkCompiler -PathType Leaf)) {
+    throw 'The Windows .NET Framework C# compiler is required to build the downloader helper'
+}
+$helperBuild = Join-Path $outputPath 'downloader-build'
+New-Item -ItemType Directory -Path $helperBuild -Force | Out-Null
+$helperPath = Join-Path $helperBuild 'WindowsDownload.exe'
+& $frameworkCompiler /nologo /target:exe /platform:anycpu /optimize+ "/out:$helperPath" $helperSource
+if ($LASTEXITCODE -ne 0) { throw "Downloader helper compiler failed: $LASTEXITCODE" }
 $arguments = @(
     '/Qp',
     "/DOutputPath=$outputPath",
@@ -46,7 +59,8 @@ $arguments = @(
     "/DInstallerUrl=$($artifact.url)",
     "/DInstallerFilename=$($artifact.filename)",
     "/DInstallerSha256=$($artifact.sha256)",
-    "/DInstallerSize=$($artifact.size_bytes)"
+    "/DInstallerSize=$($artifact.size_bytes)",
+    "/DDownloadHelper=$helperPath"
 )
 if ($SigningToolCommand) { $arguments += @('/DSigningTool=communityai', "/Scommunityai=$SigningToolCommand") }
 $arguments += (Join-Path $PSScriptRoot 'communityai-online.iss')
@@ -67,6 +81,10 @@ $metadata = @{
     unsigned_alpha = [bool]$UnsignedAlpha
     offline_installer = $artifact
     release_manifest_sha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    download_helper_sha256 = (Get-FileHash -LiteralPath $helperPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    download_helper_source_sha256 = (Get-FileHash -LiteralPath $helperSource -Algorithm SHA256).Hash.ToLowerInvariant()
+    installer_script_sha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'communityai-online.iss') -Algorithm SHA256).Hash.ToLowerInvariant()
+    builder_script_sha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
     live_download_verified = $false
 }
 $metadata | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath "$installerPath.json" -Encoding utf8

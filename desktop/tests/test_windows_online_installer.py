@@ -163,6 +163,13 @@ class WindowsOnlineInstallerTests(unittest.TestCase):
         metadata = json.loads(installer.with_suffix(".exe.json").read_text(encoding="utf-8-sig"))
         self.assertEqual(metadata["offline_installer"], self.artifact)
         self.assertEqual(metadata["sha256"], hashlib.sha256(installer.read_bytes()).hexdigest())
+        helper = self.output / "downloader-build/WindowsDownload.exe"
+        self.assertIn(f"/DDownloadHelper={helper}", arguments)
+        self.assertEqual(metadata["download_helper_sha256"], hashlib.sha256(helper.read_bytes()).hexdigest())
+        self.assertEqual(
+            metadata["download_helper_source_sha256"],
+            hashlib.sha256((BUILDER.parent / "WindowsDownload.cs").read_bytes()).hexdigest(),
+        )
         self.assertFalse(metadata["live_download_verified"])
 
     def test_failed_compiler_cannot_create_success_metadata(self):

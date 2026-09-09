@@ -13,6 +13,8 @@ on:
       - "scripts/gate13_linux_packaged_lifecycle.py"
       - "scripts/gateq38_linux_host_runtime.py"
       - "tests/test_runtime_archive_hardlinks.py"
+      - "tests/test_windows_download_helper.py"
+      - "tests/test_windows_online_integration.py"
       - "docs/REVIVAL.md"
       - "docs/REVIVAL_TEST_RESULTS.md"
   workflow_dispatch:
@@ -156,6 +158,16 @@ jobs:
             }
           } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $fixtureManifest -Encoding utf8
           ./installers/build_windows_online_installer.ps1 -Manifest $fixtureManifest -OutputDirectory (Join-Path $fixtureDirectory 'output') -Compiler (Join-Path $env:RUNNER_TEMP 'inno-compiler/ISCC.exe') -UnsignedAlpha
+      - name: Verify resumable Windows downloader and owned setup handoff
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: |
+          $env:COMMUNITYAI_INNO_COMPILER = Join-Path $env:RUNNER_TEMP 'inno-compiler/ISCC.exe'
+          python -m unittest discover -s tests -p test_windows_download_helper.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Resumable downloader tests failed' }
+          python -m unittest discover -s tests -p test_windows_online_integration.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Online setup integration tests failed' }
       - name: Build Debian engineering package
         if: runner.os == 'Linux'
         run: >-
