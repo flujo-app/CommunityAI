@@ -1,6 +1,6 @@
 # Public inference alpha release readiness
 
-Last reviewed: **2026-09-08**. This is the current release checklist. The former
+Last reviewed: **2026-09-09**. This is the current release checklist. The former
 checkpoint narratives, completed-gate detail, failed attempts, old model inventory,
 and budget history are preserved in [RELEASE_READINESS_HISTORY.md](RELEASE_READINESS_HISTORY.md).
 Implementation details belong in their linked runbooks and evidence records.
@@ -83,7 +83,7 @@ remain; `WAITING` means a dependency is open; `TODO` means not yet executed.
 | 14 | **PASSED, bounded Windows/Linux alpha scope** | **“Sharing obeys my limits.”** Frozen packages at `76b6d84` (Windows) and `bf67f0d` (Linux packaging fixes) passed fresh 100%/100% defaults with sharing opt-in, real Qwen processing load, live VRAM changes, low-memory rejection/recovery, Pause, persistence and independent storage/bandwidth/schedule/power admission checks. Linux used ordinary-user Debian 12/Xvfb with CUDA passthrough; broader hardware/physical desktop profiles are not implied. [Final evidence](evidence/gate14-20260907-final-resource-acceptance.md). |
 | 15 | **PASSED, bounded Windows/Debian/Ubuntu alpha scope** | **“Install it, replace it, remove it.”** Windows active different-version upgrade and Debian/Ubuntu active same-version replacement/removal/reinstall passed. Both frozen sign-in checkboxes passed enable/restart/disable with native registration and cleanup verified. Manual cache/reset choices passed on disposable Windows state; disable sign-in startup before uninstalling. [Combined acceptance](evidence/gate15-20260908-final-installer-acceptance.md). Unsigned alpha is owner-authorized; signing, Store, hosted signed APT and automatic updates follow after alpha. |
 | 16 | **IN PROGRESS; existing recovery/safety evidence under release-scope review** | Real worker-loss/fallback/rejoin, formation, resource shutdown and local safety checks already passed in their recorded scopes. Credit those results before scheduling any new run. The combined public-deployment probe followed by real inference has not run; periodic live catalog withdrawal/restore qualification follows the owner's beta deferral. |
-| 17 | **TODO** | Publish and observe the explicitly best-effort alpha after the preceding outcomes pass. |
+| 17 | **IN PROGRESS; candidate downloads published** | All four qualified installer options and release metadata are public and hash-verified. Prepare the draft release and observation within the declared best-effort scope; the combined Gate 16 canary remains unexecuted. |
 
 Gate 14 protects contributors' PCs and Gate 15 makes distribution usable; retain
 both. Combine overlapping Q3.8/Gate 14/15 observations in the same bounded desktop
@@ -95,14 +95,39 @@ public safety check; exhaustive hardening is deferred.
 
 September 8 distribution refresh: the owner requested removal of duplicate
 libraries and unused bitsandbytes CUDA variants, plus a small verified downloader
-and the full offline installer. Source changes and focused Windows/Linux checks
-are implemented; replacement frozen bundles and their actual install/download
-acceptance remain pending. The [packaging evidence](evidence/runtime-packaging-reduction-20260908.md)
-distinguishes inventory estimates from measured replacement installer sizes.
-Cloudflare R2 was activated by the owner; a storage-scoped token, CLI access,
-dedicated public bucket and anonymous test-object download are verified. The
-fresh account has no domain; its rate-limited `r2.dev` address is configured for
-initial testing. [Download and hosting status](ALPHA_INSTALL.md).
+and the full offline installer. Both replacement runtimes identify source
+`84205f93fc73d3babd39e238944b97fab0d11b3e`. The Windows
+`0.1.0-alpha.20260908.1` setup is **2,462,345,104 bytes** and passed ordinary-user
+installation, installed native CUDA operations and removal.
+[Windows acceptance](evidence/normalized-windows-installer-20260908.md).
+The Linux `0.1.0~alpha.20260908.1` package is **2,302,428,788 bytes** and passed
+installation, installed CPU/CUDA/worker checks and removal on Ubuntu 22.04.
+[Linux acceptance](evidence/alpha-normalized-linux-20260908.md). Measured
+regular runtime payloads are 4,263,859,354 bytes on Windows and 5,161,115,250 bytes
+on Linux. The [packaging evidence](evidence/runtime-packaging-reduction-20260908.md)
+preserves the earlier estimates and targeted normalization rules.
+
+Cloudflare R2 is configured at the immutable `alpha/20260908.1/` prefix. The
+actual Windows setup and Debian package are uploaded and passed complete hosted
+download/hash verification. The **2,107,751-byte Windows online setup** passed
+actual ordinary-user installer handoff, an installed CPU diagnostic and removal,
+with exact child-process exit, temporary cleanup and persisted user-state baseline
+verified. [Windows hosted acceptance](evidence/normalized-online-windows-installer-20260908.md).
+The **13,662-byte Linux online installer** passed HTTPS download, protected-copy/APT
+installation and removal. [Linux hosted acceptance](evidence/alpha-online-linux-hosted-20260908.md).
+Earlier transport and progress-publication failures remain in those records;
+these single successful handoffs establish no broad availability guarantee.
+
+The Windows online helper, Inno script and builder match source
+`b6c8aad9cea208630785d890cfb966093f809e7e`, checked after the working-tree build;
+the offline runtime source remains `84205f93`. Both online files, all 19 curated
+platform records, the combined manifest, installer checksums and metadata ZIP
+are published. All 24 small public object bodies matched their exact hashes.
+[Publication audit](evidence/alpha-cloudflare-publication-20260909.json).
+The rate-limited `r2.dev` origin serves the declared initial scope.
+The [installation guide](ALPHA_INSTALL.md) carries exact hashes and availability;
+[hosting records](CLOUDFLARE_RELEASE.md) keep platform provenance and the exact
+embedded online manifests separate.
 
 Gate 14 is complete for the declared Windows/Linux alpha scope. The
 [final acceptance](evidence/gate14-20260907-final-resource-acceptance.md) used complete
@@ -244,10 +269,11 @@ after observing lease release within timeout bounds and exact admission deltas;
 early resets and malformed-request transport failures still fail the probe.
 [Transport follow-up](evidence/gate16-20260908-linux-idle-transport-fix.md).
 
-At reviewed head `076b4b1`, all nine CI checks passed, including Linux/macOS
+At reviewed head `fdd8d0b`, all nine CI checks passed, including Linux/macOS
 functional tests, style/security checks and both complete Windows/Linux production
-package/installer jobs. These rebuilds retain their own provenance; the installed
-acceptance above remains bound to its exact qualified artifacts.
+package/installer jobs. This head adds an import-formatting fix after the
+`84205f93` candidate runtime source. CI rebuilds retain their own provenance;
+candidate acceptance remains bound to its exact installer/runtime identities.
 The
 two high-severity CodeQL findings were reviewed against their exact source-to-sink
 paths and [dismissed as false positives](evidence/gate14-20260907-codeql-triage.md),
@@ -260,20 +286,29 @@ still require operator-supplied strong tokens.
    have already passed in their recorded scopes. The owner asked which genuinely
    new deployment observations remain; do not launch another full qualification
    campaign merely to repeat them. The combined live canary remains unexecuted.
-2. **Prepare the public download location.** Arrange access for the exact setup
-   and `.deb`, then verify anonymous downloads and checksums. Additional Q3.8
+2. **Retain the completed distribution acceptance.** Both complete hosted
+   download/hash checks and actual online downloader-to-installer handoffs passed.
+   All four installer options and their checksums/metadata are public and verified.
+   Additional Q3.8
    conversations/performance measurements and periodic catalog activation/draining
    are explicitly deferred and must not be reintroduced through Gate 16.
-3. **Publish and observe the best-effort alpha.** Publish only the qualified setup
-   and `.deb` with checksums/provenance after the preceding outcomes pass. Store,
-   trusted Windows signing, hosted signed APT, larger adapters and credits follow.
+3. **Prepare the draft alpha release with the verified candidate links.**
+   Use the published exact checksums/provenance and declare the tested platform
+   limits. This can proceed while Gate 16's deployment scope is
+   reviewed; it does not claim the combined canary passed or current public Qwen
+   capacity was observed. Store, trusted Windows signing, hosted signed APT,
+   larger adapters and credits follow.
 
 The [candidate installation/download guide](ALPHA_INSTALL.md) binds the exact
-installer hashes and records a publication constraint: both files exceed GitHub
-Releases' 2 GiB per-asset limit. Their combined 6.3 GB fits the stated R2 Standard
-included storage allowance if available; a bucket/custom domain and anonymous
-download verification remain to be arranged. No hosting account, paid resource
-or public upload was created in this sprint.
+installer hashes. Both new offline files exceed GitHub Releases' 2 GiB per-asset
+limit and total 4,764,773,892 bytes; the owner-authorized R2 origin serves these
+versioned objects. The [public metadata check](evidence/alpha-public-metadata-20260908.json)
+verified the catalog, bootstrap and both manifests at 23:52 UTC on September 8.
+The signed catalog expires on September 28 at 19:35 UTC. Renew it before expiry
+and preserve `codex/gate-v-auto-selection` while the published URLs depend on
+that branch. No peer was probed: historical successful routes do not establish
+current complete community capacity. These operational facts remain distinct
+from installer acceptance and the unexecuted combined Gate 16 canary.
 
 The [model ladder audit](COMMUNITY_AI_MODEL_LADDER.md) and
 [product results](QWEN_DESKTOP_PRODUCT_RESULTS.md) separate implemented behavior

@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "source_tree": "5bd44e4afb6b6911f5ddd1bb3d492dad438883e8",
+  "installer_filename": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+  "installer_sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+  "installer_bytes": 2462345104,
+  "provenance_sha256": "d5210329edf7236aaaadc0102c0f9363d3c0560f14ccb46ece3928f61b0ddaa1",
+  "app_identifier": "CommunityAI.Desktop",
+  "ordinary_user": true,
+  "installed_payload_files": 4936,
+  "installed_payload_bytes": 4263859354,
+  "installed_total_files": 4939,
+  "installed_total_bytes": 4270309816,
+  "installed_identities": {
+    "CommunityAI.exe": "c4a500d7b4ca62f26029745e172c2a7fc33465146d7b3ab20b6702411f0f6fd2",
+    "node/CommunityAI-Node.exe": "5696046eff78d5ebf1badd0fcf7a02f5fcfde9f884072eb8c8f2fc5a3e527162",
+    "runtime-packaging.json": "ea551e5fe410260999804392d978600024db45a568770c385ea92eb9d9abf2c4",
+    "node/_internal/bitsandbytes/libbitsandbytes_cuda124.dll": "436aaa9499932fdbb4c447a29d71fcb5cfdadd2e972f932d6fad964eb7b3374f"
+  },
+  "native_runtime": {
+    "application": "CommunityAI-Native-Runtime",
+    "bitsandbytes_native_library": "libbitsandbytes_cuda124.dll",
+    "bitsandbytes_nf4_maximum_absolute_error": 0.14501953125,
+    "bitsandbytes_nf4_roundtrip_passed": true,
+    "cpu_matmul_passed": true,
+    "cuda_build": "12.4",
+    "cuda_linalg_passed": true,
+    "cuda_matmul_passed": true,
+    "cuda_required": true,
+    "cuda_test_performed": true,
+    "frozen": true,
+    "model_loading_performed": false,
+    "network_join_performed": false,
+    "schema_version": 1,
+    "torch": "2.6.0+cu124"
+  },
+  "server_runtime": {
+    "application": "CommunityAI-Worker",
+    "entrypoint": "server",
+    "frozen": true,
+    "model_loading_performed": false,
+    "network_join_performed": false,
+    "process_lifetime_guard_armed": true,
+    "schema_version": 1,
+    "server_class": "Server",
+    "throughput_mode": "dry_run",
+    "training_rpcs_enabled": false
+  },
+  "result": "passed-bounded-install-native-uninstall",
+  "recorded_at_utc": "2026-09-08T23:50:07.658876+00:00",
+  "environment": "Windows-10-10.0.19045-SP0",
+  "logical_cpu_limit": 2,
+  "priority": "BELOW_NORMAL",
+  "scope": "One new ordinary-user silent offline install, installed native CUDA/server contracts, and uninstall",
+  "phases": [
+    {
+      "phase": "install",
+      "timeout_seconds": 900,
+      "result": "passed",
+      "pid": 26564,
+      "exit_code": 0,
+      "seconds": 202.937,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "phase": "installed-native-cuda",
+      "timeout_seconds": 180,
+      "result": "passed",
+      "pid": 10308,
+      "exit_code": 0,
+      "seconds": 5.187,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "7f8c4b8605f0b6421fc9b3e5e2de4de401fb604c0dd9703e5fcc0220fb02bd87",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "phase": "installed-server-contract",
+      "timeout_seconds": 180,
+      "result": "passed",
+      "pid": 23636,
+      "exit_code": 0,
+      "seconds": 7.391,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "3aa6b190fda9f84336b9a4a3ebd516f00e361169972d25a3d5f17f92412f2a40",
+      "stderr_sha256": "84eac7794ac271ba86fab9ca1ad642a7e92e9c7a228d5188f9db6a11c54ca4e1"
+    },
+    {
+      "phase": "uninstall",
+      "timeout_seconds": 300,
+      "result": "passed",
+      "pid": 5784,
+      "exit_code": 0,
+      "seconds": 4.578,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "cleanup": {
+    "installation_directory_removed": true,
+    "owned_menu_directory_removed": true,
+    "all_uninstall_registration_views_absent": true,
+    "common_menu_unchanged": true,
+    "app_state_metadata_unchanged_during_uninstall": true,
+    "login_registration_unchanged_during_uninstall": true,
+    "all_recorded_processes_stopped": true
+  },
+  "owned_process_identities": [
+    {
+      "pid": 26564,
+      "created_at": 1788910959.4571977,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 24092,
+      "created_at": 1788910959.8080733,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-setup.tmp",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 10308,
+      "created_at": 1788911165.423862,
+      "executable_name": "CommunityAI-Node.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 27672,
+      "created_at": 1788911165.4386368,
+      "executable_name": "conhost.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 23636,
+      "created_at": 1788911170.5387845,
+      "executable_name": "CommunityAI-Node.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 26024,
+      "created_at": 1788911170.5689337,
+      "executable_name": "conhost.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 5784,
+      "created_at": 1788911404.1521368,
+      "executable_name": "unins000.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 10124,
+      "created_at": 1788911404.3143272,
+      "executable_name": "_unins.tmp",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 24288,
+      "created_at": 1788911404.445324,
+      "executable_name": "CommunityAI.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    }
+  ],
+  "initial_harness_result": "failed-after-successful-install-and-diagnostics",
+  "initial_harness_error": "AssertionError: Menu changed despite NOICONS",
+  "noicons_supported_by_offline_setup": false,
+  "shortcut_finding": "Both newly created shortcuts targeted this isolated install; uninstall removed both and their newly created directory.",
+  "qualification_credential_created": false,
+  "product_desktop_window_launched": false,
+  "raw_evidence_sha256": {
+    ".gate13-runs/normalized-windows-acceptance-20260908/result.json": "6e02ccaef85e9719c976da8f9232fc01ddc1930f070898b9f17feec3802e92c0",
+    ".gate13-runs/normalized-windows-acceptance-20260908/install.log": "5137e942e1480869e77d509c23b7ea5de340965b9fc76c7d84aa6a298410df9c",
+    ".gate13-runs/normalized-windows-acceptance-20260908/cleanup-followup/result.json": "cdb9be2f754a157c70e6600755a7ce82877f3d1cb9b3867dea97b654b051a420",
+    ".gate13-runs/normalized-windows-acceptance-20260908/cleanup-followup/uninstall.log": "b853f1d8992d47e63312554596c6d3deeabc523d61e41ef1d1409e7ce751b68e",
+    ".gate13-runs/qualify-normalized-windows-20260908.py": "ed88f48df908119f06a4d063214ede5cb64df094c6b09864f07b69ac26b333f5",
+    ".gate13-runs/cleanup-normalized-windows-20260908.py": "a9a2a5aafef34e31af4e2001197862866ea555a9136a93b9614be750cd7897ea"
+  },
+  "limits": [
+    "No full model load, network join, contribution worker, GUI or renewed Gate14/15 lifecycle acceptance.",
+    "The initial preinstall menu/state snapshots were not persisted before the harness assertion. The installer log records new menu creation; retained follow-up snapshots prove app-state metadata and Run preservation during uninstall only.",
+    "The offline installer does not enable AllowNoIcons; supplying NOICONS did not suppress its normal Start Menu shortcuts. This corrected harness assumption is retained, not presented as a product fix.",
+    "No real online-downloader handoff or public release is established by this offline acceptance."
+  ]
+}

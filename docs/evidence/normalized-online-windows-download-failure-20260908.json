@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "result": "failed",
+  "phases": [
+    {
+      "phase": "online-download-install",
+      "timeout_seconds": 8100,
+      "result": "failed",
+      "pid": 3960,
+      "exit_code": 1,
+      "seconds": 1260.312,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "started_at_utc": "2026-09-09T00:01:12.481268+00:00",
+  "online_sha256": "c8171619c835877f018dcf305bf70d7b4804535fd6ad548bd682971ecccdda5d",
+  "online_size_bytes": 2099037,
+  "offline_installer": {
+    "filename": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "format": "exe",
+    "kind": "offline-installer",
+    "platform": "windows-x64",
+    "publisher": "Mario Andreschak",
+    "sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+    "size_bytes": 2462345104,
+    "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "version": "0.1.0-alpha.20260908.1"
+  },
+  "manifest_sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+  "metadata_sha256": "1460eb03070e33889ffc783b0bd97eeb48dfb76f44b6ac4b2ef27e81a89a6f1d",
+  "ordinary_user": true,
+  "logical_cpu_limit": 2,
+  "priority": "BELOW_NORMAL",
+  "baseline_before_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+  "owned_processes": [
+    {
+      "pid": 3960,
+      "created_at": 1788912072.5575345,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 23136,
+      "created_at": 1788912072.8589523,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.tmp",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    }
+  ],
+  "updated_at_utc": "2026-09-09T00:22:12.841343+00:00",
+  "error": "RuntimeError: online-download-install exit or owned-process cleanup failed",
+  "installation_present": false,
+  "all_recorded_processes_stopped": true,
+  "scope": "Production Windows online download interrupted before offline installer handoff",
+  "transport_failure": {
+    "wininet_error": 12030,
+    "bytes_reported_before_failure": 2296254144,
+    "expected_bytes": 2462345104,
+    "offline_installer_launched": false,
+    "log_message": "Error reading data: (12030) Die Serververbindung wurde aufgrund eines Fehlers beendet",
+    "cause_attribution": "A connection termination was reported. This observation does not identify whether the origin, network path, client or an intermediary caused it."
+  },
+  "cleanup_audit": {
+    "result": "passed-cleanup-after-failed-download",
+    "observed_at_utc": "2026-09-09T00:23:37.901382+00:00",
+    "raw_result_sha256": "033aecb1dbdb040a6cf1a8aaf22a63ed3a301acdac18fb88e522fec7da16498a",
+    "online_log_sha256": "6e7a6fc7b0429231f2133fddababa571e6bd163260b40d0663b497b9f817a460",
+    "raw_result_preserved": true,
+    "all_recorded_processes_stopped": true,
+    "recorded_process_count": 2,
+    "installation_directory_absent": true,
+    "offline_child_observed": false,
+    "remaining_temporary_entries": [],
+    "persisted_baseline_restored": true,
+    "baseline_before_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+    "baseline_after_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+    "mutations_performed_by_audit": false
+  },
+  "raw_evidence_sha256": {
+    ".gate13-runs/normalized-online-acceptance-20260908/result.json": "033aecb1dbdb040a6cf1a8aaf22a63ed3a301acdac18fb88e522fec7da16498a",
+    ".gate13-runs/normalized-online-acceptance-20260908/online.log": "6e7a6fc7b0429231f2133fddababa571e6bd163260b40d0663b497b9f817a460",
+    ".gate13-runs/normalized-online-acceptance-20260908/download-failure-cleanup-audit.json": "0f326dd1a1bc1a830c3a0d4ab91a6fe6725f4aea950da4ff6af3018b7f55219f",
+    ".gate13-runs/qualify-online-windows-20260908.py": "7f99358c019145eb66f323af52426ae23107b603a64cff57fa3591324c501c9b",
+    ".gate13-runs/qualify-normalized-windows-20260908.py": "ed88f48df908119f06a4d063214ede5cb64df094c6b09864f07b69ac26b333f5",
+    ".gate13-runs/audit-online-windows-failure-20260908.py": "6eb1fa5877c2bb8cf344c829e89f237da4636b23f454adacd27967fa014811d2",
+    ".gate13-runs/cloudflare-publication-20260908/windows-bounded-range-check.json": "917dec7700f241c512b65778b8107affc5e3989e858cee6b49000442bb8fefb4",
+    ".gate13-runs/append-online-failure-chronology-20260908.py": "d9d3f882eea9359667c5e9d2204b0a5507fee41542e5046db6efe706dd575762",
+    ".gate13-runs/cloudflare-publication-20260908/windows-cache-metadata-operator-record.json": "274c548af50ccff8e3d020b1543719e8935d28698fb6c28e68f57d280d42f376",
+    ".gate13-runs/bind-online-failure-operator-record-20260908.py": "2699cf7bcbcab690c2b47e814740121ba088ab1a62771cad4298381e15dd20d3",
+    ".gate13-runs/normalized-online-installers-20260908/communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe.json": "1460eb03070e33889ffc783b0bd97eeb48dfb76f44b6ac4b2ef27e81a89a6f1d"
+  },
+  "positive_full_online_handoff_passed": false,
+  "limits": [
+    "The partial bytes were not independently hashed; the byte count is the native downloader progress log.",
+    "No full offline installer, installed diagnostic, uninstall or product GUI was launched in this attempt.",
+    "Cleanup compares exact recorded process identities and persisted settings-file metadata, menu and native Run/uninstall registration snapshots."
+  ],
+  "concurrent_publication_chronology": {
+    "source": "Later operator transcription of observed CLI result chunkfa58bc; not a raw API response saved at operation time.",
+    "metadata_change_at_utc": "2026-09-09T00:01:55.375Z",
+    "download_started_at_utc": "2026-09-09T00:01:12.481268+00:00",
+    "seconds_after_download_started_approximately": 43,
+    "operation": "Server-side copy-object to the same key to correct Cache-Control metadata.",
+    "causal_conclusion": "Unconfirmed. A metadata update occurred during the active read; it is a recorded transport variable, not a demonstrated explanation of error12030.",
+    "retry_policy": "Preserve the failed attempt, use the exact same production wrapper with fresh run/install paths, wait for publication completion and serialize full downloads. No further object mutation during retry.",
+    "post_copy_size_and_declared_sha256_match_expected": true,
+    "copy_source_and_returned_version_ids_match": true,
+    "pre_copy_etag_persisted": false,
+    "etag_before_after_equality_verified": false,
+    "operator_record": {
+      "schema_version": 1,
+      "record_kind": "operator transcription of an observed CLI tool result",
+      "source_tool_result_chunk": "fa58bc",
+      "operation": "s3api copy-object from the object to the same key, metadata-directive REPLACE",
+      "bucket": "communityai-releases",
+      "key": "alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+      "reason": "The original unquoted PowerShell cache-control argument became a space-separated string; replace it with correctly comma-separated directives.",
+      "copy_response_last_modified_utc": "2026-09-09T00:01:55.375Z",
+      "copy_source_version_id": "7e5f7c9ee30c1badff3303cf08a30ef1",
+      "returned_version_id": "7e5f7c9ee30c1badff3303cf08a30ef1",
+      "returned_etag": "535fc3433bf995d4f9b8a2fbb1b2875c-147",
+      "post_copy_head": {
+        "content_length": 2462345104,
+        "cache_control": "public,max-age=31536000,immutable",
+        "declared_sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb"
+      },
+      "concurrent_online_download_started_utc": "2026-09-09T00:01:12.994Z",
+      "limitations": [
+        "This is a later transcription of the tool response, not a raw API response saved at operation time.",
+        "No pre-copy ETag was persisted, so ETag equality before and after cannot be independently asserted from this record.",
+        "The copy used the same source object and retained expected size and SHA metadata, but that is not independent whole-file download/hash verification.",
+        "A later transport termination occurred; causation by this concurrent metadata operation is unconfirmed."
+      ]
+    }
+  },
+  "subsequent_bounded_origin_check": {
+    "recorded_at_utc": "2026-09-09T00:26:45.310165+00:00",
+    "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "user_agent": "CommunityAI-Online-Installer/1",
+    "file_size_bytes": 2462345104,
+    "ranges": [
+      {
+        "start": 0,
+        "end": 65535,
+        "bytes": 65536,
+        "http_status": 206,
+        "sha256": "3bebe436fae4d118223044d658128291f2137c5fd7e504b372558504725ecb53",
+        "matches_exact_local_file": true
+      },
+      {
+        "start": 2462279568,
+        "end": 2462345103,
+        "bytes": 65536,
+        "http_status": 206,
+        "sha256": "a9d8f56aad78c72b9518f84b1a9bbb6a248dc4e23c89223a50679892da9d4ea7",
+        "matches_exact_local_file": true
+      }
+    ],
+    "complete_download_verified": false,
+    "purpose": "Origin range compatibility check using the real Linux installer user agent after transport failure; does not establish failure cause"
+  },
+  "runtime_source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "source_commit_scope": "The inherited source_commit identifies only the packaged offline runtime.",
+  "online_source_identity": {
+    "scope": "Online builder, Inno script and any downloader helper are identified by the companion build hashes. They are working-tree files at online build time, not implied to exist in runtime_source_commit.",
+    "companion_metadata_sha256": "1460eb03070e33889ffc783b0bd97eeb48dfb76f44b6ac4b2ef27e81a89a6f1d",
+    "build_input_hashes": {}
+  }
+}

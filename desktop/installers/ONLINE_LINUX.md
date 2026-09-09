@@ -37,7 +37,8 @@ change what APT installs. APT keeps its normal dependency resolution and prompts
 
 The default staging parent is `/var/tmp`. Allow temporary space for **two copies
 of the compressed package**, plus the unpacked application and any dependency or
-upgrade overhead. For the qualified 3.78 GB package this means about 7.56 GB of
+upgrade overhead. For the qualified September 8 package (2,302,428,788 bytes),
+this means about 4.60 GB of
 package staging, in addition to the installed runtime. The wrapper checks two
 package sizes plus a 64 MiB margin in the selected staging directory; the helper
 also checks room for its copy in `/var/tmp`. These checks do not promise enough
@@ -57,10 +58,18 @@ only staging created by that invocation. If APT's exit cannot be confirmed, its
 input is retained rather than removed or the package manager killed; the path is
 printed for later review. Package-manager recovery follows APT's own messages.
 
-Current validation covers download, cancellation, protected-copy ordering,
+Fixture validation covers download, cancellation, protected-copy ordering,
 changed-source rejection, APT exit handling, and a generated script's standalone
 `--help` using inert fixtures. The focused suites also passed inside the cached
 Ubuntu 22.04 container with two CPU cores, a 2 GiB memory cap, read-only sources
 and no network. Linux's source-symlink rejection passed there. These checks
-never invoked real sudo or APT. A real HTTPS package download and an actual APT
-handoff remain required. Existing offline installer acceptance is separate.
+never invoked real sudo or APT.
+
+The release's actual hosted download, real sudo/protected-copy/APT installation
+and removal subsequently passed on Ubuntu 22.04 with two CPUs and 3 GiB memory.
+The [scoped acceptance](../../docs/evidence/alpha-online-linux-hosted-20260908.md)
+binds the downloaded package hash, root-owned protected input, actual APT path
+and dpkg installed/removal transaction. It preserves the original diagnostic
+harness's missing process observation; its planned post-online native check did
+not run. Existing CPU/CUDA acceptance covers the identical offline package.
+The published online script itself was also downloaded anonymously and hashed.

@@ -1,182 +1,192 @@
 # CommunityAI alpha candidate installation
 
-These instructions describe the qualified September 7 candidates. They are ready
-for release preparation; a public download location has not been published.
-The unchanged Debian package also passed the
-[Ubuntu 22.04 installed lifecycle on September 8](evidence/gate15-20260908-frozen-ubuntu-installer.md).
-The [combined Gate 15 acceptance](evidence/gate15-20260908-final-installer-acceptance.md)
-also records Windows/Linux frozen sign-in controls and manual retained-data choices.
-Current acceptance and remaining release work are tracked in
-[RELEASE_READINESS.md](RELEASE_READINESS.md).
+The September 8 candidates contain the smaller packaged runtime. Windows and
+Linux offline installation, native CUDA operations and removal have passed.
+Both online installers also passed complete hosted download, verified installer
+handoff and removal. All four download options and their release metadata are
+published and verified.
 
 The alpha is unsigned. Windows publisher signing, the Microsoft Store, automatic
 application updates and a hosted APT repository follow after alpha. The model
 catalog is separately signed and verified by the application.
 
-## Candidate downloads
+## Candidate downloads and acceptance
 
-| Platform | Installer | Download bytes |
-| --- | --- | ---: |
-| Windows x64 | `communityai-0.1.0-alpha.20260907.2-windows-setup.exe` | 2,519,046,440 |
-| Debian/Ubuntu amd64 | `communityai_0.1.0~alpha.20260907.4_amd64.deb` | 3,781,591,484 |
+| Candidate | Download bytes | Status |
+| --- | ---: | --- |
+| [Windows x64 offline setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe) | 2,462,345,104 | Published. Complete hosted download/hash, ordinary-user installation and removal passed; native CUDA checks passed separately for this exact setup. |
+| [Debian/Ubuntu amd64 package](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai_0.1.0~alpha.20260908.1_amd64.deb) | 2,302,428,788 | Full hosted download/hash, protected-copy/APT installation and removal passed on Ubuntu 22.04; native checks passed separately for the exact package. |
+| [Windows online setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe) | 2,107,751 | Published and public file hash verified. Complete hosted download/hash, ordinary-user installer handoff, installed CPU diagnostic and removal passed. |
+| [Linux online installer](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-linux-online.py) | 13,662 | Published and public file hash verified. Actual HTTPS → protected copy → APT installation and removal passed. |
 
-Download the installer and its `INSTALLER-SHA256SUMS` from the same official
-release. Compare the checksum with the release notes before running it. The
-[artifact inventory](evidence/alpha-artifact-audit-20260907.json) records the exact
-files, hashes, source provenance and lifecycle evidence. Model weights are
-downloaded separately on demand; they are not inside the installers.
+Compare the downloaded file's SHA-256 with the value below before running it.
+The [installer checksums](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/INSTALLER-SHA256SUMS),
+[release manifest](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/release-downloads.json)
+and [metadata ZIP](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-release-metadata.zip)
+are public. Complete anonymous downloads matched all 24 small release objects,
+including the online installers and 19 curated platform records. Both large
+hosted installers passed full download/hash checks during actual installation;
+an HTTP HEAD response alone would not establish their integrity.
+[Publication record](evidence/alpha-cloudflare-publication-20260909.json).
 
-The unpacked runtime occupies approximately 4.5 GB on Windows and 8.6 GB for this
-Linux candidate. Allow additional space for the downloaded installer, model
-cache and temporary upgrade files. These are measured runtime sizes, not a
-minimum disk-space guarantee.
+Both runtime bundles identify source
+`84205f93fc73d3babd39e238944b97fab0d11b3e`. All nine CI checks passed at
+`fdd8d0b799e42b307450b0f0776a88b4aeffe852`, an import-formatting follow-up;
+those CI outputs retain their own provenance and predate the new resumable
+Windows helper. The online helper, Inno script and builder match source commit
+`b6c8aad9cea208630785d890cfb966093f809e7e`, verified after their working-tree build.
+Its 24 helper tests and four real Inno fixture tests passed separately. The
+[Windows acceptance](evidence/normalized-windows-installer-20260908.md) and
+[Linux acceptance](evidence/alpha-normalized-linux-20260908.md) bind the new
+installers to their actual installed runtime and cleanup.
 
-The [September 8 size audit](evidence/alpha-installer-size-audit-20260908.md)
-attributes most of this footprint to PyTorch and NVIDIA runtime libraries. It
-also identifies 3.26 GB of duplicate regular-file data in the qualified Linux
-bundle, before compression. Packaging reductions are candidates for a separately
-verified build; the installer sizes and hashes on this page remain unchanged.
+Runtime file content is 4,263,859,354 bytes on Windows and 5,161,115,250 bytes on
+Linux, approximately 4.26 GB and 5.16 GB. Installation metadata, filesystem
+allocation and temporary upgrade files add overhead. Allow room for the
+compressed installer and model cache as well. Model weights download separately
+on demand. The [packaging changes](evidence/runtime-packaging-reduction-20260908.md)
+remove unused bitsandbytes CUDA variants and reduce large duplicate Linux native
+libraries while retaining the required loader paths.
 
-The September 8 packaging refresh removes unused bitsandbytes CUDA variants and
-preserves identical Linux native libraries as hardlinks. Its source-level checks
-are recorded in [the reduction evidence](evidence/runtime-packaging-reduction-20260908.md).
-Fresh frozen-runtime and installer checks are required before replacing the
-qualified downloads above.
-
-Small online installers are implemented for
-[Windows](../desktop/installers/ONLINE_WINDOWS.md) and
-[Linux](../desktop/installers/ONLINE_LINUX.md). Each embeds the exact offline
-package URL, SHA-256 and byte size, verifies the download, then runs the ordinary
-installer. This reduces the initial download, not the total runtime download.
-They are not published yet; build fixtures use an intentionally unreachable URL.
+The [earlier Gate 14 resource acceptance](evidence/gate14-20260907-final-resource-acceptance.md)
+and [Gate 15 installer/login acceptance](evidence/gate15-20260908-final-installer-acceptance.md)
+remain the baseline for their recorded Windows/Debian/Ubuntu scopes. They are
+separate from the new candidate checks above.
 
 ## Windows
 
-In PowerShell, from the folder containing the download:
+Download the offline setup linked above. In PowerShell, from its folder:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\communityai-0.1.0-alpha.20260907.2-windows-setup.exe
+Get-FileHash -Algorithm SHA256 -LiteralPath .\communityai-0.1.0-alpha.20260908.1-windows-setup.exe
 ```
 
-The expected SHA-256 is:
+Expected SHA-256:
 
 ```text
-c4e8df599f3a6118eab5718a5ad50655b0e07fd6c270aacf7dbb0b3065c5c399
+116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb
 ```
 
-Open the setup file and follow the installation prompts. It installs for your
-current Windows user without administrator elevation. Windows may identify the
-publisher as unknown because this alpha does not have an Authenticode signature.
-Launch **CommunityAI** from the Start menu after installation.
+Open setup and follow the prompts. It installs for your current Windows user
+without administrator elevation. Windows may identify the publisher as unknown
+because this alpha has no Authenticode signature. Launch **CommunityAI** from the
+Start menu after installation.
 
-Run the next published setup file to upgrade. Setup stops the current desktop and
-its owned node before replacing application files. Remove CommunityAI through
+Run the next published setup to upgrade. Setup stops the current desktop and its
+owned node before replacing application files. Remove CommunityAI through
 Windows installed-app settings to uninstall it.
 
 ## Debian/Ubuntu
 
-This package targets amd64 on Debian 12+/Ubuntu 22.04+. Its actual acceptance
-scope is listed in the release readiness record; a physical desktop or GPU that
-has not been tested is not implied by that baseline.
-
-From the download folder:
+The new package passed installed acceptance on Ubuntu 22.04 and is available
+above. Verify it and install it with APT:
 
 ```sh
-sha256sum 'communityai_0.1.0~alpha.20260907.4_amd64.deb'
+sha256sum 'communityai_0.1.0~alpha.20260908.1_amd64.deb'
 ```
 
-The expected SHA-256 is:
+Expected SHA-256:
 
 ```text
-a2cc0548cd51f98ed7a9c208be18b53a701a9317cbc63293d4bf7d1e14151517
+714b9a7ac9121f3cf3b85f9677d541b488c2f00020bc6e1ce73ba7081f851576
 ```
 
-Install the local package so APT also resolves its declared desktop dependencies:
+After comparing the checksum:
 
 ```sh
-sudo apt install './communityai_0.1.0~alpha.20260907.4_amd64.deb'
+sudo apt install './communityai_0.1.0~alpha.20260908.1_amd64.deb'
 communityai
 ```
 
-Run the application as your ordinary desktop user. Package installation and
-removal use administrator privileges. An unlocked native desktop credential
-store is required. GPU use also requires a compatible NVIDIA driver; the
-packaged CUDA libraries do not install a system driver.
+The package targets amd64 Debian 12+/Ubuntu 22.04+. Run CommunityAI as your
+ordinary desktop user with an unlocked native credential store. GPU use requires
+a compatible NVIDIA driver; the packaged CUDA libraries do not install a system
+driver. Tested platform boundaries remain in [release readiness](RELEASE_READINESS.md).
 
 Install the next downloaded `.deb` with `sudo apt install ./<new-package>.deb`
-to replace it. Remove the application with:
+to replace it. Remove the application with `sudo apt remove communityai`.
+Package maintenance stops processes belonging to its installation before
+replacement or removal and refuses to proceed if ownership or shutdown cannot
+be verified.
 
-```sh
-sudo apt remove communityai
+## Online installers
+
+Online installers download the complete offline package, verify its exact size
+and SHA-256, then invoke the ordinary installer. They reduce the initial
+download, not the total runtime download.
+
+Windows's resumable installer passed a complete public HTTPS download, exact
+size/hash verification, ordinary-user installation, an installed CPU diagnostic
+and uninstall. Its separate online/offline logs, retained child-process handle,
+temporary-file cleanup and persisted user-state baseline matched the
+[acceptance record](evidence/normalized-online-windows-installer-20260908.md).
+The same offline payload passed the earlier required-CUDA/NF4 checks. The three
+earlier failed transfers remain recorded; this one successful transfer does not
+establish broad network availability. The accepted online setup's SHA-256 is:
+
+```text
+8ad0b7da83fdc7c32223902ed13d51f5f2946c89e00947e50aae742c1fc37861
 ```
 
-The package stops processes belonging to its installation before replacement or
-removal. It refuses to proceed if it cannot verify process ownership or finish
-shutdown.
+Download the Windows online setup linked above, compare that checksum, then open
+it. It downloads the full runtime before starting the ordinary setup prompts.
+
+Linux's actual ordinary-user download → protected copy → APT installation and
+removal passed the [saved log and state audit](evidence/alpha-online-linux-hosted-20260908.md).
+The raw diagnostic harness missed process arguments; APT's own package path and
+transaction log supplied the input/version binding. Prior native checks cover
+the byte-identical offline package. The published script's SHA-256 is:
+
+```text
+59a00906d358c1cac0046e9c323a612e7f6fdb824d21ba562de0bae18ba39b0b
+```
+
+After downloading and comparing that checksum, run it as your ordinary user:
+
+```sh
+python3 communityai-0.1.0-alpha.20260908.1-linux-online.py
+```
+
+See the
+[Windows](../desktop/installers/ONLINE_WINDOWS.md) and
+[Linux](../desktop/installers/ONLINE_LINUX.md) instructions for the supported
+options. Linux's online flow needs temporary room for two compressed packages
+in addition to the installed runtime and package-manager overhead.
 
 ## First launch and retained data
 
-CommunityAI fetches its signed model catalog on first launch. Sharing is opt-in:
-both resource sliders start at 100%, and contributing begins only when you enable
-it. Set VRAM and processing usage to your preferred values before starting.
-The processing slider paces contributed work; it is not an instantaneous cap on
-whole-device utilization. The local model download appears separately from
-sharing-worker downloads.
+CommunityAI fetches its signed catalog on first launch. Both resource sliders
+start at 100%; sharing begins only when you enable it. Set VRAM and processing
+usage before contributing. Processing limits pace contributed work and allow
+brief compute bursts. Local inference and local model downloads are separate.
 
-Settings, native credentials and model caches live outside the application
-installation. Upgrade and normal uninstall preserve them so reinstall can reuse
-your choices and verified downloads. Application removal does not mean those
-retained files have been erased.
+Community inference is best effort. Current complete public Qwen route capacity
+has not been verified by this release check; historical successful routes do not
+guarantee a route is available now. The application reports unavailable capacity
+and can use its eligible local fallback. Computers helping with a request may
+be able to see its content.
 
-Before uninstalling, turn off **Start CommunityAI when I sign in**. The alpha
-uninstaller does not remove a saved per-user login entry. Follow the
-[explicit cache, credential and full-reset choices](DESKTOP_UNINSTALL.md) to
-remove retained data intentionally.
+Upgrade and normal uninstall preserve settings, native credentials and model
+caches outside the application directory. Before uninstalling, turn off
+**Start CommunityAI when I sign in**: the alpha uninstaller retains that per-user
+login entry. Follow the [explicit cache, credential and full-reset choices](DESKTOP_UNINSTALL.md)
+to remove retained data intentionally.
 
-## Publication requirement
+## Release maintenance
 
-Both candidate installers exceed GitHub Releases' **2 GiB per-file limit**.
-GitHub release notes can link to them, but the complete files need a different
-download origin. [GitHub's release limits](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#storage-and-bandwidth-quotas).
+The immutable candidate prefix is
+`https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/`.
+The initial R2 hostname is rate-limited; it provides no availability guarantee.
+[Hosting and publication records](CLOUDFLARE_RELEASE.md) track the exact objects,
+manifests, passed download acceptance and completed artifact publication.
 
-For a single-file download, **Cloudflare R2 Standard storage** is configured with
-a dedicated `communityai-releases` bucket. Release objects will use immutable
-versioned paths. The account owner activated R2 on September 8 and authorized a
-personal API token for release storage; CLI access and an anonymous text-object
-download were verified. The credential is encrypted locally outside the repository.
+At **2026-09-08 23:52 UTC**, the public catalog, bootstrap and both model manifests
+were reachable and passed the existing signature/digest verifiers. The signed
+catalog expires on **2026-09-28 at 19:35 UTC** and must be renewed before then.
+Its published URLs depend on `codex/gate-v-auto-selection`; maintainers must
+preserve that branch or migrate the endpoints before removing it.
+[Metadata check](evidence/alpha-public-metadata-20260908.json).
 
-The two installers total **6,300,637,924 bytes** (about 6.3 GB). That fits R2's
-10 GB-month included storage allowance if other account usage and retained
-versions leave enough room. Standard storage includes 1 million Class A and
-10 million Class B operations monthly, and direct R2 downloads have no egress
-charge. These allowances make a small alpha plausibly free; they are not a
-guarantee of the account's bill. [R2 pricing](https://developers.cloudflare.com/r2/pricing/).
-
-Both files fit the documented 5 GiB single-part object upload limit, but
-Wrangler's object uploader has a smaller 300 MiB limit. Large release uploads use
-the S3-compatible CLI with multipart transfer.
-
-This fresh account has no domains. Its initial test origin is
-`https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev`.
-Cloudflare rate-limits the supplied `r2.dev` hostname and intends it for
-development; a custom domain remains appropriate for wider distribution.
-No installer is advertised at this origin yet. A real package download/checksum
-check and online-installer acceptance are still required before publication.
-[R2 limits](https://developers.cloudflare.com/r2/platform/limits/),
-[public bucket domains](https://developers.cloudflare.com/r2/buckets/public-buckets/).
-
-Publish the exact qualified installer bytes there, then put their permanent
-links, checksums and provenance in the GitHub release. Keeping a second full
-6.3 GB release alongside this one would exceed the included storage allowance
-if retained for a full month, before any other account usage.
-
-Google Cloud Storage is an alternative in the existing CommunityAI GCP project
-and supports objects up to 5 TiB. That project currently documents a discovery
-VM, not an installer download service. A read-only bucket inventory could not
-authenticate during this audit; no download bucket, public access or cost
-authorization has been established. [Cloud Storage object limits](https://docs.cloud.google.com/storage/quotas#objects).
-
-Splitting the unchanged files into sub-2-GiB GitHub assets and reconstructing them
-locally is another option, but introduces a download/reassembly step before
-setup. It is not the single-file installation flow described above. No installer
-or public hosting configuration was changed by this audit.
+Qualified candidate links and a draft release can proceed while Gate 16's scope
+review continues. The combined public canary has not run and is not claimed as
+passed. [Current release status](RELEASE_READINESS.md).

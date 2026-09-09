@@ -1,0 +1,253 @@
+{
+  "schema_version": 1,
+  "result": "passed",
+  "verified_at_utc": "2026-09-09T02:02:01.346429+00:00",
+  "public_base_url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/",
+  "small_public_objects": [
+    {
+      "key": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe",
+      "size_bytes": 2107751,
+      "sha256": "8ad0b7da83fdc7c32223902ed13d51f5f2946c89e00947e50aae742c1fc37861",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "key": "communityai-0.1.0-alpha.20260908.1-linux-online.py",
+      "size_bytes": 13662,
+      "sha256": "59a00906d358c1cac0046e9c323a612e7f6fdb824d21ba562de0bae18ba39b0b",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "text/x-python; charset=utf-8"
+    },
+    {
+      "key": "release-downloads.json",
+      "size_bytes": 1087,
+      "sha256": "3ab88fd1dd7b5ccbb19cb226429c5b3646d241a676280bde55795fdc34c8df6a",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "INSTALLER-SHA256SUMS",
+      "size_bytes": 477,
+      "sha256": "ba50a7b4502145303beb69b3f1c4a2b25bd5e297817b33d5c0f6d5428e284274",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "text/plain"
+    },
+    {
+      "key": "metadata/windows/communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe.json",
+      "size_bytes": 1433,
+      "sha256": "c3fece282465df8c74907ff4c7c29fd48405b9dc579315a61d340929afe4584e",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/windows/communityai-0.1.0-alpha.20260908.1-windows-setup.exe.json",
+      "size_bytes": 300,
+      "sha256": "a8cbf949c099fc5cb110ffe1768bd2f7fa04bffc814e088249272b745271d98d",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/windows/desktop-metrics.json",
+      "size_bytes": 3786,
+      "sha256": "35c608d647c72c0201f4a436018d178fe75d017a6a396565ad430dd6d860d35c",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/windows/normalized-online-windows-installer-20260908.json",
+      "size_bytes": 11035,
+      "sha256": "df98bf134ce2b49e733ec30b79bec338041146dd0337a69d7f0dd6874adaeace",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/windows/normalized-windows-installer-20260908.json",
+      "size_bytes": 8369,
+      "sha256": "88a23622f18df48655e138c74151b7fe9f8b40e8794b2c7b9cb37b5700056a25",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/windows/online-source-commit.json",
+      "size_bytes": 312,
+      "sha256": "dc871c18c66b8ccfcb61304b9632d151cccb29cb623333055bef355e01419f94",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/windows/provenance.json",
+      "size_bytes": 1239925,
+      "sha256": "d5210329edf7236aaaadc0102c0f9363d3c0560f14ccb46ece3928f61b0ddaa1",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/windows/release-metadata.json",
+      "size_bytes": 872,
+      "sha256": "6a434cf14100572954452052b8a1e6e8565b2930e3251b1b8327cfdcd7383a25",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/windows/SHA256SUMS",
+      "size_bytes": 673493,
+      "sha256": "1afc393a0103a43f256181657a062515bb0f9011fb6dbf9bf0c1e84015a2a44d",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "text/plain"
+    },
+    {
+      "key": "metadata/windows/windows-release-downloads.json",
+      "size_bytes": 575,
+      "sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/alpha-normalized-linux-20260908.json",
+      "size_bytes": 21883,
+      "sha256": "aa2320fd6b721d70078ba4ef0eedd371685d0db02a4cf7d794f5b3e165d083b5",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/alpha-online-linux-hosted-20260908.json",
+      "size_bytes": 11794,
+      "sha256": "a7e69662a24447ad8ac9a60e24731673387c3fce61892fbda9c5cad2a196973b",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/communityai-0.1.0-alpha.20260908.1-linux-online.py.json",
+      "size_bytes": 915,
+      "sha256": "a3b9134f69f232cfed6bc5f5fd12e20a0390ef01c08ff7ca2616af962ee8b9d5",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/communityai_0.1.0~alpha.20260908.1_amd64.deb.json",
+      "size_bytes": 1255,
+      "sha256": "091325f0b1dfd8a4879d46d700e7ed20c878f5a10c615ca26e12ce9ecf888bc3",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/desktop-metrics.json",
+      "size_bytes": 3814,
+      "sha256": "46e0332d0cd8de383d9bd4f60edc31e801b1508dd297fb7e52d79ae62242fde6",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/provenance.json",
+      "size_bytes": 1244840,
+      "sha256": "3f8ac9de9f61f663b1c7573a1200aa4c26e5d0e18aa38d0f004d96e95e341db9",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/release-metadata.json",
+      "size_bytes": 872,
+      "sha256": "6a434cf14100572954452052b8a1e6e8565b2930e3251b1b8327cfdcd7383a25",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/runtime-packaging.json",
+      "size_bytes": 1573,
+      "sha256": "e5d71cf23a900193d7ab8005291bd22763edb320c64e3a21327ce906ab9e1ade",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/json"
+    },
+    {
+      "key": "metadata/linux/SHA256SUMS",
+      "size_bytes": 675799,
+      "sha256": "b22fd299a36ef208c886d137fe80e7c89e3441c293bcefe02c70b4b412408a99",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "text/plain; charset=utf-8"
+    },
+    {
+      "key": "communityai-0.1.0-alpha.20260908.1-release-metadata.zip",
+      "size_bytes": 1009867,
+      "sha256": "9e3424eb8587b09b02b464dc2456aecd1150f154c4fe719069e39374129bb60b",
+      "status": 200,
+      "complete_anonymous_body_verified": true,
+      "cache_control": "public,max-age=31536000,immutable",
+      "content_type": "application/zip"
+    }
+  ],
+  "offline_objects": [
+    {
+      "platform": "linux-amd64",
+      "filename": "communityai_0.1.0~alpha.20260908.1_amd64.deb",
+      "size_bytes": 2302428788,
+      "sha256": "714b9a7ac9121f3cf3b85f9677d541b488c2f00020bc6e1ce73ba7081f851576",
+      "head_status": 200,
+      "public_sha256_header": null,
+      "full_body_verification_scope": "Actual online installation evidence, not this HEAD request"
+    },
+    {
+      "platform": "windows-x64",
+      "filename": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+      "size_bytes": 2462345104,
+      "sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+      "head_status": 200,
+      "public_sha256_header": null,
+      "full_body_verification_scope": "Actual online installation evidence, not this HEAD request"
+    }
+  ],
+  "actual_installation_evidence": [
+    "normalized-online-windows-installer-20260908.json",
+    "alpha-online-linux-hosted-20260908.json"
+  ],
+  "limits": [
+    "Cloudflare r2.dev is a rate-limited development endpoint; this is observed delivery, not a load/availability guarantee.",
+    "Installers are unsigned alpha artifacts.",
+    "The first final-publication audit stopped after all small objects matched because it incorrectly required a custom SHA metadata header on the public endpoint. The public endpoint does not expose this header; full offline byte identity is established by the actual online acceptance records."
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-09T01:14:51.040079+00:00",
+  "result": "passed-bounded-helper-and-local-inno-integration",
+  "scope": "Resumable Windows online downloader source checks, tiny loopback transfers, real hidden Inno wrapper/harmless-child integration, and local publication metadata audit",
+  "environment": "Windows-10-10.0.19045-SP0",
+  "final_wrapper": {
+    "filename": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe",
+    "version": "0.1.0-alpha.20260908.1",
+    "platform": "windows-x64",
+    "size_bytes": 2107444,
+    "sha256": "0d1c31206336b1e8c783a78a6cadbdc8f9e643e91d587b88d78581a85b5d9ef6",
+    "authenticode_status": "NotSigned",
+    "unsigned_alpha": true,
+    "live_download_verified": false,
+    "release_manifest_sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+    "download_helper_sha256": "ba76158d7762058cfc53f98054334ca0b6bc3a5d4e0f8e8f32eda87b824813df",
+    "download_helper_source_sha256": "3df36f4f1273599a3680d3d4981f150f2eaf289d92926b19dbde6620fdad3094",
+    "installer_script_sha256": "b6c680afa048ba581af6d01a596fa8f9f62837bb7d571979cb9d4dc9fbbf6633",
+    "builder_script_sha256": "e5a33e969a0a4c110d960c4de240418be15d58288c3c4e43678a394f92dd5893"
+  },
+  "final_companion_sha256": "6423e194ca120897cf25f20a49eb89896cf3e839c53e62c0cfba921f357b9e97",
+  "offline_installer": {
+    "filename": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "format": "exe",
+    "kind": "offline-installer",
+    "platform": "windows-x64",
+    "publisher": "Mario Andreschak",
+    "sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+    "size_bytes": 2462345104,
+    "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "version": "0.1.0-alpha.20260908.1"
+  },
+  "source_identity": "Exact content hashes; the new downloader sources were working-tree changes at build time. No wrapper source commit is claimed.",
+  "source_sha256": {
+    "desktop/installers/WindowsDownload.cs": "3df36f4f1273599a3680d3d4981f150f2eaf289d92926b19dbde6620fdad3094",
+    "desktop/installers/communityai-online.iss": "b6c680afa048ba581af6d01a596fa8f9f62837bb7d571979cb9d4dc9fbbf6633",
+    "desktop/installers/build_windows_online_installer.ps1": "e5a33e969a0a4c110d960c4de240418be15d58288c3c4e43678a394f92dd5893",
+    "tests/test_windows_download_helper.py": "af6146b674fc3f13a646375cdafba7574503c08a225511aa759e542e7b46109a",
+    "tests/test_windows_online_integration.py": "650d2013641f55c3ee876f0d9244af939e5ebe76bf6a1f2ba4f22cdc8062caab"
+  },
+  "compiler": {
+    "inno_version": "6.7.3",
+    "setup_engine_machine": "IMAGE_FILE_MACHINE_I386 (0x014c)",
+    "setup_engine_optional_header": "PE32 (0x010b)",
+    "exact_version_preprocessor_guard_compiled": true,
+    "simulated_future_version_rejected": true,
+    "native_bridge_sizes_bytes": {
+      "startup_info": 68,
+      "process_information": 16,
+      "job_extended_limit_information": 112
+    },
+    "helper_runtime": ".NET Framework 4",
+    "additional_runtime_download_required": false
+  },
+  "helper_tests": {
+    "passed": 21,
+    "failed": 0,
+    "seconds": 18.767,
+    "command": "python -m unittest discover -s tests -p test_windows_download_helper.py -v",
+    "test_source": "tests/test_windows_download_helper.py",
+    "log": ".gate13-runs/windows-download-helper-final-20260909.log",
+    "log_sha256": "9f30a84726357ce39c4fb1292ab0c244c13c2f44b3d7b98b89cd95355a186888",
+    "observation": "Execution reported by release_audit; saved final log and source hashes independently verified during this evidence export.",
+    "coverage": [
+      "exact interrupted-response resume",
+      "wrong ranges and lengths, redirects, encoding and checksum mismatch rejected",
+      "finite retries and monotonic deadline",
+      "cancellation and exact-parent identity/loss",
+      "transient progress-reader lock recovery and bounded atomic updates",
+      "64-bit range validation above 2 GiB",
+      "production compile rejects loopback HTTP"
+    ]
+  },
+  "real_inno_tests": {
+    "passed": 3,
+    "failed": 0,
+    "seconds": 8.894,
+    "command": "python -m unittest discover -s tests -p test_windows_online_integration.py -v",
+    "test_source": "tests/test_windows_online_integration.py",
+    "observation": "Directly observed final execution output in gate15_choices agent; no separate raw log was persisted.",
+    "fixtures": "Separately compiled WINDOWS_DOWNLOAD_TEST helper and harmless winexe child; actual maintained Inno script compiled with an explicit loopback URL.",
+    "coverage": [
+      "interrupted small download resumed at observed exact Range offset; child received exact forwarded arguments plus independent /LOG",
+      "child file remained alive throughout its short execution, outer wrapper returned child exit 7, then Inno temporary directory disappeared",
+      "cancel file during held response produced nonzero outer exit, no child launch and no remaining downloaded file",
+      "terminating the exact engine handle matched the helper parent FILETIME, stopped the helper promptly and prevented child launch"
+    ],
+    "parent_death_acceptance": "Either job termination or cooperative parent watcher is valid; the test does not assert a timing-sensitive forced exit code.",
+    "all_recorded_owned_process_handles_stopped": true,
+    "owned_temporary_directories_cleaned": true,
+    "visible_windows_launched": false
+  },
+  "style_checks": {
+    "black": "passed",
+    "isort_root_settings": "passed",
+    "git_diff_check": "passed",
+    "scope": "tests/test_windows_online_integration.py"
+  },
+  "publication_staging": {
+    "audit_result": "passed",
+    "audit_sha256": "0f31f6cd09645fafb34eb53da3f430ef28467f8ee17dcc925e91bac790bf4d59",
+    "combined_manifest_sha256": "3ab88fd1dd7b5ccbb19cb226429c5b3646d241a676280bde55795fdc34c8df6a",
+    "windows_manifest_sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+    "installer_sha256sums_sha256": "2e646a9e81d9be66af8bfb4204bd17e24963dc5dfeda560edfb01d52cb679231",
+    "platform_metadata_files": {
+      "windows": 7,
+      "linux": 7
+    },
+    "raw_or_private_data_markers_found": false,
+    "other_three_installer_checksum_entries_unchanged": true,
+    "previous_windows_online_companion_preserved_privately": true,
+    "previous_windows_online_wrapper_sha256": "c8171619c835877f018dcf305bf70d7b4804535fd6ad548bd682971ecccdda5d",
+    "upload_performed_by_this_audit": false
+  },
+  "retained_failures": [
+    "docs/evidence/normalized-online-windows-download-failure-20260908.json",
+    "docs/evidence/normalized-online-windows-download-retry-failure-20260908.json"
+  ],
+  "qualification_boundaries": {
+    "complete_hosted_windows_download_passed": false,
+    "final_real_r2_installer_handoff_passed": false,
+    "product_installation_performed_by_these_tests": false,
+    "full_installer_files_rehashed_by_metadata_audit": false,
+    "model_loading_or_public_peer_contact": false,
+    "native_credential_access": false
+  },
+  "notes": [
+    "The prior native Inno downloader failed closed twice with error12030; these source and local fixture passes do not establish the cause or erase either failure.",
+    "The outer Inno shell retains independent final size/SHA checks and only then launches the unchanged offline installer.",
+    "The new production wrapper still requires its separate complete hosted download and actual installer handoff before online release readiness can be claimed."
+  ]
+}

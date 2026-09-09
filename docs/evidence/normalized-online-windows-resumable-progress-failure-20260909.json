@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "result": "failed",
+  "phases": [
+    {
+      "phase": "online-download-install",
+      "timeout_seconds": 8100,
+      "result": "failed",
+      "pid": 15572,
+      "exit_code": 1,
+      "seconds": 263.343,
+      "all_recorded_processes_stopped": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "started_at_utc": "2026-09-09T01:14:44.367520+00:00",
+  "online_sha256": "0d1c31206336b1e8c783a78a6cadbdc8f9e643e91d587b88d78581a85b5d9ef6",
+  "online_size_bytes": 2107444,
+  "offline_installer": {
+    "filename": "communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "format": "exe",
+    "kind": "offline-installer",
+    "platform": "windows-x64",
+    "publisher": "Mario Andreschak",
+    "sha256": "116882e5d94e643e507efedebc4ec4b091275c5703f89bc646957f0f648d64bb",
+    "size_bytes": 2462345104,
+    "url": "https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260908.1/communityai-0.1.0-alpha.20260908.1-windows-setup.exe",
+    "version": "0.1.0-alpha.20260908.1"
+  },
+  "manifest_sha256": "6e4423a2e0316eff9c19c18cf09b18224d8fcc769e6b0f9f10e514a37581355b",
+  "metadata_sha256": "6423e194ca120897cf25f20a49eb89896cf3e839c53e62c0cfba921f357b9e97",
+  "ordinary_user": true,
+  "logical_cpu_limit": 2,
+  "priority": "BELOW_NORMAL",
+  "baseline_before_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+  "owned_processes": [
+    {
+      "pid": 15572,
+      "created_at": 1788916484.4362707,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 23684,
+      "created_at": 1788916484.746788,
+      "executable_name": "communityai-0.1.0-alpha.20260908.1-windows-online-setup.tmp",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 23840,
+      "created_at": 1788916484.9901369,
+      "executable_name": "WindowsDownload.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    },
+    {
+      "pid": 25804,
+      "created_at": 1788916484.9977367,
+      "executable_name": "conhost.exe",
+      "affinity": [
+        0,
+        1
+      ],
+      "priority": 16384
+    }
+  ],
+  "updated_at_utc": "2026-09-09T01:19:07.803441+00:00",
+  "download_helper": {
+    "pid": 23840,
+    "created_at": 1788916484.9901369,
+    "executable_name": "WindowsDownload.exe",
+    "size_bytes": 13824,
+    "sha256": "ba76158d7762058cfc53f98054334ca0b6bc3a5d4e0f8e8f32eda87b824813df",
+    "source_sha256": "3df36f4f1273599a3680d3d4981f150f2eaf289d92926b19dbde6620fdad3094",
+    "observed_owned_helper_matches_companion_metadata": true
+  },
+  "error": "RuntimeError: online-download-install exit or owned-process cleanup failed",
+  "installation_present": false,
+  "all_recorded_processes_stopped": true,
+  "scope": "First resumable production wrapper: progress-publication failure before installer handoff",
+  "failure": {
+    "component": "Local progress-file publication",
+    "helper_exit_code": 1,
+    "message": "Progress could not be persisted",
+    "reported_downloaded_bytes": 541341184,
+    "underlying_exception_type_or_native_error": "Not recorded by this helper version",
+    "network_failure_inferred": false,
+    "offline_installer_launched": false
+  },
+  "cleanup_audit": {
+    "result": "passed-cleanup-after-progress-failure",
+    "observed_at_utc": "2026-09-09T01:21:11.532367+00:00",
+    "raw_result_sha256": "0c14be16ef030e9da56493b3a9ab2a8bf15db47f0ee78674dcd820004d307b8d",
+    "raw_result_preserved": true,
+    "recorded_process_count": 4,
+    "all_recorded_processes_stopped": true,
+    "installation_directory_absent": true,
+    "remaining_temporary_entries": [],
+    "persisted_baseline_restored": true,
+    "baseline_before_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+    "baseline_after_sha256": "f81e748eeefe3d3666ff20fe72d85b1e59cbc8dd8499437b71ea3c900b5f2874",
+    "application_state_mutations_performed_by_audit": false
+  },
+  "positive_full_online_handoff_passed": false,
+  "prior_attempts": [
+    "normalized-online-windows-download-failure-20260908.json",
+    "normalized-online-windows-download-retry-failure-20260908.json"
+  ],
+  "raw_evidence_sha256": {
+    ".gate13-runs/normalized-online-acceptance-resumable-20260909/result.json": "0c14be16ef030e9da56493b3a9ab2a8bf15db47f0ee78674dcd820004d307b8d",
+    ".gate13-runs/normalized-online-acceptance-resumable-20260909/online.log": "479d629702ff787c6901d67bb35280f21ff872f0ec2c59c88df4d0e23ac2edcc",
+    ".gate13-runs/normalized-online-acceptance-resumable-20260909/failure-cleanup-audit.json": "13e41959ec3242309a20502a401c8c43f31d1962968203c72d7608ea97615534",
+    ".gate13-runs/qualify-online-windows-resumable-20260909.py": "a1d7d1ee6be132042571bedc58ecce2d5dfd08d0e430749af61ec6d3dbd2020f",
+    ".gate13-runs/record-online-windows-resumable-failure-20260909.py": "9c5d7d6f409d5b98e7893d5c14b488eeb4666a9d087ef1e10c7c3b3fcfeec657",
+    ".gate13-runs/qualify-normalized-windows-20260908.py": "ed88f48df908119f06a4d063214ede5cb64df094c6b09864f07b69ac26b333f5",
+    ".gate13-runs/normalized-online-resumable-final-20260909/communityai-0.1.0-alpha.20260908.1-windows-online-setup.exe.json": "6423e194ca120897cf25f20a49eb89896cf3e839c53e62c0cfba921f357b9e97"
+  },
+  "runtime_source_commit": "84205f93fc73d3babd39e238944b97fab0d11b3e",
+  "source_commit_scope": "The inherited source_commit identifies only the packaged offline runtime.",
+  "online_source_identity": {
+    "scope": "Online builder, Inno script and any downloader helper are identified by the companion build hashes. They are working-tree files at online build time, not implied to exist in runtime_source_commit.",
+    "companion_metadata_sha256": "6423e194ca120897cf25f20a49eb89896cf3e839c53e62c0cfba921f357b9e97",
+    "build_input_hashes": {
+      "builder_script_sha256": "e5a33e969a0a4c110d960c4de240418be15d58288c3c4e43678a394f92dd5893",
+      "installer_script_sha256": "b6c680afa048ba581af6d01a596fa8f9f62837bb7d571979cb9d4dc9fbbf6633",
+      "download_helper_source_sha256": "3df36f4f1273599a3680d3d4981f150f2eaf289d92926b19dbde6620fdad3094",
+      "download_helper_sha256": "ba76158d7762058cfc53f98054334ca0b6bc3a5d4e0f8e8f32eda87b824813df"
+    }
+  }
+}

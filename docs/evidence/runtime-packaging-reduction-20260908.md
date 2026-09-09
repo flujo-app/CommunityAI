@@ -104,3 +104,39 @@ accuracy failures, and native backend/path containment. These tests do not claim
 real native execution. The next frozen build must run the commands above after
 normalization and again from its extracted/installed runtime. No native test,
 build, GUI, model or container was started while implementing this mode.
+
+## Follow-up: measured replacement builds
+
+Both replacement runtimes were built from clean commit
+`84205f93fc73d3babd39e238944b97fab0d11b3e`. The later CI commit `fdd8d0b`
+only fixes import ordering outside the packaged application; all nine CI checks
+passed there. The following are actual build measurements, replacing the earlier
+inventory-only predictions for these files:
+
+| Platform | Previous installer bytes | Replacement installer bytes | Regular-file runtime payload bytes |
+| --- | ---: | ---: | ---: |
+| Windows x64 | 2,519,046,440 | 2,462,345,104 | 4,263,859,354 |
+| Linux amd64 | 3,781,591,484 | 2,302,428,788 | 5,161,115,250 |
+
+Windows saves 56,701,336 compressed bytes (2.25%); Linux saves 1,479,162,696
+compressed bytes (39.1%). Linux has 4,900 regular files and 35 internal symlinks;
+the regular-file payload excludes repeated logical lengths of symlink targets.
+These lengths do not claim physical filesystem block allocation.
+
+Each fresh node pruned nine unused bitsandbytes CUDA variants. The fresh Linux
+collection already lacked the old large duplicate regular-library candidates,
+so its normalization report records no additional hardlink replacements. The
+measured end result is the smaller bundle above; the inventory prediction must
+not be presented as an observed list of hardlinks created in this build.
+
+Small repeated content remains: 23,211,174 bytes in Windows and 55,221,669 bytes
+in Linux, mainly libraries belonging to the separate desktop and node runtimes.
+This change does not claim that every byte-identical file was removed.
+
+Both actual frozen runtimes passed CPU math, required-CUDA math and linalg,
+loading their package-local CUDA 12.4 bitsandbytes backend, and an NF4 roundtrip
+with maximum absolute error 0.14501953125. The
+[Windows installed-runtime and removal check](normalized-windows-installer-20260908.md)
+and [Linux installation/native check](alpha-normalized-linux-20260908.md)
+also passed in their recorded scopes. Installer acceptance and real online handoff
+are recorded separately from these build measurements.

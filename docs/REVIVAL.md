@@ -1,7 +1,7 @@
 # Petals revival: public inference alpha roadmap
 
 Current release status and execution order are maintained in
-[RELEASE_READINESS.md](RELEASE_READINESS.md), reviewed 2026-09-08. The Qwen3.8
+[RELEASE_READINESS.md](RELEASE_READINESS.md), reviewed 2026-09-09. The Qwen3.8
 64-block route, same-session replacement, reference comparison and Windows
 packaged short chat, worker-loss recovery and HTTP-blocked cache restart passed
 on assigned cloud routes. Bounded autonomous CPU desktop formation and recovery
@@ -9,8 +9,12 @@ also passed on September 7. Gate 14 resource controls now pass the bounded
 Windows/Linux frozen-package acceptance. Gate 15 installers and login controls
 also pass their bounded Windows/Debian/Ubuntu acceptance. The owner accepts the
 existing Qwen conversation proof for alpha; additional measurements and frozen
-periodic catalog-update qualification are deferred. Gate 16 scope review and
-publication preparation are next. The [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
+periodic catalog-update qualification are deferred. The smaller September 8
+installers passed installed native checks and removal. Both online installers
+passed complete hosted download, verified installation and removal; all four
+download options and release metadata are public and verified. Qualified
+candidate links and a draft release can proceed during Gate 16 scope review;
+the combined public canary remains unexecuted. The [model ladder](COMMUNITY_AI_MODEL_LADDER.md) supersedes the older size-by-size
 candidate lists in historical implementation snapshots below.
 
 September 7 Gate 14 update: **PASSED for the bounded alpha scope.** The
@@ -35,6 +39,35 @@ and active-answer draining tests follow in beta; the owner expects only one or
 two more catalog changes this year. Existing real recovery and safety results
 must be credited when deciding whether Gate 16 adds useful new evidence. Its
 combined public deployment drill remains unexecuted, not passed.
+
+September 8–9 distribution refresh: both runtimes identify `84205f93`. The new
+Windows setup is 2,462,345,104 bytes and passed installed native CUDA checks and
+removal. The Linux package is 2,302,428,788 bytes and passed installation,
+installed CPU/CUDA/worker checks and removal on Ubuntu 22.04. All nine CI checks passed at
+the import-formatting follow-up `fdd8d0b`. Both offline packages are public on
+the owner-authorized R2 origin and passed complete hosted download/hash checks.
+The 2,107,751-byte Windows online setup passed actual ordinary-user handoff,
+installed CPU diagnostics and removal with exact child exit, temporary cleanup
+and persisted baseline verified. Its helper, Inno script and builder match the
+subsequent source commit `b6c8aad9`; this is separate from runtime source `84205f93`.
+[Windows hosted acceptance](evidence/normalized-online-windows-installer-20260908.md).
+Linux's 13,662-byte online installer passed its actual hosted download,
+protected-copy/APT installation and removal and is published with hash-verified
+metadata. [Linux hosted acceptance](evidence/alpha-online-linux-hosted-20260908.md).
+Earlier failed attempts remain recorded. Both online files, all 19 curated
+platform records, the combined manifest, checksums and metadata ZIP are now
+public; all 24 small object bodies matched their hashes. The
+[publication audit](evidence/alpha-cloudflare-publication-20260909.json) records
+that result. No broad availability guarantee is implied by these single complete
+handoffs.
+Exact versions, hashes and availability are in the
+[installation guide](ALPHA_INSTALL.md); earlier Gate 14/15 evidence is retained.
+
+The public signed catalog/bootstrap/manifests passed a bounded metadata check
+on September 8. The catalog expires on September 28 at 19:35 UTC and its URLs
+depend on preserving `codex/gate-v-auto-selection`. This check establishes no
+current public worker capacity; community inference remains best effort.
+[Metadata evidence](evidence/alpha-public-metadata-20260908.json).
 
 This repository starts from DRIFT-LLM, the most practical maintained continuation
 of Petals found during the August 2026 fork audit. It preserves the parts that are
