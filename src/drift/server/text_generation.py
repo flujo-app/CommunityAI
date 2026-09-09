@@ -158,6 +158,15 @@ class TextGenerationEngine:
             # of activations. Prefill in small pieces to stay below the public
             # worker's 4 MiB message bound while retaining the entire prompt.
             kwargs["prefill_chunk_size"] = 64
+            if payload["chat"] and tokenizer.eos_token_id is not None:
+                # The tokenizer's chat end marker may differ from the base
+                # model's end-of-text token. Stop on either, rather than letting
+                # generation invent another user/assistant turn after im_end.
+                configured = getattr(self.runtime.model.generation_config, "eos_token_id", None)
+                endings = list(configured) if isinstance(configured, (list, tuple)) else [configured]
+                kwargs["eos_token_id"] = list(
+                    dict.fromkeys(value for value in [*endings, tokenizer.eos_token_id] if value is not None)
+                )
             kwargs["stopping_criteria"] = StoppingCriteriaList([cancel])
             if stops:
                 kwargs["tokenizer"] = tokenizer

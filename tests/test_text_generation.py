@@ -147,7 +147,9 @@ def test_disconnect_stops_prefill_before_the_next_chunk_and_removes_hook():
             raise AssertionError("Cancelled prefill must stop before finishing")
 
     model = Model()
-    tokenizer = SimpleNamespace(apply_chat_template=lambda *a, **kw: {"input_ids": torch.ones(1, 533).long()})
+    tokenizer = SimpleNamespace(
+        eos_token_id=None, apply_chat_template=lambda *a, **kw: {"input_ids": torch.ones(1, 533).long()}
+    )
     engine = TextGenerationEngine(SimpleNamespace(model=model, tokenizer=tokenizer))
     output = queue.Queue()
     engine._generate(
@@ -159,3 +161,28 @@ def test_disconnect_stops_prefill_before_the_next_chunk_and_removes_hook():
     assert model.calls == 1
     assert not model._forward_pre_hooks
     assert output.empty()
+
+
+def test_chat_stops_on_tokenizer_turn_end_as_well_as_model_end_of_text():
+    captured = {}
+
+    class Model(nn.Module):
+        generation_config = SimpleNamespace(eos_token_id=248044)
+
+        def generate(self, inputs, **kwargs):
+            captured.update(kwargs)
+            return inputs
+
+    tokenizer = SimpleNamespace(
+        eos_token_id=248046, apply_chat_template=lambda *a, **kw: {"input_ids": torch.ones(1, 8).long()}
+    )
+    engine = TextGenerationEngine(SimpleNamespace(model=Model(), tokenizer=tokenizer))
+    output = queue.Queue()
+    engine._generate(
+        {"chat": True, "body": {"model": "auto", "messages": [{"role": "user", "content": "hi"}]}},
+        ("peer", "request"),
+        _RequestCancelled(),
+        output,
+    )
+    assert captured["eos_token_id"] == [248044, 248046]
+    assert output.get_nowait()["finish_reason"] == "stop"
