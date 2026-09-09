@@ -7,7 +7,8 @@
 
 **AI powered by people.**
 
-<img width="1200" height="800" alt="image" src="https://github.com/user-attachments/assets/b56c43a1-9bc3-4117-9188-db1aa89b6093" />
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/410a7c84-efa7-4a93-aa14-7ab9bb474575" />
+
 
 ## How it works
 
@@ -19,13 +20,9 @@ Community-AI is a shared Large-Language-Model, by the people, for the people.
 
 Community-AI takes care of everything else.
 
-The application ships one model-agnostic runtime. Its signed catalog approves exact model
-manifests; when a model is selected, CommunityAI downloads only the upstream Hugging Face
-checkpoint files needed by the local client components or contributed block range, verifies
-their declared size and SHA-256, and keeps them in a persistent shared cache. It does not need
-one installer or container image per model. Download minimization is currently limited to
-whole upstream checkpoint shards. See
-[`ADR 0003`](docs/adr/0003-direct-manifested-artifact-delivery.md).
 
-CommunityAI is still working toward its first public inference alpha. Credits,
-earnings, payments, and payouts are planned later and are not currently available.
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/64f168b4-ce93-4162-9be0-8001ae01f829" />
+
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/a18ee47d-1506-4121-accd-3bb2e10e2e2e" />
+
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/0f7a233a-f095-40a4-8c50-0936ea2b1808" />
