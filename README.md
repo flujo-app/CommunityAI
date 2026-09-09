@@ -20,18 +20,22 @@ Community-AI is a shared Large-Language-Model, by the people, for the people.
 
 Community-AI takes care of everything else.
 
-The application ships one model-agnostic runtime. Its signed catalog approves exact model
-manifests; when a model is selected, CommunityAI downloads only the upstream Hugging Face
-checkpoint files needed by the local client components or contributed block range, verifies
-their declared size and SHA-256, and keeps them in a persistent shared cache. It does not need
-one installer or container image per model. Download minimization is currently limited to
-whole upstream checkpoint shards. See
-[`ADR 0003`](docs/adr/0003-direct-manifested-artifact-delivery.md).
+Community inference runs on contributing peers, including the model's input and
+output stages. Your app sends text and receives answers without downloading
+community model weights. When the mesh cannot answer, the small local fallback
+remains available. Sharing your GPU is optional.
 
-The [Windows and Linux alpha](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.2)
+The application ships one model-agnostic runtime. Its signed catalog approves
+exact model manifests. Local fallback and sharing roles download the checkpoint
+files they need, verify their declared size and SHA-256, and keep them in a
+persistent shared cache. See [artifact delivery](docs/adr/0003-direct-manifested-artifact-delivery.md)
+and [text-only community consumers](docs/adr/0004-text-only-community-consumers.md).
+
+The [Windows and Linux alpha](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.3)
 is available for closed testing. See the [installation guide](docs/ALPHA_INSTALL.md).
-This release adds automatic application downloads with **Restart to update**.
-Users of the first release need to install this update once. Credits,
+This release fixes community inference and gives sharing the full configured GPU
+memory budget. Existing updater installations download it and offer **Restart to
+update**. Users of the September 8 release need one manual installer upgrade. Credits,
 earnings, payments, and payouts are planned later and are not currently available.
 
 ## System requirements
@@ -52,9 +56,10 @@ CPU or smallest working RAM/VRAM configuration.
 
 The installed app occupies about **4.3 GB on Windows** or **5.2 GB on Linux**.
 The small local model downloads another **1.8 GB**. The current Qwen3.8 27B
-community checkpoint totals about **31 GB**, although clients and contributors
-download only the files needed for their role. The small online installer still
-downloads the complete runtime; it does not reduce installed disk usage.
+community checkpoint totals about **31 GB**. Contributors download the files
+needed for their role; community consumers do not download those weights. The
+small online installer still downloads the complete runtime; it does not reduce
+installed disk usage.
 
 For NVIDIA acceleration, install a driver compatible with the bundled CUDA 12.4
 runtime. NVIDIA's CUDA 12.4 GA driver baseline is **551.61 on Windows** or

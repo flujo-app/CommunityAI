@@ -1,8 +1,8 @@
 # Petals revival: public inference alpha roadmap
 
-September 9 product correction in progress: community consumers must send text
+September 9 product correction, release `0.1.0-alpha.20260909.3`: consumers send text
 without loading input/output model weights. A complete block grid did not prove
-that behavior in the released client. Input/output processing moves to contributing
+that behavior in the earlier released client. Input/output processing runs on contributing
 text peers; the small local Qwen fallback stays when the mesh cannot answer.
 See [ADR 0004](adr/0004-text-only-community-consumers.md). Earlier generation
 proofs remain valid for their tested tensor-client scope and do not establish

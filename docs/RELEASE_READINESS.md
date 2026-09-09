@@ -5,12 +5,17 @@ checkpoint narratives, completed-gate detail, failed attempts, old model invento
 and budget history are preserved in [RELEASE_READINESS_HISTORY.md](RELEASE_READINESS_HISTORY.md).
 Implementation details belong in their linked runbooks and evidence records.
 
-September 9 correction awaiting packaged delivery: source clients now use
-peer-owned input/output processing for community inference. Two real public-mesh
-requests completed with an empty consumer cache and artifact downloads forbidden.
-The local Qwen fallback remains when the mesh cannot answer. The currently
-published `20260909.2` installers do not contain this correction. See
-[text-only consumer evidence](evidence/text-only-mesh-consumer-20260909.md).
+September 9 release `0.1.0-alpha.20260909.3` packages peer-owned input/output
+processing for community inference and the full configured sharing budget, with
+no permanent fallback reservation. Two real public-mesh requests completed with
+an empty consumer cache and artifact downloads forbidden. The local Qwen fallback
+remains when the mesh cannot answer. The desktop accepts zero-byte community
+downloads and uses common discovery rather than a separate local tensor router.
+Text-peer roles currently require operator setup through the source CLI;
+automatic desktop placement of that role remains open. CPU-mesh answers in this proof took 107–158
+seconds. See [consumer evidence](evidence/text-only-mesh-consumer-20260909.md) and
+[release records](evidence/text-mesh-release-20260909.json). The historical checks
+below retain their original scope and do not qualify the new consumer path.
 
 ## Release definition
 

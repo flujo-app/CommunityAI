@@ -1,23 +1,27 @@
 # Install CommunityAI
 
-[Download the latest alpha](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.2)
-for Windows or Ubuntu/Debian. This release includes the simpler desktop and automatic application updates.
+[Download the latest alpha](https://github.com/flujo-app/CommunityAI/releases/tag/v0.1.0-alpha.20260909.3)
+for Windows or Ubuntu/Debian. Community inference now needs no local community
+model downloads. Sharing uses the full configured GPU memory budget.
 
-**Upgrading from the September 8 release? Run this installer once.** Your settings
-and downloaded models are preserved. Future releases download in the app and show
+**Already using the September 9 updater release? Check for updates in the sidebar.**
+September 8 installations need one manual installer upgrade. Your settings and
+downloaded models are preserved. Updates download in the app and show
 **Restart to update** when ready. You choose when to restart.
 
 | Platform | Small online installer | Complete offline installer |
 | --- | --- | --- |
-| Windows | [Online setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.2/communityai-0.1.0-alpha.20260909.2-windows-online-setup.exe) | [Offline setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.2/communityai-0.1.0-alpha.20260909.2-windows-setup.exe) |
-| Ubuntu/Debian | [Online installer](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.2/communityai-0.1.0-alpha.20260909.2-linux-online.py) | [Offline .deb](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.2/communityai_0.1.0~alpha.20260909.2_amd64.deb) |
+| Windows | [Online setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-online-setup.exe) | [Offline setup](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-windows-setup.exe) |
+| Ubuntu/Debian | [Online installer](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-linux-online.py) | [Offline .deb](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai_0.1.0~alpha.20260909.3_amd64.deb) |
 
 The online installer downloads and verifies the complete offline package. It makes
-the initial download smaller; the total runtime download is the same. Model files
-download separately when needed. Both platforms include the required runtime
-libraries; GPU use still requires a compatible NVIDIA driver.
+the initial download smaller; the total runtime download is the same. Local
+fallback and sharing roles download model files when needed. Community inference
+sends text to peers and requires no community weight downloads. Both platforms
+include the required runtime libraries; GPU use still requires a compatible
+NVIDIA driver.
 
-[Installer SHA-256 checksums](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.2/INSTALLER-SHA256SUMS)
+[Installer SHA-256 checksums](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/INSTALLER-SHA256SUMS)
 are available for all four downloads.
 
 ## Windows
@@ -32,13 +36,13 @@ Launch **CommunityAI** from the Start menu.
 Run the downloaded online installer as your normal user:
 
 ```sh
-python3 communityai-0.1.0-alpha.20260909.2-linux-online.py
+python3 communityai-0.1.0-alpha.20260909.3-linux-online.py
 ```
 
 Or install the downloaded offline package:
 
 ```sh
-sudo apt install './communityai_0.1.0~alpha.20260909.2_amd64.deb'
+sudo apt install './communityai_0.1.0~alpha.20260909.3_amd64.deb'
 communityai
 ```
 
@@ -50,17 +54,20 @@ ask for administrator authentication.
 
 Home shows the selected model and why, your hardware, GPU memory budget in GB,
 and computing limit. Use **Start sharing** to contribute. The resource controls
-default to 100%; you can reduce them before starting. Models expands to show
-block health, contributors and your downloads.
+default to 100%; you can reduce them before starting. A 100% GPU memory limit
+allows sharing to use the full capacity, with no permanent fallback reservation.
+Models expands to show block health, contributors and your downloads.
 
 The app checks for updates shortly after opening and every six hours. New releases
 download automatically with visible progress. **Restart to update** installs the
 update after the current answer finishes. Settings, credentials and model caches
 are preserved. See [how updates work](AUTOMATIC_UPDATES.md).
 
-Community availability depends on contributors. The app can use its eligible
-local fallback when community capacity is unavailable. Computers helping answer
-a request may be able to see its contents.
+Community availability depends on contributors, including a peer serving the
+input/output stages. The app can use its eligible local fallback when the mesh
+cannot answer. Text-peer roles currently require operator setup through the
+source CLI (`drift text-peer`), rather than the desktop sharing controls.
+Computers helping answer a request may be able to see its contents.
 
 Normal uninstall preserves settings and model downloads. Before uninstalling,
 turn off **Start CommunityAI when I sign in**. See
@@ -68,13 +75,16 @@ turn off **Start CommunityAI when I sign in**. See
 
 ## Release records
 
-The immutable release is `alpha/20260909.2/` on Cloudflare R2.
-[Release metadata](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.2/communityai-0.1.0-alpha.20260909.2-release-metadata.zip)
-binds the packages to source commit `15e1757ade8881c231db0703a4c1ef01b0dbdd74`.
+The immutable release is `alpha/20260909.3/` on Cloudflare R2.
+[Release metadata](https://pub-1f8764bf149e4e269735e087a4808e4c.r2.dev/alpha/20260909.3/communityai-0.1.0-alpha.20260909.3-release-metadata.zip)
+binds the packages to source commit `d7f4333cc8ff74ce060076c1d6effb67fb4c6d2c`.
 The R2 development hostname is rate limited.
 
-The source checks and Windows updater handoff fixture passed. Packaging uses the
-normal build checks, uploaded size/checksum metadata and public download samples.
+Focused source checks and real text-only public-mesh completion/chat passed.
+See [consumer evidence](evidence/text-only-mesh-consumer-20260909.md) and
+[release evidence](evidence/text-mesh-release-20260909.json). The Windows updater
+handoff fixture belongs to the earlier September 9 updater release. Packaging uses
+the normal build checks, uploaded size/checksum metadata and public download samples.
 Small public files receive complete hash checks. This release does
 not claim a new full desktop, GPU, cloud or installed Linux updater test run.
 Earlier installer/native-runtime checks remain recorded in
