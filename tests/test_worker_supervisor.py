@@ -741,6 +741,304 @@ def test_worker_device_must_match_vram_reservation():
         )
 
 
+@pytest.mark.parametrize("probe_result", [False, None, 1, "available", RuntimeError("GPU-private-identity")])
+def test_device_admission_denies_uncapped_launch_and_hides_probe_errors(probe_result, caplog):
+    calls = []
+
+    def device_available(worker_id):
+        calls.append(worker_id)
+        if isinstance(probe_result, Exception):
+            raise probe_result
+        return probe_result
+
+    launch = WorkerLaunch("selected-worker", "model", ("unused",), device="cuda:0")
+    popen = Mock(side_effect=AssertionError("an unavailable device must not launch a worker"))
+    supervisor = WorkerSupervisor([launch], popen=popen, device_available=device_available)
+    reason = "selected device is unavailable or has changed; reselect it before sharing"
+    try:
+        for action in (supervisor.start_worker, supervisor.restart_worker):
+            with pytest.raises(WorkerPolicyError) as error:
+                action("selected-worker")
+            assert str(error.value) == reason
+        snapshot = supervisor.snapshot("selected-worker")
+        assert snapshot["resource_admitted"] is False
+        assert snapshot["resource_reason"] == reason
+        assert snapshot["max_power_watts"] is None
+        assert snapshot["pid"] is None
+        assert snapshot["desired_running"] is False
+        assert "GPU-private-identity" not in repr(snapshot) + caplog.text
+        assert calls and set(calls) == {"selected-worker"}
+        popen.assert_not_called()
+    finally:
+        supervisor.shutdown()
+
+
+@pytest.mark.parametrize("auto_restart", [False, True])
+def test_device_admission_suspends_uncapped_worker_until_available(auto_restart):
+    available = {"selected-worker": False, "other-worker": True}
+    command = (sys.executable, "-c", "import time; time.sleep(30)")
+    launches = [
+        WorkerLaunch(
+            worker_id,
+            "model",
+            command,
+            device=f"cuda:{index}",
+            auto_start=True,
+            auto_restart=auto_restart,
+            restart_backoff=0.01,
+        )
+        for index, worker_id in enumerate(available)
+    ]
+    supervisor = WorkerSupervisor(
+        launches, stop_timeout=2, poll_period=0.01, device_available=lambda worker_id: available[worker_id]
+    )
+    try:
+        supervisor.start_service()
+        initial = supervisor.snapshot("selected-worker")
+        assert initial["resource_suspended"] is True and initial["pid"] is None
+        available["selected-worker"] = True
+        _wait_for(lambda: supervisor.snapshot("selected-worker")["state"] == "running")
+        first_process = supervisor._record("selected-worker").process
+        other_pid = supervisor.snapshot("other-worker")["pid"]
+        available["selected-worker"] = False
+        _wait_for(lambda: supervisor.snapshot("selected-worker")["state"] == "paused")
+        suspended = supervisor.snapshot("selected-worker")
+        assert first_process.poll() is not None
+        assert suspended["pid"] is None
+        assert suspended["desired_running"] is True
+        assert suspended["resource_suspended"] is True
+        assert suspended["resource_admitted"] is False
+        time.sleep(0.08)  # Several monitor/restart intervals must not retry a missing device.
+        assert supervisor.snapshot("selected-worker")["restart_count"] == 0
+        assert supervisor.snapshot("selected-worker")["pid"] is None
+        assert supervisor.snapshot("other-worker")["pid"] == other_pid
+        available["selected-worker"] = True
+        _wait_for(lambda: supervisor.snapshot("selected-worker")["state"] == "running")
+        assert supervisor.snapshot("selected-worker")["restart_count"] == 1
+        available["selected-worker"] = False
+        _wait_for(lambda: supervisor.snapshot("selected-worker")["state"] == "paused")
+        supervisor.pause_worker("selected-worker")
+        available["selected-worker"] = True
+        time.sleep(0.05)
+        assert supervisor.snapshot("selected-worker")["pid"] is None
+        assert supervisor.snapshot("selected-worker")["operator_paused"] is True
+    finally:
+        supervisor.shutdown()
+
+
+@pytest.mark.parametrize("parent_exited", [False, True])
+def test_device_suspension_releases_vram_reservation_only_after_cleanup(monkeypatch, parent_exited):
+    available = {"first": True, "waiting": True}
+    launches = [
+        WorkerLaunch(
+            worker_id,
+            "model",
+            (sys.executable, "-c", "import time; time.sleep(30)"),
+            auto_start=True,
+            max_vram_bytes=60,
+            vram_device="cuda:0",
+            vram_pool_bytes=100,
+        )
+        for worker_id in available
+    ]
+    supervisor = WorkerSupervisor(
+        launches, stop_timeout=2, poll_period=0.01, device_available=lambda worker_id: available[worker_id]
+    )
+    stop_started, allow_stop = threading.Event(), threading.Event()
+    original_terminate = supervisor._terminate
+
+    def gated_terminate(process):
+        if parent_exited:
+            exit_code = original_terminate(process)
+        stop_started.set()
+        assert allow_stop.wait(timeout=2)
+        return exit_code if parent_exited else original_terminate(process)
+
+    monkeypatch.setattr(supervisor, "_terminate", gated_terminate)
+    try:
+        supervisor.start_service()
+        first_process = supervisor._record("first").process
+        assert first_process is not None
+        available["first"] = False
+        assert stop_started.wait(timeout=2)
+        assert (first_process.poll() is not None) is parent_exited
+        waiting = supervisor.snapshot("waiting")
+        assert waiting["pid"] is None and waiting["resource_suspended"] is True
+        assert waiting["resource_reason"] == "VRAM budget is already reserved on cuda:0"
+        allow_stop.set()
+        _wait_for(lambda: supervisor.snapshot("waiting")["state"] == "running")
+        assert first_process.poll() is not None
+        assert supervisor.snapshot("first")["pid"] is None
+    finally:
+        allow_stop.set()
+        supervisor.shutdown()
+
+
+def test_launch_guard_follows_replacement_instead_of_stale_supervisor_probe():
+    original_available = {"value": True}
+    first = WorkerLaunch(
+        "selected-worker",
+        "model",
+        (sys.executable, "-c", "import time; time.sleep(30)"),
+        auto_start=True,
+        restart_backoff=0.01,
+        device="cuda:0",
+        max_vram_bytes=60,
+        vram_device="cuda:0",
+        vram_pool_bytes=100,
+        environment=(("CUDA_VISIBLE_DEVICES", "GPU-11111111-2222-3333-4444-555555555555"),),
+        device_available=lambda: original_available["value"],
+    )
+    supervisor = WorkerSupervisor(
+        [first],
+        stop_timeout=2,
+        poll_period=0.01,
+        device_available=lambda _worker_id: original_available["value"],
+    )
+    try:
+        supervisor.start_service()
+        assert supervisor.snapshot("selected-worker")["state"] == "running"
+        supervisor.pause_worker_for_reconfiguration("selected-worker")
+        original_available["value"] = False
+        unavailable = replace(
+            first,
+            max_vram_bytes=None,
+            vram_device=None,
+            vram_pool_bytes=None,
+            environment=(),
+            device_available=lambda: False,
+        )
+        supervisor.replace_launch(unavailable, start=True)
+        original_available["value"] = True
+        time.sleep(0.08)
+        snapshot = supervisor.snapshot("selected-worker")
+        assert snapshot["pid"] is None and snapshot["resource_suspended"] is True
+        assert snapshot["resource_admitted"] is False
+        with pytest.raises(WorkerPolicyError, match="selected device is unavailable"):
+            supervisor.start_worker("selected-worker")
+        supervisor.pause_worker_for_reconfiguration("selected-worker")
+        original_available["value"] = False
+        restored = replace(first, device_available=lambda: True)
+        supervisor.replace_launch(restored, start=True)
+        _wait_for(lambda: supervisor.snapshot("selected-worker")["state"] == "running")
+        assert supervisor.snapshot("selected-worker")["max_vram_bytes"] == 60
+        assert supervisor.snapshot("selected-worker")["restart_count"] == 1
+    finally:
+        supervisor.shutdown()
+
+
+def test_repeated_start_with_missing_device_stops_live_worker_and_waits_for_cleanup(monkeypatch):
+    available = {"value": True}
+    launch = WorkerLaunch(
+        "selected-worker",
+        "model",
+        (sys.executable, "-c", "import time; time.sleep(30)"),
+        auto_restart=False,
+    )
+    supervisor = WorkerSupervisor(
+        [launch], stop_timeout=2, poll_period=0.01, device_available=lambda _worker_id: available["value"]
+    )
+    stop_started, allow_stop = threading.Event(), threading.Event()
+    original_terminate = supervisor._terminate
+
+    def gated_terminate(process):
+        result = original_terminate(process)
+        stop_started.set()
+        assert allow_stop.wait(timeout=2)
+        return result
+
+    monkeypatch.setattr(supervisor, "_terminate", gated_terminate)
+    try:
+        assert supervisor.start_worker("selected-worker")
+        first_process = supervisor._record("selected-worker").process
+        available["value"] = False
+        with pytest.raises(WorkerPolicyError, match="selected device is unavailable"):
+            supervisor.start_worker("selected-worker")
+        assert stop_started.wait(timeout=2)
+        assert first_process.poll() is not None
+        assert supervisor.snapshot("selected-worker")["state"] == "stopping"
+        available["value"] = True
+        assert supervisor.start_worker("selected-worker") is False
+        assert supervisor.snapshot("selected-worker")["restart_count"] == 0
+        allow_stop.set()
+        _wait_for(lambda: supervisor.snapshot("selected-worker")["state"] == "paused")
+        supervisor.start_service()
+        _wait_for(lambda: supervisor.snapshot("selected-worker")["state"] == "running")
+        assert supervisor.snapshot("selected-worker")["restart_count"] == 1
+    finally:
+        allow_stop.set()
+        supervisor.shutdown()
+
+
+def test_device_admission_settings_refresh_is_atomic_and_can_remove_callback():
+    launch = WorkerLaunch("selected-worker", "model", (sys.executable, "-c", "import time; time.sleep(30)"))
+    old_probe = Mock(return_value=False)
+    new_probe = Mock(return_value=True)
+    supervisor = WorkerSupervisor([launch], stop_timeout=2, device_available=old_probe)
+    settings = WorkerSupervisorSettings((launch,), stop_timeout=2, device_available=new_probe)
+    try:
+        with pytest.raises(OSError, match="write failed"):
+            supervisor.reconfigure(settings, persist=lambda: (_ for _ in ()).throw(OSError("write failed")))
+        with pytest.raises(WorkerPolicyError, match="selected device is unavailable"):
+            supervisor.start_worker("selected-worker")
+        new_probe.assert_not_called()
+        supervisor.reconfigure(settings, persist=lambda: None)
+        assert supervisor.start_worker("selected-worker") is True
+        new_probe.assert_called_with("selected-worker")
+        supervisor.pause_worker("selected-worker")
+        new_probe.return_value = False
+        supervisor.reconfigure(WorkerSupervisorSettings((launch,), stop_timeout=2), persist=lambda: None)
+        new_probe.reset_mock()
+        assert supervisor.start_worker("selected-worker") is True
+        new_probe.assert_not_called()
+    finally:
+        supervisor.shutdown()
+
+
+def test_worker_launch_and_device_settings_repr_hide_private_bindings():
+    private_uuid = "GPU-private-device-identity"
+    private_token = "hf_private-token"
+    launch = WorkerLaunch(
+        "worker",
+        "model",
+        ("unused",),
+        environment=(("CUDA_VISIBLE_DEVICES", private_uuid), ("HF_TOKEN", private_token)),
+        device_available=Mock(name=private_uuid, return_value=True),
+    )
+    probe = Mock(name=private_uuid, return_value=True)
+    settings = WorkerSupervisorSettings((launch,), stop_timeout=2, device_available=probe)
+    assert private_uuid not in repr(launch) + repr(settings)
+    assert private_token not in repr(launch) + repr(settings)
+
+
+def test_worker_logs_redact_private_cuda_binding_in_prefixed_and_bare_forms(caplog):
+    private_uuid = "GPU-12345678-abcd-1234-abcd-123456789abc"
+    launch = WorkerLaunch(
+        "worker",
+        "model",
+        (
+            sys.executable,
+            "-c",
+            "import os,time; value=os.environ['CUDA_VISIBLE_DEVICES']; "
+            "print('device=' + value, flush=True); "
+            "print('bare=' + value.removeprefix('GPU-').upper(), flush=True); "
+            "print('healthy', flush=True); time.sleep(30)",
+        ),
+        environment=(("CUDA_VISIBLE_DEVICES", private_uuid),),
+    )
+    supervisor = WorkerSupervisor([launch], stop_timeout=2)
+    caplog.set_level("INFO", logger=worker_module.__name__)
+    try:
+        assert supervisor.start_worker("worker")
+        _wait_for(lambda: len(supervisor.snapshot("worker")["recent_logs"]) == 3)
+        snapshot = supervisor.snapshot("worker")
+        assert snapshot["recent_logs"] == ["device=[private device]", "bare=[private device]", "healthy"]
+        assert "worker[worker] device=[private device]" in caplog.text
+        assert private_uuid.removeprefix("GPU-") not in (repr(snapshot) + caplog.text).lower()
+    finally:
+        supervisor.shutdown()
+
+
 @pytest.mark.parametrize("prefix", ["", "GPU-"])
 def test_cuda_power_mapping_uses_private_uuid_and_fails_closed_if_binding_changes(monkeypatch, prefix):
     import torch

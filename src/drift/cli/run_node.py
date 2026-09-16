@@ -27,6 +27,7 @@ from drift.node.contribution_planner import (
     PlacementPlan,
     PlacementRegistry,
 )
+from drift.node.device_binding import DeviceBindingError, DeviceBindingStore
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery, PeerCache
 from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
@@ -464,7 +465,7 @@ def _automatic_placement_candidates(
     return tuple(candidates)
 
 
-def _resolve_worker_device(worker_id: str, selection: str | None) -> torch.device:
+def _resolve_worker_device(worker_id: str, selection: str | None, *, require_available: bool = True) -> torch.device:
     """Resolve once and reject unavailable selections instead of moving a worker."""
     requested = selection
     try:
@@ -478,7 +479,7 @@ def _resolve_worker_device(worker_id: str, selection: str | None) -> torch.devic
         if device.index not in (None, 0):
             raise NodeConfigError(f"worker {worker_id!r} selected invalid device {str(device)!r}")
         device = torch.device(device.type)
-    if device.type == "cpu":
+    if device.type == "cpu" or not require_available:
         return device
 
     # Match the bounded public inventory: CUDA, then XPU, then the single MPS
@@ -668,13 +669,39 @@ def _prepare_worker_supervisor_settings(
             (value for value in (worker.max_power_watts, policy.max_power_watts) if value is not None),
             default=None,
         )
-        configured_device = _resolve_worker_device(worker.worker_id, worker.device)
+        detection_failed = False
+        try:
+            configured_device = _resolve_worker_device(worker.worker_id, worker.device, require_available=False)
+        except NodeConfigError:
+            if worker.device is not None:
+                raise
+            # Auto-detection itself can fail when a driver disappears. This
+            # inert command placeholder is never enrolled or allowed to spawn.
+            detection_failed = True
+            configured_device = torch.device("cpu")
+        binding = None
+        device_ready = False
+        try:
+            if detection_failed:
+                raise DeviceBindingError("Automatic device detection is unavailable")
+            _resolve_worker_device(worker.worker_id, str(configured_device))
+            # Private selection state follows the worker identity across normal
+            # config/policy saves. Never publish it in the node status response.
+            binding = DeviceBindingStore(
+                worker.identity_path.with_name(f".{worker.identity_path.name}.device-binding")
+            ).bind(worker.worker_id, str(configured_device))
+            device_ready = True
+        except (NodeConfigError, DeviceBindingError):
+            # A missing or changed GPU must leave the control API usable so the
+            # operator can pause/reconfigure, including when sharing is disabled.
+            pass
+        device_check = (lambda: True) if device_ready and binding is None else binding.check if device_ready else None
         policy_vram_limit = (policy.max_vram_bytes, policy.max_vram_fraction)
         worker_vram_limit = (worker.max_vram_bytes, worker.max_vram_fraction)
         effective_vram_bytes = None
         policy_vram_bytes = None
         vram_device = None
-        if is_accelerator(configured_device):
+        if is_accelerator(configured_device) and device_ready:
             if policy_admitted and policy_vram_limit == (None, None):
                 raise NodeConfigError(
                     f"accelerator worker {worker.worker_id!r} requires a finite contribution max_vram"
@@ -690,10 +717,11 @@ def _prepare_worker_supervisor_settings(
                     )
                     if type(total_vram) is not int or not 0 < total_vram <= 2**63 - 1:
                         raise ValueError("invalid accelerator capacity")
-                except Exception as exc:
-                    raise NodeConfigError(
-                        f"worker {worker.worker_id!r} cannot resolve max_vram for {configured_device}"
-                    ) from exc
+                except Exception:
+                    # A probe can fail after the identity check (e.g. device
+                    # loss). Keep the control plane alive without a reservation.
+                    device_check = None
+                    total_vram = None
 
                 def resolve_vram_limit(limit):
                     size, fraction = limit
@@ -701,11 +729,12 @@ def _prepare_worker_supervisor_settings(
 
                 # Sharing owns its configured fraction of the physical device.
                 # An optional local fallback must not reduce this budget.
-                policy_vram_bytes = min(total_vram, resolve_vram_limit(policy_vram_limit))
-                effective_vram_bytes = policy_vram_bytes
-                if worker_vram_limit != (None, None):
-                    effective_vram_bytes = min(effective_vram_bytes, resolve_vram_limit(worker_vram_limit))
-                vram_device = str(configured_device)
+                if total_vram is not None:
+                    policy_vram_bytes = min(total_vram, resolve_vram_limit(policy_vram_limit))
+                    effective_vram_bytes = policy_vram_bytes
+                    if worker_vram_limit != (None, None):
+                        effective_vram_bytes = min(effective_vram_bytes, resolve_vram_limit(worker_vram_limit))
+                    vram_device = str(configured_device)
 
         if getattr(sys, "frozen", False):
             # desktop/launch_node.py dispatches this mode inside the packaged
@@ -753,7 +782,10 @@ def _prepare_worker_supervisor_settings(
             )
         # The child must use exactly the device whose resources were admitted;
         # a second auto-detection in another process can choose a different GPU.
-        command.extend(("--device", str(configured_device)))
+        # A UUID mask pins the child independently of parent/child CUDA ordinal
+        # enumeration. Inside that one-device mask the selected card is cuda:0.
+        child_device = "cuda:0" if binding is not None else str(configured_device)
+        command.extend(("--device", child_device))
         if cache_dir is not None:
             command.extend(("--cache_dir", str(cache_dir)))
         if effective_disk_space is not None:
@@ -779,6 +811,12 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--revocation_file", str(revocation_file)))
         placement_binding = decision if decision is not None and decision.artifact_set_digest is not None else None
 
+        def worker_device_available(check=device_check):
+            if check is None:
+                return False
+            result = check()
+            return result is None or result is True
+
         launches.append(
             WorkerLaunch(
                 worker_id=worker.worker_id,
@@ -803,12 +841,18 @@ def _prepare_worker_supervisor_settings(
                 placement_cache_root=None if placement_binding is None else str(cache_dir),
                 max_disk_bytes=effective_disk_bytes,
                 max_vram_bytes=effective_vram_bytes,
-                device=str(configured_device),
+                device=None if detection_failed else str(configured_device),
+                # This guard must travel atomically with this exact command,
+                # mask and reservation during automatic placement replacement.
+                device_available=worker_device_available,
                 vram_device=vram_device,
                 vram_pool_bytes=policy_vram_bytes,
                 max_bandwidth_mbps=effective_bandwidth_mbps,
                 max_power_watts=effective_power_watts,
-                environment=(("HF_TOKEN", token),) if token is not None else (),
+                environment=(
+                    ((("HF_TOKEN", token),) if token is not None else ())
+                    + ((("CUDA_VISIBLE_DEVICES", binding.cuda_visible_devices),) if binding is not None else ())
+                ),
             )
         )
     bandwidth_monitor = (
@@ -854,6 +898,7 @@ def _build_worker_supervisor(
         schedule_allowed=settings.schedule_allowed,
         bandwidth_mbps=settings.bandwidth_mbps,
         power_watts=settings.power_watts,
+        device_available=settings.device_available,
     )
 
 

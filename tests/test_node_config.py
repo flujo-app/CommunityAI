@@ -21,6 +21,7 @@ from drift.cli.run_node import (
     _reuse_runtime_initial_peers,
 )
 from drift.model_manifest import ManifestError, ModelManifest
+from drift.node import device_binding as device_binding_module
 from drift.node.config import (
     NODE_CONFIG_SCHEMA_VERSION,
     ContributionPolicyConfig,
@@ -101,9 +102,25 @@ def _config_dict(**overrides):
 
 @pytest.fixture
 def available_cuda_devices(monkeypatch):
+    monkeypatch.setattr(device_binding_module, "_DEFAULT_LIVENESS_PROBE", device_binding_module._NvidiaIdentityProbe())
     capacities = {0: 8 * 1024**3, 1: 24 * 1024**3}
     monkeypatch.setattr(run_node_module.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(run_node_module.torch.cuda, "device_count", lambda: len(capacities))
+    monkeypatch.setattr(
+        run_node_module.torch.cuda,
+        "get_device_properties",
+        lambda index: SimpleNamespace(uuid=f"GPU-00000000-0000-0000-0000-{int(index) + 1:012d}"),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "pynvml",
+        SimpleNamespace(
+            nvmlInit=lambda: None,
+            nvmlDeviceGetHandleByUUID=lambda value: value,
+            nvmlDeviceGetUUID=lambda handle: handle,
+            nvmlDeviceGetMemoryInfo=lambda handle: SimpleNamespace(total=8 * 1024**3),
+        ),
+    )
     monkeypatch.setattr(run_node_module, "get_device_total_memory", lambda device: capacities[device.index])
     return capacities
 
@@ -168,7 +185,9 @@ def test_worker_launch_always_pins_the_resolved_device(
     try:
         launch = supervisor.launches[0]
         assert launch.command.count("--device") == 1
-        assert launch.command[launch.command.index("--device") + 1] == expected
+        assert launch.command[launch.command.index("--device") + 1] == (
+            "cuda:0" if expected.startswith("cuda:") else expected
+        )
         assert launch.device == expected
         assert launch.vram_device == (expected if expected.startswith("cuda:") else None)
         assert detections == ([detected] if selection is None else [])
@@ -186,7 +205,8 @@ def test_unequal_worker_devices_keep_memory_and_launch_binding_with_one_processi
         for launch, device, capacity in ((first, "cuda:1", 24), (second, "cuda:0", 8)):
             assert launch.vram_device == device
             assert launch.device == device
-            assert launch.command[launch.command.index("--device") + 1] == device
+            assert launch.command[launch.command.index("--device") + 1] == "cuda:0"
+            assert dict(launch.environment)["CUDA_VISIBLE_DEVICES"].endswith(f"{int(device[-1]) + 1:012d}")
             assert launch.max_vram_bytes == capacity * 1024**3 // 2
             assert launch.vram_pool_bytes == capacity * 1024**3 // 2
             assert launch.command[launch.command.index("--max_device_memory") + 1] == str(launch.max_vram_bytes)
@@ -199,7 +219,7 @@ def test_unequal_worker_devices_keep_memory_and_launch_binding_with_one_processi
         supervisor.shutdown()
 
 
-@pytest.mark.parametrize("selection", ["cuda:2", "cuda:-1", "not-a-device", "meta", "cpu:1", "mps:1"])
+@pytest.mark.parametrize("selection", ["cuda:-1", "not-a-device", "meta", "cpu:1", "mps:1"])
 def test_invalid_selected_worker_device_fails_without_automatic_fallback(
     monkeypatch, worker_device_config, available_cuda_devices, selection
 ):
@@ -220,8 +240,15 @@ def test_unavailable_selected_cuda_device_fails_before_memory_or_fallback(
     monkeypatch.setattr(
         run_node_module, "get_device_total_memory", lambda device: pytest.fail("unavailable memory probe")
     )
-    with pytest.raises(NodeConfigError, match="device-worker-0.*cuda:1.*unavailable"):
-        _build_worker_supervisor(config_for("cuda:1"), manager)
+    supervisor = _build_worker_supervisor(config_for("cuda:1"), manager)
+    try:
+        assert supervisor.snapshot("device-worker-0")["resource_admitted"] is False
+        assert supervisor.launches[0].device == "cuda:1"
+        assert supervisor.launches[0].max_vram_bytes is None
+        with pytest.raises(WorkerPolicyError, match="selected device is unavailable"):
+            supervisor.start_worker("device-worker-0")
+    finally:
+        supervisor.shutdown()
 
 
 @pytest.mark.parametrize(
@@ -269,8 +296,12 @@ def test_worker_rejects_accelerators_without_supported_memory_telemetry(monkeypa
     # telemetry into permission to reserve host RAM as accelerator memory.
     monkeypatch.setattr(run_node_module, "get_device_total_memory", lambda device: 16 * 1024**3)
     manager, config_for = worker_device_config
-    with pytest.raises(NodeConfigError, match="device-worker-0.*unsupported.*memory telemetry"):
-        _build_worker_supervisor(config_for(kind), manager)
+    supervisor = _build_worker_supervisor(config_for(kind), manager)
+    try:
+        assert supervisor.snapshot("device-worker-0")["resource_admitted"] is False
+        assert supervisor.launches[0].max_vram_bytes is None
+    finally:
+        supervisor.shutdown()
 
 
 @pytest.mark.parametrize(
@@ -288,8 +319,12 @@ def test_worker_rejects_invalid_accelerator_capacity(
             SimpleNamespace(is_available=lambda: True, recommended_max_memory=lambda: capacity),
         )
     manager, config_for = worker_device_config
-    with pytest.raises(NodeConfigError, match=f"device-worker-0.*cannot resolve max_vram for {kind}"):
-        _build_worker_supervisor(config_for(kind), manager)
+    supervisor = _build_worker_supervisor(config_for(kind), manager)
+    try:
+        assert supervisor.snapshot("device-worker-0")["resource_admitted"] is False
+        assert supervisor.launches[0].max_vram_bytes is None
+    finally:
+        supervisor.shutdown()
 
 
 def test_contribution_telemetry_providers_are_core_runtime_dependencies():
@@ -298,6 +333,112 @@ def test_contribution_telemetry_providers_are_core_runtime_dependencies():
 
     assert '"psutil>=5.9"' in core_dependencies
     assert '"nvidia-ml-py>=12.535"' in core_dependencies
+
+
+def test_physical_selection_survives_restart_and_rejects_reordered_cuda(
+    monkeypatch, worker_device_config, available_cuda_devices
+):
+    manager, config_for = worker_device_config
+    config = config_for("cuda:1")
+    first = _build_worker_supervisor(config, manager)
+    private_mask = dict(first.launches[0].environment)["CUDA_VISIBLE_DEVICES"]
+    assert first.snapshot("device-worker-0")["resource_admitted"] is True
+    assert private_mask not in json.dumps(first.snapshots())
+    assert private_mask not in repr(first.launches[0])
+    first.shutdown()
+    same = _build_worker_supervisor(config, manager)
+    try:
+        assert dict(same.launches[0].environment)["CUDA_VISIBLE_DEVICES"] == private_mask
+        assert same.snapshot("device-worker-0")["resource_admitted"] is True
+    finally:
+        same.shutdown()
+    monkeypatch.setattr(
+        run_node_module.torch.cuda,
+        "get_device_properties",
+        lambda index: SimpleNamespace(uuid="GPU-00000000-0000-0000-0000-000000000099"),
+    )
+    changed = _build_worker_supervisor(config, manager)
+    try:
+        snapshot = changed.snapshot("device-worker-0")
+        assert snapshot["resource_admitted"] is False
+        assert snapshot["max_vram_bytes"] is None
+        assert "GPU-" not in json.dumps(snapshot)
+        with pytest.raises(WorkerPolicyError, match="selected device is unavailable"):
+            changed.start_worker("device-worker-0")
+    finally:
+        changed.shutdown()
+
+
+@pytest.mark.parametrize("sharing", [False, True])
+def test_auto_selection_does_not_move_saved_cuda_worker_to_cpu(
+    monkeypatch, worker_device_config, available_cuda_devices, sharing
+):
+    manager, config_for = worker_device_config
+    config = config_for(None)
+    config = replace(config, contribution_policy=replace(config.contribution_policy, sharing_enabled=sharing))
+    monkeypatch.setattr(run_node_module, "auto_detect_device", lambda: "cuda:0")
+    first = _build_worker_supervisor(config, manager)
+    assert first.snapshot("device-worker-0")["resource_admitted"] is True
+    first.shutdown()
+    monkeypatch.setattr(run_node_module, "auto_detect_device", lambda: "cpu")
+    restarted = _build_worker_supervisor(config, manager)
+    try:
+        assert restarted.snapshot("device-worker-0")["resource_admitted"] is False
+        assert restarted.snapshot("device-worker-0")["pid"] is None
+    finally:
+        restarted.shutdown()
+
+
+def test_uncapped_cuda_binding_rechecks_fresh_nvml_liveness(monkeypatch, worker_device_config, available_cuda_devices):
+    manager, config_for = worker_device_config
+    supervisor = _build_worker_supervisor(config_for("cuda:0"), manager)
+    try:
+        assert supervisor.launches[0].max_power_watts is None
+        assert supervisor.snapshot("device-worker-0")["resource_admitted"] is True
+
+        def device_lost(handle):
+            raise RuntimeError("private driver detail with GPU-00000000-0000-0000-0000-000000000001")
+
+        monkeypatch.setattr(sys.modules["pynvml"], "nvmlDeviceGetMemoryInfo", device_lost)
+        snapshot = supervisor.snapshot("device-worker-0")
+        assert snapshot["resource_admitted"] is False
+        assert "private driver" not in json.dumps(snapshot)
+    finally:
+        supervisor.shutdown()
+
+
+def test_missing_one_gpu_preserves_cpu_control_and_never_spawns_fallback(
+    monkeypatch, worker_device_config, available_cuda_devices
+):
+    manager, config_for = worker_device_config
+    supervisor = _build_worker_supervisor(config_for("cuda:2", "cpu"), manager)
+    try:
+        missing, cpu = supervisor.snapshots()
+        assert missing["resource_admitted"] is False
+        assert missing["device"] == "cuda:2"
+        assert missing["pid"] is None
+        assert cpu["resource_admitted"] is True
+        assert cpu["device"] == "cpu"
+    finally:
+        supervisor.shutdown()
+
+
+def test_private_binding_never_reaches_authenticated_worker_or_status_api(worker_device_config, available_cuda_devices):
+    from fastapi.testclient import TestClient
+
+    from drift.node.server import create_node_app
+
+    manager, config_for = worker_device_config
+    supervisor = _build_worker_supervisor(config_for("cuda:1"), manager)
+    private_mask = dict(supervisor.launches[0].environment)["CUDA_VISIBLE_DEVICES"]
+    app = create_node_app(manager, api_keys=["client-key"], control_keys=["control-key"], worker_supervisor=supervisor)
+    with TestClient(app) as client:
+        for path in ("/control/v1/workers", "/control/v1/status"):
+            response = client.get(path, headers={"Authorization": "Bearer control-key"})
+            assert response.status_code == 200
+            assert private_mask not in response.text
+            assert private_mask.removeprefix("GPU-") not in response.text
+            assert "CUDA_VISIBLE_DEVICES" not in response.text
 
 
 def test_node_config_resolves_paths_relative_to_its_own_directory(tmp_path):
@@ -516,6 +657,7 @@ def test_build_manager_registers_multiple_manifests_without_loading(monkeypatch,
 
 @pytest.mark.parametrize("public_port", [None, 43210])
 def test_worker_supervisor_command_is_pinned_to_configured_manifest(monkeypatch, tmp_path, public_port):
+    monkeypatch.setattr(run_node_module, "auto_detect_device", lambda: "cpu")
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
@@ -1671,3 +1813,52 @@ def test_automatic_placement_reconciliation_has_a_one_second_floor(tmp_path):
 
     assert service._period == 1.0
     service.close()
+
+
+def test_failed_auto_detection_blocks_only_that_worker_without_enrollment(monkeypatch, worker_device_config):
+    manager, config_for = worker_device_config
+    config = config_for(None, "cpu")
+
+    def failed_detection():
+        raise RuntimeError("private driver diagnostic")
+
+    monkeypatch.setattr(run_node_module, "auto_detect_device", failed_detection)
+    supervisor = _build_worker_supervisor(config, manager)
+    try:
+        blocked, cpu = supervisor.snapshots()
+        assert blocked["resource_admitted"] is False
+        assert blocked["device"] is None
+        assert "private driver" not in json.dumps(blocked)
+        assert cpu["resource_admitted"] is True
+        first_identity = config.workers[0].identity_path
+        assert not first_identity.with_name(f".{first_identity.name}.device-binding").exists()
+        with pytest.raises(WorkerPolicyError, match="selected device is unavailable"):
+            supervisor.start_worker("device-worker-0")
+    finally:
+        supervisor.shutdown()
+
+
+def test_placement_replacement_keeps_its_own_missing_device_gate(
+    monkeypatch, worker_device_config, available_cuda_devices
+):
+    manager, config_for = worker_device_config
+    config = config_for("cuda:0")
+    supervisor = _build_worker_supervisor(config, manager)
+    try:
+        assert supervisor.snapshot("device-worker-0")["resource_admitted"] is True
+        monkeypatch.setattr(run_node_module.torch.cuda, "is_available", lambda: False)
+        replacement = run_node_module._prepare_worker_supervisor_settings(config, manager).launches[0]
+        assert replacement.max_vram_bytes is None
+        assert "CUDA_VISIBLE_DEVICES" not in dict(replacement.environment)
+        supervisor.replace_launch(replacement, start=False)
+        monkeypatch.setattr(run_node_module.torch.cuda, "is_available", lambda: True)
+        assert supervisor.snapshot("device-worker-0")["resource_admitted"] is False
+        with pytest.raises(WorkerPolicyError, match="selected device is unavailable"):
+            supervisor.start_worker("device-worker-0")
+        fresh = run_node_module._prepare_worker_supervisor_settings(config, manager).launches[0]
+        supervisor.replace_launch(fresh, start=False)
+        assert supervisor.snapshot("device-worker-0")["resource_admitted"] is True
+        assert "CUDA_VISIBLE_DEVICES" in dict(supervisor.launches[0].environment)
+        assert supervisor.launches[0].max_vram_bytes is not None
+    finally:
+        supervisor.shutdown()

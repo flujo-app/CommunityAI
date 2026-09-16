@@ -193,6 +193,9 @@ class WorkerLaunch:
     max_power_watts: Optional[float] = None
     environment: Tuple[Tuple[str, str], ...] = field(default=(), repr=False)
     device: Optional[str] = None
+    # Keep the guard with the exact child mask and resource reservation when an
+    # automatic placement is replaced. Fresh equivalent probes do not reassign it.
+    device_available: Optional[Callable[[], bool]] = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.worker_id or not self.command:
@@ -364,6 +367,7 @@ class WorkerSupervisorSettings:
     schedule_allowed: Optional[Callable[[], bool]] = None
     bandwidth_mbps: Optional[Callable[[], Optional[float]]] = None
     power_watts: Optional[Callable[[str], Optional[float]]] = None
+    device_available: Optional[Callable[[str], bool]] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.launches, tuple):
@@ -410,6 +414,7 @@ class WorkerSupervisor:
         schedule_allowed: Optional[Callable[[], bool]] = None,
         bandwidth_mbps: Optional[Callable[[], Optional[float]]] = None,
         power_watts: Optional[Callable[[str], Optional[float]]] = None,
+        device_available: Optional[Callable[[str], bool]] = None,
     ) -> None:
         if stop_timeout <= 0 or poll_period <= 0:
             raise ValueError("worker supervisor timeouts must be positive")
@@ -430,6 +435,7 @@ class WorkerSupervisor:
         self._schedule_allowed = schedule_allowed
         self._bandwidth_mbps = bandwidth_mbps
         self._power_watts = power_watts
+        self._device_available = device_available
         self._last_bandwidth_mbps: Optional[float] = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -497,6 +503,17 @@ class WorkerSupervisor:
 
     def _resource_status_locked(self, record: _WorkerRecord) -> Tuple[bool, Optional[str]]:
         launch = record.launch
+        device_check = launch.device_available
+        if device_check is None and self._device_available is not None:
+            device_check = lambda: self._device_available(launch.worker_id)
+        if device_check is not None:
+            try:
+                device_available = device_check()
+            except Exception:
+                # Device probes may include private hardware identifiers in errors.
+                device_available = False
+            if device_available is not True:
+                return False, "selected device is unavailable or has changed; reselect it before sharing"
         if record.memory_rejected_command == launch.command:
             return False, "selected blocks exceed the VRAM budget; increase VRAM or contribute fewer blocks"
         if launch.max_vram_bytes is not None:
@@ -505,8 +522,10 @@ class WorkerSupervisor:
                 for other in self._records.values()
                 if other is not record
                 and other.launch.vram_device == launch.vram_device
-                and other.process is not None
-                and other.process.poll() is None
+                and (
+                    other.suspension_stop_thread is not None
+                    or (other.process is not None and other.process.poll() is None)
+                )
             )
             if reserved + launch.max_vram_bytes > launch.vram_pool_bytes:
                 return False, f"VRAM budget is already reserved on {launch.vram_device}"
@@ -549,7 +568,12 @@ class WorkerSupervisor:
             raise WorkerPolicyError(schedule_reason)
         resource_admitted, resource_reason = self._resource_status_locked(record)
         if not resource_admitted:
-            record.state = WorkerState.PAUSED
+            if record.process is not None and record.process.poll() is None:
+                # Start may be requested again after a live device disappeared.
+                # Keep the process tracked until the ordinary stop path finishes.
+                self._suspend_locked(record, resource=True)
+            elif record.suspension_stop_thread is None:
+                record.state = WorkerState.PAUSED
             record.resource_suspended = defer_unavailable_resources and record.desired_running
             if defer_unavailable_resources:
                 return False
@@ -557,6 +581,11 @@ class WorkerSupervisor:
             raise WorkerPolicyError(resource_reason)
         if self._closed:
             raise RuntimeError("worker supervisor is closed")
+        if record.suspension_stop_thread is not None:
+            # A new Start intent must wait for the previous process cleanup, even
+            # when its device becomes available before the stop thread completes.
+            record.resource_suspended = record.desired_running
+            return False
         if record.process is not None and record.process.poll() is None:
             return False
         record.state = WorkerState.STARTING
@@ -602,22 +631,40 @@ class WorkerSupervisor:
         record.last_error = None
         record.last_exit_code = None
         record.started_at = time.time()
+        private_device_ids = re.findall(
+            r"(?:GPU-)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+            environment.get("CUDA_VISIBLE_DEVICES", ""),
+            flags=re.IGNORECASE,
+        )
+        private_device_pattern = (
+            re.compile(r"(?:GPU-)?(?:" + "|".join(map(re.escape, private_device_ids)) + r")", re.IGNORECASE)
+            if private_device_ids
+            else None
+        )
         thread = threading.Thread(
             target=self._drain_output,
-            args=(record, process),
+            args=(record, process, private_device_pattern),
             name=f"drift-worker-log-{record.launch.worker_id}",
             daemon=True,
         )
         thread.start()
         return True
 
-    def _drain_output(self, record: _WorkerRecord, process: subprocess.Popen) -> None:
+    def _drain_output(
+        self,
+        record: _WorkerRecord,
+        process: subprocess.Popen,
+        private_device_pattern: Optional[re.Pattern[str]] = None,
+    ) -> None:
         stream = process.stdout
         if stream is None:
             return
         try:
             for line in stream:
                 message = line.rstrip("\r\n")
+                if private_device_pattern is not None:
+                    # Capture this launch's binding rather than a future assignment.
+                    message = private_device_pattern.sub("[private device]", message)
                 with self._lock:
                     record.recent_logs.append(message)
                 logger.info("worker[%s] %s", record.launch.worker_id, message)
@@ -1023,6 +1070,7 @@ class WorkerSupervisor:
             self._schedule_allowed = settings.schedule_allowed
             self._bandwidth_mbps = settings.bandwidth_mbps
             self._power_watts = settings.power_watts
+            self._device_available = settings.device_available
             self._last_bandwidth_mbps = None
 
     def shutdown(self) -> None:
