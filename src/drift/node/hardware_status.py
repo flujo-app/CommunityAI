@@ -135,7 +135,13 @@ class HardwareStatus:
                 device = torch.device("cpu")
             if device.type == "mps" and device.index in (None, 0):
                 device = torch.device("mps")
-            self.inventory["selected_device"] = str(device)
+            # Public selection uses the same bounded vocabulary as inventory
+            # rows. Keep the diagnostic below, but never echo arbitrary backend
+            # strings or ordinals that a control client cannot select.
+            canonical = (device.type in ("cpu", "mps") and device.index is None) or (
+                device.type in ("cuda", "xpu") and device.index is not None and 0 <= device.index < self.MAX_DEVICES
+            )
+            self.inventory["selected_device"] = str(device) if canonical else None
             self.inventory["device"] = str(device)
             if device.type == "cpu" and device.index is None:
                 self.inventory["device_status"] = "available"

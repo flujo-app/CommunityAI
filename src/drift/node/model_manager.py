@@ -248,6 +248,17 @@ class ModelManager:
 
     def begin_idle_restart(self) -> bool:
         """Atomically stop admission only after existing leases and loads finish."""
+        return self.commit_idle_restart(lambda: None)
+
+    def commit_idle_restart(self, persist: Callable[[], None]) -> bool:
+        """Persist an idle restart before closing admission, under its lock.
+
+        Busy or already-stopping managers never invoke ``persist``. Persistence
+        runs synchronously while admission is excluded; failure propagates with
+        admission unchanged. The callback may read exact descriptors and catalog
+        eligibility through this reentrant lock, but must not admit/load work,
+        mutate manager state, or acquire locks above it in the caller's order.
+        """
         with self._capacity_changed:
             if self._closed or self._draining:
                 return False
@@ -256,6 +267,7 @@ class ModelManager:
                 for record in self._records.values()
             ):
                 return False
+            persist()
             self._draining = True
             self._capacity_changed.notify_all()
             return True

@@ -442,6 +442,7 @@ class WorkerSupervisor:
         self._monitor: Optional[threading.Thread] = None
         self._started = False
         self._closed = False
+        self._configuration_restart_pending = False
 
     def _record(self, worker_id: str) -> _WorkerRecord:
         with self._lock:
@@ -555,6 +556,8 @@ class WorkerSupervisor:
         defer_outside_schedule: bool = False,
         defer_unavailable_resources: bool = False,
     ) -> bool:
+        if self._configuration_restart_pending:
+            raise WorkerReconfigurationBusyError("node configuration restart is pending")
         if not record.launch.policy_admitted:
             record.desired_running = False
             raise WorkerPolicyError(record.launch.policy_reason)
@@ -796,6 +799,8 @@ class WorkerSupervisor:
         with self._lock:
             if self._closed:
                 raise RuntimeError("worker supervisor is closed")
+            if self._configuration_restart_pending:
+                raise WorkerReconfigurationBusyError("node configuration restart is pending")
             if self._started:
                 return
             self._started = True
@@ -816,6 +821,8 @@ class WorkerSupervisor:
     def start_worker(self, worker_id: str) -> bool:
         record = self._record(worker_id)
         with self._lock:
+            if self._configuration_restart_pending:
+                raise WorkerReconfigurationBusyError("node configuration restart is pending")
             if not record.launch.policy_admitted:
                 record.desired_running = False
                 if record.launch.automatic:
@@ -908,6 +915,9 @@ class WorkerSupervisor:
         return True
 
     def restart_worker(self, worker_id: str) -> bool:
+        with self._lock:
+            if self._configuration_restart_pending:
+                raise WorkerReconfigurationBusyError("node configuration restart is pending")
         self.pause_worker(worker_id)
         return self.start_worker(worker_id)
 
@@ -999,12 +1009,21 @@ class WorkerSupervisor:
         with self._lock:
             return tuple(record.launch for record in self._records.values())
 
+    @property
+    def configuration_restart_pending(self) -> bool:
+        """Whether a durable worker-configuration change is waiting for node restart."""
+
+        with self._lock:
+            return self._configuration_restart_pending
+
     def replace_launch(self, launch: WorkerLaunch, *, start: Optional[bool] = None) -> bool:
         """Replace one paused worker assignment without overriding an explicit pause."""
         record = self._record(launch.worker_id)
         with self._lock:
             if self._closed:
                 raise RuntimeError("worker supervisor is closed")
+            if self._configuration_restart_pending:
+                raise WorkerReconfigurationBusyError("node configuration restart is pending")
             self._refresh_locked(record)
             if (
                 record.desired_running
@@ -1047,6 +1066,8 @@ class WorkerSupervisor:
         with self._lock:
             if self._closed:
                 raise RuntimeError("worker supervisor is closed")
+            if self._configuration_restart_pending:
+                raise WorkerReconfigurationBusyError("node configuration restart is pending")
             if set(launches) != set(self._records):
                 raise ValueError("a policy update must preserve the configured worker set")
             for record in self._records.values():
@@ -1072,6 +1093,37 @@ class WorkerSupervisor:
             self._power_watts = settings.power_watts
             self._device_available = settings.device_available
             self._last_bandwidth_mbps = None
+
+    def commit_configuration_restart(self, persist: Callable[[], None]) -> None:
+        """Durably commit a node configuration while contribution is explicitly quiescent.
+
+        The callback runs under the same lock as every worker action. A successful
+        callback permanently closes all launch/reconfiguration paths for this
+        supervisor; the owning node must restart to construct the new worker set.
+        A failed callback leaves the restart latch unchanged.
+        """
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("worker supervisor is closed")
+            if self._configuration_restart_pending:
+                raise WorkerReconfigurationBusyError("node configuration restart is pending")
+            for record in self._records.values():
+                self._refresh_locked(record)
+                if (
+                    not record.operator_paused
+                    or record.desired_running
+                    or record.process is not None
+                    or record.suspension_stop_thread is not None
+                    or record.schedule_suspended
+                    or record.resource_suspended
+                    or record.state is not WorkerState.PAUSED
+                ):
+                    raise WorkerReconfigurationBusyError(
+                        "pause all contribution workers before changing the worker configuration"
+                    )
+            persist()
+            self._configuration_restart_pending = True
 
     def shutdown(self) -> None:
         with self._lock:

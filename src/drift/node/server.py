@@ -11,9 +11,11 @@ from typing import Callable, List, Literal, Optional
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
+from starlette.responses import JSONResponse
 
 from drift.api.server import create_app
 from drift.node.config import ContributionPolicyConfig, NodeConfigError
+from drift.node.device_binding import DeviceBindingError
 from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.node.keys import ApiKeyNotFoundError, ApiKeyStore, ApiKeyStoreError, LastActiveKeyError
 from drift.node.model_manager import (
@@ -29,6 +31,7 @@ from drift.node.policy_store import (
     ContributionPolicyStore,
     parse_policy_update_request,
 )
+from drift.node.worker_selection import MAX_SELECTION_REQUEST_BYTES, parse_selection_request
 from drift.node.worker_supervisor import (
     WorkerNotFoundError,
     WorkerPolicyError,
@@ -39,6 +42,24 @@ from drift.utils.download_progress import public_progress
 
 CONTROL_API_VERSION = 1
 CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
+
+
+class _ConfigurationRestartSignalError(RuntimeError):
+    """Configuration is committed, but the node could not request its reload."""
+
+
+async def _commit_worker_selection(store, selection, manager, request_restart):
+    # A disconnected/cancelled HTTP await must not strand a completed durable
+    # transaction. The executor owns the commit AND its one reload signal.
+    def commit_and_restart():
+        result = store.update_worker_selection(selection, manager=manager)
+        try:
+            request_restart()
+        except Exception:
+            raise _ConfigurationRestartSignalError("saved configuration requires a node restart") from None
+        return result
+
+    return await asyncio.get_running_loop().run_in_executor(None, commit_and_restart)
 
 
 class InferenceModeRequest(BaseModel):
@@ -191,6 +212,7 @@ def create_node_app(
     contribution_policy_store: Optional[ContributionPolicyStore] = None,
     route_outcome_observer: Optional[Callable[..., None]] = None,
     hardware_status: Optional[Callable[[dict], dict]] = None,
+    request_restart: Optional[Callable[[], None]] = None,
 ):
     """Compose the OpenAI API and authenticated local control surface."""
     if api_key_store is None and (not api_keys or any(not isinstance(key, str) or not key for key in api_keys)):
@@ -233,6 +255,7 @@ def create_node_app(
     async def node_status(request: Request):
         check_control_auth(request)
         worker_snapshots = list(worker_supervisor.snapshots()) if worker_supervisor is not None else []
+        restart_pending = getattr(worker_supervisor, "configuration_restart_pending", False) is True
         if contribution_policy_store is not None:
             policy_snapshot = contribution_policy_store.snapshot()
         else:
@@ -246,18 +269,19 @@ def create_node_app(
         contribution = _contribution_status(
             worker_snapshots,
             configured=worker_supervisor is not None,
-            editable=contribution_policy_store is not None,
+            editable=contribution_policy_store is not None and not restart_pending,
             policy_snapshot=policy_snapshot,
         )
         return {
             "api_version": CONTROL_API_VERSION,
-            "status": "stopping" if model_manager.closed else "running",
+            "status": "stopping" if model_manager.closed or restart_pending else "running",
+            "configuration_restart_pending": restart_pending,
             "started_at": started_at,
             "openai_base_url": f"http://{'[' + host + ']' if ':' in host else host}:{port}/v1",
             "runtime_budget": model_manager.residency(),
             "hardware": hardware_status(policy_snapshot["policy"]) if hardware_status is not None else {},
             "inference_mode": model_manager.inference_mode,
-            "inference_mode_editable": contribution_policy_store is not None,
+            "inference_mode_editable": contribution_policy_store is not None and not restart_pending,
             "auto_selection": model_manager.auto_selection_snapshot(),
             "models": [snapshot.to_dict() for snapshot in model_manager.snapshots()],
             "workers": [
@@ -290,6 +314,52 @@ def create_node_app(
             raise HTTPException(status_code=412, detail=str(exc)) from exc
         except ContributionPolicyPersistenceError as exc:
             raise HTTPException(status_code=503, detail="inference mode could not be saved") from exc
+        except WorkerReconfigurationBusyError as exc:
+            raise HTTPException(status_code=409, detail="node configuration restart is pending") from exc
+
+    @app.put("/control/v1/contribution-worker-selection", status_code=202)
+    async def update_worker_selection(request: Request):
+        check_control_auth(request)
+        store = require_policy_store()
+        if request_restart is None:
+            raise HTTPException(status_code=501, detail="worker selection reload is not configured")
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().casefold() != "application/json":
+            raise HTTPException(status_code=415, detail="worker selection must use application/json")
+        payload = bytearray()
+        async for chunk in request.stream():
+            if len(payload) + len(chunk) > MAX_SELECTION_REQUEST_BYTES:
+                raise HTTPException(status_code=413, detail="worker selection exceeds the size limit")
+            payload.extend(chunk)
+        try:
+            selection = parse_selection_request(bytes(payload))
+        except NodeConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            result = await _commit_worker_selection(store, selection, model_manager, request_restart)
+        except _ConfigurationRestartSignalError as exc:
+            raise HTTPException(
+                status_code=503, detail="GPU selection was saved; restart the node to apply it"
+            ) from exc
+        except WorkerNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="selected contribution worker was not found") from exc
+        except ContributionPolicyConflictError as exc:
+            raise HTTPException(status_code=412, detail="settings changed elsewhere; refresh before saving") from exc
+        except WorkerReconfigurationBusyError as exc:
+            raise HTTPException(
+                status_code=409, detail="pause sharing and finish active inference; wait for any pending node restart"
+            ) from exc
+        except DeviceBindingError as exc:
+            raise HTTPException(status_code=409, detail="this GPU is unavailable or changed; select it again") from exc
+        except NodeConfigError as exc:
+            raise HTTPException(
+                status_code=422, detail="GPU selection cannot be prepared; previous settings remain"
+            ) from exc
+        except (ContributionPolicyPersistenceError, OSError) as exc:
+            raise HTTPException(
+                status_code=503, detail="GPU selection could not be saved; previous settings remain"
+            ) from exc
+        # Uvicorn's graceful shutdown waits for this active request to finish.
+        return JSONResponse(result, status_code=202)
 
     @app.put("/control/v1/contribution-policy")
     async def update_contribution_policy(request: Request):
@@ -393,7 +463,7 @@ def create_node_app(
             snapshot = worker_supervisor.snapshot(worker_id)
         except WorkerNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except WorkerPolicyError as exc:
+        except (WorkerPolicyError, WorkerReconfigurationBusyError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc

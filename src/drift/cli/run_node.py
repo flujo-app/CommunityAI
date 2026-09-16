@@ -1343,7 +1343,7 @@ def main() -> None:
     _validate_args(parser, args)
 
     while _serve_once(args, parser):
-        logger.info("Activating the authenticated catalog update after all active generations finished")
+        logger.info("Activating a saved node configuration after all active generations finished")
 
 
 def _serve_once(args, parser) -> bool:
@@ -1448,6 +1448,13 @@ def _serve_once(args, parser) -> bool:
     from drift.node.hardware_status import HardwareStatus
 
     hardware_status = HardwareStatus(config)
+    restart_requested = False
+
+    def restart():
+        nonlocal restart_requested
+        restart_requested = True
+        server.should_exit = True
+
     app = create_node_app(
         manager,
         api_key_store=key_store,
@@ -1461,6 +1468,7 @@ def _serve_once(args, parser) -> bool:
         contribution_policy_store=policy_store,
         route_outcome_observer=route_outcomes.record,
         hardware_status=hardware_status.snapshot,
+        request_restart=restart,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
     logger.info(
@@ -1471,13 +1479,6 @@ def _serve_once(args, parser) -> bool:
     if placement_service is not None:
         placement_service.start()
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="info"))
-    restart_requested = False
-
-    def restart():
-        nonlocal restart_requested
-        restart_requested = True
-        server.should_exit = True
-
     refresh_service = None
     if config.catalog_path is not None and args.config is not None:
         refresh_service = CatalogRefreshService(config, args.config, args.data_dir, manager, restart)

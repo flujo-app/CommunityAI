@@ -20,6 +20,9 @@ CONTRIBUTION_STATUS_SCHEMA_VERSION = 3
 CONTRIBUTION_POLICY_SCHEMA_VERSION = 1
 MODEL_DOWNLOAD_SCHEMA_VERSION = 1
 MAX_SELECTED_WHOLE_SHARD_BYTES = 64 * 1024**4
+MAX_GPU_INVENTORY_DEVICES = 16
+MAX_HARDWARE_BYTES = 2**63 - 1
+MAX_GPU_VISIBLE_COUNT = 2**31 - 1
 
 
 class NodeClientError(RuntimeError):
@@ -114,6 +117,28 @@ def _optional_number(value: Any, field: str, *, integer: bool = False, positive:
     if not math.isfinite(value) or (value <= 0 if positive else value < 0):
         raise NodeClientError(f"Local node contribution status has invalid {field}")
     return value
+
+
+def _hardware_bytes(value: Any, field: str, *, positive: bool = False):
+    if value is not None and (type(value) is not int or not (1 if positive else 0) <= value <= MAX_HARDWARE_BYTES):
+        raise NodeClientError(f"Local node status has invalid {field}")
+    return value
+
+
+def _public_device(value: Any, field: str, *, accelerator: bool = False):
+    if value is None:
+        return None
+    if isinstance(value, str) and (
+        value == "mps"
+        or (value == "cpu" and not accelerator)
+        or re.fullmatch(r"(?:cuda|xpu):(?:[0-9]|1[0-5])", value) is not None
+    ):
+        return value
+    raise NodeClientError(f"Local node status has invalid {field}")
+
+
+def _worker_device(worker: dict) -> dict:
+    return {"device": _public_device(worker["device"], "worker device")} if "device" in worker else {}
 
 
 def _normalize_auto_selection(value: Any) -> Dict[str, Any]:
@@ -369,11 +394,9 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
         if not isinstance(limits, dict) or not isinstance(measurements, dict):
             raise NodeClientError("Local node contribution status has invalid resource values")
         clean_limits = {
-            "disk_bytes": _optional_number(limits.get("disk_bytes"), "disk limit", integer=True, positive=True),
-            "vram_bytes": _optional_number(limits.get("vram_bytes"), "VRAM limit", integer=True, positive=True),
-            "vram_pool_bytes": _optional_number(
-                limits.get("vram_pool_bytes"), "VRAM pool", integer=True, positive=True
-            ),
+            "disk_bytes": _hardware_bytes(limits.get("disk_bytes"), "disk limit", positive=True),
+            "vram_bytes": _hardware_bytes(limits.get("vram_bytes"), "VRAM limit", positive=True),
+            "vram_pool_bytes": _hardware_bytes(limits.get("vram_pool_bytes"), "VRAM pool", positive=True),
             "bandwidth_mbps": _optional_number(limits.get("bandwidth_mbps"), "bandwidth limit", positive=True),
             "power_watts": _optional_number(limits.get("power_watts"), "power limit", positive=True),
         }
@@ -381,6 +404,16 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
             clean_limits["vram_bytes"] is not None and clean_limits["vram_bytes"] > clean_limits["vram_pool_bytes"]
         ):
             raise NodeClientError("Local node contribution status has inconsistent VRAM limits")
+        device = _worker_device(worker)
+        if "vram_scope" in limits:
+            expected_scope = (
+                "per_device"
+                if device.get("device") not in (None, "cpu") and clean_limits["vram_bytes"] is not None
+                else None
+            )
+            if limits["vram_scope"] != expected_scope:
+                raise NodeClientError("Local node contribution status has inconsistent VRAM scope")
+            clean_limits["vram_scope"] = expected_scope
         clean_measurements = {
             "bandwidth_mbps": _optional_number(measurements.get("bandwidth_mbps"), "bandwidth measurement"),
             "power_watts": _optional_number(measurements.get("power_watts"), "power measurement"),
@@ -396,6 +429,7 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
             {
                 "id": worker_id,
                 "model": model,
+                **device,
                 "state": state,
                 "desired_running": worker["desired_running"],
                 "operator_paused": worker.get("operator_paused") is True,
@@ -418,6 +452,10 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
 
 
 def _normalize_hardware(value: Any) -> Dict[str, Any]:
+    """Preserve capacity evidence without inferring opt-in, free VRAM or reservations.
+
+    The legacy singular GPU aliases one inventory row; it is not extra capacity.
+    """
     if not isinstance(value, dict):
         return {}
     result = {}
@@ -429,6 +467,149 @@ def _normalize_hardware(value: Any) -> Dict[str, Any]:
     for field in ("gpu_total_bytes", "sharing_vram_bytes", "sharing_vram_available_bytes"):
         item = value.get(field)
         result[field] = item if type(item) is int and 0 <= item <= 64 * 1024**4 else None
+    if "processing_percent" in value:
+        percent = value["processing_percent"]
+        if type(percent) not in (int, float) or not 1 <= percent <= 100:
+            raise NodeClientError("Local node hardware has invalid processing percentage")
+        result["processing_percent"] = percent
+    inventory_fields = {
+        "gpus",
+        "gpu_backends",
+        "gpu_inventory_limit",
+        "gpu_visible_count",
+        "gpu_inventory_status",
+        "selected_device",
+        "device_status",
+        "sharing_vram_scope",
+        "sharing_vram_kind",
+    }
+    if not inventory_fields.intersection(value):
+        return result
+    if not inventory_fields.issubset(value):
+        raise NodeClientError("Local node hardware has incomplete GPU inventory")
+    if value["sharing_vram_scope"] != "per_device" or value["sharing_vram_kind"] != "capacity":
+        raise NodeClientError("Local node hardware has invalid GPU capacity semantics")
+    limit, visible = value["gpu_inventory_limit"], value["gpu_visible_count"]
+    if type(limit) is not int or not 1 <= limit <= MAX_GPU_INVENTORY_DEVICES:
+        raise NodeClientError("Local node hardware has invalid GPU inventory limit")
+    if type(visible) is not int or not 0 <= visible <= MAX_GPU_VISIBLE_COUNT:
+        raise NodeClientError("Local node hardware has invalid visible GPU count")
+    backends = value["gpu_backends"]
+    if not isinstance(backends, dict) or set(backends) != {"cuda", "xpu", "mps"}:
+        raise NodeClientError("Local node hardware has invalid GPU backends")
+    clean_backends = {}
+    for kind, summary in backends.items():
+        if not isinstance(summary, dict) or set(summary) != {"status", "visible_count"}:
+            raise NodeClientError("Local node hardware has invalid GPU backend summary")
+        status, count = summary["status"], summary["visible_count"]
+        if status not in ("available", "unavailable", "unsupported", "excess"):
+            raise NodeClientError("Local node hardware has invalid GPU backend status")
+        if count is not None and (type(count) is not int or not 0 <= count <= MAX_GPU_VISIBLE_COUNT):
+            raise NodeClientError("Local node hardware has invalid GPU backend count")
+        if (
+            (status in ("available", "excess") and not count)
+            or (status == "unsupported" and count is not None)
+            or (kind == "mps" and count not in (None, 0, 1))
+        ):
+            raise NodeClientError("Local node hardware has inconsistent GPU backend count")
+        clean_backends[kind] = {"status": status, "visible_count": count}
+    if visible != sum(summary["visible_count"] or 0 for summary in clean_backends.values()):
+        raise NodeClientError("Local node hardware has inconsistent visible GPU count")
+    rows = value["gpus"]
+    if not isinstance(rows, list) or len(rows) > min(limit, visible):
+        raise NodeClientError("Local node hardware has invalid GPU inventory size")
+    clean_rows = []
+    seen = set()
+    for row in rows:
+        fields = {"device", "name", "total_bytes", "status", "sharing_vram_bytes", "sharing_vram_available_bytes"}
+        if not isinstance(row, dict) or set(row) != fields:
+            raise NodeClientError("Local node hardware has invalid GPU record")
+        device = _public_device(row["device"], "GPU device", accelerator=True)
+        if device is None or device in seen:
+            raise NodeClientError("Local node hardware has missing or duplicate GPU device")
+        seen.add(device)
+        kind, _, index = device.partition(":")
+        count = clean_backends[kind]["visible_count"]
+        if count is None or (int(index) if index else 0) >= count:
+            raise NodeClientError("Local node hardware has inconsistent GPU device count")
+        status = row["status"]
+        if status not in ("available", "unavailable", "unsupported"):
+            raise NodeClientError("Local node hardware has invalid GPU status")
+        total = _hardware_bytes(row["total_bytes"], "GPU capacity", positive=True)
+        allowance = _hardware_bytes(row["sharing_vram_bytes"], "GPU sharing capacity")
+        capacity = _hardware_bytes(row["sharing_vram_available_bytes"], "GPU sharing capacity ceiling")
+        name = row["name"]
+        if status == "available":
+            name = _bounded_status_text(name, "GPU model name", limit=160)
+            if total is None or capacity is None or allowance is None or not allowance <= capacity <= total:
+                raise NodeClientError("Local node hardware has inconsistent GPU capacities")
+        elif name is not None or total is not None or (allowance, capacity) not in ((None, None), (0, 0)):
+            raise NodeClientError("Local node hardware has capacities for an unavailable GPU")
+        clean_rows.append({**row, "name": name})
+    inventory_status = value["gpu_inventory_status"]
+    if inventory_status not in ("available", "partial", "unavailable", "excess"):
+        raise NodeClientError("Local node hardware has invalid GPU inventory status")
+    if (
+        (inventory_status in ("available", "partial") and not rows)
+        or (
+            inventory_status == "available"
+            and (len(rows) != min(limit, visible) or any(row["status"] != "available" for row in clean_rows))
+        )
+        or (inventory_status == "unavailable" and rows)
+        or (inventory_status == "excess" and visible <= limit)
+        or (visible > limit and inventory_status != "excess")
+    ):
+        raise NodeClientError("Local node hardware has inconsistent GPU inventory status")
+    selected = _public_device(value["selected_device"], "selected device")
+    device_status = value["device_status"]
+    if device_status not in ("available", "unavailable", "unsupported", "excess"):
+        raise NodeClientError("Local node hardware has invalid selected device status")
+    device = value.get("device")
+    device = device if device == "unknown" else _public_device(device, "hardware device")
+    available_devices = {row["device"] for row in clean_rows if row["status"] == "available"}
+    if device_status == "available":
+        if selected is None or device != selected or (selected != "cpu" and selected not in available_devices):
+            raise NodeClientError("Local node hardware has inconsistent selected device")
+    elif device != "unknown":
+        raise NodeClientError("Local node hardware has an unavailable active device")
+    gpu_device = _public_device(value.get("gpu_device"), "legacy GPU device", accelerator=True)
+    if gpu_device is not None and gpu_device not in available_devices:
+        raise NodeClientError("Local node hardware has an unavailable legacy GPU device")
+    for field in ("gpu_total_bytes", "sharing_vram_bytes", "sharing_vram_available_bytes"):
+        result[field] = _hardware_bytes(value.get(field), field, positive=field == "gpu_total_bytes")
+    if gpu_device is None:
+        if any(
+            result[field] is not None
+            for field in ("gpu_name", "gpu_total_bytes", "sharing_vram_bytes", "sharing_vram_available_bytes")
+        ):
+            raise NodeClientError("Local node hardware has capacities without a legacy GPU")
+    else:
+        alias = next(row for row in clean_rows if row["device"] == gpu_device)
+        allowance, capacity = result["sharing_vram_bytes"], result["sharing_vram_available_bytes"]
+        if (
+            device_status != "available"
+            or (selected != "cpu" and gpu_device != selected)
+            or result["gpu_name"] != alias["name"]
+            or result["gpu_total_bytes"] != alias["total_bytes"]
+            or allowance is None
+            or capacity is None
+            or not allowance <= capacity <= alias["total_bytes"]
+            or (selected == "cpu" and (allowance, capacity) != (0, 0))
+        ):
+            raise NodeClientError("Local node hardware has inconsistent legacy GPU capacity")
+    result.update(
+        gpus=clean_rows,
+        gpu_backends=clean_backends,
+        gpu_inventory_limit=limit,
+        gpu_visible_count=visible,
+        gpu_inventory_status=inventory_status,
+        selected_device=selected,
+        device_status=device_status,
+        device=device,
+        gpu_device=gpu_device,
+        sharing_vram_scope="per_device",
+        sharing_vram_kind="capacity",
+    )
     return result
 
 
@@ -510,6 +691,7 @@ class NodeClient:
         result["models"] = [
             {**item, "download": _normalize_model_download(item.get("download"))} for item in result["models"]
         ]
+        result["workers"] = [{**worker, **_worker_device(worker)} for worker in result["workers"]]
         result["auto_selection"] = _normalize_auto_selection(result.get("auto_selection"))
         result["contribution"] = _normalize_contribution_status(result.get("contribution"))
         result["hardware"] = _normalize_hardware(result.get("hardware"))

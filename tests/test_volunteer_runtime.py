@@ -105,7 +105,10 @@ def test_standard_startup_retains_existing_auto_start_intent():
         supervisor.shutdown()
 
 
-def test_node_applies_profile_guards_before_services_and_registering_local_loaders(tmp_path, monkeypatch):
+@pytest.mark.parametrize("reload_requested", [False, True])
+def test_node_applies_profile_guards_before_services_and_registering_local_loaders(
+    tmp_path, monkeypatch, reload_requested
+):
     path = tmp_path / "config.json"
     path.write_text(
         json.dumps(
@@ -150,9 +153,15 @@ def test_node_applies_profile_guards_before_services_and_registering_local_loade
     monkeypatch.setattr(run_node, "_prepare_control_key", lambda *args, **kwargs: ("test", None, False))
     monkeypatch.setattr(run_node, "tie_child_processes_to_this_process", lambda: None)
     monkeypatch.setattr("drift.node.hardware_status.HardwareStatus", Mock())
-    monkeypatch.setattr("drift.node.server.create_node_app", Mock())
-    monkeypatch.setattr("uvicorn.Server", Mock())
-    assert run_node._serve_once(args, parser) is False
+    create_app = Mock()
+    server = Mock(should_exit=False)
+    if reload_requested:
+        server.run.side_effect = lambda: create_app.call_args.kwargs["request_restart"]()
+    monkeypatch.setattr("drift.node.server.create_node_app", create_app)
+    monkeypatch.setattr("uvicorn.Server", Mock(return_value=server))
+    assert run_node._serve_once(args, parser) is reload_requested
+    assert server.should_exit is reload_requested
+    manager.shutdown.assert_called_once_with()
     assert observations == ["cpu-loader-config", "paused-before-placement"]
     forbidden_spawn.assert_not_called()
     assert NodeConfig.load(path).models[0].local_device == "cuda:0"

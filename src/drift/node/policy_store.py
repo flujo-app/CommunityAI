@@ -13,7 +13,8 @@ from typing import Any, Callable, Mapping
 
 from drift.node.config import ContributionPolicyConfig, NodeConfig, NodeConfigError
 from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
-from drift.node.worker_supervisor import WorkerSupervisor, WorkerSupervisorSettings
+from drift.node.worker_selection import candidate_selection, enroll_selection, validate_selection_request
+from drift.node.worker_supervisor import WorkerReconfigurationBusyError, WorkerSupervisor, WorkerSupervisorSettings
 
 MAX_NODE_CONFIG_BYTES = 4 * 1024 * 1024
 CONTRIBUTION_POLICY_SCHEMA_VERSION = 1
@@ -166,6 +167,7 @@ class ContributionPolicyStore:
         self._supervisor = supervisor
         self._prepare = prepare
         self._lock = threading.Lock()
+        self._restart_pending = False
         document, payload = self._read()
         config = NodeConfig.from_dict(document, base_dir=self.path.parent)
         if expected_config is not None and config != expected_config:
@@ -279,6 +281,7 @@ class ContributionPolicyStore:
         if mode not in ("auto", "local_only"):
             raise NodeConfigError("inference mode must be auto or local_only")
         with self._lock:
+            self._require_no_restart()
             if expected_revision != self._revision:
                 raise ContributionPolicyConflictError("node config changed; refresh before saving")
             document, payload = self._read()
@@ -295,6 +298,7 @@ class ContributionPolicyStore:
         if not isinstance(expected_revision, str) or not expected_revision.startswith("sha256:"):
             raise ContributionPolicyConflictError("policy update has an invalid config revision")
         with self._lock:
+            self._require_no_restart()
             if expected_revision != self._revision:
                 raise ContributionPolicyConflictError("node config changed; refresh the policy before saving")
             document, payload = self._read()
@@ -326,6 +330,54 @@ class ContributionPolicyStore:
                 "schema_version": CONTRIBUTION_POLICY_SCHEMA_VERSION,
                 "config_revision": self._revision,
                 "policy": dict(self._policy.to_dict()),
+            }
+
+    def _require_no_restart(self) -> None:
+        if self._restart_pending:
+            raise WorkerReconfigurationBusyError("node configuration restart is pending")
+
+    def update_worker_selection(self, request: dict, *, manager) -> dict[str, Any]:
+        """Commit paused worker membership only while execution is quiescent.
+
+        Lock order is store, supervisor, model admission, config write lock.
+        Rebuilding the whole node avoids stale planners and telemetry closures.
+        """
+        request = validate_selection_request(request)
+        with self._lock:
+            self._require_no_restart()
+            if request["expected_config_revision"] != self._revision:
+                raise ContributionPolicyConflictError("node config changed; refresh before saving")
+            document, payload = self._read()
+            if _revision(payload) != self._revision:
+                raise ContributionPolicyConflictError("node config changed; refresh before saving")
+            candidate, worker_id, device = candidate_selection(document, request, base_dir=self.path.parent)
+            config = NodeConfig.from_dict(candidate, base_dir=self.path.parent)
+            encoded = (json.dumps(candidate, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+            if len(encoded) > MAX_NODE_CONFIG_BYTES:
+                raise NodeConfigError("resulting node config exceeds the size limit")
+
+            def persist():
+                if device is not None:
+                    # Never publish a config whose first physical pin is deferred
+                    # until restart: a reordered ordinal could select another card.
+                    # A failed save may retain a private, never-reused orphan pin.
+                    enroll_selection(config, worker_id)
+                self._prepare(config)
+                self._atomic_replace(encoded, expected_revision=self._revision)
+
+            def commit_while_idle():
+                if not manager.commit_idle_restart(persist):
+                    raise WorkerReconfigurationBusyError("finish active inference before changing GPU selections")
+
+            self._supervisor.commit_configuration_restart(commit_while_idle)
+            self._revision = _revision(encoded)
+            self._restart_pending = True
+            return {
+                "schema_version": 1,
+                "config_revision": self._revision,
+                "restart_required": True,
+                "worker_id": worker_id,
+                "device": device,
             }
 
 

@@ -240,7 +240,7 @@ def test_unsupported_selection_is_explicit(monkeypatch, selection):
     mock_devices(monkeypatch)
     result = HardwareStatus(config(worker_device=selection)).snapshot({"sharing_enabled": False})
     assert result["device_status"] == "unsupported"
-    assert result["selected_device"] == selection
+    assert result["selected_device"] is None
     assert result["device"] == "unknown"
     assert result["gpu_device"] is None
 
@@ -262,6 +262,7 @@ def test_large_backend_preserves_in_range_selections(monkeypatch, index, expecte
     assert len(result["gpus"]) == 16
     assert result["gpu_visible_count"] == 20
     assert result["device_status"] == expected
+    assert result["selected_device"] == (f"cuda:{index}" if index < 16 else None)
     assert result["gpu_device"] == (f"cuda:{index}" if expected == "available" else None)
 
 
