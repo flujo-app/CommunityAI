@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import signal
+import stat
 import sys
 import time
 from importlib.metadata import version
@@ -124,6 +125,72 @@ def _single_instance_server_name(data_location: Path | str) -> str:
     return f"communityai-desktop-{digest}"
 
 
+def _instance_server_name(data_root: Path, instance_name: str | None, *, profile_scoped: bool) -> str:
+    if not profile_scoped:
+        return instance_name or _single_instance_server_name(data_root)
+    base = _single_instance_server_name(data_root)
+    # A legacy override must not let two explicit profiles share an endpoint
+    # while holding different directory locks.
+    if instance_name:
+        base += "-" + hashlib.sha256(instance_name.encode("utf-8")).hexdigest()[:20]
+    return base
+
+
+def _validate_application_name(application_name: str) -> str:
+    if (
+        not isinstance(application_name, str)
+        or not application_name
+        or application_name != application_name.strip()
+        or len(application_name) > 96
+        or not application_name.isprintable()
+        or any(character in application_name for character in '<>:"/\\|?*')
+        or application_name.endswith(".")
+    ):
+        raise ValueError("application_name must be a short, printable application name without path separators")
+    return application_name
+
+
+def _instance_data_root(instance_data_dir, default_location, *, create: bool) -> Path:  # noqa: ANN001
+    """Use an explicit profile directory verbatim; never follow linked ancestors."""
+    if instance_data_dir is None:
+        if not default_location:
+            raise SingleInstanceError("the per-user application-data location is unavailable")
+        root = Path(default_location)
+    else:
+        try:
+            root = Path(instance_data_dir)
+        except (TypeError, ValueError) as exc:
+            raise SingleInstanceError("the profile instance directory is invalid") from exc
+        if not root.is_absolute() or root == Path(root.anchor) or ".." in root.parts:
+            raise SingleInstanceError(
+                "the profile instance directory must be an absolute directory below a filesystem root"
+            )
+
+    def validate_explicit_path():
+        if instance_data_dir is None:
+            return
+        for entry in (*reversed(root.parents), root):
+            try:
+                info = entry.lstat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(
+                stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0
+            ):
+                raise SingleInstanceError("the profile instance directory cannot contain symlinks or junctions")
+            if not stat.S_ISDIR(info.st_mode):
+                raise SingleInstanceError("the profile instance path must contain only directories")
+
+    try:
+        validate_explicit_path()
+        if create:
+            root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            validate_explicit_path()
+    except OSError as exc:
+        raise SingleInstanceError("could not prepare the profile instance directory") from exc
+    return root
+
+
 def _install_posix_termination_bridge(application, timer_type) -> Callable[[], None]:  # noqa: ANN001
     """Convert POSIX termination into a Qt quit so lifecycle cleanup can finish."""
     if os.name != "posix":
@@ -189,15 +256,19 @@ def run(
     start_minimized: bool = False,
     activate_existing_instance: bool = True,
     instance_name: str | None = None,
+    application_name: str = "CommunityAI",
+    instance_data_dir: Path | str | None = None,
+    allow_login_startup: bool = True,
     before_termination_restore: Callable[[], None] | None = None,
     qualification_automation=None,  # noqa: ANN001
     updater=None,  # noqa: ANN001
 ) -> int:
     if controller is None and connect is None:
         raise ValueError("the desktop requires an initial controller or connector")
+    application_name = _validate_application_name(application_name)
+    if instance_data_dir is not None:
+        _instance_data_root(instance_data_dir, None, create=False)
 
-    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
-    from communityai_desktop.resource_controls import ResourceControls
     from PySide6.QtCore import QLockFile, QObject, QRunnable, QStandardPaths, Qt, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -224,6 +295,9 @@ def run(
         QVBoxLayout,
         QWidget,
     )
+
+    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
+    from communityai_desktop.resource_controls import ResourceControls
 
     def label(text: str = "", name: str | None = None) -> QLabel:
         item = QLabel(text)
@@ -284,7 +358,7 @@ def run(
     class MainWindow(QMainWindow):
         def __init__(self):
             super().__init__()
-            self.setWindowTitle("CommunityAI")
+            self.setWindowTitle(application_name)
             self.resize(1200, 800)
             self.setMinimumSize(960, 680)
             self._pool = QThreadPool.globalInstance()
@@ -361,7 +435,7 @@ def run(
             mark.setFixedSize(42, 42)
             brand_copy = QVBoxLayout()
             brand_copy.setSpacing(0)
-            brand_copy.addWidget(label("CommunityAI", "brandName"))
+            brand_copy.addWidget(label(application_name, "brandName"))
             brand_copy.addWidget(label("AI powered by people", "brandTag"))
             brand_row.addWidget(mark)
             brand_row.addLayout(brand_copy, 1)
@@ -465,7 +539,7 @@ def run(
             page, layout = self._scroll_page("Home", "")
             self.connection_banner, banner_layout = card("connectionBanner")
             self.connection_title = label("Connecting…", "bodyStrong")
-            self.connection_detail = label("Starting CommunityAI.", "bodyMuted")
+            self.connection_detail = label(f"Starting {application_name}.", "bodyMuted")
             self.connection_detail.setWordWrap(True)
             banner_layout.addWidget(self.connection_title)
             banner_layout.addWidget(self.connection_detail)
@@ -614,15 +688,20 @@ def run(
             body_layout = QVBoxLayout(body)
             body_layout.setContentsMargins(0, 8, 0, 0)
             body_layout.setSpacing(14)
-            self.login_startup_toggle = QCheckBox("Open CommunityAI when I sign in")
-            self.login_startup_toggle.setAccessibleName("Start CommunityAI when I sign in")
-            try:
-                startup_enabled = login_startup_enabled()
-                startup_detail = ""
-            except LoginStartupError:
+            self.login_startup_toggle = QCheckBox(f"Open {application_name} when I sign in")
+            self.login_startup_toggle.setAccessibleName(f"Start {application_name} when I sign in")
+            if not allow_login_startup:
                 startup_enabled = False
-                startup_detail = "Sign-in settings could not be read."
+                startup_detail = "Automatic opening is unavailable for this test profile."
                 self.login_startup_toggle.setDisabled(True)
+            else:
+                try:
+                    startup_enabled = login_startup_enabled()
+                    startup_detail = ""
+                except LoginStartupError:
+                    startup_enabled = False
+                    startup_detail = "Sign-in settings could not be read."
+                    self.login_startup_toggle.setDisabled(True)
             self.login_startup_toggle.setChecked(startup_enabled)
             self.login_startup_detail = label(startup_detail, "bodyMuted")
             self.login_startup_detail.setVisible(bool(startup_detail))
@@ -798,16 +877,16 @@ def run(
 
         def _connection_failed(self, message: str) -> None:
             self._set_connection_state(False)
-            self.connection_title.setText("Could not connect to CommunityAI")
-            self.connection_detail.setText("Try again. If this keeps happening, restart CommunityAI.")
+            self.connection_title.setText(f"Could not connect to {application_name}")
+            self.connection_detail.setText(f"Try again. If this keeps happening, restart {application_name}.")
             self.connection_detail.setToolTip(str(message)[:300])
             self.hero_title.setText("Model unavailable")
-            self.hero_subtitle.setText("Waiting for CommunityAI to reconnect.")
+            self.hero_subtitle.setText(f"Waiting for {application_name} to reconnect.")
             for widget in (self.sharing_title, self.home_sharing_title):
                 widget.setText("Checking sharing…")
                 widget.setStyleSheet("color: #F3C46C;")
             for widget in (self.sharing_detail, self.home_sharing_detail):
-                widget.setText("Waiting for CommunityAI to reconnect.")
+                widget.setText(f"Waiting for {application_name} to reconnect.")
                 widget.show()
             self._set_busy(0)
 
@@ -997,6 +1076,12 @@ def run(
                 self.keys_layout.addWidget(row)
 
         def _set_login_startup(self, enabled: bool) -> None:
+            if not allow_login_startup:
+                previously_blocked = self.login_startup_toggle.blockSignals(True)
+                self.login_startup_toggle.setChecked(False)
+                self.login_startup_toggle.blockSignals(previously_blocked)
+                self.login_startup_toggle.setDisabled(True)
+                return
             try:
                 set_login_startup(enabled)
             except LoginStartupError as exc:
@@ -1009,7 +1094,7 @@ def run(
                 QMessageBox.warning(self, "Login startup", str(exc)[:300])
                 return
             self.login_startup_detail.setText(
-                "CommunityAI will open when you sign in." if enabled else "Automatic opening is off."
+                f"{application_name} will open when you sign in." if enabled else "Automatic opening is off."
             )
             self.login_startup_detail.show()
 
@@ -1261,7 +1346,7 @@ def run(
                 self._submit(lambda: self._controller.revoke_client_key(key_id), lambda result: self.refresh())
 
     application = QApplication.instance() or QApplication([])
-    application.setApplicationName("CommunityAI")
+    application.setApplicationName(application_name)
     application.setOrganizationName("CommunityAI")
     application.setOrganizationDomain("communityai.org")
     application.setFont(QFont("Segoe UI", 10))
@@ -1280,15 +1365,13 @@ def run(
     instance_server_name = None
     shutdown_sockets = []
     if single_instance:
-        data_location = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
-        if not data_location:
-            raise SingleInstanceError("the per-user application-data location is unavailable")
-        data_root = Path(data_location)
-        try:
-            data_root.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise SingleInstanceError(f"could not prepare the per-user instance directory: {exc}") from exc
-        instance_server_name = instance_name or _single_instance_server_name(data_location)
+        default_location = (
+            QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation) if instance_data_dir is None else None
+        )
+        data_root = _instance_data_root(instance_data_dir, default_location, create=True)
+        instance_server_name = _instance_server_name(
+            data_root, instance_name, profile_scoped=instance_data_dir is not None
+        )
         lock_digest = hashlib.sha256(instance_server_name.encode("utf-8")).hexdigest()[:20]
         instance_lock = QLockFile(str(data_root / f"instance-{lock_digest}.lock"))
         instance_lock.setStaleLockTime(0)
@@ -1327,7 +1410,7 @@ def run(
                 owns_instance_lock = instance_lock.tryLock(0)
         if not owns_instance_lock:
             raise SingleInstanceError(
-                "another CommunityAI instance is starting, but its activation endpoint is not ready"
+                f"another {application_name} instance is starting, but its activation endpoint is not ready"
             )
 
         # The lock makes stale endpoint removal ownership-safe: no successor can
@@ -1338,7 +1421,7 @@ def run(
         if not instance_server.listen(instance_server_name):
             error = instance_server.errorString()
             instance_lock.unlock()
-            raise SingleInstanceError(f"could not establish the per-user CommunityAI instance endpoint: {error}")
+            raise SingleInstanceError(f"could not establish the per-user {application_name} instance endpoint: {error}")
 
     window = MainWindow()
 

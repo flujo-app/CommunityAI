@@ -129,6 +129,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--request_timeout", type=float, default=None)
     parser.add_argument("--max_retries", type=int, default=None)
     parser.add_argument("--default_max_tokens", type=int, default=512)
+    parser.add_argument(
+        "--pause_sharing_on_start",
+        action="store_true",
+        help="Start every contribution worker paused until an explicit local control Start action",
+    )
+    parser.add_argument(
+        "--local_inference_cpu_only",
+        action="store_true",
+        help="Use CPU for local inference in this process, preserving the saved model budgets and device settings",
+    )
     return parser
 
 
@@ -201,7 +211,26 @@ def _load_persisted_and_runtime_config(
     args: argparse.Namespace,
 ) -> tuple[NodeConfig | None, NodeConfig]:
     persisted = NodeConfig.load(args.config) if args.config is not None else None
-    return persisted, _load_node_config(args, persisted_config=persisted)
+    runtime = _load_node_config(args, persisted_config=persisted)
+    if getattr(args, "local_inference_cpu_only", False):
+        runtime = replace(
+            runtime,
+            models=tuple(
+                replace(model, local_device="cpu") if model.execution == "local" else model for model in runtime.models
+            ),
+        )
+    return persisted, runtime
+
+
+def _apply_startup_pause(args: argparse.Namespace, supervisor: WorkerSupervisor) -> None:
+    """Apply stopped intent before any monitor or placement thread can start work.
+
+    Operator pause survives both policy updates and automatic launch replacement.
+    Only an authenticated, explicit worker Start clears it; saved limits stay intact.
+    """
+    if getattr(args, "pause_sharing_on_start", False):
+        for launch in supervisor.launches:
+            supervisor.pause_worker(launch.worker_id)
 
 
 def _merge_cached_initial_peers(config: NodeConfig, peer_cache: PeerCache) -> NodeConfig:
@@ -1026,6 +1055,7 @@ def _build_automatic_placement_service(
     peer_cache: PeerCache,
     route_outcomes: RouteOutcomeTracker | None = None,
     route_identity_path: Path | None = None,
+    require_explicit_start: bool = False,
 ) -> AutomaticPlacementService | None:
     automatic_workers = tuple(worker for worker in config.workers if worker.model.casefold() == "auto")
     if not automatic_workers:
@@ -1048,6 +1078,7 @@ def _build_automatic_placement_service(
     route_identity = _prepare_route_identity(discovery, route_identity_path, config.route_demand_authority_roots)
     route_sequences = {}
     route_leases = {}
+    awaiting_explicit_start = require_explicit_start
 
     def publish_route_demand(manifest: ModelManifest) -> None:
         if route_outcomes is None or route_identity_path is None:
@@ -1129,6 +1160,7 @@ def _build_automatic_placement_service(
         return True, identity.key_id
 
     def reconcile() -> None:
+        nonlocal awaiting_explicit_start
         current = config if config_path is None else NodeConfig.load(config_path)
         if current.catalog_path != config.catalog_path:
             # A verified update is waiting for the current request leases to
@@ -1138,6 +1170,15 @@ def _build_automatic_placement_service(
         current_workers = {
             worker.worker_id.casefold(): worker for worker in current.workers if worker.model.casefold() == "auto"
         }
+        if awaiting_explicit_start:
+            if all(supervisor.snapshot(worker.worker_id)["operator_paused"] for worker in current_workers.values()):
+                # The first Start of this node process gates metadata preparation
+                # and public placement/route announcements as well as child spawn.
+                # Start clears operator pause even for an ineligible placeholder.
+                return
+            # Preserve the normal placement/lease maintenance after first opt-in;
+            # clearing only its registry would leave an old admitted launch alive.
+            awaiting_explicit_start = False
         previous_plans = registry.snapshot()
         plans = {}
         route_demand_authorities_unchanged = current.route_demand_authority_roots == config.route_demand_authority_roots
@@ -1333,6 +1374,7 @@ def _serve_once(args, parser) -> bool:
             token=args.token,
             automatic_placements=placement_registry.snapshot(),
         )
+        _apply_startup_pause(args, worker_supervisor)
         policy_store = (
             None
             if args.config is None
@@ -1359,6 +1401,7 @@ def _serve_once(args, parser) -> bool:
             peer_cache=peer_cache,
             route_outcomes=route_outcomes,
             route_identity_path=args.data_dir / "route-demand.key",
+            require_explicit_start=getattr(args, "pause_sharing_on_start", False),
         )
     except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))

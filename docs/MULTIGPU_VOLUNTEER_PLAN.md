@@ -2,7 +2,9 @@
 
 Date: 2026-09-16. Status: the first runtime/API implementation passed local validation and three internal reviews; volunteer acceptance and a distributable test build remain pending. The volunteer reports Ubuntu with eight NVIDIA H100 GPUs and willingness to test. Exact Ubuntu version, VRAM per GPU, driver/MIG configuration, available RAM/disk and usable capacity remain unverified. This is an offer to test, not direct hardware access. The coordinating task posted a short follow-up asking for Ubuntu version and memory per GPU; do not duplicate it. No model download, test-build publication or paid work has occurred. See MULTIGPU_FOUNDATION.md for the implementation and 237-pass validation record, including two Linux-only skips.
 
-This isolated branch is `codex/multi-gpu-volunteer`, starting at committed baseline `9d26632f618a5e8602ca4d207f437d271a602b65`. It does **not** include the main worktree's uncommitted runtime or B1 safety fixes. Integrate reviewed fixes as explicit changes and rerun their checks before preparing any volunteer build.
+This isolated branch is `codex/multi-gpu-volunteer`, starting at committed baseline `9d26632f618a5e8602ca4d207f437d271a602b65`. The exact reviewed main B1 safety patch is now integrated at `d9396a5`, with all 32 scoped tests passing and three internal reviews; see B1_VOLUNTEER_INTEGRATION.md. Other uncommitted main runtime changes are not automatically included and require separate review before preparing a build.
+
+Subsequent source checkpoints supersede the earlier open-item descriptions below: MULTIGPU_DEVICE_BINDING.md records private persistent CPU/CUDA selection and uncapped device-loss safeguards (`c6e6820`, 332 tests passed / three platform skips). MULTIGPU_VOLUNTEER_PROFILE.md records desktop profile isolation, paused startup, CPU local fallback and remaining artifact gates. The baseline survey and phased implementation order below remain useful context; per-card GUI/reselection, aggregate limits, frozen packaging and actual Linux/multi-GPU qualification are still open. No volunteer artifact has been shared.
 
 ## First supported shape
 

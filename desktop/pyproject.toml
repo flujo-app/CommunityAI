@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 communityai-desktop = "communityai_desktop.app:main"
+communityai-multigpu-test = "communityai_desktop.app:volunteer_main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
 
 from communityai_desktop.client import NodeApiError, NodeClient, NodeClientError, normalize_loopback_url
@@ -94,6 +94,11 @@ class NodeLifecycleSupervisor:
         startup_timeout: float = 45.0,
         poll_interval: float = 0.2,
         client_timeout: float = 2.0,
+        environment_overrides: Optional[Mapping[str, str | None]] = None,
+        validate_config: Optional[Callable[[], None]] = None,
+        pause_sharing_on_start: bool = False,
+        local_inference_cpu_only: bool = False,
+        allow_external_node: bool = True,
         process_factory: Callable[..., Any] = subprocess.Popen,
         bootstrap_runner: Callable[..., Any] = subprocess.run,
         client_factory: Callable[..., NodeClient] = NodeClient,
@@ -126,6 +131,11 @@ class NodeLifecycleSupervisor:
         self.startup_timeout = float(startup_timeout)
         self.poll_interval = float(poll_interval)
         self.client_timeout = float(client_timeout)
+        self._environment_overrides = dict(environment_overrides or {})
+        self._validate_config = validate_config
+        self._pause_sharing_on_start = pause_sharing_on_start
+        self._local_inference_cpu_only = local_inference_cpu_only
+        self._allow_external_node = allow_external_node
         self._process_factory = process_factory
         self._bootstrap_runner = bootstrap_runner
         self._client_factory = client_factory
@@ -168,7 +178,18 @@ class NodeLifecycleSupervisor:
             self.credential_store.service,
             "--credential_account",
             self.credential_store.account,
+            *(("--pause_sharing_on_start",) if self._pause_sharing_on_start else ()),
+            *(("--local_inference_cpu_only",) if self._local_inference_cpu_only else ()),
         )
+
+    def _child_environment(self) -> dict[str, str]:
+        environment = dict(os.environ)
+        for name, value in self._environment_overrides.items():
+            if value is None:
+                environment.pop(name, None)
+            else:
+                environment[name] = value
+        return environment
 
     def _record_failure(self) -> None:
         self._failures += 1
@@ -210,6 +231,7 @@ class NodeLifecycleSupervisor:
             "timeout": min(self.bootstrap_timeout, 30.0) if existing else self.bootstrap_timeout,
             "cwd": str(self.data_dir),
             "close_fds": True,
+            "env": self._child_environment(),
         }
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -247,7 +269,11 @@ class NodeLifecycleSupervisor:
     def _start(self) -> None:
         if urlsplit(self.node_url).scheme != "http":
             raise NodeLifecycleError("Desktop-owned nodes require a loopback HTTP URL")
+        if self._validate_config is not None:
+            self._validate_config()
         self._ensure_config()
+        if self._validate_config is not None:
+            self._validate_config()
         executable = Path(self.node_command[0])
         if len(self.node_command) == 1 and not executable.is_file():
             raise NodeLifecycleError("The bundled CommunityAI node is missing; reinstall the application")
@@ -261,6 +287,7 @@ class NodeLifecycleSupervisor:
             "stderr": subprocess.DEVNULL,
             "cwd": str(self.data_dir),
             "close_fds": True,
+            "env": self._child_environment(),
         }
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -338,6 +365,10 @@ class NodeLifecycleSupervisor:
 
             port_open = self._port_probe(self.node_url, min(self.client_timeout, 0.25))
             if port_open:
+                if not self._allow_external_node and self.owned_pid is None:
+                    raise NodeLifecycleError(
+                        "The test profile port is already in use. Close its previous node before restarting the test app."
+                    )
                 try:
                     client.status()
                 except NodeClientError as exc:

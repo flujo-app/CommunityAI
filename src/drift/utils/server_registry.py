@@ -1,6 +1,7 @@
 """A small on-disk registry of DRIFT-LLM servers running on this machine.
 
-``drift up`` / ``drift server`` write one JSON record per live server under ``~/.cache/drift/run/``
+``drift up`` / ``drift server`` write one JSON record per live server under ``$DRIFT_CACHE/run/``
+(default ``~/.cache/drift/run/``)
 so that ``drift down`` can find and stop them. Records are best-effort: a server that exits cleanly
 removes its own record, while one that is hard-killed leaves a stale file behind -- ``drift down``
 notices the pid is gone and cleans it up.
@@ -19,7 +20,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-RUN_DIR = Path.home() / ".cache" / "drift" / "run"
+RUN_DIR = Path(os.environ.get("DRIFT_CACHE") or (Path.home() / ".cache" / "drift")).expanduser() / "run"
 
 
 @dataclass

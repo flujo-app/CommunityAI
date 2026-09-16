@@ -25,13 +25,15 @@ from communityai_desktop.lifecycle import (
     NodeLifecycleSupervisor,
     default_bootstrap_config_path,
 )
+from communityai_desktop.profiles import VOLUNTEER_PROFILE, VolunteerProfile
 from communityai_desktop.release import RELEASE_VERSION
 from communityai_desktop.startup import LOGIN_STARTUP_FLAG, SingleInstanceError
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="CommunityAI desktop")
+    parser = argparse.ArgumentParser(description="CommunityAI desktop", allow_abbrev=False)
     parser.add_argument("--version", action="version", version=f"%(prog)s {RELEASE_VERSION}")
+    parser.add_argument("--profile", choices=("standard", VOLUNTEER_PROFILE), default="standard")
     parser.add_argument("--node-url", default="http://127.0.0.1:8080")
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--credential-service", default=DEFAULT_CREDENTIAL_SERVICE, help=argparse.SUPPRESS)
@@ -74,9 +76,46 @@ def _write_json(value: Any) -> None:
         print(json.dumps(value, sort_keys=True))
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if forced_profile is not None:
+        if any(option.split("=", 1)[0] == "--profile" for option in arguments):
+            parser.error("This test launcher has a fixed profile")
+        arguments = ["--profile", forced_profile, *arguments]
+    args = parser.parse_args(arguments)
+    profile = None
+    if args.profile == VOLUNTEER_PROFILE:
+        # Fixed identities prevent a test launcher accidentally adopting the regular app.
+        protected_options = (
+            "--node-url",
+            "--node-config",
+            "--node-data-dir",
+            "--credential-service",
+            "--credential-account",
+            "--no-manage-node",
+            "--started-at-login",
+            "--bootstrap-config",
+        )
+        if any(option.split("=", 1)[0] in protected_options for option in arguments):
+            parser.error(
+                "The volunteer profile uses fixed local paths, credentials and port; overrides are not supported"
+            )
+        profile = VolunteerProfile.for_current_user()
+        args.node_url = profile.node_url
+        args.node_config = profile.config_path
+        args.node_data_dir = profile.data_dir
+        args.credential_service = profile.credential_service
+        args.credential_account = profile.credential_account
+    shell_profile_options = (
+        {}
+        if profile is None
+        else {
+            "application_name": profile.application_name,
+            "instance_data_dir": profile.instance_dir,
+            "allow_login_startup": False,
+        }
+    )
     if args.gate13_ui_playthrough is None:
         if args.gate13_ui_evidence is not None or args.gate13_ui_screenshot is not None:
             parser.error("Gate 13 evidence options require --gate13-ui-playthrough")
@@ -85,11 +124,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if bool(args.resource_ui_playthrough) != bool(args.resource_ui_evidence):
         parser.error("Resource UI playthrough requires both plan and evidence paths")
     try:
+        if profile is not None and not args.prepare_update:
+            profile.prepare()
         if args.prepare_update:
             try:
                 from communityai_desktop.maintenance import prepare_update
 
-                return prepare_update()
+                return prepare_update(
+                    **(
+                        {"application_name": profile.application_name, "instance_data_dir": profile.instance_dir}
+                        if profile is not None
+                        else {}
+                    )
+                )
             except Exception as exc:
                 # A windowed PyInstaller traceback dialog would hold the installer
                 # indefinitely if, for example, the installed Qt runtime is broken.
@@ -111,6 +158,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         DesktopController(NodeClient(url, token)),
                         auto_close_seconds=1.0,
                         single_instance=False,
+                        **shell_profile_options,
                     )
                     or 0
                 )
@@ -125,6 +173,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     connect=missing_credential,
                     auto_close_seconds=1.0,
                     single_instance=False,
+                    **shell_profile_options,
                 )
                 or 0
             )
@@ -139,6 +188,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         screenshot_path=args.capture_ui,
                         screenshot_page=args.capture_page,
                         single_instance=False,
+                        **shell_profile_options,
                     )
                     or 0
                 )
@@ -165,13 +215,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 data_dir=args.node_data_dir,
                 bootstrap_config_path=args.bootstrap_config,
                 client_timeout=args.timeout,
+                **(
+                    {
+                        "environment_overrides": profile.child_environment(),
+                        "validate_config": profile.validate_config,
+                        "pause_sharing_on_start": True,
+                        "local_inference_cpu_only": True,
+                        "allow_external_node": False,
+                    }
+                    if profile is not None
+                    else {}
+                ),
             )
         )
 
         def connect() -> DesktopController:
             if lifecycle is not None:
                 return DesktopController(lifecycle.ensure_client())
-            token = credential_store.get_or_migrate()
+            token = credential_store.get_or_migrate(args.node_data_dir / "control-api.key")
             return DesktopController(NodeClient(node_url, token, timeout=args.timeout))
 
         qualification_automation = None
@@ -199,9 +260,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from communityai_desktop.pyside_shell import run
 
         updater = None
-        if qualification_automation is None:
-            from communityai_desktop.updater import UpdateManager, installed_root
+        if qualification_automation is None and profile is None:
             from PySide6.QtCore import QStandardPaths
+
+            from communityai_desktop.updater import UpdateManager, installed_root
 
             root = installed_root()
             if root is not None:
@@ -222,14 +284,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     qualification_automation=qualification_automation,
                     single_instance=qualification_automation is None,
                     updater=updater,
+                    **shell_profile_options,
                 )
                 or 0
             )
         finally:
             if lifecycle is not None:
                 lifecycle.close()
-    except (CredentialError, NodeClientError, NodeLifecycleError, SingleInstanceError, ValueError) as exc:
+    except (CredentialError, NodeClientError, NodeLifecycleError, SingleInstanceError, ValueError, OSError) as exc:
         parser.exit(2, f"communityai-desktop: {exc}\n")
+
+
+def volunteer_main(argv: Optional[Sequence[str]] = None) -> int:
+    """Dedicated test entry point: arguments cannot select the ordinary profile."""
+    return main(argv, forced_profile=VOLUNTEER_PROFILE)
 
 
 if __name__ == "__main__":
