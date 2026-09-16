@@ -250,6 +250,7 @@ class TransformerBackend(ModuleBackend):
     ) -> Tuple[torch.Tensor, ...]:
         (slot_id,) = inference_info.cache_handles
         with self.memory_cache.use_paged_pool() as pool:
+            pool.validate_inference_step(slot_id, hidden_states.shape[0], hypo_ids)
             if not is_dummy(hypo_ids):
                 pool.reorder(slot_id, hypo_ids)
             max_chunk_length = self._estimate_max_chunk_length(hidden_states, inference_info)

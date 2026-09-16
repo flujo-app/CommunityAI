@@ -25,6 +25,17 @@ from drift.utils.misc import get_size_in_bytes
 logger = get_logger(__name__)
 
 
+# A wire shape must not expand into arbitrarily many host-side page-table rows.
+# This matches the largest default task-token limit, independently of GPU pages.
+MAX_PAGED_BATCH_SIZE = 8192
+
+
+def validate_paged_batch_size(batch_size: int, *, max_rows: int = MAX_PAGED_BATCH_SIZE) -> None:
+    limit = min(MAX_PAGED_BATCH_SIZE, max_rows)
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 1 <= batch_size <= limit:
+        raise ValueError("Paged cache batch size exceeds the supported row budget")
+
+
 class MemoryCache:
     """A shared cache for storing tensors that persist across calls. Main use case: storing past attention KVs"""
 
@@ -297,15 +308,18 @@ class MemoryCache:
     async def allocate_paged_slots(self, num_slots: int, batch_size: int, timeout: Optional[float]):
         """Register ``num_slots`` paged cache slots (one per served block) for a new session.
 
-        Reserves no pages up front; admission only requires the pool not be completely full. Returns
-        the integer slot ids; freeing them (on context exit) returns their pages to the pool.
+        Reserves no pages up front; admission checks a snapshot for each slot's first token
+        across the batch. Concurrent sessions may consume that capacity before the first write.
+        Returns integer slot ids; freeing them returns their pages to the pool.
         """
         assert self.paged, "allocate_paged_slots requires paged mode"
         assert not self._is_runtime_context(), "must be called by a ConnectionHandler, not runtime"
+        validate_paged_batch_size(batch_size, max_rows=self._num_pages.value)
         if self.max_alloc_timeout is not None:
             timeout = self.max_alloc_timeout if timeout is None else min(timeout, self.max_alloc_timeout)
 
-        await self._wait_for_free_pages(num_slots, timeout)
+        # Every slot needs at least one page per batch row for its first token.
+        await self._wait_for_free_pages(num_slots * batch_size, timeout)
         with self._lock_metadata:
             slot_ids = [int(self.handle_counter) + i for i in range(num_slots)]
             self.handle_counter += num_slots
@@ -316,21 +330,24 @@ class MemoryCache:
             with self._lock_metadata:
                 self._pipe_send.send(("paged_free", slot_ids, None))
 
-    async def _wait_for_free_pages(self, num_slots: int, timeout: Optional[float]) -> None:
+    async def _wait_for_free_pages(self, num_pages: int, timeout: Optional[float]) -> None:
+        if num_pages > self._num_pages.value:
+            raise AllocationFailed("Paged cache cannot fit the requested batch across its slots")
+
         def has_room() -> bool:
-            return self._num_pages.value - self._paged_used_pages.value >= num_slots
+            return self._num_pages.value - self._paged_used_pages.value >= num_pages
 
         if has_room():
             return
         if timeout == 0:
-            raise AllocationFailed(f"Paged cache full: no room for {num_slots} new sessions")
+            raise AllocationFailed(f"Paged cache full: no room for {num_pages} initial pages")
 
         loop = asyncio.get_event_loop()
         deadline = None if timeout is None else time.perf_counter() + timeout
         while not has_room():
             remaining = None if deadline is None else deadline - time.perf_counter()
             if remaining is not None and remaining <= 0:
-                raise AllocationFailed(f"Paged cache full: no room for {num_slots} sessions in {timeout}s")
+                raise AllocationFailed(f"Paged cache full: no room for {num_pages} initial pages in {timeout}s")
             await loop.run_in_executor(None, self._memory_freed_event.wait, remaining)
             self._memory_freed_event.clear()
 
@@ -425,6 +442,7 @@ class PagedKVPool:
         return self.num_pages - len(self._free_pages)
 
     def register_slot(self, slot_id: int, batch_size: int) -> None:
+        validate_paged_batch_size(batch_size, max_rows=self.num_pages)
         if slot_id in self._block_tables:
             return  # idempotent: a slot may be re-announced across steps
         self._block_tables[slot_id] = [[] for _ in range(batch_size)]
@@ -499,25 +517,67 @@ class PagedKVPool:
             self.key_pool[pages_lp, :, :, off_start:off_end] = new_key[:, :, :, tok_start:tok_end]
             self.value_pool[pages_lp, :, off_start:off_end, :] = new_value[:, :, tok_start:tok_end, :]
 
+    def _validate_hypo_ids(self, slot_id: int, hypo_ids: torch.Tensor, *, allow_empty: bool = False) -> List[int]:
+        if slot_id not in self._block_tables:
+            raise ValueError("Unknown paged cache slot")
+        if hypo_ids.ndim != 1 or hypo_ids.dtype != torch.int64:
+            raise ValueError("Paged beam indices must be a one-dimensional int64 tensor")
+        batch_size = len(self._block_tables[slot_id])
+        if allow_empty and hypo_ids.numel() == 0:
+            return []
+        if hypo_ids.numel() != batch_size:
+            raise ValueError("Paged beam indices must preserve the allocated batch size")
+        indices = hypo_ids.tolist()
+        if any(index < 0 or index >= batch_size for index in indices):
+            raise ValueError("Paged beam index is outside the allocated batch")
+        return indices
+
+    def validate_inference_step(self, slot_id: int, batch_size: int, hypo_ids: torch.Tensor) -> None:
+        """Check decoded step dimensions against this slot before any cache read or mutation."""
+        if slot_id not in self._block_tables:
+            raise ValueError("Unknown paged cache slot")
+        if batch_size != len(self._block_tables[slot_id]):
+            raise ValueError("Paged inference must preserve the allocated batch size")
+        self._validate_hypo_ids(slot_id, hypo_ids, allow_empty=True)
+
     def reorder(self, slot_id: int, hypo_ids: torch.Tensor) -> None:
-        """Permute batch rows by ``hypo_ids`` (beam search), copying pages for duplicated sources."""
+        """Reorder a fixed batch atomically, copying pages for duplicated beam sources.
+
+        The pool is confined to one synchronous runtime thread. Copies may overwrite free
+        pages, but neither their ownership nor the live slot changes until every copy succeeds.
+        Duplicate pages require temporary free capacity before unreferenced rows are reclaimed.
+        """
+        indices = self._validate_hypo_ids(slot_id, hypo_ids)
         block_table = self._block_tables[slot_id]
-        hypo_ids = hypo_ids.tolist()
+        claimed = set()
+        pages_needed = 0
+        for src in indices:
+            if src in claimed:
+                pages_needed += len(block_table[src])
+            claimed.add(src)
+        if pages_needed > len(self._free_pages):
+            raise AllocationFailed("Paged attention cache lacks temporary pages for beam copies")
+
+        # Stage every ownership change locally. A copy/allocation exception leaves the old
+        # table and free list intact, including when some free-page contents were overwritten.
+        available_pages = iter(reversed(self._free_pages))
+        free_pages = self._free_pages[:-pages_needed] if pages_needed else list(self._free_pages)
         result: List[List[int]] = []
         claimed = set()
-        for src in hypo_ids:
+        for src in indices:
             if src not in claimed:
                 claimed.add(src)
                 result.append(block_table[src])  # first use reuses the source pages in place
             else:
                 copied = []
                 for page in block_table[src]:
-                    new_page = self._acquire_page()
+                    new_page = next(available_pages)
                     self.key_pool[new_page].copy_(self.key_pool[page])
                     self.value_pool[new_page].copy_(self.value_pool[page])
                     copied.append(new_page)
                 result.append(copied)
         for src, row_pages in enumerate(block_table):  # reclaim rows no dest row referenced
             if src not in claimed:
-                self._free_pages.extend(row_pages)
+                free_pages.extend(row_pages)
         self._block_tables[slot_id] = result
+        self._free_pages = free_pages

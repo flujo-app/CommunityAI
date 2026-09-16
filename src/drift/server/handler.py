@@ -30,6 +30,7 @@ from drift.protocol_identity import TRANSPORT_SECURITY
 from drift.server.admission import PUBLIC_OVERLOAD_MESSAGE, AdmissionRejected, AdmissionState
 from drift.server.backend import TransformerBackend
 from drift.server.block_functions import iterate_rpc_inference, run_rpc_backward, run_rpc_forward
+from drift.server.memory_cache import validate_paged_batch_size
 from drift.server.rejection_logging import install_public_rejection_log_filter
 from drift.server.task_prioritizer import DummyTaskPrioritizer, TaskPrioritizerBase
 from drift.utils.convert_block import QuantType
@@ -119,6 +120,31 @@ class TransformerConnectionHandler(ConnectionHandler):
             )
         if self.manifest_digest is None and actual is not None:
             raise ValueError(f"Manifest digest mismatch: client requires {actual!r}, server is in legacy mode")
+
+    def _inference_batch_size(
+        self, request: runtime_pb2.ExpertRequest, backends: Sequence[TransformerBackend], max_length: int
+    ) -> int:
+        """Check the activation shape before it can reserve cache resources."""
+        if not request.tensors:
+            return 1  # Preserve an empty stream-closing step.
+        shape = tuple(request.tensors[0].size)
+        if len(shape) != 3 or any(isinstance(size, bool) or not isinstance(size, int) for size in shape):
+            raise AdmissionRejected("inference activation shape is invalid")
+        batch_size, sequence_length, hidden_size = shape
+        max_tokens = min(backend.inference_pool.max_batch_size for backend in backends)
+        if (
+            batch_size < 1
+            or not 0 <= sequence_length <= max_length
+            or hidden_size != backends[0].config.hidden_size
+            or batch_size * max(sequence_length, 1) > max_tokens
+        ):
+            raise AdmissionRejected("inference activation shape exceeds the worker limits")
+        if backends[0].memory_cache.paged:
+            try:
+                validate_paged_batch_size(batch_size)
+            except ValueError as exc:
+                raise AdmissionRejected("inference activation shape exceeds the worker limits") from exc
+        return batch_size
 
     async def add_p2p_handlers(self, *args, **kwargs) -> None:
         if self._admission_state is not None:
@@ -245,7 +271,7 @@ class TransformerConnectionHandler(ConnectionHandler):
                         f"Cannot allocate KV cache for {max_length} tokens, max = {self.inference_max_length}"
                     )
 
-                batch_size = request.tensors[0].size[0] if request.tensors else 1
+                batch_size = self._inference_batch_size(request, requested_backends, max_length)
 
                 session_context = (
                     self._managed_session(session_id) if session_id is not None else contextlib.nullcontext()

@@ -201,7 +201,9 @@ def build_parser(*, bound_worker: bool = False) -> configargparse.ArgParser:
     parser.add_argument('--cache', type=str, default='contiguous', choices=['contiguous', 'paged'],
                         help='Attention KV cache manager: "contiguous" reserves each session\'s full max_length up '
                              'front (default); "paged" lazily allocates fixed-size pages from a shared pool so many '
-                             'sessions pack into the same budget. Paged mode is single-device (no tensor parallelism) for now.')
+                             'sessions pack into the same budget. Paged mode is single-device (no tensor parallelism) '
+                             'and limits each session to 8192 batch rows, also bounded by available pool pages and '
+                             '--max_batch_size. Beam reordering must preserve the allocated batch size.')
     parser.add_argument('--page_size', type=int, default=16,
                         help='Tokens per page when --cache paged is used (default: 16)')
 
