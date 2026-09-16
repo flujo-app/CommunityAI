@@ -18,6 +18,7 @@ from drift.utils.convert_block import QuantType
 class RecordingPool:
     def __init__(self):
         self.positions = []
+        self.max_batch_size = 512
 
     async def submit_task(self, hidden_states, hypo_ids, infos, *prompts, priority):
         self.positions.append(tuple(info.prefix_length for info in infos))
@@ -29,6 +30,7 @@ def make_iterator(steps, *, max_length=512):
     backends = [
         SimpleNamespace(
             dtype=torch.float32,
+            config=SimpleNamespace(hidden_size=4),
             inference_pool=pool,
             donor_layer_types=[],
             outputs_schema=(SimpleNamespace(dtype=torch.float32, compression=runtime_pb2.CompressionType.NONE),),
@@ -53,6 +55,7 @@ def make_iterator(steps, *, max_length=512):
         input_iterator=inputs(),
         cache_handles=((0,), (1,)),
         max_length=max_length,
+        session_batch_size=1,
         prioritizer=DummyTaskPrioritizer(),
         points=0,
         quant_type=QuantType.NONE,
@@ -123,7 +126,7 @@ async def test_rewind_cannot_return_to_discarded_prefix_or_bypass_max_length():
     iterator, pools = make_iterator([(2, {}), (2, {"start_from_position": 2})], max_length=3)
     try:
         await iterator.__anext__()
-        with pytest.raises(ValueError, match="Maximum length exceeded"):
+        with pytest.raises(AdmissionRejected, match="inference activation shape exceeds the session limits"):
             await iterator.__anext__()
         assert pools[0].positions == [(0, 0)]
     finally:

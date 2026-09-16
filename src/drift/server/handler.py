@@ -291,6 +291,7 @@ class TransformerConnectionHandler(ConnectionHandler):
                                 ),
                                 cache_handles=cache_handles,
                                 max_length=max_length,
+                                session_batch_size=batch_size,
                                 prioritizer=self._prioritizer,
                                 points=points,
                                 quant_type=self.quant_type,

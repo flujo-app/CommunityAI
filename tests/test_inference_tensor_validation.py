@@ -18,6 +18,7 @@ from drift.utils.packaging import pack_args_kwargs
 class RecordingPool:
     def __init__(self):
         self.calls = []
+        self.max_batch_size = 512
 
     async def submit_task(self, hidden_states, hypo_ids, infos, *prompts, priority):
         self.calls.append(
@@ -41,6 +42,7 @@ def make_iterator(steps, *, structured_args=False):
     backends = [
         SimpleNamespace(
             dtype=torch.float32,
+            config=SimpleNamespace(hidden_size=4),
             inference_pool=pool,
             donor_layer_types=[],
             outputs_schema=(SimpleNamespace(dtype=torch.float32, compression=runtime_pb2.CompressionType.NONE),),
@@ -77,6 +79,7 @@ def make_iterator(steps, *, structured_args=False):
         input_iterator=inputs(),
         cache_handles=((0,), (1,)),
         max_length=256,
+        session_batch_size=3,
         prioritizer=prioritizer,
         points=0,
         quant_type=QuantType.NONE,

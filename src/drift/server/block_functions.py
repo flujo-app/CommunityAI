@@ -151,6 +151,7 @@ async def iterate_rpc_inference(
     cache_handles: Sequence[Sequence[Handle]],
     *,
     max_length: int,
+    session_batch_size: int,
     prioritizer: TaskPrioritizerBase,
     points: int,
     quant_type: QuantType,
@@ -160,6 +161,22 @@ async def iterate_rpc_inference(
 
     prefix_length = 0
     point_per_piece = points / max_length if max_length > 0 else 0.0
+    hidden_size = requested_backends[0].config.hidden_size
+    max_step_tokens = min(backend.inference_pool.max_batch_size for backend in requested_backends)
+
+    def validate_shape(shape):
+        if len(shape) != 3 or any(isinstance(size, bool) or not isinstance(size, int) for size in shape):
+            raise AdmissionRejected("inference activation shape is invalid")
+        batch_size, length_increment, width = shape
+        if (
+            batch_size != session_batch_size
+            or batch_size < 1
+            or width != hidden_size
+            or not 0 <= length_increment <= max_length - prefix_length
+            or batch_size * max(length_increment, 1) > max_step_tokens
+        ):
+            raise AdmissionRejected("inference activation shape exceeds the session limits")
+        return tuple(shape)
 
     async for request, step_metadata in input_iterator:
         if "start_from_position" in step_metadata:
@@ -174,15 +191,36 @@ async def iterate_rpc_inference(
                 raise AdmissionRejected("inference cache position is invalid")
             prefix_length = start_from_position
 
+        # Tensor zero is the admission header. Packed arguments may select a different
+        # activation, so validate that effective header too before decoding any tensors.
+        if not request.tensors:
+            raise AdmissionRejected("inference activation shape is invalid")
+        validate_shape(request.tensors[0].size)
+        wire_args = tuple(request.tensors)
+        if args_structure is not None:
+            try:
+                wire_args, _ = unpack_args_kwargs(wire_args, args_structure)
+            except (TypeError, ValueError, IndexError, KeyError) as exc:
+                raise AdmissionRejected("inference activation arguments are invalid") from exc
+        if (
+            not isinstance(wire_args, (tuple, list))
+            or len(wire_args) < 3
+            or not isinstance(wire_args[0], runtime_pb2.Tensor)
+        ):
+            raise AdmissionRejected("inference activation arguments are invalid")
+        activation_shape = validate_shape(wire_args[0].size)
+
         flat_tensors = tuple(deserialize_torch_tensor(tensor) for tensor in request.tensors)
         if args_structure is not None:
             # TODO: kwargs currently is unused, it can be used later for peft-like adaptation
             flat_tensors, kwargs = unpack_args_kwargs(flat_tensors, args_structure)
 
         hidden_states, prompts, hypo_ids, *rest = flat_tensors
+        if not isinstance(hidden_states, torch.Tensor) or tuple(hidden_states.shape) != activation_shape:
+            raise AdmissionRejected("inference decoded activation shape is invalid")
+        batch_size, length_increment, _ = validate_shape(hidden_states.shape)
         per_layer_inputs = rest[0] if rest else None  # Gemma 4 Per-Layer Embedding slices (optional)
         shared_kv_input_tensors = list(rest[1:])  # Gemma 4 KV-sharing donor K/V from upstream spans (optional)
-        batch_size, length_increment, _ = hidden_states.shape
 
         # Reject malformed beam indices before any worker can reorder its cache, including
         # zero-token steps. The empty int64 vector is the client's no-reordering sentinel.
@@ -230,12 +268,6 @@ async def iterate_rpc_inference(
         else:
             shared_kv_states = {}
         seeded_kv_keys = set(shared_kv_states)
-
-        if prefix_length + length_increment > max_length:
-            raise ValueError(
-                f"Maximum length exceeded: prefix {prefix_length} + current {length_increment}"
-                f" exceeds pre-allocated maximum {max_length}"
-            )
 
         merge_max_tokens = MAX_NF4_SHORT_INFERENCE_TOKENS if quant_type == QuantType.NF4 else MAX_SHORT_INFERENCE_TOKENS
         can_merge_pools = batch_size * length_increment <= merge_max_tokens
