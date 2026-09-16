@@ -184,9 +184,17 @@ async def iterate_rpc_inference(
         shared_kv_input_tensors = list(rest[1:])  # Gemma 4 KV-sharing donor K/V from upstream spans (optional)
         batch_size, length_increment, _ = hidden_states.shape
 
+        # Reject malformed beam indices before any worker can reorder its cache, including
+        # zero-token steps. The empty int64 vector is the client's no-reordering sentinel.
+        if not isinstance(hypo_ids, torch.Tensor) or hypo_ids.dtype != torch.int64 or hypo_ids.ndim != 1:
+            raise AdmissionRejected("inference hypothesis indices are invalid")
+        if hypo_ids.numel() and (
+            hypo_ids.numel() != batch_size or torch.any(hypo_ids < 0).item() or torch.any(hypo_ids >= batch_size).item()
+        ):
+            raise AdmissionRejected("inference hypothesis indices are invalid")
+
         # Cast inputs to backend dtype
         hidden_states = hidden_states.to(requested_backends[0].dtype)
-        assert hypo_ids.dtype == torch.int64, f"hypo ids must be int64, got {hypo_ids.dtype}"
 
         # parse deep prompts (optional argument)
         has_prompts = prompts is not None and not is_dummy(prompts)
