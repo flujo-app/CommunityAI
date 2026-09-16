@@ -13,6 +13,7 @@ from hivemind.utils.logging import get_logger
 from hivemind.utils.nested import nested_flatten
 
 from drift.data_structures import Handle, InferenceMetadata
+from drift.server.admission import AdmissionRejected
 from drift.server.backend import TransformerBackend
 from drift.server.task_pool import PrioritizedTaskPool
 from drift.server.task_prioritizer import TaskPrioritizerBase
@@ -163,9 +164,14 @@ async def iterate_rpc_inference(
     async for request, step_metadata in input_iterator:
         if "start_from_position" in step_metadata:
             start_from_position = step_metadata["start_from_position"]
-            assert (
-                prefix_length >= start_from_position
-            ), f"prefix_length={prefix_length}, start_from_position={start_from_position}"
+            # Validate wire metadata before decoding tensors or passing a cache offset to a worker.
+            # Explicit checks also apply when Python runs with assertions disabled.
+            if (
+                isinstance(start_from_position, bool)
+                or not isinstance(start_from_position, int)
+                or not 0 <= start_from_position <= prefix_length
+            ):
+                raise AdmissionRejected("inference cache position is invalid")
             prefix_length = start_from_position
 
         flat_tensors = tuple(deserialize_torch_tensor(tensor) for tensor in request.tensors)
