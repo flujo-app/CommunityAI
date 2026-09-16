@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
 import tarfile
 import time
+import types
 import unittest
 import zipfile
 from pathlib import Path
@@ -214,9 +217,11 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         self.addCleanup(self._temporary_directory.cleanup)
         self.tmp_path = Path(self._temporary_directory.name)
 
-    def _bundle(self, name: str, files: dict[str, bytes]) -> tuple[Path, Path]:
+    def _bundle(
+        self, name: str, files: dict[str, bytes], *, profile=build_desktop.STANDARD_PROFILE
+    ) -> tuple[Path, Path]:
         output_root = self.tmp_path / name
-        bundle_root = output_root / build_desktop.APP_NAME
+        bundle_root = output_root / profile.app_name
         for relative_path, content in files.items():
             path = bundle_root / relative_path
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -229,10 +234,12 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         files: dict[str, bytes] | None = None,
         *,
         publication_evidence: dict[str, object] | None = None,
+        profile=build_desktop.STANDARD_PROFILE,
     ) -> tuple[Path, Path, dict[str, object]]:
         output_root, bundle_root = self._bundle(
             name,
             files or {"zeta.txt": b"zeta\n", "nested/alpha.bin": b"alpha\x00"},
+            profile=profile,
         )
         summary = build_desktop._write_release_attestations(
             output_root,
@@ -243,6 +250,7 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
             build_pyinstaller="6.11.1",
             publication_evidence=publication_evidence,
             install_platform="Linux",
+            profile=profile,
         )
         return output_root, bundle_root, summary
 
@@ -251,6 +259,8 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         output_root: Path,
         bundle_root: Path,
         release_summary: dict[str, object],
+        *,
+        profile=build_desktop.STANDARD_PROFILE,
     ) -> dict[str, object]:
         provenance = json.loads((output_root / build_desktop.PROVENANCE_NAME).read_text(encoding="utf-8"))
         install_platform = release_summary["install_archive"]["platform"]
@@ -262,8 +272,8 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         node_bytes, node_file_count = build_desktop._directory_metrics(node_root)
         metrics = {
             "schema_version": 1,
-            "application": build_desktop.APP_NAME,
-            "package": "communityai-desktop",
+            "application": profile.app_name,
+            "package": profile.package,
             "platform": provenance["build_platform"],
             "python": provenance["build_python"],
             "bundle_bytes": bundle_bytes,
@@ -736,6 +746,166 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     build_desktop._verify_release_attestations(output_root)
 
+    def test_volunteer_archive_provenance_and_metrics_round_trip_with_distinct_identity(self):
+        profile = build_desktop.VOLUNTEER_BUILD_PROFILE
+        output_root, bundle_root, summary = self._write(
+            "volunteer-round-trip",
+            {profile.app_name: b"desktop", "node/CommunityAI-Node": b"node"},
+            profile=profile,
+        )
+        self._finalize_metrics(output_root, bundle_root, summary, profile=profile)
+        metadata = json.loads((output_root / build_desktop.RELEASE_METADATA_NAME).read_bytes())
+        provenance = json.loads((output_root / build_desktop.PROVENANCE_NAME).read_bytes())
+        for document in (metadata, provenance):
+            self.assertEqual(document["product"], "CommunityAI-MultiGPU-Test")
+            self.assertEqual(document["package"], "communityai-multigpu-test")
+            self.assertEqual(document["release_channel"], "multigpu-volunteer")
+            self.assertEqual(document["artifact_root"], "CommunityAI-MultiGPU-Test")
+            self.assertIs(document["complete_release_qualification"], False)
+            self.assertIs(document["unsigned"], True)
+        self.assertEqual(metadata["supported_platforms"], ["Linux"])
+        self.assertIn("Not a qualified beta release", metadata["warning"])
+        self.assertIsNone(provenance["catalog_publication_bundle"])
+        self.assertEqual(provenance["source_commit"], "a" * 40)
+        self.assertEqual(provenance["source_tree"], "b" * 40)
+        archive_path = output_root / "communityai-multigpu-test-linux.tar.gz"
+        self.assertEqual(summary["install_archive"]["path"], archive_path.name)
+        with tarfile.open(archive_path, "r:gz") as archive:
+            self.assertEqual(
+                set(archive.getnames()),
+                {
+                    "CommunityAI-MultiGPU-Test",
+                    "CommunityAI-MultiGPU-Test/CommunityAI-MultiGPU-Test",
+                    "CommunityAI-MultiGPU-Test/node",
+                    "CommunityAI-MultiGPU-Test/node/CommunityAI-Node",
+                },
+            )
+            self.assertEqual(archive.extractfile("CommunityAI-MultiGPU-Test/node/CommunityAI-Node").read(), b"node")
+        self.assertEqual(
+            build_desktop._verify_release_attestations(
+                output_root,
+                expected_source_commit="a" * 40,
+                expected_source_tree="b" * 40,
+                profile=profile,
+            ),
+            summary,
+        )
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = os.pathsep.join(
+            (str(DESKTOP_SOURCE), str(REPOSITORY / "src"), environment.get("PYTHONPATH", ""))
+        )
+        command = [
+            sys.executable,
+            str(REPOSITORY / "desktop" / "build_desktop.py"),
+            "--verify-release-output",
+            str(output_root),
+        ]
+        verified = subprocess.run(
+            [*command, "--profile", "multigpu-volunteer"],
+            capture_output=True,
+            text=True,
+            cwd=REPOSITORY,
+            env=environment,
+            check=False,
+        )
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        self.assertEqual(json.loads(verified.stdout), summary)
+        wrong_profile = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            cwd=REPOSITORY,
+            env=environment,
+            check=False,
+        )
+        self.assertNotEqual(wrong_profile.returncode, 0)
+
+    def test_cross_profile_verification_rejects_both_directions_and_preserves_standard_defaults(self):
+        volunteer = build_desktop.VOLUNTEER_BUILD_PROFILE
+        volunteer_root, _, _ = self._write("volunteer-identity", profile=volunteer)
+        standard_root, _, standard_summary = self._write("standard-after-volunteer")
+        with self.assertRaises(RuntimeError):
+            build_desktop._verify_release_attestations(volunteer_root, require_metrics=False)
+        with self.assertRaises(RuntimeError):
+            build_desktop._verify_release_attestations(standard_root, require_metrics=False, profile=volunteer)
+        standard_metadata = json.loads((standard_root / build_desktop.RELEASE_METADATA_NAME).read_bytes())
+        self.assertEqual(standard_metadata["product"], "CommunityAI")
+        self.assertEqual(standard_metadata["package"], "communityai-desktop")
+        self.assertEqual(standard_metadata["supported_platforms"], ["Windows", "Linux"])
+        self.assertEqual(standard_summary["install_archive"]["path"], "communityai-desktop-linux.tar.gz")
+        self.assertEqual(
+            build_desktop._verify_release_attestations(standard_root, require_metrics=False), standard_summary
+        )
+
+    def test_volunteer_metadata_and_provenance_cannot_be_relabelled_as_standard(self):
+        profile = build_desktop.VOLUNTEER_BUILD_PROFILE
+        for filename in (build_desktop.RELEASE_METADATA_NAME, build_desktop.PROVENANCE_NAME):
+            with self.subTest(filename=filename):
+                output_root, _, _ = self._write(f"volunteer-relabel-{filename}", profile=profile)
+                document_path = output_root / filename
+                document = json.loads(document_path.read_bytes())
+                document["product"] = "CommunityAI"
+                document["package"] = "communityai-desktop"
+                document["release_channel"] = "public-alpha"
+                document_path.write_bytes(build_desktop._canonical_json(document).encode("utf-8"))
+                with self.assertRaisesRegex(RuntimeError, "claim"):
+                    build_desktop._verify_release_attestations(output_root, require_metrics=False, profile=profile)
+
+    def test_volunteer_archive_rejects_tampered_bytes_and_rebound_standard_root(self):
+        profile = build_desktop.VOLUNTEER_BUILD_PROFILE
+        for mutation in ("bytes", "root"):
+            with self.subTest(mutation=mutation):
+                output_root, _, summary = self._write(f"volunteer-archive-{mutation}", profile=profile)
+                archive_path = output_root / summary["install_archive"]["path"]
+                if mutation == "bytes":
+                    archive_path.write_bytes(archive_path.read_bytes() + b"tampered")
+                else:
+                    with tarfile.open(archive_path, "w:gz") as archive:
+                        member = tarfile.TarInfo("CommunityAI/payload.txt")
+                        member.size = 7
+                        archive.addfile(member, io.BytesIO(b"payload"))
+                    provenance_path = output_root / build_desktop.PROVENANCE_NAME
+                    provenance = json.loads(provenance_path.read_bytes())
+                    provenance["install_archive"]["sha256"] = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+                    provenance["install_archive"]["size_bytes"] = archive_path.stat().st_size
+                    provenance_path.write_bytes(build_desktop._canonical_json(provenance).encode("utf-8"))
+                with self.assertRaises(RuntimeError):
+                    build_desktop._verify_release_attestations(output_root, require_metrics=False, profile=profile)
+
+    def test_volunteer_archive_cannot_claim_windows_support(self):
+        profile = build_desktop.VOLUNTEER_BUILD_PROFILE
+        output_root, bundle_root = self._bundle("volunteer-windows", {"payload": b"test"}, profile=profile)
+        with self.assertRaises(RuntimeError):
+            build_desktop._write_release_attestations(
+                output_root,
+                bundle_root,
+                source_commit="a" * 40,
+                source_tree="b" * 40,
+                build_workflow="test",
+                build_pyinstaller="6.test",
+                publication_evidence=None,
+                install_platform="Windows",
+                profile=profile,
+            )
+        self.assertFalse((output_root / "communityai-desktop-windows.zip").exists())
+
+    def test_volunteer_attestations_require_both_source_identities(self):
+        profile = build_desktop.VOLUNTEER_BUILD_PROFILE
+        output_root, bundle_root = self._bundle("volunteer-no-source", {"payload": b"test"}, profile=profile)
+        with self.assertRaises(RuntimeError):
+            build_desktop._write_release_attestations(
+                output_root,
+                bundle_root,
+                source_commit=None,
+                source_tree=None,
+                build_workflow="test",
+                build_pyinstaller="6.test",
+                publication_evidence=None,
+                install_platform="Linux",
+                profile=profile,
+            )
+        self.assertFalse((output_root / build_desktop.PROVENANCE_NAME).exists())
+
     def test_windows_superscript_dos_device_names_are_rejected(self):
         for reserved_name in ("COM¹", "com².txt", "LPT³.bin", "CONIN$", "conout$.txt"):
             with self.subTest(name=reserved_name):
@@ -907,6 +1077,355 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
             os.mkfifo(fifo)
             with self.assertRaisesRegex(RuntimeError, "non-regular file"):
                 build_desktop._bundle_artifacts(bundle_root)
+
+
+class VolunteerBuildIsolationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporary_directory = TemporaryDirectory()
+        self.addCleanup(self._temporary_directory.cleanup)
+        self.tmp_path = Path(self._temporary_directory.name)
+        self.project = self.tmp_path / "repository" / "desktop"
+        icon = self.project / "src" / "communityai_desktop" / "assets" / "communityai.ico"
+        icon.parent.mkdir(parents=True)
+        icon.write_bytes(b"fixture icon")
+
+    def _capture_build(self, arguments: list[str]):
+        class BuildReached(Exception):
+            pass
+
+        pyinstaller = types.ModuleType("PyInstaller")
+        pyinstaller.__version__ = "6.test"
+        pyinstaller_main = types.ModuleType("PyInstaller.__main__")
+        pyinstaller.__main__ = pyinstaller_main
+        with (
+            patch.object(sys, "argv", ["build_desktop.py", *arguments]),
+            patch.object(build_desktop, "__file__", str(self.project / "build_desktop.py")),
+            patch.object(build_desktop.platform, "system", return_value="Linux"),
+            patch.object(build_desktop, "_source_identity", return_value=("a" * 40, "b" * 40)),
+            patch.object(build_desktop, "_check_build_storage") as storage,
+            patch.object(build_desktop, "_run_pyinstaller", side_effect=BuildReached) as package,
+            patch.dict(sys.modules, {"PyInstaller": pyinstaller, "PyInstaller.__main__": pyinstaller_main}),
+        ):
+            with self.assertRaises(BuildReached):
+                build_desktop.main()
+        return package.call_args, storage.call_args
+
+    def test_volunteer_build_freezes_dedicated_node_launcher_with_profile_import_path(self):
+        class NodeBuildReached(Exception):
+            pass
+
+        calls = []
+
+        def package(arguments, **options):
+            calls.append((arguments, options))
+            if len(calls) == 2:
+                raise NodeBuildReached
+            root = Path(arguments[arguments.index("--distpath") + 1])
+            name = arguments[arguments.index("--name") + 1]
+            executable = root / name / (name + (".exe" if os.name == "nt" else ""))
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"fixture only; never executed")
+
+        pyinstaller = types.ModuleType("PyInstaller")
+        pyinstaller.__version__ = "6.test"
+        pyinstaller_main = types.ModuleType("PyInstaller.__main__")
+        pyinstaller.__main__ = pyinstaller_main
+        with (
+            patch.object(
+                sys, "argv", ["build_desktop.py", "--profile", "multigpu-volunteer", "--source-commit", "a" * 40]
+            ),
+            patch.object(build_desktop, "__file__", str(self.project / "build_desktop.py")),
+            patch.object(build_desktop.platform, "system", return_value="Linux"),
+            patch.object(build_desktop, "_source_identity", return_value=("a" * 40, "b" * 40)),
+            patch.object(build_desktop, "_check_build_storage"),
+            patch.object(build_desktop, "_run_pyinstaller", side_effect=package),
+            patch.dict(sys.modules, {"PyInstaller": pyinstaller, "PyInstaller.__main__": pyinstaller_main}),
+        ):
+            with self.assertRaises(NodeBuildReached):
+                build_desktop.main()
+        arguments, options = calls[1]
+        self.assertEqual(arguments[0], str(self.project / "launch_volunteer_node.py"))
+        self.assertIn(str(self.project / "src"), arguments)
+        self.assertEqual(options, {"config_dir": self.project / "build" / "multigpu-volunteer" / "pyinstaller-cache"})
+        self.assertIn("desktop/launch_volunteer_node.py", build_desktop._RELEASE_SOURCE_PATHS)
+
+    def test_volunteer_cli_uses_fixed_launcher_and_separate_defaults_without_implicit_catalog(self):
+        # The ordinary product bundle exists but is deliberately invalid. A
+        # volunteer build must neither validate nor silently include this input.
+        (self.project / "release" / "catalog-publication-bundle").mkdir(parents=True)
+        package, storage = self._capture_build(["--profile", "multigpu-volunteer", "--source-commit", "a" * 40])
+        arguments = package.args[0]
+        self.assertEqual(arguments[0], str(self.project / "launch_volunteer.py"))
+        self.assertEqual(arguments[arguments.index("--name") + 1], "CommunityAI-MultiGPU-Test")
+        self.assertEqual(
+            arguments[arguments.index("--distpath") + 1], str(self.project / "dist" / "multigpu-volunteer")
+        )
+        self.assertEqual(
+            arguments[arguments.index("--workpath") + 1], str(self.project / "build" / "multigpu-volunteer" / "work")
+        )
+        self.assertEqual(
+            package.kwargs, {"config_dir": self.project / "build" / "multigpu-volunteer" / "pyinstaller-cache"}
+        )
+        self.assertEqual(
+            storage.args, (self.project / "dist" / "multigpu-volunteer", self.project / "build" / "multigpu-volunteer")
+        )
+        self.assertFalse(any("catalog-publication-bundle" in item for item in arguments))
+        self.assertFalse((self.project / "dist").exists())
+        self.assertFalse((self.project / "build").exists())
+
+    def test_standard_cli_retains_launcher_defaults_and_implicit_verified_catalog(self):
+        _, _, bundle_path, _ = _release_bundle(self.project / "release")
+        package, storage = self._capture_build([])
+        arguments = package.args[0]
+        self.assertEqual(arguments[0], str(self.project / "launch_desktop.py"))
+        self.assertEqual(arguments[arguments.index("--name") + 1], "CommunityAI")
+        self.assertEqual(arguments[arguments.index("--distpath") + 1], str(self.project / "dist" / "desktop"))
+        self.assertEqual(storage.args, (self.project / "dist" / "desktop", self.project / "build" / "desktop"))
+        self.assertEqual(package.kwargs, {})
+        self.assertIn(f"{bundle_path}{os.pathsep}bootstrap", arguments)
+
+    def test_volunteer_cli_includes_only_explicit_verified_catalog(self):
+        _, _, bundle_path, _ = _release_bundle(self.tmp_path / "explicit")
+        package, _ = self._capture_build(
+            [
+                "--profile",
+                "multigpu-volunteer",
+                "--source-commit",
+                "a" * 40,
+                "--publication-bundle",
+                str(bundle_path),
+            ]
+        )
+        self.assertIn(f"{bundle_path}{os.pathsep}bootstrap", package.args[0])
+
+    def test_volunteer_cli_rejects_wrong_platform_or_missing_source_before_build_work(self):
+        cases = (
+            ("Windows", ["--source-commit", "a" * 40], "built on Linux"),
+            ("Linux", [], "require --source-commit"),
+        )
+        for platform_name, arguments, message in cases:
+            with (
+                self.subTest(platform=platform_name),
+                patch.object(sys, "argv", ["build_desktop.py", "--profile", "multigpu-volunteer", *arguments]),
+                patch.object(build_desktop.platform, "system", return_value=platform_name),
+                patch.object(build_desktop, "_source_identity") as identity,
+                patch.object(build_desktop, "_check_build_storage") as storage,
+                patch.object(build_desktop, "_run_pyinstaller") as package,
+                patch.object(sys, "stderr", new_callable=io.StringIO) as error,
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    build_desktop.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(message, error.getvalue())
+                identity.assert_not_called()
+                storage.assert_not_called()
+                package.assert_not_called()
+
+    def test_volunteer_roots_accept_fresh_or_empty_siblings_without_writing(self):
+        output = self.tmp_path / "output"
+        build = self.tmp_path / "build"
+        build_desktop._check_volunteer_roots(self.project, output, build)
+        self.assertFalse(output.exists())
+        self.assertFalse(build.exists())
+        output.mkdir()
+        build.mkdir()
+        build_desktop._check_volunteer_roots(self.project, output, build)
+        self.assertEqual(list(output.iterdir()), [])
+        self.assertEqual(list(build.iterdir()), [])
+
+    def test_volunteer_roots_preserve_nonempty_or_file_destinations(self):
+        for kind in ("directory", "file"):
+            with self.subTest(kind=kind):
+                occupied = self.tmp_path / kind
+                sentinel = occupied / "keep.txt" if kind == "directory" else occupied
+                sentinel.parent.mkdir(parents=True, exist_ok=True)
+                sentinel.write_bytes(b"prior output must survive")
+                for output, build in ((occupied, self.tmp_path / "fresh"), (self.tmp_path / "fresh", occupied)):
+                    with self.assertRaisesRegex(RuntimeError, "empty"):
+                        build_desktop._check_volunteer_roots(self.project, output, build)
+                    self.assertEqual(sentinel.read_bytes(), b"prior output must survive")
+
+    def test_volunteer_roots_reject_overlap_and_all_standard_output_aliases(self):
+        first = self.tmp_path / "fresh"
+        cases = [(first, first), (first, first / "nested"), (first / "nested", first)]
+        for standard in (self.project / "dist" / "desktop", self.project / "build" / "desktop"):
+            for candidate in (standard, standard / "nested", standard.parent):
+                cases.extend(((candidate, first), (first, candidate)))
+        for output, build in cases:
+            with self.subTest(output=output, build=build):
+                with self.assertRaisesRegex(RuntimeError, "overlap"):
+                    build_desktop._check_volunteer_roots(self.project, output, build)
+        self.assertFalse(first.exists())
+
+    def test_volunteer_roots_reject_parent_traversal_before_creating_destinations(self):
+        traversing = self.tmp_path / "unused" / ".." / "output"
+        fresh = self.tmp_path / "fresh"
+        for output, build in ((traversing, fresh), (fresh, traversing)):
+            with self.subTest(output=output, build=build):
+                with self.assertRaisesRegex(RuntimeError, "traverse parent directories"):
+                    build_desktop._check_volunteer_roots(self.project, output, build)
+        self.assertFalse((self.tmp_path / "unused").exists())
+        self.assertFalse((self.tmp_path / "output").exists())
+        self.assertFalse(fresh.exists())
+
+    def test_volunteer_roots_reject_linked_destinations_and_linked_ancestors_through_cli(self):
+        target = self.tmp_path / "target"
+        target.mkdir()
+        alias = self.tmp_path / "alias"
+        try:
+            alias.symlink_to(target, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"directory symlinks are unavailable: {exc}")
+        for output in (alias, alias / "fresh"):
+            with self.subTest(output=output):
+                with self.assertRaisesRegex(RuntimeError, "links or junctions"):
+                    self._capture_build(
+                        [
+                            "--profile",
+                            "multigpu-volunteer",
+                            "--source-commit",
+                            "a" * 40,
+                            "--output-root",
+                            str(output),
+                            "--build-root",
+                            str(self.tmp_path / "build"),
+                        ]
+                    )
+                self.assertEqual(list(target.iterdir()), [])
+
+    def test_smoke_environment_replaces_user_state_and_tokens_without_mutating_parent(self):
+        home = self.tmp_path / "smoke-home"
+        path_names = (
+            "HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+            "XDG_RUNTIME_DIR",
+            "TMP",
+            "TEMP",
+            "TMPDIR",
+            "DRIFT_CACHE",
+            "HF_HOME",
+            "HF_HUB_CACHE",
+            "HUGGINGFACE_HUB_CACHE",
+            "HF_ASSETS_CACHE",
+            "HF_XET_CACHE",
+            "HF_TOKEN_PATH",
+            "TRANSFORMERS_CACHE",
+            "TORCH_HOME",
+            "TORCHINDUCTOR_CACHE_DIR",
+            "TRITON_CACHE_DIR",
+        )
+        tokens = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN")
+        inherited = {name: str(self.tmp_path / "real-user-state") for name in path_names}
+        inherited.update({name: "fixture-token" for name in tokens})
+        inherited.update({"PATH": "preserved-search-path", "QT_QPA_PLATFORM": "inherited-display"})
+        with patch.dict(os.environ, inherited, clear=True):
+            result = build_desktop._smoke_environment(home)
+            self.assertEqual(dict(os.environ), inherited)
+        for name in path_names:
+            with self.subTest(variable=name):
+                self.assertTrue(Path(result[name]).is_relative_to(home), result[name])
+        for name in tokens:
+            self.assertNotIn(name, result)
+        self.assertEqual(result["HOME"], str(home))
+        self.assertEqual(result["USERPROFILE"], str(home))
+        self.assertEqual(result["HF_HUB_OFFLINE"], "1")
+        self.assertEqual(result["TRANSFORMERS_OFFLINE"], "1")
+        self.assertEqual(result["HF_HUB_DISABLE_IMPLICIT_TOKEN"], "1")
+        self.assertEqual(result["QT_QPA_PLATFORM"], "offscreen")
+        self.assertEqual(result["PATH"], "preserved-search-path")
+        self.assertFalse((self.tmp_path / "real-user-state").exists())
+
+    def test_frozen_volunteer_launcher_calls_only_forced_profile_entrypoint(self):
+        application = types.ModuleType("communityai_desktop.app")
+        calls = []
+        application.volunteer_main = lambda: calls.append("volunteer") or 23
+        application.main = lambda: self.fail("volunteer launcher called standard main")
+        with patch.dict(sys.modules, {"communityai_desktop.app": application}):
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(str(REPOSITORY / "desktop" / "launch_volunteer.py"), run_name="__main__")
+        self.assertEqual(raised.exception.code, 23)
+        self.assertEqual(calls, ["volunteer"])
+
+    def test_source_launcher_self_test_and_override_rejection_preserve_ordinary_state(self):
+        home = self.tmp_path / "source-smoke-home"
+        ordinary = home / ".drift" / "node" / "node-config.json"
+        ordinary.parent.mkdir(parents=True)
+        ordinary.write_bytes(b"ordinary application state must survive unchanged")
+        environment = build_desktop._smoke_environment(home)
+        environment["PYTHONPATH"] = os.pathsep.join(
+            (str(DESKTOP_SOURCE), str(REPOSITORY / "src"), environment.get("PYTHONPATH", ""))
+        )
+        command = [sys.executable, str(REPOSITORY / "desktop" / "launch_volunteer.py"), "--self-test"]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            cwd=REPOSITORY,
+            env=environment,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["api_version"], 1)
+        self.assertTrue((home / ".communityai" / "multigpu-volunteer" / "node").is_dir())
+        for overrides in (
+            ["--profile", "standard"],
+            ["--profile=standard"],
+            ["--node-data-dir", str(ordinary.parent)],
+        ):
+            with self.subTest(overrides=overrides):
+                rejected = subprocess.run(
+                    [*command, *overrides],
+                    capture_output=True,
+                    text=True,
+                    cwd=REPOSITORY,
+                    env=environment,
+                    check=False,
+                    timeout=60,
+                )
+                self.assertEqual(rejected.returncode, 2, rejected.stderr)
+                self.assertIn("fixed", rejected.stderr)
+                self.assertEqual(ordinary.read_bytes(), b"ordinary application state must survive unchanged")
+        self.assertEqual(list((home / ".drift").rglob("*")), [ordinary.parent, ordinary])
+
+    def test_source_identity_covers_added_modified_and_missing_volunteer_launcher(self):
+        repository = self.tmp_path / "source"
+        launcher = repository / "desktop" / "launch_volunteer.py"
+        launcher.parent.mkdir(parents=True)
+        (repository / ".gitattributes").write_text("* text eol=lf\n", encoding="utf-8")
+
+        def git(*arguments: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(repository), *arguments],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        git("init")
+        git("config", "user.email", "release-test@example.invalid")
+        git("config", "user.name", "Release Test")
+        git("add", ".gitattributes")
+        git("commit", "-m", "baseline")
+        launcher.write_text("print('fixed volunteer entry')\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
+            build_desktop._source_identity(repository, git("rev-parse", "HEAD"))
+        git("add", "desktop/launch_volunteer.py")
+        git("commit", "-m", "volunteer launcher")
+        head, tree = git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
+        self.assertEqual(build_desktop._source_identity(repository, head), (head, tree))
+        launcher.write_text("print('different entry')\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
+            build_desktop._source_identity(repository, head)
+        launcher.unlink()
+        with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
+            build_desktop._source_identity(repository, head)
 
 
 if __name__ == "__main__":

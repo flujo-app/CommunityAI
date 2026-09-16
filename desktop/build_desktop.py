@@ -15,9 +15,10 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Sequence
+from typing import BinaryIO, NamedTuple, Sequence
 
 from communityai_desktop.acceptance import run_self_test
 from communityai_desktop.pyside_shell import check_runtime
@@ -44,6 +45,56 @@ UNSIGNED_ALPHA_WARNING = (
     "Unsigned public-alpha engineering bundle: verify SHA256SUMS before use. "
     "No publisher signature or authenticated automatic update is provided."
 )
+
+
+class BuildProfile(NamedTuple):
+    name: str
+    app_name: str
+    package: str
+    channel: str
+    launcher: str
+    node_launcher: str
+    directory: str
+    platforms: tuple[str, ...]
+    warning: str
+
+    @property
+    def archive_specs(self) -> dict[str, tuple[str, str]]:
+        return {
+            system: (
+                f"{self.package}-{system.lower()}.{'tar.gz' if system == 'Linux' else 'zip'}",
+                "tar.gz" if system == "Linux" else "zip",
+            )
+            for system in self.platforms
+        }
+
+
+STANDARD_PROFILE = BuildProfile(
+    "standard",
+    APP_NAME,
+    "communityai-desktop",
+    "public-alpha",
+    "launch_desktop.py",
+    "launch_node.py",
+    "desktop",
+    ("Windows", "Linux"),
+    UNSIGNED_ALPHA_WARNING,
+)
+VOLUNTEER_BUILD_PROFILE = BuildProfile(
+    "multigpu-volunteer",
+    "CommunityAI-MultiGPU-Test",
+    "communityai-multigpu-test",
+    "multigpu-volunteer",
+    "launch_volunteer.py",
+    "launch_volunteer_node.py",
+    "multigpu-volunteer",
+    ("Linux",),
+    "Unsigned volunteer engineering test bundle: verify SHA256SUMS before use. "
+    "No publisher signature or automatic updates. Not a qualified beta release.",
+)
+BUILD_PROFILES = {item.name: item for item in (STANDARD_PROFILE, VOLUNTEER_BUILD_PROFILE)}
+
+
 _SOURCE_COMMIT_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _RELEASE_SOURCE_PATHS = (
     ".gitattributes",
@@ -51,6 +102,8 @@ _RELEASE_SOURCE_PATHS = (
     "desktop/build_desktop.py",
     "desktop/runtime_packaging.py",
     "desktop/launch_desktop.py",
+    "desktop/launch_volunteer.py",
+    "desktop/launch_volunteer_node.py",
     "desktop/launch_node.py",
     "desktop/pyproject.toml",
     "desktop/src",
@@ -62,6 +115,57 @@ _RELEASE_SOURCE_PATHS = (
     "src",
 )
 _EXPECTED_UNSET = object()
+
+
+def _check_volunteer_roots(project: Path, output_root: Path, build_root: Path) -> None:
+    """Keep PyInstaller cleanup inside fresh, dedicated test destinations."""
+    roots = []
+    for candidate in (output_root, build_root):
+        if ".." in candidate.parts:
+            raise RuntimeError("volunteer build paths must not traverse parent directories")
+        candidate = Path(os.path.abspath(candidate))
+        for ancestor in (candidate, *candidate.parents):
+            if _is_link_or_junction(ancestor):
+                raise RuntimeError("volunteer build paths must not use links or junctions")
+        if candidate.exists() and (not candidate.is_dir() or any(candidate.iterdir())):
+            raise RuntimeError("volunteer build paths must be empty; preserve prior output and choose fresh paths")
+        roots.append(candidate.resolve())
+    reserved = ((project / "dist" / "desktop").resolve(), (project / "build" / "desktop").resolve())
+    for candidate, other in ((roots[0], roots[1]), *((root, item) for root in roots for item in reserved)):
+        if candidate.is_relative_to(other) or other.is_relative_to(candidate):
+            raise RuntimeError("volunteer build paths overlap each other or ordinary desktop output")
+
+
+def _smoke_environment(home: Path) -> dict[str, str]:
+    """Give frozen diagnostics disposable application/cache state, not a sandbox."""
+    from communityai_desktop.profiles import VOLUNTEER_PROFILE, VolunteerProfile
+
+    environment = os.environ.copy()
+    directories = {
+        "HOME": home,
+        "USERPROFILE": home,
+        "APPDATA": home / "config",
+        "LOCALAPPDATA": home / "local",
+        "XDG_CONFIG_HOME": home / "config",
+        "XDG_DATA_HOME": home / "data",
+        "XDG_STATE_HOME": home / "state",
+        "XDG_RUNTIME_DIR": home / "runtime",
+    }
+    for name, path in directories.items():
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        environment[name] = str(path)
+    profile = VolunteerProfile(home / ".communityai" / VOLUNTEER_PROFILE)
+    profile.prepare()
+    for name, value in profile.child_environment().items():
+        if value is None:
+            environment.pop(name, None)
+        else:
+            environment[name] = value
+    environment["HF_HUB_OFFLINE"] = "1"
+    environment["TRANSFORMERS_OFFLINE"] = "1"
+    environment["QT_QPA_PLATFORM"] = "offscreen"
+    environment.pop("HUGGINGFACEHUB_API_TOKEN", None)
+    return environment
 
 
 def _check_build_storage(output_root: Path, build_root: Path) -> None:
@@ -165,14 +269,14 @@ def _source_identity(repository: Path, requested_commit: str | None) -> tuple[st
     return source_commit, source_tree
 
 
-def _validate_artifact_path(raw_path: str) -> str:
+def _validate_artifact_path(raw_path: str, *, profile: BuildProfile = STANDARD_PROFILE) -> str:
     if not raw_path or "\\" in raw_path or any(ord(character) < 32 for character in raw_path):
         raise RuntimeError(f"unsafe release artifact path: {raw_path!r}")
     path = PurePosixPath(raw_path)
     if path.is_absolute() or raw_path != path.as_posix() or any(part in ("", ".", "..") for part in path.parts):
         raise RuntimeError(f"unsafe release artifact path: {raw_path!r}")
-    if len(path.parts) < 2 or path.parts[0] != APP_NAME:
-        raise RuntimeError(f"release artifact is outside {APP_NAME}/: {raw_path!r}")
+    if len(path.parts) < 2 or path.parts[0] != profile.app_name:
+        raise RuntimeError(f"release artifact is outside {profile.app_name}/: {raw_path!r}")
     return raw_path
 
 
@@ -189,7 +293,9 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _internal_file_symlink_artifact(bundle_root: Path, link: Path, artifact_path: str) -> dict[str, object]:
+def _internal_file_symlink_artifact(
+    bundle_root: Path, link: Path, artifact_path: str, *, profile: BuildProfile = STANDARD_PROFILE
+) -> dict[str, object]:
     try:
         raw_target = os.readlink(link)
     except OSError as exc:
@@ -207,7 +313,7 @@ def _internal_file_symlink_artifact(bundle_root: Path, link: Path, artifact_path
     target_mode = resolved_target.lstat().st_mode
     if _is_link_or_junction(resolved_target) or not stat.S_ISREG(target_mode):
         raise RuntimeError(f"release bundle file symlink does not resolve to a regular file: {link}")
-    canonical_target = _validate_artifact_path(f"{APP_NAME}/{target_relative.as_posix()}")
+    canonical_target = _validate_artifact_path(f"{profile.app_name}/{target_relative.as_posix()}", profile=profile)
     return {
         "path": artifact_path,
         "kind": "symlink",
@@ -217,7 +323,7 @@ def _internal_file_symlink_artifact(bundle_root: Path, link: Path, artifact_path
     }
 
 
-def _bundle_artifacts(bundle_root: Path) -> list[dict[str, object]]:
+def _bundle_artifacts(bundle_root: Path, *, profile: BuildProfile = STANDARD_PROFILE) -> list[dict[str, object]]:
     """Inventory regular files and safe internal file symlinks without leaving the bundle."""
 
     if not bundle_root.is_dir() or _is_link_or_junction(bundle_root):
@@ -237,13 +343,13 @@ def _bundle_artifacts(bundle_root: Path) -> list[dict[str, object]]:
             child = directory_path / name
             mode = child.lstat().st_mode
             relative_path = child.relative_to(bundle_root).as_posix()
-            artifact_path = _validate_artifact_path(f"{APP_NAME}/{relative_path}")
+            artifact_path = _validate_artifact_path(f"{profile.app_name}/{relative_path}", profile=profile)
             comparison_key = artifact_path.casefold()
             if comparison_key in seen_paths:
                 raise RuntimeError(f"duplicate normalized release artifact path: {artifact_path}")
             seen_paths.add(comparison_key)
             if stat.S_ISLNK(mode):
-                artifact = _internal_file_symlink_artifact(bundle_root, child, artifact_path)
+                artifact = _internal_file_symlink_artifact(bundle_root, child, artifact_path, profile=profile)
             elif _is_link_or_junction(child) or not stat.S_ISREG(mode):
                 raise RuntimeError(f"release bundle contains a non-regular file: {child}")
             else:
@@ -258,11 +364,11 @@ def _bundle_artifacts(bundle_root: Path) -> list[dict[str, object]]:
     return sorted(artifacts, key=lambda artifact: str(artifact["path"]))
 
 
-def _render_sha256sums(artifacts: Sequence[dict[str, object]]) -> str:
+def _render_sha256sums(artifacts: Sequence[dict[str, object]], *, profile: BuildProfile = STANDARD_PROFILE) -> str:
     lines: list[str] = []
     seen_paths: set[str] = set()
     for artifact in sorted(artifacts, key=lambda item: str(item.get("path", ""))):
-        artifact_path = _validate_artifact_path(str(artifact.get("path", "")))
+        artifact_path = _validate_artifact_path(str(artifact.get("path", "")), profile=profile)
         comparison_key = artifact_path.casefold()
         if comparison_key in seen_paths:
             raise RuntimeError(f"duplicate normalized release artifact path: {artifact_path}")
@@ -274,7 +380,7 @@ def _render_sha256sums(artifacts: Sequence[dict[str, object]]) -> str:
     return "".join(lines)
 
 
-def _validate_install_member_path(raw_path: str) -> str:
+def _validate_install_member_path(raw_path: str, *, profile: BuildProfile = STANDARD_PROFILE) -> str:
     if not raw_path or "\\" in raw_path or any(ord(character) < 32 for character in raw_path):
         raise RuntimeError(f"unsafe install archive member path: {raw_path!r}")
     normalized = raw_path[:-1] if raw_path.endswith("/") else raw_path
@@ -284,11 +390,11 @@ def _validate_install_member_path(raw_path: str) -> str:
         or path.is_absolute()
         or normalized != path.as_posix()
         or any(part in ("", ".", "..") for part in path.parts)
-        or path.parts[0] != APP_NAME
+        or path.parts[0] != profile.app_name
     ):
         raise RuntimeError(f"unsafe install archive member path: {raw_path!r}")
     if len(path.parts) > 1:
-        _validate_artifact_path(normalized)
+        _validate_artifact_path(normalized, profile=profile)
     return normalized
 
 
@@ -302,7 +408,9 @@ def _validate_windows_install_path(member_path: str) -> None:
             raise RuntimeError(f"install archive member is unsafe on Windows: {member_path!r}")
 
 
-def _canonical_archive_link_target(member_path: str, raw_target: str) -> str:
+def _canonical_archive_link_target(
+    member_path: str, raw_target: str, *, profile: BuildProfile = STANDARD_PROFILE
+) -> str:
     if (
         not raw_target
         or raw_target.startswith("/")
@@ -321,12 +429,11 @@ def _canonical_archive_link_target(member_path: str, raw_target: str) -> str:
         else:
             parts.append(part)
     canonical = PurePosixPath(*parts).as_posix()
-    return _validate_artifact_path(canonical)
+    return _validate_artifact_path(canonical, profile=profile)
 
 
 def _install_archive_entries(
-    bundle_root: Path,
-    artifacts: Sequence[dict[str, object]],
+    bundle_root: Path, artifacts: Sequence[dict[str, object]], *, profile: BuildProfile = STANDARD_PROFILE
 ) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
     seen_paths: set[str] = set()
@@ -337,8 +444,8 @@ def _install_archive_entries(
         directories.extend(Path(directory) / name for name in directory_names)
     for directory in directories:
         relative = directory.relative_to(bundle_root)
-        member_path = APP_NAME if not relative.parts else f"{APP_NAME}/{relative.as_posix()}"
-        member_path = _validate_install_member_path(member_path)
+        member_path = profile.app_name if not relative.parts else f"{profile.app_name}/{relative.as_posix()}"
+        member_path = _validate_install_member_path(member_path, profile=profile)
         comparison_key = member_path.casefold()
         if comparison_key in seen_paths:
             raise RuntimeError(f"duplicate normalized install archive member: {member_path}")
@@ -356,12 +463,12 @@ def _install_archive_entries(
         )
 
     for artifact in artifacts:
-        member_path = _validate_install_member_path(str(artifact["path"]))
+        member_path = _validate_install_member_path(str(artifact["path"]), profile=profile)
         comparison_key = member_path.casefold()
         if comparison_key in seen_paths:
             raise RuntimeError(f"duplicate normalized install archive member: {member_path}")
         seen_paths.add(comparison_key)
-        relative = PurePosixPath(member_path).relative_to(APP_NAME)
+        relative = PurePosixPath(member_path).relative_to(profile.app_name)
         source = bundle_root.joinpath(*relative.parts)
         entry = dict(artifact)
         entry["_source"] = source
@@ -458,13 +565,14 @@ def _install_archive_evidence(
     install_platform: str,
     archive_format: str,
     entry_count: int,
+    profile: BuildProfile = STANDARD_PROFILE,
 ) -> dict[str, object]:
     return {
         "schema_version": 1,
         "path": archive_path.name,
         "format": archive_format,
         "platform": install_platform,
-        "artifact_root": APP_NAME,
+        "artifact_root": profile.app_name,
         "sha256": _sha256_file(archive_path),
         "size_bytes": archive_path.stat().st_size,
         "entry_count": entry_count,
@@ -483,8 +591,7 @@ def _sha256_archive_stream(stream: BinaryIO) -> str:
 
 
 def _verify_tar_install_archive(
-    archive_path: Path,
-    expected_entries: Sequence[dict[str, object]],
+    archive_path: Path, expected_entries: Sequence[dict[str, object]], *, profile: BuildProfile = STANDARD_PROFILE
 ) -> None:
     expected = {str(entry["path"]): entry for entry in expected_entries}
     actual: dict[str, tarfile.TarInfo] = {}
@@ -492,7 +599,7 @@ def _verify_tar_install_archive(
         with tarfile.open(archive_path, mode="r:gz") as archive:
             seen_paths: set[str] = set()
             for member in archive.getmembers():
-                member_path = _validate_install_member_path(member.name)
+                member_path = _validate_install_member_path(member.name, profile=profile)
                 comparison_key = member_path.casefold()
                 if comparison_key in seen_paths:
                     raise RuntimeError(f"duplicate normalized install archive member: {member_path}")
@@ -509,13 +616,13 @@ def _verify_tar_install_archive(
                 elif entry["kind"] == "symlink":
                     if not member.issym():
                         raise RuntimeError(f"install archive symlink type mismatch: {member_path}")
-                    canonical_target = _canonical_archive_link_target(member_path, member.linkname)
+                    canonical_target = _canonical_archive_link_target(member_path, member.linkname, profile=profile)
                     if canonical_target != entry["link_target"]:
                         raise RuntimeError(f"install archive symlink target mismatch: {member_path}")
                 elif entry["kind"] == "file":
                     effective_size = member.size
                     if member.islnk():
-                        target = _validate_install_member_path(member.linkname)
+                        target = _validate_install_member_path(member.linkname, profile=profile)
                         target_entry = expected.get(target, {})
                         if (
                             member.linkname != target
@@ -546,8 +653,7 @@ def _verify_tar_install_archive(
 
 
 def _verify_zip_install_archive(
-    archive_path: Path,
-    expected_entries: Sequence[dict[str, object]],
+    archive_path: Path, expected_entries: Sequence[dict[str, object]], *, profile: BuildProfile = STANDARD_PROFILE
 ) -> None:
     expected = {str(entry["path"]): entry for entry in expected_entries}
     if any(entry["kind"] == "symlink" for entry in expected_entries):
@@ -557,7 +663,7 @@ def _verify_zip_install_archive(
         with zipfile.ZipFile(archive_path, mode="r") as archive:
             seen_paths: set[str] = set()
             for member in archive.infolist():
-                member_path = _validate_install_member_path(member.filename)
+                member_path = _validate_install_member_path(member.filename, profile=profile)
                 _validate_windows_install_path(member_path)
                 comparison_key = member_path.casefold()
                 if comparison_key in seen_paths:
@@ -602,6 +708,8 @@ def _verify_install_archive(
     bundle_root: Path,
     artifacts: Sequence[dict[str, object]],
     evidence: object,
+    *,
+    profile: BuildProfile = STANDARD_PROFILE,
 ) -> dict[str, object]:
     expected_keys = {
         "schema_version",
@@ -618,7 +726,7 @@ def _verify_install_archive(
     if not isinstance(evidence, dict) or set(evidence) != expected_keys:
         raise RuntimeError("install archive provenance schema is missing or altered")
     install_platform = evidence["platform"]
-    spec = INSTALL_ARCHIVE_SPECS.get(str(install_platform))
+    spec = profile.archive_specs.get(str(install_platform))
     if spec is None:
         raise RuntimeError("install archive platform is unsupported")
     expected_name, expected_format = spec
@@ -626,7 +734,7 @@ def _verify_install_archive(
         "schema_version": 1,
         "path": expected_name,
         "format": expected_format,
-        "artifact_root": APP_NAME,
+        "artifact_root": profile.app_name,
         "preserves_executable_modes": install_platform == "Linux",
         "preserves_internal_file_symlinks": install_platform == "Linux",
     }
@@ -643,7 +751,7 @@ def _verify_install_archive(
     ):
         raise RuntimeError("install archive provenance has invalid size or member counts")
 
-    for candidate_name, _ in INSTALL_ARCHIVE_SPECS.values():
+    for candidate_name, _ in profile.archive_specs.values():
         candidate = output_root / candidate_name
         if candidate_name != expected_name and (candidate.exists() or _is_link_or_junction(candidate)):
             raise RuntimeError(f"unexpected platform install archive is present: {candidate_name}")
@@ -653,13 +761,13 @@ def _verify_install_archive(
     if archive_path.stat().st_size != evidence["size_bytes"] or _sha256_file(archive_path) != digest:
         raise RuntimeError("install archive size or SHA-256 does not match provenance")
 
-    entries = _install_archive_entries(bundle_root, artifacts)
+    entries = _install_archive_entries(bundle_root, artifacts, profile=profile)
     if len(entries) != evidence["entry_count"]:
         raise RuntimeError("install archive member count does not match provenance")
     if expected_format == "tar.gz":
-        _verify_tar_install_archive(archive_path, entries)
+        _verify_tar_install_archive(archive_path, entries, profile=profile)
     elif expected_format == "zip":
-        _verify_zip_install_archive(archive_path, entries)
+        _verify_zip_install_archive(archive_path, entries, profile=profile)
     else:
         raise RuntimeError("install archive format is unsupported")
     return dict(evidence)
@@ -671,14 +779,15 @@ def _create_install_archive(
     artifacts: Sequence[dict[str, object]],
     *,
     install_platform: str | None = None,
+    profile: BuildProfile = STANDARD_PROFILE,
 ) -> dict[str, object]:
     install_platform = install_platform or platform.system()
-    spec = INSTALL_ARCHIVE_SPECS.get(install_platform)
+    spec = profile.archive_specs.get(install_platform)
     if spec is None:
         raise RuntimeError("production install archives are supported only on Windows and Linux")
     archive_name, archive_format = spec
     output_root.mkdir(parents=True, exist_ok=True)
-    for candidate_name, _ in INSTALL_ARCHIVE_SPECS.values():
+    for candidate_name, _ in profile.archive_specs.values():
         candidate = output_root / candidate_name
         if candidate_name != archive_name and (candidate.exists() or _is_link_or_junction(candidate)):
             raise RuntimeError(f"unexpected platform install archive already exists: {candidate_name}")
@@ -688,7 +797,7 @@ def _create_install_archive(
             raise RuntimeError(f"install archive output path is unsafe: {archive_path}")
         archive_path.unlink()
 
-    entries = _install_archive_entries(bundle_root, artifacts)
+    entries = _install_archive_entries(bundle_root, artifacts, profile=profile)
     try:
         if archive_format == "tar.gz":
             _write_tar_install_archive(archive_path, entries)
@@ -701,27 +810,28 @@ def _create_install_archive(
             install_platform=install_platform,
             archive_format=archive_format,
             entry_count=len(entries),
+            profile=profile,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)
         raise
 
 
-def _release_metadata() -> dict[str, object]:
+def _release_metadata(*, profile: BuildProfile = STANDARD_PROFILE) -> dict[str, object]:
     return {
         "schema_version": 1,
-        "product": APP_NAME,
-        "package": "communityai-desktop",
-        "release_channel": "public-alpha",
-        "warning": UNSIGNED_ALPHA_WARNING,
+        "product": profile.app_name,
+        "package": profile.package,
+        "release_channel": profile.channel,
+        "warning": profile.warning,
         "unsigned": True,
         "publisher_signature": False,
         "automatic_updates": False,
-        "supported_platforms": ["Windows", "Linux"],
+        "supported_platforms": list(profile.platforms),
         "macos_supported": False,
         "credits_enabled": False,
         "complete_release_qualification": False,
-        "artifact_root": APP_NAME,
+        "artifact_root": profile.app_name,
         "artifact_inventory": "regular-files-and-relative-internal-file-symlinks-with-file-modes",
         "checksum_manifest": CHECKSUMS_NAME,
         "install_archive_required": True,
@@ -742,10 +852,11 @@ def _verify_release_attestations(
     expected_build_pyinstaller: str | object = _EXPECTED_UNSET,
     expected_publication_evidence: dict[str, object] | None | object = _EXPECTED_UNSET,
     require_metrics: bool = True,
+    profile: BuildProfile = STANDARD_PROFILE,
 ) -> dict[str, object]:
     output_root = output_root.resolve()
-    artifacts = _bundle_artifacts(output_root / APP_NAME)
-    expected_checksums = _render_sha256sums(artifacts)
+    artifacts = _bundle_artifacts(output_root / profile.app_name, profile=profile)
+    expected_checksums = _render_sha256sums(artifacts, profile=profile)
     checksums_path = output_root / CHECKSUMS_NAME
     if not checksums_path.is_file() or checksums_path.is_symlink():
         raise RuntimeError(f"release checksum manifest is missing or unsafe: {checksums_path}")
@@ -765,7 +876,7 @@ def _verify_release_attestations(
         provenance = json.loads(provenance_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("release metadata or provenance is not canonical UTF-8 JSON") from exc
-    if not _strict_equal(metadata, _release_metadata()):
+    if not _strict_equal(metadata, _release_metadata(profile=profile)):
         raise RuntimeError("release metadata contains missing, altered, or unsupported alpha claims")
     if metadata_bytes != _canonical_json(metadata).encode("utf-8"):
         raise RuntimeError("release metadata is not canonical UTF-8 JSON")
@@ -797,10 +908,10 @@ def _verify_release_attestations(
         raise RuntimeError("release provenance schema is missing or altered")
     expected_claims = {
         "schema_version": 1,
-        "product": APP_NAME,
-        "package": "communityai-desktop",
-        "release_channel": "public-alpha",
-        "artifact_root": APP_NAME,
+        "product": profile.app_name,
+        "package": profile.package,
+        "release_channel": profile.channel,
+        "artifact_root": profile.app_name,
         "checksum_manifest": CHECKSUMS_NAME,
         "unsigned": True,
         "publisher_signature": False,
@@ -815,6 +926,8 @@ def _verify_release_attestations(
     source_tree = _normalize_source_commit(provenance["source_tree"])
     if provenance["source_commit"] != source_commit or provenance["source_tree"] != source_tree:
         raise RuntimeError("release provenance source identity is not canonical")
+    if profile == VOLUNTEER_BUILD_PROFILE and (source_commit is None or source_tree is None):
+        raise RuntimeError("volunteer provenance requires a source commit and tree")
     if (source_commit is None) != (source_tree is None):
         raise RuntimeError("release provenance source commit and tree must be supplied together")
     for field in ("build_workflow", "build_platform", "build_python", "build_pyinstaller"):
@@ -841,10 +954,7 @@ def _verify_release_attestations(
         ):
             raise RuntimeError("catalog publication member digests are missing or unsafe")
     install_archive = _verify_install_archive(
-        output_root,
-        output_root / APP_NAME,
-        artifacts,
-        provenance["install_archive"],
+        output_root, output_root / profile.app_name, artifacts, provenance["install_archive"], profile=profile
     )
 
     expected_values = {
@@ -881,10 +991,11 @@ def _verify_release_attestations(
     if require_metrics:
         _verify_desktop_metrics(
             output_root,
-            output_root / APP_NAME,
+            output_root / profile.app_name,
             release_summary,
             provenance,
             provenance["desktop_metrics"],
+            profile=profile,
         )
     return release_summary
 
@@ -899,39 +1010,39 @@ def _write_release_attestations(
     build_pyinstaller: str,
     publication_evidence: dict[str, object] | None,
     install_platform: str | None = None,
+    profile: BuildProfile = STANDARD_PROFILE,
 ) -> dict[str, object]:
     """Write deterministic checksums plus explicit unsigned-alpha provenance."""
 
     output_root = output_root.resolve()
-    if bundle_root.resolve() != (output_root / APP_NAME).resolve():
-        raise RuntimeError(f"release bundle must be emitted at {output_root / APP_NAME}")
+    if bundle_root.resolve() != (output_root / profile.app_name).resolve():
+        raise RuntimeError(f"release bundle must be emitted at {output_root / profile.app_name}")
     source_commit = _normalize_source_commit(source_commit)
     source_tree = _normalize_source_commit(source_tree)
+    if profile == VOLUNTEER_BUILD_PROFILE and (source_commit is None or source_tree is None):
+        raise RuntimeError("volunteer provenance requires a source commit and tree")
     if (source_commit is None) != (source_tree is None):
         raise RuntimeError("source commit and tree must be supplied together")
     if not build_workflow or any(ord(character) < 32 for character in build_workflow):
         raise RuntimeError("build workflow identity must be a non-empty, printable string")
     if not build_pyinstaller or any(ord(character) < 32 for character in build_pyinstaller):
         raise RuntimeError("PyInstaller version must be a non-empty, printable string")
-    artifacts = _bundle_artifacts(bundle_root)
+    artifacts = _bundle_artifacts(bundle_root, profile=profile)
     install_archive = _create_install_archive(
-        output_root,
-        bundle_root,
-        artifacts,
-        install_platform=install_platform,
+        output_root, bundle_root, artifacts, install_platform=install_platform, profile=profile
     )
     provenance = {
         "schema_version": 1,
-        "product": APP_NAME,
-        "package": "communityai-desktop",
-        "release_channel": "public-alpha",
+        "product": profile.app_name,
+        "package": profile.package,
+        "release_channel": profile.channel,
         "source_commit": source_commit,
         "source_tree": source_tree,
         "build_workflow": build_workflow,
         "build_platform": platform.platform(),
         "build_python": platform.python_version(),
         "build_pyinstaller": build_pyinstaller,
-        "artifact_root": APP_NAME,
+        "artifact_root": profile.app_name,
         "checksum_manifest": CHECKSUMS_NAME,
         "artifacts": artifacts,
         "install_archive": install_archive,
@@ -943,8 +1054,10 @@ def _write_release_attestations(
         "complete_release_qualification": False,
     }
     output_root.mkdir(parents=True, exist_ok=True)
-    (output_root / CHECKSUMS_NAME).write_bytes(_render_sha256sums(artifacts).encode("utf-8"))
-    (output_root / RELEASE_METADATA_NAME).write_bytes(_canonical_json(_release_metadata()).encode("utf-8"))
+    (output_root / CHECKSUMS_NAME).write_bytes(_render_sha256sums(artifacts, profile=profile).encode("utf-8"))
+    (output_root / RELEASE_METADATA_NAME).write_bytes(
+        _canonical_json(_release_metadata(profile=profile)).encode("utf-8")
+    )
     (output_root / PROVENANCE_NAME).write_bytes(_canonical_json(provenance).encode("utf-8"))
     return _verify_release_attestations(
         output_root,
@@ -956,6 +1069,7 @@ def _write_release_attestations(
         expected_build_pyinstaller=build_pyinstaller,
         expected_publication_evidence=publication_evidence,
         require_metrics=False,
+        profile=profile,
     )
 
 
@@ -974,6 +1088,8 @@ def _verify_desktop_metrics(
     release_summary: dict[str, object],
     provenance: dict[str, object],
     evidence: object,
+    *,
+    profile: BuildProfile = STANDARD_PROFILE,
 ) -> dict[str, object]:
     expected_evidence_keys = {"schema_version", "path", "sha256", "size_bytes"}
     if not isinstance(evidence, dict) or set(evidence) != expected_evidence_keys:
@@ -1023,8 +1139,8 @@ def _verify_desktop_metrics(
     install_platform = release_summary["install_archive"]["platform"]
     expected_claims = {
         "schema_version": 1,
-        "application": APP_NAME,
-        "package": "communityai-desktop",
+        "application": profile.app_name,
+        "package": profile.package,
         "platform": provenance["build_platform"],
         "python": provenance["build_python"],
         "ui_smoke_passed": True,
@@ -1197,8 +1313,10 @@ def _run_bundle(
     return result
 
 
-def _run_pyinstaller(arguments: list[str]) -> None:
+def _run_pyinstaller(arguments: list[str], *, config_dir: Path | None = None) -> None:
     environment = os.environ.copy()
+    if config_dir is not None:
+        environment["PYINSTALLER_CONFIG_DIR"] = str(config_dir)
     if os.name == "nt":
         # Qt links Windows' ICU ABI. An unrelated tool on PATH may ship another
         # icuuc.dll with the same basename and incompatible exports. Restrict
@@ -1258,6 +1376,7 @@ def _verify_packaged_release_inputs(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--profile", choices=tuple(BUILD_PROFILES), default="standard")
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--build-root", type=Path)
     parser.add_argument("--publication-bundle", type=Path)
@@ -1266,6 +1385,7 @@ def main() -> int:
     parser.add_argument("--verify-release-output", type=Path)
     parser.add_argument("--verify-build-environment", action="store_true")
     args = parser.parse_args()
+    profile = BUILD_PROFILES[args.profile]
 
     project = Path(__file__).resolve().parent
     repository = project.parent
@@ -1303,6 +1423,7 @@ def main() -> int:
                     expected_build_python=expected_build_python,
                     expected_build_pyinstaller=expected_build_pyinstaller,
                     expected_publication_evidence=expected_publication_evidence,
+                    profile=profile,
                 ),
                 sort_keys=True,
             )
@@ -1311,18 +1432,29 @@ def main() -> int:
     if args.verify_build_environment:
         parser.error("--verify-build-environment requires --verify-release-output")
 
+    if profile == VOLUNTEER_BUILD_PROFILE:
+        if platform.system() not in profile.platforms:
+            parser.error("the volunteer portable artifact must be built on Linux")
+        if args.source_commit is None:
+            parser.error("volunteer builds require --source-commit matching clean source inputs")
     source_commit, source_tree = _source_identity(repository, args.source_commit)
     build_workflow = args.build_workflow or os.environ.get("GITHUB_WORKFLOW_REF", "local")
-    output_root = (args.output_root or project / "dist" / "desktop").resolve()
-    build_root = (args.build_root or project / "build" / "desktop").resolve()
+    output_root = args.output_root or project / "dist" / profile.directory
+    build_root = args.build_root or project / "build" / profile.directory
+    if profile == VOLUNTEER_BUILD_PROFILE:
+        _check_volunteer_roots(project, output_root, build_root)
+    output_root = output_root.resolve()
+    build_root = build_root.resolve()
     _check_build_storage(output_root, build_root)
-    bundle_root = output_root / APP_NAME
+    bundle_root = output_root / profile.app_name
     icon_path = project / "src" / "communityai_desktop" / "assets" / "communityai.ico"
     if not icon_path.is_file():
         raise RuntimeError(f"desktop icon is missing: {icon_path}; run generate_assets.py")
     publication_bundle = args.publication_bundle or project / "release" / "catalog-publication-bundle"
     publication_bundle = Path(os.path.abspath(os.fspath(publication_bundle.expanduser())))
-    should_validate_release = args.publication_bundle is not None or publication_bundle.exists()
+    should_validate_release = args.publication_bundle is not None or (
+        profile == STANDARD_PROFILE and publication_bundle.exists()
+    )
     publication_evidence = _prepare_release_inputs(publication_bundle if should_validate_release else None)
 
     try:
@@ -1332,9 +1464,9 @@ def main() -> int:
         parser.error(f"PyInstaller is not installed: {exc}")
 
     pyinstaller_args = [
-        str(project / "launch_desktop.py"),
+        str(project / profile.launcher),
         "--name",
-        APP_NAME,
+        profile.app_name,
         "--onedir",
         "--noconfirm",
         "--clean",
@@ -1374,9 +1506,10 @@ def main() -> int:
     if credential_backend:
         pyinstaller_args.extend(("--hidden-import", credential_backend))
 
-    _run_pyinstaller(pyinstaller_args)
+    packaging_options = {"config_dir": build_root / "pyinstaller-cache"} if profile == VOLUNTEER_BUILD_PROFILE else {}
+    _run_pyinstaller(pyinstaller_args, **packaging_options)
 
-    executable = bundle_root / f"{APP_NAME}{'.exe' if os.name == 'nt' else ''}"
+    executable = bundle_root / f"{profile.app_name}{'.exe' if os.name == 'nt' else ''}"
     if not executable.is_file():
         raise RuntimeError(f"packaged executable was not created: {executable}")
     if publication_evidence is not None:
@@ -1387,7 +1520,7 @@ def main() -> int:
 
     sidecar_dist = build_root / "sidecar-dist"
     node_args = [
-        str(project / "launch_node.py"),
+        str(project / profile.node_launcher),
         "--name",
         NODE_NAME,
         "--onedir",
@@ -1408,6 +1541,10 @@ def main() -> int:
         "--exclude-module",
         "PySide6",
     ]
+    if profile == VOLUNTEER_BUILD_PROFILE:
+        # The sidecar imports only the stdlib-only profile module from desktop;
+        # it must not acquire the Qt UI runtime.
+        node_args.extend(("--paths", str(project / "src")))
     if platform.system() == "Linux":
         # Approved desktop profiles use eager/native kernels. Optional PEFT/bitsandbytes
         # imports otherwise initialize Triton's JIT on GPU hosts, requiring a compiler
@@ -1422,7 +1559,7 @@ def main() -> int:
     }.get(platform.system())
     if credential_backend:
         node_args.extend(("--hidden-import", credential_backend))
-    _run_pyinstaller(node_args)
+    _run_pyinstaller(node_args, **packaging_options)
 
     built_sidecar = sidecar_dist / NODE_NAME
     node_root = bundle_root / NODE_DIRECTORY
@@ -1441,28 +1578,29 @@ def main() -> int:
     )
     (bundle_root / "runtime-packaging.json").write_text(_canonical_json(normalization), encoding="utf-8")
 
-    environment = os.environ.copy()
-    environment.setdefault("QT_QPA_PLATFORM", "offscreen")
-    runtime = check_runtime()
-    contract = run_self_test()
-    _run_bundle(executable, "--check-runtime", environment)
-    _run_bundle(executable, "--self-test", environment)
-    _run_bundle(executable, "--ui-self-test", environment)
-    _run_bundle(executable, "--onboarding-ui-self-test", environment)
-    node_contract = json.loads(_run_bundle(node_executable, "--self-test", environment, timeout=180).stdout)
-    worker_contract = json.loads(
-        _run_bundle(node_executable, ("server", "--self-test"), environment, timeout=180).stdout
-    )
-    _run_bundle(node_executable, "--help", environment, timeout=180)
-    _run_bundle(node_executable, ("bootstrap", "--help"), environment, timeout=180)
-    _run_bundle(node_executable, ("server", "--help"), environment, timeout=180)
-    _run_bundle(node_executable, ("edge-acquire", "--help"), environment, timeout=180)
+    with tempfile.TemporaryDirectory(prefix="communityai-build-smoke-") as smoke_home:
+        environment = _smoke_environment(Path(smoke_home)) if profile == VOLUNTEER_BUILD_PROFILE else os.environ.copy()
+        environment.setdefault("QT_QPA_PLATFORM", "offscreen")
+        runtime = check_runtime()
+        contract = run_self_test()
+        _run_bundle(executable, "--check-runtime", environment)
+        _run_bundle(executable, "--self-test", environment)
+        _run_bundle(executable, "--ui-self-test", environment)
+        _run_bundle(executable, "--onboarding-ui-self-test", environment)
+        node_contract = json.loads(_run_bundle(node_executable, "--self-test", environment, timeout=180).stdout)
+        worker_contract = json.loads(
+            _run_bundle(node_executable, ("server", "--self-test"), environment, timeout=180).stdout
+        )
+        _run_bundle(node_executable, "--help", environment, timeout=180)
+        _run_bundle(node_executable, ("bootstrap", "--help"), environment, timeout=180)
+        _run_bundle(node_executable, ("server", "--help"), environment, timeout=180)
+        _run_bundle(node_executable, ("edge-acquire", "--help"), environment, timeout=180)
     bundle_bytes, file_count = _directory_metrics(bundle_root)
     node_bytes, node_file_count = _directory_metrics(node_root)
     metrics = {
         "schema_version": 1,
-        "application": APP_NAME,
-        "package": "communityai-desktop",
+        "application": profile.app_name,
+        "package": profile.package,
         "platform": platform.platform(),
         "python": platform.python_version(),
         "bundle_bytes": bundle_bytes,
@@ -1487,6 +1625,9 @@ def main() -> int:
         "catalog_bootstrap_bundled": publication_evidence is not None,
         "catalog_publication_bundle": publication_evidence,
     }
+    if profile == VOLUNTEER_BUILD_PROFILE:
+        if _source_identity(repository, args.source_commit) != (source_commit, source_tree):
+            raise RuntimeError("volunteer source changed during packaging")
     metrics["release_artifacts"] = _write_release_attestations(
         output_root,
         bundle_root,
@@ -1495,6 +1636,7 @@ def main() -> int:
         build_workflow=build_workflow,
         build_pyinstaller=PyInstaller.__version__,
         publication_evidence=publication_evidence,
+        profile=profile,
     )
     _write_desktop_metrics(output_root, metrics)
     verified_release = _verify_release_attestations(
@@ -1506,6 +1648,7 @@ def main() -> int:
         expected_build_python=platform.python_version(),
         expected_build_pyinstaller=PyInstaller.__version__,
         expected_publication_evidence=publication_evidence,
+        profile=profile,
     )
     if not _strict_equal(verified_release, metrics["release_artifacts"]):
         raise RuntimeError("final desktop metrics do not match the independently verified release")
