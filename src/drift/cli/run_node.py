@@ -28,6 +28,7 @@ from drift.node.contribution_planner import (
     PlacementRegistry,
 )
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery, PeerCache
+from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
 from drift.node.loading import make_text_peer_loader, validate_manifest_execution
 from drift.node.local_inference import local_route_observer, make_local_manifest_loader
@@ -56,7 +57,13 @@ from drift.protocol_identity import (
 )
 from drift.utils.auto_config import AutoDistributedConfig
 from drift.utils.disk_cache import DEFAULT_CACHE_DIR
-from drift.utils.hardware import auto_detect_device, get_device_total_memory, is_accelerator, normalize_device
+from drift.utils.hardware import (
+    ACCELERATOR_TYPES,
+    auto_detect_device,
+    get_device_total_memory,
+    is_accelerator,
+    normalize_device,
+)
 from drift.utils.process_lifetime import tie_child_processes_to_this_process
 
 use_hivemind_log_handler("in_root_logger")
@@ -457,6 +464,60 @@ def _automatic_placement_candidates(
     return tuple(candidates)
 
 
+def _resolve_worker_device(worker_id: str, selection: str | None) -> torch.device:
+    """Resolve once and reject unavailable selections instead of moving a worker."""
+    requested = selection
+    try:
+        requested = auto_detect_device() if selection is None else selection
+        device = normalize_device(torch.device(requested))
+    except (RuntimeError, ValueError, TypeError, OSError, AssertionError) as exc:
+        raise NodeConfigError(f"worker {worker_id!r} has an invalid or unavailable device {requested!r}") from exc
+    if device.type not in ("cpu", *ACCELERATOR_TYPES):
+        raise NodeConfigError(f"worker {worker_id!r} selected unsupported device {str(device)!r}")
+    if device.type in ("cpu", "mps"):
+        if device.index not in (None, 0):
+            raise NodeConfigError(f"worker {worker_id!r} selected invalid device {str(device)!r}")
+        device = torch.device(device.type)
+    if device.type == "cpu":
+        return device
+
+    # Match the bounded public inventory: CUDA, then XPU, then the single MPS
+    # device. These are process-visible ordinals, not physical NVML indices.
+    offset = 0
+    try:
+        for device_type in ACCELERATOR_TYPES:
+            backend = getattr(torch, device_type, None)
+            available = getattr(backend, "is_available", None)
+            if available is None or not available():
+                if device_type == device.type:
+                    raise NodeConfigError(f"worker {worker_id!r} selected device {str(device)!r} is unavailable")
+                continue
+            count = 1 if device_type == "mps" else backend.device_count()
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise RuntimeError("invalid visible accelerator count")
+            if device_type == device.type:
+                index = 0 if device.index is None else device.index
+                if index >= count:
+                    raise NodeConfigError(f"worker {worker_id!r} selected device {str(device)!r} is unavailable")
+                if offset + index >= MAX_VISIBLE_ACCELERATORS:
+                    raise NodeConfigError(
+                        f"worker {worker_id!r} selected device {str(device)!r} exceeds the supported "
+                        f"inventory of {MAX_VISIBLE_ACCELERATORS} visible accelerators"
+                    )
+                memory_api = "recommended_max_memory" if device_type == "mps" else "get_device_properties"
+                if not callable(getattr(backend, memory_api, None)):
+                    raise NodeConfigError(
+                        f"worker {worker_id!r} selected device {str(device)!r} has unsupported memory telemetry"
+                    )
+                return device
+            offset += count
+    except NodeConfigError:
+        raise
+    except (RuntimeError, ValueError, TypeError, OSError, AssertionError, AttributeError) as exc:
+        raise NodeConfigError(f"worker {worker_id!r} cannot verify availability of device {str(device)!r}") from exc
+    raise NodeConfigError(f"worker {worker_id!r} selected device {str(device)!r} is unavailable")
+
+
 def _prepare_worker_supervisor_settings(
     config: NodeConfig,
     manager: ModelManager,
@@ -607,7 +668,7 @@ def _prepare_worker_supervisor_settings(
             (value for value in (worker.max_power_watts, policy.max_power_watts) if value is not None),
             default=None,
         )
-        configured_device = normalize_device(torch.device(worker.device or auto_detect_device()))
+        configured_device = _resolve_worker_device(worker.worker_id, worker.device)
         policy_vram_limit = (policy.max_vram_bytes, policy.max_vram_fraction)
         worker_vram_limit = (worker.max_vram_bytes, worker.max_vram_fraction)
         effective_vram_bytes = None
@@ -620,7 +681,15 @@ def _prepare_worker_supervisor_settings(
                 )
             if policy_vram_limit != (None, None):
                 try:
-                    total_vram = get_device_total_memory(configured_device)
+                    # Read raw MPS capacity so the generic helper's integer
+                    # conversion cannot turn malformed telemetry into a budget.
+                    total_vram = (
+                        torch.mps.recommended_max_memory()
+                        if configured_device.type == "mps"
+                        else get_device_total_memory(configured_device)
+                    )
+                    if type(total_vram) is not int or not 0 < total_vram <= 2**63 - 1:
+                        raise ValueError("invalid accelerator capacity")
                 except Exception as exc:
                     raise NodeConfigError(
                         f"worker {worker.worker_id!r} cannot resolve max_vram for {configured_device}"
@@ -682,8 +751,9 @@ def _prepare_worker_supervisor_settings(
                     str(cache_dir),
                 )
             )
-        if worker.device is not None:
-            command.extend(("--device", worker.device))
+        # The child must use exactly the device whose resources were admitted;
+        # a second auto-detection in another process can choose a different GPU.
+        command.extend(("--device", str(configured_device)))
         if cache_dir is not None:
             command.extend(("--cache_dir", str(cache_dir)))
         if effective_disk_space is not None:
@@ -733,6 +803,7 @@ def _prepare_worker_supervisor_settings(
                 placement_cache_root=None if placement_binding is None else str(cache_dir),
                 max_disk_bytes=effective_disk_bytes,
                 max_vram_bytes=effective_vram_bytes,
+                device=str(configured_device),
                 vram_device=vram_device,
                 vram_pool_bytes=policy_vram_bytes,
                 max_bandwidth_mbps=effective_bandwidth_mbps,
@@ -744,7 +815,7 @@ def _prepare_worker_supervisor_settings(
         SystemBandwidthMonitor() if any(launch.max_bandwidth_mbps is not None for launch in launches) else None
     )
     power_monitors = {
-        launch.worker_id.casefold(): NvidiaPowerMonitor([int(launch.vram_device.split(":", 1)[1])])
+        launch.worker_id.casefold(): NvidiaPowerMonitor.from_cuda_device(int(launch.vram_device.split(":", 1)[1]))
         for launch in launches
         if launch.max_power_watts is not None
         and launch.vram_device is not None

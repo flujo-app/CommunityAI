@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -17,7 +18,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Sequence, Tuple
+from uuid import UUID
 
+from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE
 
 logger = logging.getLogger(__name__)
@@ -96,18 +99,51 @@ class SystemBandwidthMonitor:
 
 
 class NvidiaPowerMonitor:
-    """Read aggregate NVIDIA device power; unsupported hardware stays unavailable."""
+    """Read NVIDIA power from explicit NVML indices or a private CUDA UUID binding."""
 
     def __init__(self, device_indices: Sequence[int]) -> None:
         self._device_indices = tuple(sorted(set(device_indices)))
         self._pynvml = None
         self._initialized = False
         self._lock = threading.Lock()
+        self._cuda_uuid: Optional[str] = None
+        self._cuda_identity: Optional[Callable[[], Optional[str]]] = None
+
+    @classmethod
+    def from_cuda_device(cls, visible_index: int) -> "NvidiaPowerMonitor":
+        """Bind a visible CUDA ordinal to NVML identity, never to an NVML ordinal.
+
+        UUIDs remain private to this monitor. Unknown or changed bindings and
+        unsupported MIG power telemetry fail closed under an optional power cap.
+        """
+        monitor = cls(())
+        if isinstance(visible_index, bool) or not isinstance(visible_index, int) or visible_index < 0:
+            return monitor
+
+        def identity() -> Optional[str]:
+            try:
+                import torch
+
+                value = getattr(torch.cuda.get_device_properties(visible_index), "uuid", None)
+                value = None if value is None else str(value)
+                # Torch 2.6 exposes _CUuuid as a bare UUID; NVML expects GPU-.
+                # MIG-prefixed or malformed identifiers are not physical GPUs.
+                if value and not value.startswith("GPU-"):
+                    value = "GPU-" + str(UUID(value))
+                return value if value and value.startswith("GPU-") and len(value) <= 80 else None
+            except Exception:
+                return None
+
+        monitor._cuda_identity = identity
+        monitor._cuda_uuid = identity()
+        return monitor
 
     def __call__(self) -> Optional[float]:
-        if not self._device_indices:
+        if not self._device_indices and self._cuda_uuid is None:
             return None
         with self._lock:
+            if self._cuda_identity is not None and self._cuda_identity() != self._cuda_uuid:
+                return None
             if self._pynvml is None:
                 try:
                     import pynvml
@@ -118,13 +154,11 @@ class NvidiaPowerMonitor:
                 if not self._initialized:
                     self._pynvml.nvmlInit()
                     self._initialized = True
-                return (
-                    sum(
-                        self._pynvml.nvmlDeviceGetPowerUsage(self._pynvml.nvmlDeviceGetHandleByIndex(index))
-                        for index in self._device_indices
-                    )
-                    / 1000
-                )
+                if self._cuda_uuid is not None:
+                    handles = (self._pynvml.nvmlDeviceGetHandleByUUID(self._cuda_uuid),)
+                else:
+                    handles = tuple(self._pynvml.nvmlDeviceGetHandleByIndex(index) for index in self._device_indices)
+                return sum(self._pynvml.nvmlDeviceGetPowerUsage(handle) for handle in handles) / 1000
             except Exception:
                 return None
 
@@ -158,6 +192,7 @@ class WorkerLaunch:
     max_bandwidth_mbps: Optional[float] = None
     max_power_watts: Optional[float] = None
     environment: Tuple[Tuple[str, str], ...] = field(default=(), repr=False)
+    device: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.worker_id or not self.command:
@@ -276,6 +311,12 @@ class WorkerLaunch:
         vram_fields = (self.max_vram_bytes, self.vram_device, self.vram_pool_bytes)
         if any(value is not None for value in vram_fields) and not all(value is not None for value in vram_fields):
             raise ValueError("worker VRAM reservation fields must be configured together")
+        if self.vram_device is not None and not _canonical_device(self.vram_device, accelerator_only=True):
+            raise ValueError("worker VRAM reservation requires a canonical accelerator device")
+        if self.device is not None and not _canonical_device(self.device):
+            raise ValueError("worker device must be canonical")
+        if self.device is not None and self.vram_device is not None and self.device != self.vram_device:
+            raise ValueError("worker device must match its VRAM reservation device")
         if self.vram_pool_bytes is not None and (
             isinstance(self.vram_pool_bytes, bool)
             or not isinstance(self.vram_pool_bytes, int)
@@ -294,6 +335,26 @@ class WorkerLaunch:
             raise ValueError("worker environment names and values must be strings")
 
 
+def _canonical_device(value: Any, *, accelerator_only: bool = False) -> bool:
+    return isinstance(value, str) and (
+        value == "mps"
+        or (value == "cpu" and not accelerator_only)
+        or (
+            re.fullmatch(r"(?:cuda|xpu):(?:0|[1-9][0-9]{0,5})", value) is not None
+            and int(value.partition(":")[2]) < MAX_VISIBLE_ACCELERATORS
+        )
+    )
+
+
+def _validate_vram_pools(launches: Sequence[WorkerLaunch]) -> None:
+    pools: Dict[str, int] = {}
+    for launch in launches:
+        if launch.vram_device is not None:
+            prior = pools.setdefault(launch.vram_device, launch.vram_pool_bytes)
+            if prior != launch.vram_pool_bytes:
+                raise ValueError("workers on the same device must agree on its VRAM pool")
+
+
 @dataclass(frozen=True)
 class WorkerSupervisorSettings:
     """A completely validated, atomically swappable worker-policy configuration."""
@@ -310,6 +371,7 @@ class WorkerSupervisorSettings:
         normalized_ids = [launch.worker_id.casefold() for launch in self.launches]
         if len(set(normalized_ids)) != len(normalized_ids):
             raise ValueError("worker ids must be unique case-insensitively")
+        _validate_vram_pools(self.launches)
         if self.stop_timeout <= 0:
             raise ValueError("worker stop timeout must be positive")
 
@@ -351,6 +413,8 @@ class WorkerSupervisor:
     ) -> None:
         if stop_timeout <= 0 or poll_period <= 0:
             raise ValueError("worker supervisor timeouts must be positive")
+        launches = tuple(launches)
+        _validate_vram_pools(launches)
         self._records: Dict[str, _WorkerRecord] = {}
         for launch in launches:
             normalized = launch.worker_id.casefold()
@@ -832,6 +896,8 @@ class WorkerSupervisor:
                         "remote_acknowledged": record.launch.remote_acknowledged,
                         "max_disk_bytes": record.launch.max_disk_bytes,
                         "max_vram_bytes": record.launch.max_vram_bytes,
+                        "device": record.launch.device or record.launch.vram_device,
+                        "vram_device": record.launch.vram_device,
                         "vram_pool_bytes": record.launch.vram_pool_bytes,
                         "max_bandwidth_mbps": record.launch.max_bandwidth_mbps,
                         "current_bandwidth_mbps": self._last_bandwidth_mbps,
@@ -903,6 +969,7 @@ class WorkerSupervisor:
                     f"pause contribution worker {record.launch.worker_id!r} before replacing its placement"
                 )
             changed = record.launch != launch
+            _validate_vram_pools(tuple(launch if other is record else other.launch for other in self._records.values()))
             record.launch = launch
             record.schedule_suspended = False
             record.resource_suspended = False

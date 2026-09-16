@@ -11,7 +11,7 @@ from drift.model_manifest import ModelManifest
 from drift.node.keys import ApiKeyStore, load_or_create_api_key, load_or_create_control_key
 from drift.node.loading import make_manifest_loader
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime, ModelState
-from drift.node.server import create_node_app
+from drift.node.server import _contribution_status, create_node_app
 from drift.node.worker_supervisor import WorkerPolicyError
 
 
@@ -269,6 +269,7 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
                     "remote_acknowledged": False,
                     "max_disk_bytes": 100 * 1024**3,
                     "max_vram_bytes": 4 * 1024**3,
+                    "device": "cuda:1",
                     "vram_pool_bytes": 8 * 1024**3,
                     "max_bandwidth_mbps": 100.0,
                     "current_bandwidth_mbps": 12.5,
@@ -330,6 +331,8 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
         }
         assert status_worker["policy"] == {"admitted": True, "reason": None, "preferred": True}
         assert status_worker["resources"]["limits"]["vram_bytes"] == 4 * 1024**3
+        assert status_worker["device"] == "cuda:1"
+        assert status_worker["resources"]["limits"]["vram_scope"] == "per_device"
         assert status_worker["resources"]["measurements"]["power_watts"] == 125.0
         assert "pid" not in status_worker
         assert "recent_logs" not in status_worker
@@ -341,6 +344,39 @@ def test_authenticated_worker_controls_are_routed_through_supervisor():
 
     assert supervisor.calls == [("start", "worker"), ("pause", "worker"), ("restart", "worker")]
     assert supervisor.closed
+
+
+@pytest.mark.parametrize(
+    "raw_device, expected",
+    [
+        ("cpu", "cpu"),
+        ("mps", "mps"),
+        ("cuda:1", "cuda:1"),
+        ("xpu:0", "xpu:0"),
+        ("cuda:15", "cuda:15"),
+        ("cuda:16", None),
+        ("xpu:999999", None),
+        ("GPU-private-hardware-id", None),
+        ("0000:65:00.0", None),
+        ("cuda:00", None),
+        ("cuda:999999999999999999999999", None),
+        (False, None),
+        (None, None),
+    ],
+)
+def test_contribution_device_status_exposes_only_bounded_canonical_ordinals(raw_device, expected):
+    status = _contribution_status(
+        [{"id": "worker", "device": raw_device, "device_uuid": "GPU-private-hardware-id", "pci_id": "0000:65:00.0"}],
+        configured=True,
+        editable=False,
+        policy_snapshot={},
+    )
+    worker = status["workers"][0]
+    assert worker["device"] == expected
+    assert "device_uuid" not in worker and "pci_id" not in worker
+    assert "GPU-private-hardware-id" not in str(status)
+    assert "0000:65:00.0" not in str(status)
+    assert worker["resources"]["limits"]["vram_scope"] is None
 
 
 def test_worker_policy_rejection_is_reported_as_a_control_conflict():

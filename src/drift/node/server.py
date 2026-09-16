@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 import secrets
 import time
 from typing import Callable, List, Literal, Optional
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 
 from drift.api.server import create_app
 from drift.node.config import ContributionPolicyConfig, NodeConfigError
+from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.node.keys import ApiKeyNotFoundError, ApiKeyStore, ApiKeyStoreError, LastActiveKeyError
 from drift.node.model_manager import (
     ModelInUseError,
@@ -59,6 +61,20 @@ def _optional_positive_int(value):
     return value
 
 
+def _public_device(value):
+    # Expose a bounded local ordinal, never a hardware UUID, PCI ID or arbitrary
+    # backend error text. Legacy supervisors without a device report None.
+    if isinstance(value, str) and (
+        value in ("cpu", "mps")
+        or (
+            re.fullmatch(r"(?:cuda|xpu):(?:0|[1-9][0-9]{0,5})", value)
+            and int(value.partition(":")[2]) < MAX_VISIBLE_ACCELERATORS
+        )
+    ):
+        return value
+    return None
+
+
 def _optional_nonnegative_number(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         return None
@@ -84,10 +100,14 @@ def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, 
     """Return the bounded, secret-free worker view consumed by the desktop."""
     workers = []
     for snapshot in worker_snapshots:
+        device = _public_device(snapshot.get("device"))
+        vram_bytes = _optional_positive_int(snapshot.get("max_vram_bytes"))
+        vram_pool_bytes = _optional_positive_int(snapshot.get("vram_pool_bytes"))
         workers.append(
             {
                 "id": _bounded_text(snapshot.get("id"), "unknown worker", limit=128),
                 "model": _bounded_text(snapshot.get("model"), "unknown model", limit=256),
+                "device": device,
                 "state": (
                     snapshot.get("state")
                     if snapshot.get("state") in ("paused", "starting", "running", "stopping", "crashed")
@@ -118,8 +138,13 @@ def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, 
                     **_gate_status(snapshot, "resource"),
                     "limits": {
                         "disk_bytes": _optional_positive_int(snapshot.get("max_disk_bytes")),
-                        "vram_bytes": _optional_positive_int(snapshot.get("max_vram_bytes")),
-                        "vram_pool_bytes": _optional_positive_int(snapshot.get("vram_pool_bytes")),
+                        "vram_bytes": vram_bytes,
+                        "vram_pool_bytes": vram_pool_bytes,
+                        "vram_scope": (
+                            "per_device"
+                            if device not in (None, "cpu") and vram_bytes is not None and vram_pool_bytes is not None
+                            else None
+                        ),
                         "bandwidth_mbps": _optional_positive_number(snapshot.get("max_bandwidth_mbps")),
                         "power_watts": _optional_positive_number(snapshot.get("max_power_watts")),
                     },

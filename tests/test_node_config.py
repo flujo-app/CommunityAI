@@ -4,6 +4,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -96,6 +97,199 @@ def _config_dict(**overrides):
     }
     source.update(overrides)
     return source
+
+
+@pytest.fixture
+def available_cuda_devices(monkeypatch):
+    capacities = {0: 8 * 1024**3, 1: 24 * 1024**3}
+    monkeypatch.setattr(run_node_module.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(run_node_module.torch.cuda, "device_count", lambda: len(capacities))
+    monkeypatch.setattr(run_node_module, "get_device_total_memory", lambda device: capacities[device.index])
+    return capacities
+
+
+@pytest.fixture
+def worker_device_config(monkeypatch, tmp_path):
+    manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
+    monkeypatch.setattr(
+        run_node_module, "make_text_peer_loader", lambda *args, **kwargs: lambda: ModelRuntime(object(), object())
+    )
+    base = NodeConfig.from_dict(
+        _config_dict(
+            models=[{"manifest": str(manifest_path), "initial_peers": ["peer-one"]}],
+            contribution_policy={
+                "sharing_enabled": True,
+                "max_disk_space": "1GiB",
+                "max_vram": "50%",
+                "max_processing_percent": 25,
+            },
+        ),
+        base_dir=tmp_path,
+    )
+    manager, _, _ = _build_model_manager(base, token=None)
+
+    def config_for(*devices):
+        return replace(
+            base,
+            workers=tuple(
+                WorkerConfig(
+                    worker_id=f"device-worker-{index}",
+                    model=manifest.name,
+                    identity_path=tmp_path / f"worker-{index}.key",
+                    block_indices=f"{index}:{index + 1}",
+                    device=device,
+                )
+                for index, device in enumerate(devices)
+            ),
+        )
+
+    yield manager, config_for
+    manager.shutdown()
+
+
+@pytest.mark.parametrize(
+    "selection,detected,expected",
+    [(None, "cpu", "cpu"), (None, "cuda:1", "cuda:1"), ("cuda", "cpu", "cuda:0"), ("cpu:0", "cuda", "cpu")],
+)
+def test_worker_launch_always_pins_the_resolved_device(
+    monkeypatch, worker_device_config, available_cuda_devices, selection, detected, expected
+):
+    detections = []
+
+    def detect():
+        detections.append(detected)
+        return detected
+
+    monkeypatch.setattr(run_node_module, "auto_detect_device", detect)
+    manager, config_for = worker_device_config
+    supervisor = _build_worker_supervisor(config_for(selection), manager)
+    try:
+        launch = supervisor.launches[0]
+        assert launch.command.count("--device") == 1
+        assert launch.command[launch.command.index("--device") + 1] == expected
+        assert launch.device == expected
+        assert launch.vram_device == (expected if expected.startswith("cuda:") else None)
+        assert detections == ([detected] if selection is None else [])
+    finally:
+        supervisor.shutdown()
+
+
+def test_unequal_worker_devices_keep_memory_and_launch_binding_with_one_processing_budget(
+    worker_device_config, available_cuda_devices
+):
+    manager, config_for = worker_device_config
+    supervisor = _build_worker_supervisor(config_for("cuda:1", "cuda:0"), manager)
+    try:
+        first, second = supervisor.launches
+        for launch, device, capacity in ((first, "cuda:1", 24), (second, "cuda:0", 8)):
+            assert launch.vram_device == device
+            assert launch.device == device
+            assert launch.command[launch.command.index("--device") + 1] == device
+            assert launch.max_vram_bytes == capacity * 1024**3 // 2
+            assert launch.vram_pool_bytes == capacity * 1024**3 // 2
+            assert launch.command[launch.command.index("--max_device_memory") + 1] == str(launch.max_vram_bytes)
+            assert launch.command[launch.command.index("--max_processing_percent") + 1] == "25.0"
+        assert (
+            first.command[first.command.index("--processing_budget_path") + 1]
+            == second.command[second.command.index("--processing_budget_path") + 1]
+        )
+    finally:
+        supervisor.shutdown()
+
+
+@pytest.mark.parametrize("selection", ["cuda:2", "cuda:-1", "not-a-device", "meta", "cpu:1", "mps:1"])
+def test_invalid_selected_worker_device_fails_without_automatic_fallback(
+    monkeypatch, worker_device_config, available_cuda_devices, selection
+):
+    manager, config_for = worker_device_config
+    monkeypatch.setattr(
+        run_node_module, "auto_detect_device", lambda: pytest.fail("an explicit device must not fall back")
+    )
+    with pytest.raises(NodeConfigError, match="device-worker-0.*device"):
+        _build_worker_supervisor(config_for(selection), manager)
+
+
+def test_unavailable_selected_cuda_device_fails_before_memory_or_fallback(
+    monkeypatch, worker_device_config, available_cuda_devices
+):
+    manager, config_for = worker_device_config
+    monkeypatch.setattr(run_node_module.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(run_node_module, "auto_detect_device", lambda: pytest.fail("selected CUDA must not fall back"))
+    monkeypatch.setattr(
+        run_node_module, "get_device_total_memory", lambda device: pytest.fail("unavailable memory probe")
+    )
+    with pytest.raises(NodeConfigError, match="device-worker-0.*cuda:1.*unavailable"):
+        _build_worker_supervisor(config_for("cuda:1"), manager)
+
+
+@pytest.mark.parametrize(
+    "selection,cuda_count,xpu_count,expected",
+    [
+        ("cuda:15", 20, 0, "cuda:15"),
+        ("cuda:16", 20, 0, None),
+        ("xpu:0", 16, 2, None),
+        ("xpu", 15, 2, "xpu:0"),
+        ("xpu:1", 15, 2, None),
+        ("mps:0", 14, 1, "mps"),
+        ("mps", 15, 1, None),
+    ],
+)
+def test_worker_device_selection_matches_the_bounded_total_inventory(
+    monkeypatch, selection, cuda_count, xpu_count, expected
+):
+    for backend_name, count in (("cuda", cuda_count), ("xpu", xpu_count)):
+        backend = getattr(run_node_module.torch, backend_name)
+        monkeypatch.setattr(backend, "is_available", lambda count=count: count > 0)
+        monkeypatch.setattr(backend, "device_count", lambda count=count: count)
+    monkeypatch.setattr(run_node_module.torch.mps, "is_available", lambda: True)
+    if expected is None:
+        with pytest.raises(NodeConfigError, match="selected device.*exceeds.*16"):
+            run_node_module._resolve_worker_device("bounded-worker", selection)
+    else:
+        assert str(run_node_module._resolve_worker_device("bounded-worker", selection)) == expected
+
+
+def test_selected_device_probe_failure_is_a_visible_configuration_error(monkeypatch, available_cuda_devices):
+    def broken_count():
+        raise RuntimeError("driver unavailable")
+
+    monkeypatch.setattr(run_node_module.torch.cuda, "device_count", broken_count)
+    with pytest.raises(NodeConfigError, match="selected-worker.*cannot verify.*cuda:1"):
+        run_node_module._resolve_worker_device("selected-worker", "cuda:1")
+
+
+@pytest.mark.parametrize("kind", ["cuda", "xpu", "mps"])
+def test_worker_rejects_accelerators_without_supported_memory_telemetry(monkeypatch, worker_device_config, kind):
+    for backend_name in ("cuda", "xpu", "mps"):
+        monkeypatch.setattr(run_node_module.torch, backend_name, SimpleNamespace(is_available=lambda: False))
+    monkeypatch.setattr(run_node_module.torch, kind, SimpleNamespace(is_available=lambda: True, device_count=lambda: 1))
+    # A memory helper fallback or a cached value must not turn missing native
+    # telemetry into permission to reserve host RAM as accelerator memory.
+    monkeypatch.setattr(run_node_module, "get_device_total_memory", lambda device: 16 * 1024**3)
+    manager, config_for = worker_device_config
+    with pytest.raises(NodeConfigError, match="device-worker-0.*unsupported.*memory telemetry"):
+        _build_worker_supervisor(config_for(kind), manager)
+
+
+@pytest.mark.parametrize(
+    "kind,capacity",
+    [("cuda", value) for value in (True, 0, -1, 1.5, "16000", 2**63)] + [("mps", True), ("mps", 1.5)],
+)
+def test_worker_rejects_invalid_accelerator_capacity(
+    monkeypatch, worker_device_config, available_cuda_devices, kind, capacity
+):
+    monkeypatch.setattr(run_node_module, "get_device_total_memory", lambda device: capacity)
+    if kind == "mps":
+        monkeypatch.setattr(
+            run_node_module.torch,
+            "mps",
+            SimpleNamespace(is_available=lambda: True, recommended_max_memory=lambda: capacity),
+        )
+    manager, config_for = worker_device_config
+    with pytest.raises(NodeConfigError, match=f"device-worker-0.*cannot resolve max_vram for {kind}"):
+        _build_worker_supervisor(config_for(kind), manager)
 
 
 def test_contribution_telemetry_providers_are_core_runtime_dependencies():
@@ -1184,7 +1378,7 @@ def test_contribution_policy_rejects_invalid_vram_limits(value):
         )
 
 
-def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tmp_path):
+def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tmp_path, available_cuda_devices):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
@@ -1234,7 +1428,7 @@ def test_accelerator_worker_inherits_tighter_resolved_vram_limit(monkeypatch, tm
 
 
 @pytest.mark.parametrize("sharing_percent", [25, 100])
-def test_fallback_never_reduces_worker_sharing_budget(monkeypatch, tmp_path, sharing_percent):
+def test_fallback_never_reduces_worker_sharing_budget(monkeypatch, tmp_path, sharing_percent, available_cuda_devices):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
@@ -1278,7 +1472,7 @@ def test_fallback_never_reduces_worker_sharing_budget(monkeypatch, tmp_path, sha
         manager.shutdown()
 
 
-def test_power_monitor_is_scoped_to_each_cuda_workers_device(monkeypatch, tmp_path):
+def test_power_monitor_is_scoped_to_each_cuda_workers_device(monkeypatch, tmp_path, available_cuda_devices):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
@@ -1290,6 +1484,10 @@ def test_power_monitor_is_scoped_to_each_cuda_workers_device(monkeypatch, tmp_pa
     monitor_devices = []
 
     class FakePowerMonitor:
+        @classmethod
+        def from_cuda_device(cls, visible_index):
+            return cls([visible_index])
+
         def __init__(self, device_indices):
             self.device_indices = tuple(device_indices)
             monitor_devices.append(self.device_indices)
@@ -1333,7 +1531,7 @@ def test_power_monitor_is_scoped_to_each_cuda_workers_device(monkeypatch, tmp_pa
     manager.shutdown()
 
 
-def test_accelerator_worker_requires_node_wide_vram_pool(monkeypatch, tmp_path):
+def test_accelerator_worker_requires_node_wide_vram_pool(monkeypatch, tmp_path, available_cuda_devices):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")

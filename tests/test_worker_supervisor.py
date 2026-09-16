@@ -13,6 +13,7 @@ import pytest
 
 from drift.node import worker_supervisor as worker_module
 from drift.node.worker_supervisor import (
+    NvidiaPowerMonitor,
     SystemBandwidthMonitor,
     WorkerLaunch,
     WorkerPolicyError,
@@ -668,6 +669,122 @@ def test_vram_pool_defers_second_worker_until_first_releases_reservation():
     assert resumed["max_vram_bytes"] == 60
     assert resumed["vram_pool_bytes"] == 100
     supervisor.shutdown()
+
+
+def test_vram_pools_are_independent_and_worker_device_is_reported():
+    command = (sys.executable, "-c", "import time; time.sleep(30)")
+    launches = [
+        WorkerLaunch(
+            "first", "model", command, device="cuda:0", max_vram_bytes=60, vram_device="cuda:0", vram_pool_bytes=100
+        ),
+        WorkerLaunch(
+            "contender", "model", command, device="cuda:0", max_vram_bytes=60, vram_device="cuda:0", vram_pool_bytes=100
+        ),
+        WorkerLaunch(
+            "independent",
+            "model",
+            command,
+            device="cuda:1",
+            max_vram_bytes=120,
+            vram_device="cuda:1",
+            vram_pool_bytes=200,
+        ),
+    ]
+    supervisor = WorkerSupervisor(launches, stop_timeout=2)
+    try:
+        assert supervisor.start_worker("first")
+        assert supervisor.start_worker("independent")
+        with pytest.raises(WorkerPolicyError, match="already reserved on cuda:0"):
+            supervisor.start_worker("contender")
+        assert supervisor.snapshot("first")["device"] == "cuda:0"
+        independent = supervisor.snapshot("independent")
+        assert independent["device"] == "cuda:1"
+        assert independent["resource_admitted"]
+        assert independent["state"] == "running"
+        supervisor.pause_worker("first")
+        assert supervisor.start_worker("contender")
+        assert supervisor.snapshot("independent")["state"] == "running"
+    finally:
+        supervisor.shutdown()
+    assert all(snapshot["pid"] is None for snapshot in supervisor.snapshots())
+
+
+def test_same_device_pool_disagreement_is_rejected_before_spawn_or_replacement():
+    first = WorkerLaunch("first", "model", ("unused",), max_vram_bytes=40, vram_device="cuda:0", vram_pool_bytes=100)
+    second = replace(first, worker_id="second")
+    invalid = replace(second, vram_pool_bytes=200)
+    with pytest.raises(ValueError, match="same device.*VRAM pool"):
+        WorkerSupervisor([first, invalid])
+    with pytest.raises(ValueError, match="same device.*VRAM pool"):
+        WorkerSupervisorSettings((first, invalid), stop_timeout=2)
+    supervisor = WorkerSupervisor([first, second])
+    try:
+        with pytest.raises(ValueError, match="same device.*VRAM pool"):
+            supervisor.replace_launch(invalid)
+        assert supervisor.launches == (first, second)
+    finally:
+        supervisor.shutdown()
+
+
+@pytest.mark.parametrize(
+    "device", ["cuda", "cuda:00", "CUDA:0", "cuda:-1", "cuda:16", "xpu:999999", "GPU-private-id", "cpu"]
+)
+def test_vram_reservation_requires_canonical_accelerator_device(device):
+    with pytest.raises(ValueError, match="canonical accelerator device"):
+        WorkerLaunch("worker", "model", ("unused",), max_vram_bytes=10, vram_device=device, vram_pool_bytes=20)
+
+
+def test_worker_device_must_match_vram_reservation():
+    with pytest.raises(ValueError, match="match.*VRAM"):
+        WorkerLaunch(
+            "worker", "model", ("unused",), device="cuda:1", max_vram_bytes=10, vram_device="cuda:0", vram_pool_bytes=20
+        )
+
+
+@pytest.mark.parametrize("prefix", ["", "GPU-"])
+def test_cuda_power_mapping_uses_private_uuid_and_fails_closed_if_binding_changes(monkeypatch, prefix):
+    import torch
+
+    expected_uuid = "GPU-11111111-2222-3333-4444-555555555555"
+    selected = {"uuid": prefix + expected_uuid.removeprefix("GPU-")}
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,0")
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda ordinal: SimpleNamespace(uuid=selected["uuid"]))
+    calls = []
+    fake_nvml = SimpleNamespace(
+        nvmlInit=lambda: None,
+        nvmlDeviceGetHandleByUUID=lambda uuid: calls.append(uuid) or "physical-card-1",
+        nvmlDeviceGetHandleByIndex=lambda index: pytest.fail("CUDA ordinal must never be used as an NVML index"),
+        nvmlDeviceGetPowerUsage=lambda handle: 125_000 if handle == "physical-card-1" else pytest.fail("wrong card"),
+    )
+    monkeypatch.setitem(sys.modules, "pynvml", fake_nvml)
+    monitor = NvidiaPowerMonitor.from_cuda_device(0)
+    assert monitor() == 125.0
+    assert calls == [expected_uuid]
+    selected["uuid"] = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert monitor() is None
+    assert calls == [expected_uuid]
+    selected["uuid"] = expected_uuid
+    assert monitor() == 125.0
+    monkeypatch.setattr(
+        torch.cuda, "get_device_properties", lambda ordinal: (_ for _ in ()).throw(RuntimeError("missing"))
+    )
+    assert monitor() is None
+
+
+def test_cuda_power_without_usable_identity_never_falls_back_to_index(monkeypatch):
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda ordinal: SimpleNamespace())
+    monitor = NvidiaPowerMonitor.from_cuda_device(0)
+    assert monitor() is None
+    launch = WorkerLaunch("gpu", "model", ("unused",), max_power_watts=150)
+    supervisor = WorkerSupervisor([launch], power_watts=lambda worker_id: monitor())
+    try:
+        with pytest.raises(WorkerPolicyError, match="power telemetry is unavailable"):
+            supervisor.start_worker("gpu")
+        assert supervisor.snapshot("gpu")["pid"] is None
+    finally:
+        supervisor.shutdown()
 
 
 def test_system_bandwidth_monitor_uses_bounded_aggregate_samples():
