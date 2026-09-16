@@ -63,6 +63,20 @@ def contribution():
 
 
 class GpuInventoryClientTests(unittest.TestCase):
+    def test_optional_compute_scope_is_preserved_without_changing_legacy_policy(self):
+        legacy = contribution()
+        self.assertNotIn("processing_scope", _normalize_contribution_status(legacy)["policy"]["policy"])
+        for scope in ("node", "per_device"):
+            value = contribution()
+            value["policy"]["policy"]["processing_scope"] = scope
+            normalized = _normalize_contribution_status(value)
+            self.assertEqual(normalized["policy"]["policy"]["processing_scope"], scope)
+        for scope in (True, None, "gpu", [], {}):
+            value = contribution()
+            value["policy"]["policy"]["processing_scope"] = scope
+            with self.subTest(scope=scope), self.assertRaises(NodeClientError):
+                _normalize_contribution_status(value)
+
     def assert_invalid_hardware(self, value):
         with self.assertRaises(NodeClientError):
             _normalize_hardware(value)

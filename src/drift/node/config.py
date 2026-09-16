@@ -30,6 +30,17 @@ def _require_object(value: Any, field: str) -> Mapping[str, Any]:
     return value
 
 
+def _require_processing_percent(value: Any, field: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not 1 <= value <= 100
+        or not math.isfinite(value)
+    ):
+        raise NodeConfigError(f"{field} must be between 1 and 100")
+    return float(value)
+
+
 def _require_fields(
     value: Mapping[str, Any], field: str, *, required: Tuple[str, ...], optional: Tuple[str, ...] = ()
 ) -> None:
@@ -336,6 +347,7 @@ class ContributionPolicyConfig:
     max_power_watts: Optional[float] = None
     pause_timeout: float = 10.0
     schedule: Optional[ContributionScheduleConfig] = None
+    processing_scope: str = "node"
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any]) -> "ContributionPolicyConfig":
@@ -352,6 +364,7 @@ class ContributionPolicyConfig:
                 "max_disk_space",
                 "max_vram",
                 "max_processing_percent",
+                "processing_scope",
                 "max_bandwidth_mbps",
                 "max_power_watts",
                 "pause_timeout",
@@ -381,14 +394,12 @@ class ContributionPolicyConfig:
         else:
             max_vram, max_vram_bytes, max_vram_fraction = _require_vram_limit(max_vram_value, f"{field}.max_vram")
         sharing_enabled = _require_bool(source["sharing_enabled"], f"{field}.sharing_enabled")
-        processing = source.get("max_processing_percent", 100.0)
-        if (
-            isinstance(processing, bool)
-            or not isinstance(processing, (int, float))
-            or not math.isfinite(processing)
-            or not 1 <= processing <= 100
-        ):
-            raise NodeConfigError(f"{field}.max_processing_percent must be between 1 and 100")
+        processing = _require_processing_percent(
+            source.get("max_processing_percent", 100.0), f"{field}.max_processing_percent"
+        )
+        scope = source.get("processing_scope", "node")
+        if not isinstance(scope, str) or scope not in ("node", "per_device"):
+            raise NodeConfigError(f"{field}.processing_scope must be node or per_device")
         if sharing_enabled and max_disk_bytes is None:
             raise NodeConfigError(f"{field}.max_disk_space is required when sharing_enabled is true")
         return cls(
@@ -402,6 +413,7 @@ class ContributionPolicyConfig:
             max_vram_bytes=max_vram_bytes,
             max_vram_fraction=max_vram_fraction,
             max_processing_percent=float(processing),
+            processing_scope=scope,
             max_bandwidth_mbps=(
                 None
                 if source.get("max_bandwidth_mbps") is None
@@ -432,6 +444,8 @@ class ContributionPolicyConfig:
             "max_power_watts": self.max_power_watts,
             "pause_timeout": self.pause_timeout,
             "schedule": None if self.schedule is None else self.schedule.to_dict(),
+            # Preserve the existing strict-client policy document in legacy mode.
+            **({"processing_scope": self.processing_scope} if self.processing_scope != "node" else {}),
         }
 
 
@@ -460,6 +474,8 @@ class WorkerConfig:
     port: Optional[int] = None
     public_ip: Optional[str] = None
     public_port: Optional[int] = None
+    max_processing_percent: Optional[float] = None
+    managed_by: Optional[str] = None
 
     @classmethod
     def from_dict(cls, source: Mapping[str, Any], *, base_dir: Path, index: int) -> "WorkerConfig":
@@ -479,6 +495,8 @@ class WorkerConfig:
                 "cache_dir",
                 "max_disk_space",
                 "max_vram",
+                "max_processing_percent",
+                "managed_by",
                 "max_bandwidth_mbps",
                 "max_power_watts",
                 "throughput",
@@ -487,6 +505,9 @@ class WorkerConfig:
                 "public_port",
             ),
         )
+        managed_by = source.get("managed_by")
+        if managed_by is not None and (not isinstance(managed_by, str) or managed_by != "desktop_gpu"):
+            raise NodeConfigError(f"{field}.managed_by must be desktop_gpu or null")
         worker_id = _require_string(source["id"], f"{field}.id")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", worker_id):
             raise NodeConfigError(f"{field}.id must match [A-Za-z0-9][A-Za-z0-9._-]{{0,63}}")
@@ -575,7 +596,38 @@ class WorkerConfig:
             port=port,
             public_ip=optional_string("public_ip"),
             public_port=public_port,
+            max_processing_percent=(
+                None
+                if source.get("max_processing_percent") is None
+                else _require_processing_percent(source["max_processing_percent"], f"{field}.max_processing_percent")
+            ),
+            managed_by=managed_by,
         )
+
+
+def validate_processing_configuration(policy: ContributionPolicyConfig, workers: Tuple[WorkerConfig, ...]) -> None:
+    """Validate compute duty-cycle scope, including programmatic configurations.
+
+    Per-device mode has no additional node processing cap: the master UI edits
+    every worker allowance together. Loading, discovery and local inference are
+    outside this pacing contract; it is not an SM-utilization or power limit.
+    """
+    if not isinstance(policy.processing_scope, str) or policy.processing_scope not in ("node", "per_device"):
+        raise NodeConfigError("contribution_policy.processing_scope must be node or per_device")
+    _require_processing_percent(policy.max_processing_percent, "contribution_policy.max_processing_percent")
+    configured = {}
+    for worker in workers:
+        value = worker.max_processing_percent
+        if policy.processing_scope == "node":
+            if value is not None:
+                raise NodeConfigError("worker processing overrides require per_device processing scope")
+            continue
+        if not isinstance(worker.device, str) or not worker.device.strip():
+            raise NodeConfigError("per_device processing requires an explicit device for every worker")
+        _require_processing_percent(value, f"worker {worker.worker_id!r} max_processing_percent")
+        if worker.device in configured and configured[worker.device] != value:
+            raise NodeConfigError("workers sharing a device must use the same processing percentage")
+        configured[worker.device] = value
 
 
 @dataclass(frozen=True)
@@ -658,6 +710,7 @@ class NodeConfig:
         contribution_policy = (
             ContributionPolicyConfig() if policy_value is None else ContributionPolicyConfig.from_dict(policy_value)
         )
+        validate_processing_configuration(contribution_policy, workers)
         return cls(
             schema_version=schema_version,
             max_loaded_models=_require_positive_int(source.get("max_loaded_models", 1), "max_loaded_models"),

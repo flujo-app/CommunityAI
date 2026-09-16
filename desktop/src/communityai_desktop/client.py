@@ -245,11 +245,16 @@ def _normalize_policy(value: Any) -> Dict[str, Any]:
     }
     if (
         not isinstance(value, dict)
-        or set(value) not in (fields, fields | {"max_processing_percent"})
+        or not fields <= set(value) <= fields | {"max_processing_percent", "processing_scope"}
         or not isinstance(value["sharing_enabled"], bool)
     ):
         raise NodeClientError("Local node contribution policy is malformed")
     processing = {}
+    if "processing_scope" in value:
+        scope = value["processing_scope"]
+        if not isinstance(scope, str) or scope not in ("node", "per_device"):
+            raise NodeClientError("Local node has invalid processing scope")
+        processing["processing_scope"] = scope
     if "max_processing_percent" in value:
         percent = _optional_number(value["max_processing_percent"], "processing percentage", positive=True)
         if percent is None or not 1 <= percent <= 100:

@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 
 from drift.node.config import ContributionPolicyConfig, NodeConfig, NodeConfigError
 from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
+from drift.node.gpu_selection_tokens import GpuSelectionTokens
 from drift.node.worker_selection import candidate_selection, enroll_selection, validate_selection_request
 from drift.node.worker_supervisor import WorkerReconfigurationBusyError, WorkerSupervisor, WorkerSupervisorSettings
 
@@ -168,6 +169,7 @@ class ContributionPolicyStore:
         self._prepare = prepare
         self._lock = threading.Lock()
         self._restart_pending = False
+        self._gpu_selection_tokens = GpuSelectionTokens()
         document, payload = self._read()
         config = NodeConfig.from_dict(document, base_dir=self.path.parent)
         if expected_config is not None and config != expected_config:
@@ -336,6 +338,11 @@ class ContributionPolicyStore:
         if self._restart_pending:
             raise WorkerReconfigurationBusyError("node configuration restart is pending")
 
+    def gpu_selection_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            self._require_no_restart()
+            return self._gpu_selection_tokens.snapshot(self._revision)
+
     def update_worker_selection(self, request: dict, *, manager) -> dict[str, Any]:
         """Commit paused worker membership only while execution is quiescent.
 
@@ -358,10 +365,16 @@ class ContributionPolicyStore:
 
             def persist():
                 if device is not None:
+                    if "selection_token" in request:
+                        self._gpu_selection_tokens.verify(device, self._revision, request["selection_token"])
                     # Never publish a config whose first physical pin is deferred
                     # until restart: a reordered ordinal could select another card.
                     # A failed save may retain a private, never-reused orphan pin.
-                    enroll_selection(config, worker_id)
+                    binding = enroll_selection(config, worker_id)
+                    if "selection_token" in request:
+                        self._gpu_selection_tokens.verify_enrolled(
+                            device, self._revision, request["selection_token"], binding.cuda_visible_devices
+                        )
                 self._prepare(config)
                 self._atomic_replace(encoded, expected_revision=self._revision)
 

@@ -14,6 +14,7 @@ import drift.node.worker_selection as selection_module
 from drift.node.config import NodeConfig, NodeConfigError
 from drift.node.config_lock import node_config_write_lock
 from drift.node.device_binding import DeviceBindingError, DeviceBindingStore
+from drift.node.gpu_selection_tokens import GpuSelectionChangedError, GpuSelectionTokens
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelManagerClosedError, ModelRuntime
 from drift.node.policy_store import (
     ContributionPolicyConflictError,
@@ -237,6 +238,7 @@ def test_add_only_first_worker_and_reselection_does_not_invent_spans(runtime):
         {
             "model": "auto",
             "num_blocks": 1,
+            "managed_by": "desktop_gpu",
             "id": worker_id,
             "identity_path": f"worker-identities/{worker_id}.key",
             "device": device,
@@ -254,6 +256,30 @@ def test_first_card_creation_is_durable_pinned_and_paused(runtime):
     assert worker.num_blocks == 1 and worker.enabled is False and worker.device == "cuda:1"
     assert runtime.supervisor.configuration_restart_pending
     assert len(list(worker.identity_path.parent.glob(".*.device-binding/*.json"))) == 1
+
+
+def test_remove_last_per_device_worker_then_reload_and_add_first_card(runtime):
+    document = runtime.document
+    document["contribution_policy"].update(processing_scope="per_device", max_processing_percent=17)
+    document["workers"][0]["max_processing_percent"] = 25
+    runtime.path.write_text(json.dumps(document), encoding="utf-8")
+    runtime.store = ContributionPolicyStore(runtime.path, runtime.supervisor, settings)
+    apply(runtime, "remove")
+    assert NodeConfig.load(runtime.path).workers == ()
+    manager = ModelManager()
+    supervisor = WorkerSupervisor(())
+    try:
+        store = ContributionPolicyStore(runtime.path, supervisor, settings)
+        store.update_worker_selection(request(store.snapshot()["config_revision"], "add"), manager=manager)
+        saved = NodeConfig.load(runtime.path)
+        assert saved.workers[0].max_processing_percent == 100
+        assert saved.workers[0].managed_by == "desktop_gpu"
+        assert saved.workers[0].enabled is False
+        assert saved.contribution_policy.processing_scope == "per_device"
+        assert saved.contribution_policy.max_processing_percent == 17
+    finally:
+        supervisor.shutdown()
+        manager.shutdown()
 
 
 @pytest.mark.parametrize("operation", ["reselect", "remove"])
@@ -421,3 +447,37 @@ def test_cancelled_http_await_still_signals_completed_transaction(runtime, monke
     asyncio.run(scenario())
     assert runtime.supervisor.configuration_restart_pending
     assert json.loads(runtime.path.read_bytes())["workers"][0]["device"] == "cuda:1"
+
+
+def test_gpu_tokens_require_control_key_and_apply_the_same_displayed_card(runtime):
+    runtime.store._gpu_selection_tokens = GpuSelectionTokens(
+        devices=lambda: ("cuda:0", "cuda:1"), identity=lambda device: CUDA_UUID, live=lambda identity: True
+    )
+    restarts = []
+    with TestClient(app_for(runtime, lambda: restarts.append(True))) as client:
+        url = "/control/v1/contribution-gpu-devices"
+        assert client.get(url).status_code == 401
+        assert client.get(url, headers={"Authorization": "Bearer client-key"}).status_code == 401
+        snapshot = client.get(url, headers=CONTROL).json()
+        assert snapshot["config_revision"] == revision(runtime)
+        row = snapshot["devices"][1]
+        response = client.put(URL, json=request(revision(runtime), **row), headers=CONTROL)
+        assert response.status_code == 202, response.text
+        assert restarts == [True]
+        assert client.get(url, headers=CONTROL).status_code == 409
+
+
+def test_card_change_between_token_check_and_enrollment_never_commits(runtime, monkeypatch):
+    original = runtime.path.read_bytes()
+    provider = GpuSelectionTokens(
+        devices=lambda: ("cuda:1",), identity=lambda device: CUDA_UUID, live=lambda identity: True
+    )
+    runtime.store._gpu_selection_tokens = provider
+    token = provider.snapshot(revision(runtime))["devices"][0]["selection_token"]
+    monkeypatch.setattr(binding_module, "_cuda_identity", lambda device: OTHER_UUID)
+    monkeypatch.setattr(binding_module, "_DEFAULT_LIVENESS_PROBE", lambda identity: True)
+    with pytest.raises(GpuSelectionChangedError):
+        apply(runtime, selection_token=token)
+    assert runtime.path.read_bytes() == original and not runtime.supervisor.configuration_restart_pending
+    with runtime.manager.load("model"):
+        pass

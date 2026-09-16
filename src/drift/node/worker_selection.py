@@ -30,6 +30,8 @@ def validate_selection_request(request: Any) -> dict:
         fields.add("worker_id")
     if operation != "remove":
         fields.add("device")
+        if "selection_token" in request:
+            fields.add("selection_token")
     if set(request) != fields:
         raise NodeConfigError("worker selection has missing or unknown fields")
     if type(request["schema_version"]) is not int or request["schema_version"] != 1:
@@ -49,6 +51,11 @@ def validate_selection_request(request: Any) -> dict:
             or int(device.split(":")[1]) >= MAX_VISIBLE_ACCELERATORS
         ):
             raise NodeConfigError("worker selection currently supports visible CUDA cards only")
+        token = request.get("selection_token")
+        if "selection_token" in request and (
+            not isinstance(token, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", token) is None
+        ):
+            raise NodeConfigError("worker selection has an invalid device token")
     return dict(request)
 
 
@@ -111,7 +118,12 @@ def candidate_selection(document: dict, request: dict, *, base_dir: Path) -> tup
     if operation == "add":
         if workers:
             raise NodeConfigError("additional GPU allocation is not configured; reselect an existing worker")
-        worker = {"model": "auto", "num_blocks": 1}
+        worker = {"model": "auto", "num_blocks": 1, "managed_by": "desktop_gpu"}
+        if result.get("contribution_policy", {}).get("processing_scope") == "per_device":
+            # There is no previous card allowance in an empty configuration.
+            # Use an explicit uncapped default, still saved disabled. The full
+            # multi-card operation will require each user-chosen allowance.
+            worker["max_processing_percent"] = 100
         workers.append(worker)
     else:
         worker = next((item for item in workers if item["id"].casefold() == request["worker_id"].casefold()), None)
@@ -131,9 +143,9 @@ def candidate_selection(document: dict, request: dict, *, base_dir: Path) -> tup
     return result, worker_id, device
 
 
-def enroll_selection(config, worker_id: str) -> None:
+def enroll_selection(config, worker_id: str):
     """Pin the chosen physical card before the durable configuration commit."""
     worker = next(item for item in config.workers if item.worker_id == worker_id)
-    DeviceBindingStore(worker.identity_path.with_name(f".{worker.identity_path.name}.device-binding")).bind(
+    return DeviceBindingStore(worker.identity_path.with_name(f".{worker.identity_path.name}.device-binding")).bind(
         worker.worker_id, worker.device
     )

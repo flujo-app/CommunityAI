@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import threading
 import time
 from collections import deque
@@ -15,6 +16,49 @@ from drift.node.route_metrics import RouteUtilityObservation, validate_route_obs
 MAX_AUTOMATIC_PLACEMENT_CANDIDATES = 32
 MAX_AUTOMATIC_PLACEMENT_BLOCKS = 512
 MODEL_DISPERSION_POINTS = 32.0
+MAX_JOINT_PLACEMENT_WORKERS = 16
+_WORKER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def _normalize_excluded_spans(
+    value: Optional[Mapping[str, Sequence[tuple[int, int]]]],
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("automatic placement exclusions must be a mapping")
+    if len(value) > MAX_AUTOMATIC_PLACEMENT_CANDIDATES:
+        raise ValueError(
+            f"automatic placement exclusions support at most {MAX_AUTOMATIC_PLACEMENT_CANDIDATES} manifests"
+        )
+    result = {}
+    for manifest_digest, ranges in value.items():
+        if not isinstance(manifest_digest, str) or not manifest_digest:
+            raise ValueError("automatic placement exclusion manifest must be a non-empty string")
+        if isinstance(ranges, (str, bytes)) or not isinstance(ranges, Sequence):
+            raise ValueError("automatic placement exclusion ranges must be a sequence")
+        if len(ranges) > MAX_JOINT_PLACEMENT_WORKERS:
+            raise ValueError(
+                f"automatic placement exclusions support at most {MAX_JOINT_PLACEMENT_WORKERS} ranges per manifest"
+            )
+        normalized = []
+        for item in ranges:
+            if (
+                not isinstance(item, (tuple, list))
+                or len(item) != 2
+                or any(isinstance(part, bool) or not isinstance(part, int) for part in item)
+                or item[0] < 0
+                or item[1] <= item[0]
+                or item[1] > MAX_AUTOMATIC_PLACEMENT_BLOCKS
+            ):
+                raise ValueError("automatic placement exclusion must be a non-empty non-negative range")
+            normalized.append((item[0], item[1]))
+        result[manifest_digest] = tuple(normalized)
+    return result
+
+
+def _overlaps_any(start: int, end: int, ranges: Sequence[tuple[int, int]]) -> bool:
+    return any(start < reserved_end and reserved_start < end for reserved_start, reserved_end in ranges)
 
 
 @dataclass(frozen=True)
@@ -194,7 +238,12 @@ class AutomaticContributionPlanner:
         reliability = observation.reliability_milli / 1000
         return cap * demand * useful_throughput * reliability, observation
 
-    def _evaluate(self, candidate: PlacementCandidate) -> tuple[Optional[PlacementDecision], str]:
+    def _evaluate(
+        self,
+        candidate: PlacementCandidate,
+        *,
+        excluded_spans: Sequence[tuple[int, int]] = (),
+    ) -> tuple[Optional[PlacementDecision], str]:
         if candidate.policy_reason is not None:
             return None, candidate.policy_reason
         if self.num_blocks > candidate.total_blocks:
@@ -252,6 +301,7 @@ class AutomaticContributionPlanner:
         window_sum = 0
         best_key = None
         best_start = 0
+        unreserved_window = False
         for index, count in enumerate(counts):
             window_sum += count
             while maxima and counts[maxima[-1]] <= count:
@@ -266,6 +316,9 @@ class AutomaticContributionPlanner:
                 continue
             start = index - self.num_blocks + 1
             end = start + self.num_blocks
+            if _overlaps_any(start, end, excluded_spans):
+                continue
+            unreserved_window = True
             artifact_plan = artifact_plans.get((start, end))
             if (
                 artifact_plan is not None
@@ -284,6 +337,8 @@ class AutomaticContributionPlanner:
                 best_key = key
                 best_start = start
         if best_key is None:
+            if not unreserved_window:
+                return None, f"every {self.num_blocks}-block span is reserved by another local worker"
             return None, (
                 f"every {self.num_blocks}-block artifact set exceeds the "
                 f"{candidate.max_artifact_bytes}-byte disk budget"
@@ -344,8 +399,10 @@ class AutomaticContributionPlanner:
         *,
         sharing_enabled: bool,
         now: Optional[float] = None,
+        excluded_spans: Optional[Mapping[str, Sequence[tuple[int, int]]]] = None,
     ) -> PlacementPlan:
         now = self._clock() if now is None else now
+        exclusions = _normalize_excluded_spans(excluded_spans)
         if not sharing_enabled:
             return PlacementPlan(None, "sharing is disabled by contribution policy", len(candidates))
         if len(candidates) > MAX_AUTOMATIC_PLACEMENT_CANDIDATES:
@@ -358,7 +415,10 @@ class AutomaticContributionPlanner:
         eligible: list[PlacementDecision] = []
         rejected = []
         for candidate in candidates:
-            decision, reason = self._evaluate(candidate)
+            decision, reason = self._evaluate(
+                candidate,
+                excluded_spans=exclusions.get(candidate.manifest_digest, ()),
+            )
             if decision is None:
                 rejected.append(f"{candidate.model_id}: {reason}")
             else:
@@ -381,8 +441,17 @@ class AutomaticContributionPlanner:
             current_candidate = next(
                 candidate for candidate in candidates if candidate.manifest_digest == self._current.manifest_digest
             )
-            if current_candidate.artifact_plans:
+            try:
                 start, end = (int(value) for value in self._current.block_indices.split(":"))
+            except (AttributeError, TypeError, ValueError):
+                current_assignment_is_eligible = False
+            else:
+                current_assignment_is_eligible = (
+                    end - start == self.num_blocks
+                    and 0 <= start < end <= current_candidate.total_blocks
+                    and not _overlaps_any(start, end, exclusions.get(current_candidate.manifest_digest, ()))
+                )
+            if current_assignment_is_eligible and current_candidate.artifact_plans:
                 plan = next(
                     (
                         plan
@@ -391,7 +460,7 @@ class AutomaticContributionPlanner:
                     ),
                     None,
                 )
-                current_assignment_is_eligible = (
+                current_assignment_is_eligible = current_assignment_is_eligible and (
                     plan is not None
                     and (
                         current_candidate.max_artifact_bytes is None
@@ -445,18 +514,233 @@ class AutomaticContributionPlanner:
         self._current = decision
         return plan
 
+    @property
+    def current_decision(self) -> Optional[PlacementDecision]:
+        """Return the last externally accepted decision without changing it."""
+
+        return self._current
+
     def plan(
         self,
         candidates: Sequence[PlacementCandidate],
         *,
         sharing_enabled: bool,
         now: Optional[float] = None,
+        excluded_spans: Optional[Mapping[str, Sequence[tuple[int, int]]]] = None,
     ) -> PlacementPlan:
         now = self._clock() if now is None else now
         return self.commit(
-            self.propose(candidates, sharing_enabled=sharing_enabled, now=now),
+            self.propose(
+                candidates,
+                sharing_enabled=sharing_enabled,
+                now=now,
+                excluded_spans=excluded_spans,
+            ),
             now=now,
         )
+
+
+def _normalize_worker_mapping(value: Mapping[str, Any], label: str) -> dict[str, tuple[str, Any]]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"joint placement {label} must be a mapping")
+    if len(value) > MAX_JOINT_PLACEMENT_WORKERS:
+        raise ValueError(f"joint placement {label} supports at most {MAX_JOINT_PLACEMENT_WORKERS} workers")
+    result = {}
+    for worker_id, item in value.items():
+        if not isinstance(worker_id, str) or _WORKER_ID.fullmatch(worker_id) is None:
+            raise ValueError(f"joint placement {label} worker IDs must be canonical and at most 64 characters")
+        normalized = worker_id.casefold()
+        if normalized in result:
+            raise ValueError(f"joint placement {label} contains case-insensitively duplicate worker IDs")
+        result[normalized] = (worker_id, item)
+    return result
+
+
+def _retained_span(
+    plan: PlacementPlan,
+    planner: AutomaticContributionPlanner,
+    candidates: Sequence[PlacementCandidate],
+) -> tuple[str, int, int]:
+    if not isinstance(plan, PlacementPlan):
+        raise ValueError("joint placement retained plans must be PlacementPlan instances")
+    if plan.decision is None or not plan.intent_published or not plan.remote_acknowledged:
+        raise ValueError("joint placement can retain only acknowledged non-empty plans")
+    if (
+        isinstance(plan.evaluated_models, bool)
+        or not isinstance(plan.evaluated_models, int)
+        or plan.evaluated_models < 0
+    ):
+        raise ValueError("joint placement retained plan has an invalid evaluated-model count")
+    if not isinstance(plan.reason, str) or not plan.reason:
+        raise ValueError("joint placement retained plan has an invalid reason")
+
+    decision = plan.decision
+    if planner.current_decision != decision:
+        raise ValueError("joint placement can retain only the planner's last accepted decision")
+    if (
+        not isinstance(decision.model_id, str)
+        or not decision.model_id
+        or not isinstance(decision.manifest_digest, str)
+        or not decision.manifest_digest
+        or not isinstance(decision.block_indices, str)
+    ):
+        raise ValueError("joint placement retained decision has an invalid identity")
+    match = re.fullmatch(r"(0|[1-9][0-9]*):(0|[1-9][0-9]*)", decision.block_indices)
+    if match is None:
+        raise ValueError("joint placement retained decision has an invalid block range")
+    start, end = int(match.group(1)), int(match.group(2))
+    if end - start != planner.num_blocks:
+        raise ValueError("joint placement retained decision has a mismatched block count")
+    if (
+        isinstance(decision.artifact_bytes, bool)
+        or not isinstance(decision.artifact_bytes, int)
+        or decision.artifact_bytes < 0
+        or not isinstance(decision.replica_counts, tuple)
+        or len(decision.replica_counts) != planner.num_blocks
+        or any(isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in decision.replica_counts)
+        or isinstance(decision.score, bool)
+        or not isinstance(decision.score, (int, float))
+        or not math.isfinite(decision.score)
+        or not isinstance(decision.reason, str)
+        or not decision.reason
+        or (
+            decision.artifact_set_digest is not None
+            and (
+                not isinstance(decision.artifact_set_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", decision.artifact_set_digest) is None
+            )
+        )
+    ):
+        raise ValueError("joint placement retained decision has invalid bounded metadata")
+
+    candidate = next(
+        (
+            item
+            for item in candidates
+            if item.manifest_digest == decision.manifest_digest and item.model_id == decision.model_id
+        ),
+        None,
+    )
+    if candidate is None or not 0 <= start < end <= candidate.total_blocks:
+        raise ValueError("joint placement retained decision does not match a current candidate")
+    if candidate.artifact_plans:
+        artifact_plan = next(
+            (item for item in candidate.artifact_plans if (item.start_block, item.end_block) == (start, end)),
+            None,
+        )
+        if (
+            artifact_plan is None
+            or artifact_plan.artifact_bytes != decision.artifact_bytes
+            or artifact_plan.artifact_set_digest != decision.artifact_set_digest
+        ):
+            raise ValueError("joint placement retained decision has a stale artifact binding")
+    elif decision.artifact_bytes != candidate.artifact_bytes or decision.artifact_set_digest is not None:
+        raise ValueError("joint placement retained decision has a stale artifact binding")
+    return decision.manifest_digest, start, end
+
+
+def propose_joint_placements(
+    planners: Mapping[str, AutomaticContributionPlanner],
+    candidates_by_worker: Mapping[str, Sequence[PlacementCandidate]],
+    *,
+    sharing_enabled: bool,
+    retained_plans: Optional[Mapping[str, PlacementPlan]] = None,
+    now: Optional[float] = None,
+) -> dict[str, PlacementPlan]:
+    """Propose a bounded, deterministic set of non-overlapping local spans.
+
+    This helper is deliberately side-effect free with respect to planner
+    hysteresis. Callers publish and validate external intent leases first, then
+    call each planner's ``commit`` only for the final accepted plan. Partial
+    per-worker acceptance is not safe by itself: if publication falls back to an
+    old span, the service MUST revalidate the complete final mapping and retire
+    every conflicting old worker as a batch before installing any new plan.
+    """
+
+    normalized_planners = _normalize_worker_mapping(planners, "planners")
+    normalized_candidates = _normalize_worker_mapping(candidates_by_worker, "candidate sets")
+    if set(normalized_planners) != set(normalized_candidates):
+        raise ValueError("joint placement planners and candidate sets must have identical worker IDs")
+    if len(normalized_planners) > MAX_JOINT_PLACEMENT_WORKERS:
+        raise ValueError(f"joint placement supports at most {MAX_JOINT_PLACEMENT_WORKERS} workers")
+    if len({id(item[1]) for item in normalized_planners.values()}) != len(normalized_planners):
+        raise ValueError("joint placement workers must not share planner instances")
+
+    candidate_sets = {}
+    for normalized, (_, values) in normalized_candidates.items():
+        if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+            raise ValueError("joint placement candidates must be sequences")
+        if len(values) > MAX_AUTOMATIC_PLACEMENT_CANDIDATES:
+            raise ValueError(
+                f"joint placement supports at most {MAX_AUTOMATIC_PLACEMENT_CANDIDATES} candidates per worker"
+            )
+        values = tuple(values)
+        if any(not isinstance(item, PlacementCandidate) for item in values):
+            raise ValueError("joint placement candidates must be PlacementCandidate instances")
+        candidate_sets[normalized] = values
+
+    normalized_retained = _normalize_worker_mapping(
+        {} if retained_plans is None else retained_plans,
+        "retained plans",
+    )
+    if not set(normalized_retained).issubset(normalized_planners):
+        raise ValueError("joint placement retained plans contain an unknown worker")
+
+    reservations: dict[str, list[tuple[int, int]]] = {}
+    retained_spans = {}
+    for normalized in sorted(normalized_retained):
+        plan = normalized_retained[normalized][1]
+        planner = normalized_planners[normalized][1]
+        manifest_digest, start, end = _retained_span(plan, planner, candidate_sets[normalized])
+        ranges = reservations.setdefault(manifest_digest, [])
+        if _overlaps_any(start, end, ranges):
+            raise ValueError("joint placement retained plans overlap on one manifest")
+        ranges.append((start, end))
+        retained_spans[normalized] = (manifest_digest, start, end)
+
+    order = sorted(
+        normalized_planners,
+        key=lambda worker_id: (
+            0 if worker_id in retained_spans else 1,
+            -normalized_planners[worker_id][1].num_blocks,
+            worker_id,
+        ),
+    )
+    result = {}
+    accepted_spans = {}
+    for normalized in order:
+        previous = retained_spans.get(normalized)
+        if previous is not None:
+            manifest_digest, start, end = previous
+            reservations[manifest_digest].remove((start, end))
+        planner = normalized_planners[normalized][1]
+        proposal = planner.propose(
+            candidate_sets[normalized],
+            sharing_enabled=sharing_enabled,
+            now=now,
+            excluded_spans=reservations,
+        )
+        decision = proposal.decision
+        if decision is not None:
+            match = re.fullmatch(r"(0|[1-9][0-9]*):(0|[1-9][0-9]*)", decision.block_indices)
+            if match is None:
+                raise ValueError("joint placement planner returned an invalid block range")
+            start, end = int(match.group(1)), int(match.group(2))
+            ranges = reservations.setdefault(decision.manifest_digest, [])
+            if _overlaps_any(start, end, ranges):
+                raise ValueError("joint placement planner returned overlapping local spans")
+            ranges.append((start, end))
+            accepted_spans[normalized] = (decision.manifest_digest, start, end)
+        original_worker_id = normalized_planners[normalized][0]
+        result[original_worker_id] = proposal
+
+    spans_by_manifest: dict[str, list[tuple[int, int]]] = {}
+    for manifest_digest, start, end in accepted_spans.values():
+        ranges = spans_by_manifest.setdefault(manifest_digest, [])
+        if _overlaps_any(start, end, ranges):
+            raise ValueError("joint placement result contains overlapping local spans")
+        ranges.append((start, end))
+    return result
 
 
 class AutomaticPlacementService:

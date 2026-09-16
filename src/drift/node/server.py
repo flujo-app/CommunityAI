@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse
 from drift.api.server import create_app
 from drift.node.config import ContributionPolicyConfig, NodeConfigError
 from drift.node.device_binding import DeviceBindingError
+from drift.node.gpu_selection_tokens import GpuSelectionChangedError
 from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.node.keys import ApiKeyNotFoundError, ApiKeyStore, ApiKeyStoreError, LastActiveKeyError
 from drift.node.model_manager import (
@@ -348,7 +349,7 @@ def create_node_app(
             raise HTTPException(
                 status_code=409, detail="pause sharing and finish active inference; wait for any pending node restart"
             ) from exc
-        except DeviceBindingError as exc:
+        except (DeviceBindingError, GpuSelectionChangedError) as exc:
             raise HTTPException(status_code=409, detail="this GPU is unavailable or changed; select it again") from exc
         except NodeConfigError as exc:
             raise HTTPException(
@@ -360,6 +361,17 @@ def create_node_app(
             ) from exc
         # Uvicorn's graceful shutdown waits for this active request to finish.
         return JSONResponse(result, status_code=202)
+
+    @app.get("/control/v1/contribution-gpu-devices")
+    async def contribution_gpu_devices(request: Request):
+        check_control_auth(request)
+        store = require_policy_store()
+        if request_restart is None:
+            raise HTTPException(status_code=501, detail="worker selection reload is not configured")
+        try:
+            return await asyncio.get_running_loop().run_in_executor(None, store.gpu_selection_snapshot)
+        except WorkerReconfigurationBusyError as exc:
+            raise HTTPException(status_code=409, detail="node configuration restart is pending") from exc
 
     @app.put("/control/v1/contribution-policy")
     async def update_contribution_policy(request: Request):

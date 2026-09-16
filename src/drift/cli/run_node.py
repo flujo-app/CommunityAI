@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import secrets
 import sys
@@ -18,7 +19,13 @@ from hivemind.utils.timed_storage import get_dht_time
 import drift
 from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest, select_manifest_block_artifacts
 from drift.node.catalog_refresh import CatalogRefreshService, load_configured_catalog
-from drift.node.config import NODE_CONFIG_SCHEMA_VERSION, NodeConfig, NodeConfigError, NodeModelConfig
+from drift.node.config import (
+    NODE_CONFIG_SCHEMA_VERSION,
+    NodeConfig,
+    NodeConfigError,
+    NodeModelConfig,
+    validate_processing_configuration,
+)
 from drift.node.contribution_planner import (
     AutomaticContributionPlanner,
     AutomaticPlacementService,
@@ -556,6 +563,7 @@ def _prepare_worker_supervisor_settings(
     automatic_placements: Mapping[str, PlacementPlan] | None = None,
 ) -> WorkerSupervisorSettings:
     policy = config.contribution_policy
+    validate_processing_configuration(policy, config.workers)
     automatic_placements = {} if automatic_placements is None else automatic_placements
 
     allowed_models = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
@@ -590,6 +598,7 @@ def _prepare_worker_supervisor_settings(
         manifested_models[manifest.digest_id] = (model_config, manifest)
 
     launches = []
+    device_processing = {}
     for worker in config.workers:
         automatic = worker.model.casefold() == "auto"
         if automatic and worker.num_blocks is None:
@@ -821,13 +830,26 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--max_disk_space", effective_disk_space))
         if effective_vram_bytes is not None:
             command.extend(("--max_device_memory", str(effective_vram_bytes)))
-        command.extend(("--max_processing_percent", str(policy.max_processing_percent)))
-        if policy.max_processing_percent < 100:
-            # One stable lock for all this node's workers, across model/device
-            # changes. Never remove a live lock file during a policy update.
+        if policy.processing_scope == "per_device":
+            processing_percent = float(worker.max_processing_percent)
+            # Physical identity is private and remains stable through visibility
+            # renumbering. Unavailable placeholders cannot spawn; they retain a
+            # separate inert key until a later guarded launch is prepared.
+            group = binding.cuda_visible_devices if binding is not None else str(configured_device)
+            if group in device_processing and device_processing[group] != processing_percent:
+                raise NodeConfigError("workers sharing a physical device must use the same processing percentage")
+            device_processing[group] = processing_percent
+            private_key = hashlib.sha256(group.encode("utf-8")).hexdigest()
+            budget_path = config.workers[0].identity_path.with_name(f".device-{private_key}.processing-budget")
+        else:
+            processing_percent = policy.max_processing_percent
+            # Preserve the legacy one-node lock and its exact path. Never remove
+            # a live lock file during a policy update.
             budget_path = config.workers[0].identity_path.with_name(
                 f".{config.workers[0].identity_path.name}.processing-budget"
             )
+        command.extend(("--max_processing_percent", str(processing_percent)))
+        if processing_percent < 100:
             command.extend(("--processing_budget_path", str(budget_path)))
         if worker.port is not None:
             command.extend(("--port", str(worker.port)))
