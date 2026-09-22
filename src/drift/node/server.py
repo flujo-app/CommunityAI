@@ -155,6 +155,38 @@ def _public_loading_status(snapshot):
     }
 
 
+def _public_resource_recovery(provider):
+    """Read cached recovery state only; never probe private state on a request."""
+    fallback = {"state": "blocked", "reason": "unverifiable_state", "retryable": False}
+    try:
+        value = provider()
+        if not isinstance(value, dict) or set(value) != {"state", "reason", "retryable"}:
+            return fallback
+        reasons = {
+            "checking": ("checking",),
+            "ready": ("none",),
+            "blocked": (
+                "active_owner",
+                "cleanup_pending",
+                "legacy_state",
+                "unverifiable_state",
+                "unsupported_platform",
+            ),
+        }
+        state, reason = value["state"], value["reason"]
+        if (
+            not isinstance(state, str)
+            or state not in reasons
+            or not isinstance(reason, str)
+            or reason not in reasons[state]
+            or type(value["retryable"]) is not bool
+        ):
+            return fallback
+        return {"state": state, "reason": reason, "retryable": value["retryable"]}
+    except Exception:
+        return fallback
+
+
 def _contribution_status(
     worker_snapshots, *, configured: bool, editable: bool, policy_snapshot, worker_provenance=None
 ):
@@ -261,6 +293,7 @@ def create_node_app(
     route_outcome_observer: Optional[Callable[..., None]] = None,
     hardware_status: Optional[Callable[[dict], dict]] = None,
     request_restart: Optional[Callable[[], None]] = None,
+    resource_recovery_status: Optional[Callable[[], dict]] = None,
 ):
     """Compose the OpenAI API and authenticated local control surface."""
     if api_key_store is None and (not api_keys or any(not isinstance(key, str) or not key for key in api_keys)):
@@ -323,6 +356,8 @@ def create_node_app(
                 contribution_policy_store.worker_provenance() if contribution_policy_store is not None else None
             ),
         )
+        if resource_recovery_status is not None:
+            contribution["recovery"] = _public_resource_recovery(resource_recovery_status)
         return {
             "api_version": CONTROL_API_VERSION,
             "status": "stopping" if model_manager.closed or restart_pending else "running",

@@ -486,6 +486,25 @@ def _normalize_placement(value: Any) -> Dict[str, Any]:
     return {"automatic": automatic, "block_indices": block_indices, "reason": reason}
 
 
+def _normalize_resource_recovery(value: Any) -> Dict[str, Any]:
+    reasons = {
+        "checking": ("checking",),
+        "ready": ("none",),
+        "blocked": ("active_owner", "cleanup_pending", "legacy_state", "unverifiable_state", "unsupported_platform"),
+    }
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"state", "reason", "retryable"}
+        or not isinstance(value["state"], str)
+        or value["state"] not in reasons
+        or not isinstance(value["reason"], str)
+        or value["reason"] not in reasons[value["state"]]
+        or type(value["retryable"]) is not bool
+    ):
+        raise NodeClientError("Local node contribution recovery status is invalid")
+    return {"state": value["state"], "reason": value["reason"], "retryable": value["retryable"]}
+
+
 def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema_version") != CONTRIBUTION_STATUS_SCHEMA_VERSION:
         raise NodeClientError("Local node status has an unsupported contribution schema")
@@ -599,6 +618,7 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
         "editable": editable,
         "policy": policy_snapshot,
         "workers": normalized_workers,
+        **({"recovery": _normalize_resource_recovery(value["recovery"])} if "recovery" in value else {}),
     }
 
 

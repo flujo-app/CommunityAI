@@ -8,6 +8,8 @@ the cooperative loading gate is not an RSS limit. Paths/tokens are private.
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import json
 import os
 import stat
@@ -37,6 +39,7 @@ from drift.node.placement_resources import (
     evaluate_resources,
 )
 from drift.node.worker_loading import (
+    LoadingBinding,
     cleanup_loading_binding,
     create_loading_binding,
     initialize_loading_gate,
@@ -53,6 +56,10 @@ class ResourceReservationError(RuntimeError):
     def __init__(self, message, *, category="unavailable"):
         super().__init__(message)
         self.category = category if category == "capacity" else "unavailable"
+
+
+class _JournalBusy(RuntimeError):
+    pass
 
 
 def _positive(value):
@@ -93,15 +100,24 @@ class ResourceReservationManager:
     Admission reserves all estimates against fresh available RAM, including
     existing reservations. This intentionally double-counts resident usage rather
     than assuming a journal entry has already materialized in the OS sample.
-    Journal loss/corruption and uncertain writes fail closed. There is no automatic
-    stale-entry deletion: a restarted manager cannot certify old descendants.
+    Journal loss/corruption and uncertain writes fail closed. Managed production
+    recovery requires durable owner exclusion and the recorded native containment
+    contract; legacy entries never gain authority from a missing PID.
     """
 
     def __init__(
-        self, directory: Path, *, snapshot_provider=snapshot_resources, clock=time.time, loading_protocol=False
+        self,
+        directory: Path,
+        *,
+        snapshot_provider=snapshot_resources,
+        clock=time.time,
+        loading_protocol=False,
+        recovery_protocol=False,
     ):
-        if type(loading_protocol) is not bool:
-            raise ValueError("loading protocol must be a boolean")
+        if type(loading_protocol) is not bool or type(recovery_protocol) is not bool:
+            raise ValueError("resource protocols must be booleans")
+        if recovery_protocol and not loading_protocol:
+            raise ValueError("resource recovery requires the managed loading protocol")
         self._directory = Path(directory).absolute()
         self._snapshot_provider = snapshot_provider
         self._clock = clock
@@ -117,6 +133,216 @@ class ResourceReservationManager:
         self._cache_roots = set()
         self._loading_protocol = loading_protocol
         self._loading_bindings = {}
+        self._recovery_protocol = recovery_protocol
+        self._owner_lease = None
+        self._recovery_containments = {}
+        self._journal_version = 2 if recovery_protocol else 1
+        self._recovery_status = dict(state="checking", reason="checking", retryable=True)
+        self._recovery_stop = threading.Event()
+        self._recovery_wake = threading.Event()
+        self._recovery_thread = None
+        self._closed = False
+
+    @property
+    def recovery_protocol_enabled(self):
+        return self._recovery_protocol
+
+    def recovery_snapshot(self):
+        """Return cached public state without journal, process or lock I/O."""
+        return dict(self._recovery_status)
+
+    def recovery_containment_for_token(self, token):
+        """Pure lookup; the acquired generation already owns this OS boundary."""
+        if token not in self._owned or token not in self._recovery_containments:
+            raise ResourceReservationError(_ERROR)
+        return self._recovery_containments[token]
+
+    def _recovery_state(self, reason):
+        allowed = {
+            "none",
+            "checking",
+            "active_owner",
+            "cleanup_pending",
+            "legacy_state",
+            "unverifiable_state",
+            "unsupported_platform",
+        }
+        if reason not in allowed:
+            reason = "unverifiable_state"
+        self._recovery_status = dict(
+            state="ready" if reason == "none" else "checking" if reason == "checking" else "blocked",
+            reason=reason,
+            retryable=reason in {"checking", "active_owner", "cleanup_pending"},
+        )
+        if self._recovery_status["retryable"]:
+            self._recovery_wake.set()
+
+    def start_recovery(self):
+        """Start one bounded owner, including when sharing is disabled."""
+        if not self._recovery_protocol or self._closed or self._recovery_thread is not None:
+            return
+
+        def run():
+            while not self._recovery_stop.is_set():
+                self._recovery_wake.wait()
+                self._recovery_wake.clear()
+                if self._recovery_stop.is_set():
+                    return
+                if not self.recover(cancelled=self._recovery_stop.is_set) and self._recovery_status["retryable"]:
+                    self._recovery_stop.wait(0.2)
+                    self._recovery_wake.set()
+
+        runner = threading.Thread(target=run, name="resource-recovery", daemon=True)
+        self._recovery_thread = runner
+        self._recovery_wake.set()
+        try:
+            runner.start()
+        except Exception:
+            self._recovery_thread = None
+            self._recovery_state("unverifiable_state")
+
+    def close(self, timeout=2.0):
+        """Stop recovery; release owner exclusion only after all work is drained.
+
+        False retains the lease and OS handles. The caller must not reload a new
+        manager in this process while callbacks still own uncertain generations.
+        """
+        self._closed = True
+        self._recovery_stop.set()
+        self._recovery_wake.set()
+        deadline = time.monotonic() + max(0.0, timeout)
+        runner = self._recovery_thread
+        if runner is not None and runner is not threading.current_thread():
+            runner.join(max(0.0, deadline - time.monotonic()))
+            if runner.is_alive():
+                return False
+        if not self._mutex.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            return False
+        try:
+            if self._owned or self._pending_release or self._uncertain or self._recovery_containments:
+                return False
+            if self._owner_lease is not None:
+                self._owner_lease.close()
+                self._owner_lease = None
+            return True
+        finally:
+            self._mutex.release()
+
+    @staticmethod
+    def _recovery_digest(entry, kind):
+        payload = dict(
+            schema_version=1,
+            owner=entry["owner"],
+            claim=asdict(entry["claim"]),
+            host_limit=entry["host_limit"],
+            disk_limit=entry["disk_limit"],
+            loading=entry.get("loading"),
+            kind=kind,
+        )
+        return (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            ).hexdigest()
+        )
+
+    def _loading_from_entry(self, entry):
+        value = entry.get("loading")
+        if value is None:
+            return None
+        if not isinstance(value, dict) or set(value) != {"nonce", "binding_digest"}:
+            raise ValueError("invalid retained loading binding")
+        return LoadingBinding(
+            os.path.normcase(os.path.normpath(str(self._directory / "loading"))),
+            entry["claim"].reservation_id,
+            value["nonce"],
+            value["binding_digest"],
+        )
+
+    def _ensure_recovery_owner(self):
+        from drift.node.resource_recovery import open_owner_lease
+
+        if self._closed:
+            raise ResourceReservationError(_ERROR)
+        if self._owner_lease is None:
+            self._owner_lease = open_owner_lease(self._directory / "owners", self._owner)
+        self._owner_lease.require_live()
+
+    def _discard_unpublished(self, token):
+        """Only before journal publication and before any spawn is possible."""
+        try:
+            containment = self._recovery_containments.get(token)
+            if containment is not None:
+                containment.close()
+                self._recovery_containments.pop(token, None)
+            loading = self._loading_bindings.get(token)
+            if loading is not None:
+                cleanup_loading_binding(loading)
+                self._loading_bindings.pop(token, None)
+        except BaseException:
+            self._uncertain = self._acquisition_uncertain = True
+            self._recovery_state("unverifiable_state")
+            raise
+
+    def _recover_locked(self, entries, cancelled=None):
+        if not self._recovery_protocol:
+            return entries
+        from drift.node.resource_recovery import GenerationRecoveryBinding, acquire_recovery_guard
+        from drift.node.worker_recovery_containment import recover_windows_containment
+
+        try:
+            self._ensure_recovery_owner()
+            for entry in tuple(entries):
+                self._check_cancelled(cancelled)
+                if entry["owner"] == self._owner:
+                    continue
+                if entry.get("recovery") is None:
+                    self._recovery_state("legacy_state")
+                    raise ResourceReservationError(_ERROR)
+                binding = GenerationRecoveryBinding.from_json(entry["recovery"])
+                digest = self._recovery_digest(entry, binding.kind)
+                with acquire_recovery_guard(
+                    self._directory / "owners", binding, expected_claim_digest=digest, cancelled=cancelled
+                ) as guard:
+                    proof = guard.prove_empty(windows_probe=recover_windows_containment)
+                    self._check_cancelled(cancelled)
+                    loading = self._loading_from_entry(entry)
+                    if loading is not None:
+                        cleanup_loading_binding(loading)
+                    guard.require_proof(proof)
+                    retained = [e for e in entries if e["claim"].reservation_id != entry["claim"].reservation_id]
+                    self._write(retained)
+                    entries = retained
+            self._recovery_state("none")
+            return entries
+        except ResourceScanCancelled:
+            raise
+        except ResourceReservationError:
+            raise
+        except Exception as exc:
+            self._recovery_state(getattr(exc, "reason", "unverifiable_state"))
+            raise ResourceReservationError(_ERROR) from None
+
+    def recover(self, *, cancelled=None):
+        """Reconcile only generations whose complete death is proven under exclusion."""
+        if not self._recovery_protocol:
+            return True
+        try:
+            with self._locked(cancelled):
+                if self._closed or self._uncertain:
+                    raise ValueError("resource state cannot be recovered by this owner")
+                self._recover_locked(self._read(), cancelled)
+            return True
+        except ResourceScanCancelled:
+            return False
+        except _JournalBusy:
+            self._recovery_state("checking")
+            return False
+        except ResourceReservationError:
+            return False
+        except Exception:
+            self._recovery_state("unverifiable_state")
+            return False
 
     @property
     def loading_protocol_enabled(self):
@@ -179,15 +405,22 @@ class ResourceReservationManager:
                 observed = _regular(lock_path)
                 if (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino):
                     raise ValueError("resource lock identity changed")
-                if os.name == "nt":
-                    import msvcrt
+                try:
+                    if os.name == "nt":
+                        import msvcrt
 
-                    os.lseek(descriptor, 0, os.SEEK_SET)
-                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
+                        os.lseek(descriptor, 0, os.SEEK_SET)
+                        msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
 
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as exc:
+                    if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        if self._recovery_protocol:
+                            self._recovery_state("checking")
+                        raise _JournalBusy() from None
+                    raise
                 locked = True
                 # The stable lock inode is also the durable initialization
                 # marker. Once it exists, missing journal state is never empty,
@@ -218,6 +451,14 @@ class ResourceReservationManager:
 
     def _read(self):
         try:
+            return self._read_journal()
+        except Exception:
+            if self._recovery_protocol:
+                self._recovery_state("unverifiable_state")
+            raise
+
+    def _read_journal(self):
+        try:
             before = _regular(self._path)
         except FileNotFoundError:
             raise ValueError("resource journal disappeared") from None
@@ -233,8 +474,9 @@ class ResourceReservationManager:
         document = json.loads(raw, object_pairs_hook=_unique_object)
         if not isinstance(document, dict) or set(document) != {"schema_version", "reservations", "cache_roots"}:
             raise ValueError("invalid resource journal")
-        if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        if type(document["schema_version"]) is not int or document["schema_version"] not in (1, 2):
             raise ValueError("invalid resource journal version")
+        version = document["schema_version"]
         entries = document["reservations"]
         roots = document["cache_roots"]
         if not isinstance(roots, list) or len(roots) > 32:
@@ -255,7 +497,10 @@ class ResourceReservationManager:
             raise ValueError("invalid resource journal entries")
         result = []
         for entry in entries:
-            if not isinstance(entry, dict) or set(entry) != {"owner", "claim", "host_limit", "disk_limit"}:
+            expected = {"owner", "claim", "host_limit", "disk_limit"}
+            if version == 2:
+                expected |= {"recovery", "loading"}
+            if not isinstance(entry, dict) or set(entry) != expected:
                 raise ValueError("invalid resource reservation")
             if not isinstance(entry["owner"], str) or len(entry["owner"]) != 32:
                 raise ValueError("invalid resource owner")
@@ -271,7 +516,22 @@ class ResourceReservationManager:
             if not isinstance(claim["artifacts"], list) or len(claim["artifacts"]) > 4096:
                 raise ValueError("invalid resource artifacts")
             claim = WorkerResourceClaim(**{**claim, "artifacts": tuple(ArtifactClaim(**a) for a in claim["artifacts"])})
-            result.append({**entry, "claim": claim})
+            parsed = {**entry, "claim": claim}
+            loading = self._loading_from_entry(parsed)
+            if version == 2 and entry["recovery"] is not None:
+                from drift.node.resource_recovery import GenerationRecoveryBinding
+
+                binding = GenerationRecoveryBinding.from_json(entry["recovery"])
+                if (
+                    binding.owner.owner_id != entry["owner"]
+                    or binding.reservation_id != claim.reservation_id
+                    or binding.claim_digest != self._recovery_digest(parsed, binding.kind)
+                    or (binding.kind == "metadata") != (loading is None)
+                ):
+                    raise ValueError("resource recovery binding does not match its claim")
+            elif loading is not None:
+                raise ValueError("loading cleanup lacks recovery authority")
+            result.append(parsed)
             _positive(entry["host_limit"])
             _positive(entry["disk_limit"])
         if len({entry["claim"].reservation_id for entry in result}) != len(result):
@@ -279,15 +539,27 @@ class ResourceReservationManager:
         if any(artifact.cache_root not in roots for entry in result for artifact in entry["claim"].artifacts):
             raise ValueError("reservation cache root is not recorded")
         self._cache_roots = set(roots)
+        self._journal_version = max(self._journal_version, version)
         self._seen_journal = True
         return result
 
     def _write(self, entries):
         raw = json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": self._journal_version,
                 "cache_roots": sorted(self._cache_roots),
-                "reservations": [{**e, "claim": asdict(e["claim"])} for e in entries],
+                "reservations": [
+                    {
+                        **e,
+                        "claim": asdict(e["claim"]),
+                        **(
+                            {"recovery": e.get("recovery"), "loading": e.get("loading")}
+                            if self._journal_version == 2
+                            else {}
+                        ),
+                    }
+                    for e in entries
+                ],
             },
             sort_keys=True,
             allow_nan=False,
@@ -315,6 +587,8 @@ class ResourceReservationManager:
         except Exception:
             # Even a reported write failure may have published a complete entry.
             self._uncertain = True
+            if self._recovery_protocol:
+                self._recovery_state("unverifiable_state")
             raise
         finally:
             if temporary is not None:
@@ -377,7 +651,7 @@ class ResourceReservationManager:
             with self._locked(cancelled):
                 if self._uncertain:
                     raise ValueError("uncertain resource state")
-                entries = self._read()
+                entries = self._recover_locked(self._read(), cancelled)
                 self._check_cancelled(cancelled)
                 self._remember_roots_locked(roots, entries)
         except ResourceScanCancelled:
@@ -483,7 +757,7 @@ class ResourceReservationManager:
             with self._locked(cancelled):
                 if self._uncertain:
                     raise ValueError("uncertain resource state")
-                entries = self._read()
+                entries = self._recover_locked(self._read(), cancelled)
                 entry = self._entry(launch)
                 self._check_cancelled(cancelled)
                 self._remember_roots_locked(tuple({a.cache_root for a in entry["claim"].artifacts}), entries)
@@ -505,7 +779,7 @@ class ResourceReservationManager:
             with self._locked(cancelled):
                 if self._uncertain:
                     raise ValueError("uncertain resource state")
-                entries = self._read()
+                entries = self._recover_locked(self._read(), cancelled)
                 entry = self._entry(launch)
                 self._check_cancelled(cancelled)
                 self._remember_roots_locked(tuple({a.cache_root for a in entry["claim"].artifacts}), entries)
@@ -560,6 +834,8 @@ class ResourceReservationManager:
                         initialize_loading_gate(self._directory / "loading")
                     except Exception:
                         self._uncertain = self._acquisition_uncertain = True
+                        if self._recovery_protocol:
+                            self._recovery_state("unverifiable_state")
                         raise
                 if prepare_loading:
                     try:
@@ -567,6 +843,8 @@ class ResourceReservationManager:
                         self._loading_bindings[token] = binding
                     except Exception:
                         self._uncertain = self._acquisition_uncertain = True
+                        if self._recovery_protocol:
+                            self._recovery_state("unverifiable_state")
                         raise
                     try:
                         self._check_cancelled(cancelled)
@@ -578,6 +856,29 @@ class ResourceReservationManager:
                             self._loading_bindings.pop(token, None)
                         except Exception:
                             self._uncertain = self._acquisition_uncertain = True
+                        raise
+                if self._recovery_protocol:
+                    from drift.node.resource_recovery import make_generation_binding
+                    from drift.node.worker_recovery_containment import create_recovery_containment
+
+                    kind = "worker" if prepare_loading else "metadata"
+                    entry["loading"] = (
+                        {"nonce": binding.nonce, "binding_digest": binding.binding_digest} if prepare_loading else None
+                    )
+                    try:
+                        recovery = make_generation_binding(
+                            self._owner_lease.owner_binding,
+                            token,
+                            kind=kind,
+                            claim_digest=self._recovery_digest(entry, kind),
+                        )
+                        entry["recovery"] = recovery.to_json()
+                        if prepare_loading:
+                            self._recovery_containments[token] = create_recovery_containment(recovery)
+                        self._check_cancelled(cancelled)
+                    except BaseException:
+                        # No journal publication or child creation has occurred.
+                        self._discard_unpublished(token)
                         raise
                 try:
                     self._write([*entries, entry])
@@ -647,12 +948,16 @@ class ResourceReservationManager:
                 binding = self._loading_bindings.get(token)
                 if binding is not None:
                     cleanup_loading_binding(binding)
+                containment = self._recovery_containments.get(token)
+                if containment is not None:
+                    containment.close()
                 # A preceding release may have published its removal before
                 # fsync failed. Rewrite durably on retry; this is permitted only
                 # for this owner's known cleanup-certified release attempt.
                 self._write([e for e in entries if e["claim"].reservation_id != token])
                 self._owned.remove(token)
                 self._loading_bindings.pop(token, None)
+                self._recovery_containments.pop(token, None)
                 self._pending_release.discard(token)
                 if len(self._released) >= 1024:
                     self._released.pop(next(iter(self._released)))

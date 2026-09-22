@@ -106,8 +106,9 @@ def test_standard_startup_retains_existing_auto_start_intent():
 
 
 @pytest.mark.parametrize("reload_requested", [False, True])
+@pytest.mark.parametrize("drain_complete", [False, True])
 def test_node_applies_profile_guards_before_services_and_registering_local_loaders(
-    tmp_path, monkeypatch, reload_requested
+    tmp_path, monkeypatch, reload_requested, drain_complete
 ):
     path = tmp_path / "config.json"
     path.write_text(
@@ -127,6 +128,8 @@ def test_node_applies_profile_guards_before_services_and_registering_local_loade
     launch = WorkerLaunch("worker", "model", (sys.executable, "-c", "pass"), auto_start=True)
     forbidden_spawn = Mock(side_effect=AssertionError("startup must not spawn contribution work"))
     supervisor = WorkerSupervisor([launch], popen=forbidden_spawn)
+    if not drain_complete:
+        monkeypatch.setattr(supervisor, "drain_resource_operations", lambda **kwargs: False)
     manager = Mock()
     discovery = Mock()
     observations = []
@@ -159,7 +162,12 @@ def test_node_applies_profile_guards_before_services_and_registering_local_loade
         server.run.side_effect = lambda: create_app.call_args.kwargs["request_restart"]()
     monkeypatch.setattr("drift.node.server.create_node_app", create_app)
     monkeypatch.setattr("uvicorn.Server", Mock(return_value=server))
-    assert run_node._serve_once(args, parser) is reload_requested
+    assert run_node._serve_once(args, parser) is (reload_requested and drain_complete)
+    resource_manager = create_app.call_args.kwargs["resource_recovery_status"].__self__
+    assert resource_manager._closed is drain_complete
+    # The mocked incomplete-drain path has no actual work; retire its fixture
+    # owner explicitly instead of leaving the intentionally retained runner.
+    assert resource_manager.close()
     assert server.should_exit is reload_requested
     manager.shutdown.assert_called_once_with()
     assert observations == ["cpu-loader-config", "paused-before-placement"]

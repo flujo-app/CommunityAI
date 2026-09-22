@@ -114,8 +114,10 @@ source-bound checkpoint; focused fixture checks alone are not release acceptance
 
 Subsequent [loading coordination](NODE_LOADING_COORDINATION.md) connects the
 global gate and generation-bound child readiness without releasing staging claims.
+[Recovery](RESOURCE_RECOVERY.md) now binds new generations to owner exclusion and
+native death proof, with bounded shutdown draining and cached public status.
 Hard shared bandwidth enforcement, measured model peak-memory qualification,
-automatic orphan recovery and general all-card configuration remain unfinished.
+same-boot Linux/legacy recovery and general all-card configuration remain unfinished.
 Native GPU inference, eight-H100 operation, installed Ubuntu behavior and hostile
 storage/under-load recovery still require their own evidence. Resource admission
 remains conservative estimated accounting, not an OS-enforced RAM cap.

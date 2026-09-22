@@ -27,7 +27,10 @@ def eventually(predicate, *, seconds=25):
         time.sleep(0.02)
 
 
-def test_node_cli_waits_for_gate_acknowledges_real_interpreter_and_keeps_reservation(managed_launch, tmp_path):
+@pytest.mark.parametrize("recovery", [False, True])
+def test_node_cli_waits_for_gate_acknowledges_real_interpreter_and_keeps_reservation(
+    managed_launch, tmp_path, recovery
+):
     fixture = managed_launch
     private = tmp_path / "reservations"
     private.mkdir(mode=0o700)
@@ -61,7 +64,9 @@ def test_node_cli_waits_for_gate_acknowledges_real_interpreter_and_keeps_reserva
             (VolumeSnapshot("disk", 100 * 1024**3),),
         )
 
-    manager = ResourceReservationManager(private, snapshot_provider=snapshot, loading_protocol=True)
+    manager = ResourceReservationManager(
+        private, snapshot_provider=snapshot, loading_protocol=True, recovery_protocol=recovery
+    )
     supervisor = run_node._build_worker_supervisor(
         fixture.config, fixture.manager, automatic_placements={"gpu-0": fixture.plan}, resource_manager=manager
     )
@@ -89,3 +94,5 @@ def test_node_cli_waits_for_gate_acknowledges_real_interpreter_and_keeps_reserva
     finally:
         supervisor.shutdown()
         eventually(lambda: supervisor.snapshot("gpu-0")["resource_operation"] is None)
+        assert supervisor.drain_resource_operations(timeout=2)
+        assert manager.close()

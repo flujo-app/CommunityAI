@@ -6,7 +6,7 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from communityai_desktop.client import NodeApiError, NodeClient, NodeClientError, _valid_gpu_memory
-from communityai_desktop.presentation import sharing_reason
+from communityai_desktop.presentation import recovery_reason, sharing_reason
 from communityai_desktop.telemetry import route_view
 
 
@@ -153,6 +153,9 @@ class DesktopController:
 
     def _require_gpu_start_ready(self, worker_ids=None, *, contribution=None):
         current = contribution if contribution is not None else self.client.status()["contribution"]
+        recovery = current.get("recovery")
+        if recovery is not None and recovery["state"] != "ready":
+            raise NodeClientError(recovery_reason(recovery))
         workers = current["workers"]
         if not any(
             worker.get("managed_by") == "desktop_gpu" and (worker_ids is None or worker["id"] in worker_ids)
@@ -377,6 +380,7 @@ class DesktopController:
             vram_percent = round(vram_bytes * 100 / vram_pool_bytes) if vram_pool_bytes else None
             vram_status = "configured"
         intent_enabled = policy.get("sharing_enabled", False) or bool(selected_models)
+        recovery = contribution.get("recovery")
         return {
             "configured": contribution["configured"],
             "editable": contribution["editable"],
@@ -384,8 +388,11 @@ class DesktopController:
             "policy": policy,
             "enabled": bool(active_models),
             "intent_enabled": intent_enabled,
-            "can_start": contribution["editable"] and bool(workers),
+            "can_start": contribution["editable"]
+            and bool(workers)
+            and (recovery is None or recovery["state"] == "ready"),
             "can_pause": intent_enabled or any(_worker_cleanup_pending(worker) for worker in workers),
+            **({"recovery": dict(recovery)} if recovery is not None else {}),
             "active_models": active_models,
             "selected_models": selected_models,
             "blocked_reasons": blocked_reasons,

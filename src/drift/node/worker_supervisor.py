@@ -465,6 +465,7 @@ class WorkerSupervisor:
         acquire_resources_cancellable: Optional[Callable[[WorkerLaunch, threading.Event], str]] = None,
         release_resources: Optional[Callable[[str], None]] = None,
         loading_binding_for_token: Optional[Callable[[str], LoadingBinding]] = None,
+        recovery_containment_for_token: Optional[Callable[[str], Any]] = None,
     ) -> None:
         if stop_timeout <= 0 or poll_period <= 0:
             raise ValueError("worker supervisor timeouts must be positive")
@@ -472,7 +473,13 @@ class WorkerSupervisor:
             raise ValueError("coordinated_launches must be a boolean")
         if any(
             hook is not None and not callable(hook)
-            for hook in (acquire_resources, acquire_resources_cancellable, release_resources, loading_binding_for_token)
+            for hook in (
+                acquire_resources,
+                acquire_resources_cancellable,
+                release_resources,
+                loading_binding_for_token,
+                recovery_containment_for_token,
+            )
         ):
             raise ValueError("worker resource hooks must be callable or None")
         launches = tuple(launches)
@@ -500,6 +507,7 @@ class WorkerSupervisor:
         self._acquire_resources_cancellable = acquire_resources_cancellable
         self._release_resources = release_resources
         self._loading_binding_for_token = loading_binding_for_token
+        self._recovery_containment_for_token = recovery_containment_for_token
         self._last_bandwidth_mbps: Optional[float] = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -1040,9 +1048,10 @@ class WorkerSupervisor:
         spawn_attempted = False
         loading_binding = None
         loading_values = ()
+        recovery_mode = self._recovery_containment_for_token is not None and record.launch.resource_claim is not None
         try:
             spawn_options = {"creationflags": self._creation_flags()}
-            if self._contained_launch(record):
+            if self._contained_launch(record) and not recovery_mode:
                 from drift.node.edge_supervisor import _new_containment
 
                 containment = _new_containment()
@@ -1072,7 +1081,8 @@ class WorkerSupervisor:
                     record.state = WorkerState.CRASHED
                     record.last_error = reason
                     record.next_restart_at = time.monotonic() + record.launch.restart_backoff
-                    containment.close()
+                    if containment is not None:
+                        containment.close()
                     return False
                 finally:
                     record.resource_operation_active = False
@@ -1081,7 +1091,8 @@ class WorkerSupervisor:
                     record.cleanup_pending = True
                     record.state = WorkerState.CRASHED
                     record.last_error = _RESOURCE_SPAWN_UNCERTAIN
-                    containment.close()
+                    if containment is not None:
+                        containment.close()
                     return False
                 record.resource_token = token
                 # Acquiring a durable reservation can take time. Recheck live
@@ -1097,7 +1108,8 @@ class WorkerSupervisor:
                     or not schedule_admitted
                     or not resource_admitted
                 ):
-                    containment.close()
+                    if containment is not None:
+                        containment.close()
                     if self._release_resources_locked(record):
                         record.state = WorkerState.PAUSED
                         record.last_error = resource_reason or schedule_reason
@@ -1115,11 +1127,26 @@ class WorkerSupervisor:
                     or record.operator_paused
                     or not record.desired_running
                 ):
-                    containment.close()
+                    if containment is not None:
+                        containment.close()
                     self._release_resources_locked(record)
                     record.schedule_suspended = not schedule_admitted and record.desired_running
                     record.resource_suspended = not resource_admitted and record.desired_running
                     return False
+            if recovery_mode:
+                # The manager created this generation's containment before its
+                # durable admission. This lookup is in-memory only. Never make
+                # an unnamed substitute or fall back after a missing binding.
+                containment = self._recovery_containment_for_token(record.resource_token)
+                from drift.node.worker_recovery_containment import WindowsRecoveryContainment
+
+                if containment is None or (
+                    sys.platform == "win32" and not isinstance(containment, WindowsRecoveryContainment)
+                ):
+                    raise ValueError("worker recovery containment is unavailable")
+                options = containment.popen_kwargs()
+                spawn_options.update(options)
+                spawn_options["creationflags"] |= self._creation_flags()
             if self._loading_binding_for_token is not None and record.resource_token is not None:
                 try:
                     loading_binding = self._loading_binding_for_token(record.resource_token)
@@ -1132,7 +1159,8 @@ class WorkerSupervisor:
                     self._fail_loading_locked(record)
                     raise ValueError(_LOADING_FAILED) from None
             spawn_attempted = True
-            process = self._popen(
+            spawn = getattr(containment, "spawn", self._popen) if recovery_mode else self._popen
+            process = spawn(
                 list(record.launch.command),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -2154,6 +2182,61 @@ class WorkerSupervisor:
                     )
             persist()
             self._configuration_restart_pending = True
+
+    def drain_resource_operations(self, timeout: float = 0.0) -> bool:
+        """After shutdown, bound the wait before the owner lease may be closed.
+
+        False retains recovery authority: the caller must not close the resource
+        manager or reload this node. No callback is joined under the supervisor
+        lock, and one deadline covers every worker rather than each separately.
+        This does not guess cleanup success or discard failed releases.
+        """
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (float, int))
+            or not math.isfinite(timeout)
+            or timeout < 0
+        ):
+            raise ValueError("resource drain timeout must be finite and nonnegative")
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                if not self._closed:
+                    return False
+                records = tuple(self._records.values())
+                if (
+                    not self._launch_transition_active
+                    and not self._process_containments
+                    and all(
+                        record.process is None
+                        and record.suspension_stop_thread is None
+                        and record.resource_thread is None
+                        and record.resource_operation is None
+                        and not record.resource_operation_active
+                        and record.resource_token is None
+                        and not record.resource_spawn_uncertain
+                        and not record.cleanup_pending
+                        for record in records
+                    )
+                ):
+                    return True
+                threads = tuple(
+                    thread
+                    for record in records
+                    for thread in (record.resource_thread, record.suspension_stop_thread)
+                    if thread is not None and thread is not threading.current_thread()
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if threads:
+                for thread in threads:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    thread.join(timeout=min(0.02, remaining))
+            else:
+                time.sleep(min(0.02, remaining))
 
     def shutdown(self) -> None:
         with self._lock:

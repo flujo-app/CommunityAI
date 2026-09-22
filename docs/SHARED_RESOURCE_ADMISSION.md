@@ -98,9 +98,10 @@ was published before an fsync/acknowledgement failure. Unknown/foreign tokens ca
 release another manager's claim.
 
 Uncertain acquisition writes quarantine new admission. A restarted manager retains
-old entries and cannot release them based on PID disappearance. A general recovery
-workflow that proves old process-tree death across node/host restarts is still
-required; this checkpoint deliberately supplies no unsafe automatic reset.
+old entries and cannot release them based on PID disappearance. New schema-v2
+generations support [proof-based recovery](RESOURCE_RECOVERY.md) under owner
+exclusion and native containment/boot evidence. Legacy entries and same-boot
+Linux worker recovery remain blocked without the required proof.
 
 ## Responsiveness and remaining release work
 
@@ -128,7 +129,7 @@ See [asynchronous supervision](ASYNC_RESOURCE_SUPERVISION.md) and
 The one-automatic-worker configuration guard remains. [Loading coordination](NODE_LOADING_COORDINATION.md)
 now serializes metadata and managed child startup and binds readiness to the exact
 reserved generation. Staging remains summed after readiness. Hard shared bandwidth
-enforcement, robust orphan recovery and full platform responsiveness qualification remain unfinished. Actual
+enforcement, complete cross-platform/legacy recovery and full platform responsiveness qualification remain unfinished. Actual
 all-card save/reload/start/pause, eight-H100 inference, Ubuntu 20.04 installed
 operation, peak memory/performance and under-load cancellation/recovery still
 need real evidence. Protected execution, other required models/backends and

@@ -1174,6 +1174,9 @@ def run(
             # Pause always remains reachable, including a failed reload or draft.
             if contribution.get("intent_enabled") and sharing_summary(self._snapshot)[2] != "paused":
                 return False
+            recovery = contribution.get("recovery")
+            if recovery is not None and recovery["state"] != "ready":
+                return True
             if self._gpu_saved_revision is not None:
                 return True
             if self.gpu_controls.dirty:

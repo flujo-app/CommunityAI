@@ -94,10 +94,28 @@ def sharing_reason(reason: str | None) -> str:
     return "Sharing could not start. Try again or check your settings."
 
 
+def recovery_reason(recovery: dict[str, Any] | None) -> str:
+    """Explain recovery without treating Pause, limits or file deletion as proof."""
+    if not recovery or recovery.get("state") == "ready":
+        return ""
+    return {
+        "checking": "Checking whether earlier sharing work has stopped.",
+        "active_owner": "Earlier sharing work is still running. New sharing will wait until it has stopped.",
+        "cleanup_pending": "Cleanup of earlier sharing work is still pending. New sharing is unavailable until it finishes.",
+        "legacy_state": "CommunityAI cannot safely recover sharing state saved by an older version. New sharing is unavailable.",
+        "unsupported_platform": "CommunityAI cannot safely recover this earlier sharing work in the current system session. New sharing is unavailable.",
+    }.get(
+        recovery.get("reason"),
+        "CommunityAI cannot verify that earlier sharing work has stopped. New sharing is unavailable.",
+    )
+
+
 def sharing_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
     contribution = snapshot.get("contribution", {})
     workers = snapshot.get("workers", [])
     wanted = contribution.get("intent_enabled", False)
+    recovery = contribution.get("recovery")
+    recovery_detail = recovery_reason(recovery)
     active = [
         worker
         for worker in workers
@@ -108,11 +126,22 @@ def sharing_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
         names = ", ".join(
             dict.fromkeys(model_name(worker.get("model")) for worker in active if worker.get("model") != "auto")
         )
-        return "Sharing is on", f"Helping with {names}." if names else "Helping the community.", "running"
+        detail = f"Helping with {names}." if names else "Helping the community."
+        return "Sharing is on", " ".join(filter(None, (detail, recovery_detail))), "running"
     if not wanted:
+        if recovery_detail:
+            return "Sharing is off", recovery_detail, "off"
         if contribution.get("editable") is False:
             return "Sharing is unavailable", "Restart CommunityAI to try again.", "waiting"
         return "Sharing is off", "", "off"
+    if recovery_detail:
+        if workers and all(worker.get("operator_paused") for worker in workers):
+            return "Sharing is paused", recovery_detail, "paused"
+        return (
+            "Checking sharing recovery" if recovery["state"] == "checking" else "Sharing is unavailable",
+            recovery_detail,
+            "waiting" if recovery["state"] == "checking" else "error",
+        )
     if any(worker.get("load_state") == "failed" and not worker.get("operator_paused") for worker in workers):
         return (
             "Sharing stopped",

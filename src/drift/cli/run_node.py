@@ -1235,6 +1235,11 @@ def _build_worker_supervisor(
             if resource_manager is not None and resource_manager.loading_protocol_enabled
             else None
         ),
+        recovery_containment_for_token=(
+            resource_manager.recovery_containment_for_token
+            if resource_manager is not None and resource_manager.recovery_protocol_enabled
+            else None
+        ),
     )
 
 
@@ -1850,7 +1855,10 @@ def _serve_once(args, parser) -> bool:
         placement_registry = PlacementRegistry()
         placement_guards = {}
         route_outcomes = RouteOutcomeTracker()
-        resource_manager = ResourceReservationManager(args.data_dir / "resource-reservations", loading_protocol=True)
+        resource_manager = ResourceReservationManager(
+            args.data_dir / "resource-reservations", loading_protocol=True, recovery_protocol=True
+        )
+        resource_manager.start_recovery()
         resource_claim_cache = {}
         worker_supervisor = _build_worker_supervisor(
             config,
@@ -1962,6 +1970,7 @@ def _serve_once(args, parser) -> bool:
         contribution_policy_store=policy_store,
         route_outcome_observer=route_outcomes.record,
         hardware_status=hardware_status.snapshot,
+        resource_recovery_status=resource_manager.recovery_snapshot,
         request_restart=restart,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
@@ -1985,7 +1994,13 @@ def _serve_once(args, parser) -> bool:
         if placement_service is not None:
             placement_service.close()
         worker_supervisor.shutdown()
-        manager.shutdown()
+        drained = worker_supervisor.drain_resource_operations(timeout=config.contribution_policy.pause_timeout)
+        try:
+            manager.shutdown()
+        finally:
+            if not drained or not resource_manager.close():
+                restart_requested = False
+                logger.warning("Node resources remain retained for verified recovery at the next start")
     return restart_requested
 
 
