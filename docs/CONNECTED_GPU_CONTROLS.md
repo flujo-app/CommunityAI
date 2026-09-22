@@ -103,9 +103,10 @@ useful model placement estimate.
 Joint final-map acceptance and stop-before-start transitions are now connected to
 automatic placement; see [Joint automatic placement runtime](JOINT_PLACEMENT_RUNTIME.md).
 The validation counts above describe the earlier controls checkpoint 258b4c8.
-Useful model-aware block sizing, aggregate host RAM and
-artifact storage admission, shared bandwidth behavior and physical-device budgets
-must be enforced before removing the one-auto guard. Only then can the complete
+Model-aware managed sizing is now connected; see
+[Model-aware managed GPU placement](MODEL_AWARE_PLACEMENT.md). Aggregate host RAM,
+artifact storage, load staging and shared bandwidth admission must still be
+enforced before removing the one-auto guard. Only then can the complete
 all-card flow be packaged and qualified on actual hardware. Public/private and
 qualified Protected routes, optimized backends, Qwen and the exact requested
 DeepSeek/GLM models, installed recovery and commercial gates remain required for

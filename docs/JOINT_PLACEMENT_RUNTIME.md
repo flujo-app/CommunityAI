@@ -1,8 +1,8 @@
 # Joint automatic placement runtime
 
 This source component connects joint proposals to coordinated worker transitions.
-The configuration still rejects multiple automatic workers until useful model
-sizing and aggregate resource admission are integrated. Multi-worker fixtures
+The configuration still rejects multiple automatic workers until aggregate
+resource admission is integrated. Multi-worker fixtures
 deliberately bypass that configuration restriction for internal service tests;
 they do not establish an accepted eight-card application or hardware execution.
 
@@ -62,11 +62,13 @@ including explicit head dimensions and asymmetric MLA key/value dimensions.
 Weights and workspace retain the server's estimation formula; these are not
 measurements, and the profile does not account for host RAM or artifact storage.
 
-The shared model-memory profile is preparatory to useful sizing. The managed
-selection's one-block placeholder is not the final sizing policy. Admission must
-jointly allocate useful spans across cards using the manifest's execution dtype
-and quantization, then enforce physical VRAM, aggregate host RAM, artifact cache
-storage and shared bandwidth limits. Only then may the one-auto guard be removed.
+Managed placement now uses the shared memory profile to allocate useful spans
+jointly across cards using the manifest's execution dtype and quantization; see
+[Model-aware managed GPU placement](MODEL_AWARE_PLACEMENT.md). The saved one-block
+field remains a schema placeholder. Aggregate host RAM, artifact cache storage,
+load staging and shared bandwidth enforcement remain required before the one-auto
+guard may be removed. A pure aggregate accounting primitive is present but is not
+yet a runtime reservation or loading gate.
 
 Real all-card save/reload/start/pause, Ubuntu 20.04 packaging, eight-H100 inference,
 under-load cancellation/recovery, performance, qualified Protected execution and

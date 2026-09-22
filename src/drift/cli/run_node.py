@@ -36,6 +36,7 @@ from drift.node.contribution_planner import (
     PlacementCandidate,
     PlacementPlan,
     PlacementRegistry,
+    PlacementResourcePlan,
     propose_joint_placements,
 )
 from drift.node.device_binding import DeviceBindingError, DeviceBindingStore
@@ -51,6 +52,8 @@ from drift.node.native_credentials import (
     NativeCredentialLocation,
     load_native_control_key,
 )
+from drift.node.placement_memory import load_placement_memory
+from drift.node.placement_sizing import PlacementSpanResolver
 from drift.node.policy_store import (
     ContributionPolicyConflictError,
     ContributionPolicyPersistenceError,
@@ -426,6 +429,7 @@ def _automatic_placement_candidates(
     route_outcomes: RouteOutcomeTracker | None = None,
     allow_remote_route_demand: bool = False,
     artifact_plan_cache: dict | None = None,
+    placement_metadata_cache: dict | None = None,
 ) -> tuple[PlacementCandidate, ...]:
     policy = config.contribution_policy
     allowed = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
@@ -467,27 +471,68 @@ def _automatic_placement_candidates(
         else:
             reason = None
         artifact_plans = ()
+        resource_plan = None
+        device_memory_budget = None
         if reason is None:
             try:
                 cache_root = _resolved_automatic_cache_root(worker, model_config)
-                plan_key = (manifest.digest_id, worker.num_blocks, str(cache_root), effective_disk_bytes)
-                cached = None if artifact_plan_cache is None else artifact_plan_cache.get(plan_key)
-                if cached is None:
-                    artifact_plans = _manifest_artifact_plans(
-                        manifest, worker, token=token, cache_dir=cache_root, max_disk_space=effective_disk_bytes
+                if worker.managed_by == "desktop_gpu":
+                    device, device_memory_budget = _managed_placement_device_budget(worker, policy)
+                    # Geometry is pinned by the manifest, not the CUDA ordinal.
+                    # Physical selection/capacity above are always checked fresh.
+                    resource_key = (
+                        "managed",
+                        manifest.digest_id,
+                        str(cache_root),
+                        device_memory_budget,
+                        effective_disk_bytes,
                     )
-                    if artifact_plan_cache is not None:
-                        # Plans are immutable claims derived from a verified pinned
-                        # index. Reopening that index on every discovery tick can
-                        # interrupt an admitted worker during cache materialization.
-                        # Worker startup still independently verifies all artifacts.
-                        if len(artifact_plan_cache) >= 128:
-                            artifact_plan_cache.pop(next(iter(artifact_plan_cache)))
-                        artifact_plan_cache[plan_key] = artifact_plans
+                    resource_plan = None if artifact_plan_cache is None else artifact_plan_cache.get(resource_key)
+                    if resource_plan is None:
+                        # An immutable resolver already contains the verified
+                        # geometry and artifact table. Do not reopen an evicted
+                        # metadata map merely to use an existing resolver.
+                        metadata_key = (manifest.digest_id, str(cache_root), device.type)
+                        metadata = (
+                            None if placement_metadata_cache is None else placement_metadata_cache.get(metadata_key)
+                        )
+                        if metadata is None:
+                            metadata = load_placement_memory(
+                                manifest,
+                                device=device,
+                                token=token,
+                                cache_dir=cache_root,
+                                max_disk_space=effective_disk_bytes,
+                            )
+                            if placement_metadata_cache is not None:
+                                if len(placement_metadata_cache) >= 16:
+                                    placement_metadata_cache.pop(next(iter(placement_metadata_cache)))
+                                placement_metadata_cache[metadata_key] = metadata
+                        resource_plan = PlacementSpanResolver(
+                            manifest,
+                            metadata,
+                            max_device_memory_bytes=device_memory_budget,
+                            max_artifact_bytes=effective_disk_bytes,
+                        )
+                        if artifact_plan_cache is not None:
+                            if len(artifact_plan_cache) >= 128:
+                                artifact_plan_cache.pop(next(iter(artifact_plan_cache)))
+                            artifact_plan_cache[resource_key] = resource_plan
                 else:
-                    artifact_plans = cached
-            except (ManifestError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                reason = f"exact block artifact planning failed: {type(exc).__name__}"
+                    artifact_plans = _cached_fixed_artifact_plans(
+                        manifest,
+                        worker,
+                        token=token,
+                        cache_root=cache_root,
+                        effective_disk_bytes=effective_disk_bytes,
+                        artifact_plan_cache=artifact_plan_cache,
+                    )
+            except DeviceBindingError:
+                reason = "the selected GPU is unavailable; check the saved device selection"
+            except NodeConfigError:
+                reason = "automatic placement requires an available GPU and valid memory allowances"
+            except (ManifestError, OSError, RuntimeError, TypeError, ValueError):
+                reason = "automatic placement is waiting for verified model and resource information"
         candidates.append(
             PlacementCandidate(
                 model_id=descriptor.model_id,
@@ -504,9 +549,68 @@ def _automatic_placement_candidates(
                 policy_reason=reason,
                 artifact_plans=artifact_plans,
                 max_artifact_bytes=effective_disk_bytes,
+                resource_plan=resource_plan,
+                max_device_memory_bytes=device_memory_budget,
             )
         )
     return tuple(candidates)
+
+
+def _cached_fixed_artifact_plans(manifest, worker, *, token, cache_root, effective_disk_bytes, artifact_plan_cache):
+    plan_key = (manifest.digest_id, worker.num_blocks, str(cache_root), effective_disk_bytes)
+    cached = None if artifact_plan_cache is None else artifact_plan_cache.get(plan_key)
+    if cached is None:
+        artifact_plans = _manifest_artifact_plans(
+            manifest, worker, token=token, cache_dir=cache_root, max_disk_space=effective_disk_bytes
+        )
+        if artifact_plan_cache is not None:
+            # Plans are immutable claims derived from a verified pinned
+            # index. Reopening that index on every discovery tick can
+            # interrupt an admitted worker during cache materialization.
+            # Worker startup still independently verifies all artifacts.
+            if len(artifact_plan_cache) >= 128:
+                artifact_plan_cache.pop(next(iter(artifact_plan_cache)))
+            artifact_plan_cache[plan_key] = artifact_plans
+    else:
+        artifact_plans = cached
+    return artifact_plans
+
+
+def _managed_placement_device_budget(worker, policy):
+    """Resolve a managed card's current private pin and finite physical allowance."""
+    device = _resolve_worker_device(worker.worker_id, worker.device)
+    if device.type != "cuda":
+        raise NodeConfigError("managed automatic sizing requires a selected CUDA card")
+    DeviceBindingStore(worker.identity_path.with_name(f".{worker.identity_path.name}.device-binding")).load_existing(
+        worker.worker_id, str(device)
+    )
+    total = get_device_total_memory(device)
+    if type(total) is not int or not 0 < total <= 2**63 - 1:
+        raise NodeConfigError("selected card capacity is unavailable")
+    limits = [total]
+    for label, size, fraction in (
+        ("contribution", policy.max_vram_bytes, policy.max_vram_fraction),
+        ("managed card", worker.max_vram_bytes, worker.max_vram_fraction),
+    ):
+        if (size is None) == (fraction is None):
+            raise NodeConfigError(f"{label} requires one finite memory allowance")
+        if size is not None:
+            if type(size) is not int or not 0 < size <= 2**63 - 1:
+                raise NodeConfigError(f"{label} memory allowance is invalid")
+            limits.append(size)
+        else:
+            if (
+                isinstance(fraction, bool)
+                or not isinstance(fraction, (int, float))
+                or not math.isfinite(fraction)
+                or not 0 < fraction <= 1
+            ):
+                raise NodeConfigError(f"{label} memory fraction is invalid")
+            limits.append(math.floor(total * fraction))
+    budget = min(limits)
+    if budget < 1:
+        raise NodeConfigError("selected card memory allowance is too small")
+    return device, budget
 
 
 def _resolve_worker_device(worker_id: str, selection: str | None, *, require_available: bool = True) -> torch.device:
@@ -783,6 +887,17 @@ def _prepare_worker_supervisor_settings(
                         effective_vram_bytes = min(effective_vram_bytes, resolve_vram_limit(worker_vram_limit))
                     vram_device = str(configured_device)
 
+        if automatic and worker.managed_by == "desktop_gpu" and policy_admitted:
+            estimate = decision.device_memory_bytes
+            if (
+                type(estimate) is not int
+                or estimate < 1
+                or effective_vram_bytes is None
+                or estimate > effective_vram_bytes
+            ):
+                policy_admitted = False
+                policy_reason = "automatic placement is waiting for a fitting verified memory estimate"
+
         if getattr(sys, "frozen", False):
             # desktop/launch_node.py dispatches this mode inside the packaged
             # sidecar; a frozen executable cannot be reinvoked with ``-m``.
@@ -1053,6 +1168,27 @@ def _can_retain_acknowledged_plan(
     )
 
 
+def _resource_plan_preserves_decision(candidate, decision):
+    if candidate is None or candidate.policy_reason is not None or candidate.resource_plan is None:
+        return False
+    try:
+        start, end = map(int, decision.block_indices.split(":"))
+        claim = candidate.resource_plan(start, end)
+    except Exception:
+        return False
+    return bool(
+        isinstance(claim, PlacementResourcePlan)
+        and (claim.start_block, claim.end_block) == (start, end)
+        and claim.artifact_bytes == decision.artifact_bytes
+        and claim.artifact_set_digest == decision.artifact_set_digest
+        and claim.device_memory_bytes == decision.device_memory_bytes
+        and candidate.max_device_memory_bytes is not None
+        and claim.device_memory_bytes <= candidate.max_device_memory_bytes
+        and candidate.max_artifact_bytes is not None
+        and claim.artifact_bytes <= candidate.max_artifact_bytes
+    )
+
+
 def _recent_gap_preserves_artifact_claim(candidate, decision, num_blocks, *, maximum_age):
     if candidate is None or candidate.policy_reason is not None:
         return False
@@ -1068,6 +1204,8 @@ def _recent_gap_preserves_artifact_claim(candidate, decision, num_blocks, *, max
     ):
         return False
     start, end = map(int, decision.block_indices.split(":"))
+    if candidate.resource_plan is not None:
+        return _resource_plan_preserves_decision(candidate, decision)
     return bool(
         end - start == num_blocks
         and candidate.max_artifact_bytes is not None
@@ -1162,6 +1300,7 @@ def _build_automatic_placement_service(
     intent_sequences = {}
     intent_leases = {}
     artifact_plan_cache = {}
+    placement_metadata_cache = {}
     route_identity = _prepare_route_identity(discovery, route_identity_path, config.route_demand_authority_roots)
     route_sequences = {}
     route_leases = {}
@@ -1321,11 +1460,32 @@ def _build_automatic_placement_service(
                     route_demand_authorities_unchanged and bool(config.route_demand_authority_roots)
                 ),
                 artifact_plan_cache=artifact_plan_cache,
+                placement_metadata_cache=placement_metadata_cache,
             )
             for worker_id, worker in current_workers.items()
         }
+        # Retention is a planning preference, never a renewed signed lease.
+        # Eligible resource spans retain residency unless participation of an
+        # additional feasible card requires a coordinated split.
+        retained_resource_plans = {
+            worker_id: previous
+            for worker_id, previous in previous_plans.items()
+            if previous.decision is not None
+            and previous.intent_published
+            and previous.remote_acknowledged
+            and worker_id in planners
+            and planners[worker_id].current_decision == previous.decision
+            and any(
+                candidate.manifest_digest == previous.decision.manifest_digest
+                and _resource_plan_preserves_decision(candidate, previous.decision)
+                for candidate in candidates_by_worker[worker_id]
+            )
+        }
         proposals = propose_joint_placements(
-            planners, candidates_by_worker, sharing_enabled=current.contribution_policy.sharing_enabled
+            planners,
+            candidates_by_worker,
+            sharing_enabled=current.contribution_policy.sharing_enabled,
+            retained_plans=retained_resource_plans,
         )
         for worker_id, proposal in proposals.items():
             worker = current_workers[worker_id]

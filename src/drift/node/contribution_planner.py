@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 from drift.node.route_metrics import RouteUtilityObservation, validate_route_observation
@@ -61,6 +61,33 @@ def _overlaps_any(start: int, end: int, ranges: Sequence[tuple[int, int]]) -> bo
     return any(start < reserved_end and reserved_start < end for reserved_start, reserved_end in ranges)
 
 
+def _resolve_resource_plan(candidate: PlacementCandidate, start: int, end: int) -> Optional[PlacementResourcePlan]:
+    """Resolve a pure, monotone resource claim and validate its trust boundary.
+
+    Resolvers perform no I/O. A feasible span must have feasible subspans, with
+    non-increasing artifact and memory bytes. This permits bounded sliding-window
+    sizing without enumerating every possible span. None denotes infeasibility.
+    """
+
+    if not 0 <= start < end <= candidate.total_blocks:
+        return None
+    try:
+        plan = candidate.resource_plan(start, end)
+    except Exception:
+        raise ValueError("automatic placement resource resolution failed") from None
+    if plan is None:
+        return None
+    if not isinstance(plan, PlacementResourcePlan) or (plan.start_block, plan.end_block) != (start, end):
+        raise ValueError("automatic placement resource resolver returned an invalid exact span")
+    # Revalidate frozen instances as well: callbacks are an explicit boundary.
+    PlacementResourcePlan.__post_init__(plan)
+    if plan.device_memory_bytes > candidate.max_device_memory_bytes:
+        return None
+    if candidate.max_artifact_bytes is not None and plan.artifact_bytes > candidate.max_artifact_bytes:
+        return None
+    return plan
+
+
 @dataclass(frozen=True)
 class PlacementArtifactPlan:
     """Content-bound resource claim for one possible contiguous span."""
@@ -82,6 +109,23 @@ class PlacementArtifactPlan:
 
 
 @dataclass(frozen=True)
+class PlacementResourcePlan(PlacementArtifactPlan):
+    """Exact artifact and estimated device-memory claim for a feasible span."""
+
+    device_memory_bytes: int
+
+    def __post_init__(self) -> None:
+        if any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in (self.start_block, self.end_block, self.artifact_bytes, self.device_memory_bytes)
+        ):
+            raise ValueError("placement resource ranges and byte counts must be integers")
+        if self.device_memory_bytes <= 0 or not isinstance(self.artifact_set_digest, str):
+            raise ValueError("placement resource memory and artifact binding are invalid")
+        super().__post_init__()
+
+
+@dataclass(frozen=True)
 class PlacementCandidate:
     """One exact manifested model evaluated against local policy and live coverage."""
 
@@ -97,6 +141,10 @@ class PlacementCandidate:
     policy_reason: Optional[str] = None
     artifact_plans: Tuple[PlacementArtifactPlan, ...] = ()
     max_artifact_bytes: Optional[int] = None
+    resource_plan: Optional[Callable[[int, int], Optional[PlacementResourcePlan]]] = field(
+        default=None, compare=False, repr=False
+    )
+    max_device_memory_bytes: Optional[int] = None
 
     def __post_init__(self) -> None:
         if not self.model_id or not self.manifest_digest:
@@ -107,6 +155,24 @@ class PlacementCandidate:
             raise ValueError("placement candidate exceeds the automatic placement block limit")
         if self.max_artifact_bytes is not None and self.max_artifact_bytes < 0:
             raise ValueError("placement candidate artifact budget must be non-negative")
+        if self.resource_plan is not None:
+            if not callable(self.resource_plan):
+                raise ValueError("placement candidate resource plan must be callable")
+            if any(
+                isinstance(value, bool) or not isinstance(value, int)
+                for value in (self.total_blocks, self.artifact_bytes, self.priority)
+            ):
+                raise ValueError("resource-sized placement sizes and priority must be integers")
+            if (
+                isinstance(self.max_device_memory_bytes, bool)
+                or not isinstance(self.max_device_memory_bytes, int)
+                or self.max_device_memory_bytes < 0
+            ):
+                raise ValueError("resource-sized placement requires an integer device-memory budget")
+            if self.max_artifact_bytes is not None and (
+                isinstance(self.max_artifact_bytes, bool) or not isinstance(self.max_artifact_bytes, int)
+            ):
+                raise ValueError("resource-sized placement requires an integer artifact budget")
         ranges = set()
         for plan in self.artifact_plans:
             if plan.end_block > self.total_blocks:
@@ -129,6 +195,7 @@ class PlacementDecision:
     score: float
     reason: str
     artifact_set_digest: Optional[str] = None
+    device_memory_bytes: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -246,7 +313,7 @@ class AutomaticContributionPlanner:
     ) -> tuple[Optional[PlacementDecision], str]:
         if candidate.policy_reason is not None:
             return None, candidate.policy_reason
-        if self.num_blocks > candidate.total_blocks:
+        if candidate.resource_plan is None and self.num_blocks > candidate.total_blocks:
             return None, f"model has only {candidate.total_blocks} blocks"
         health = candidate.health
         if health.get("status") not in ("complete", "incomplete"):
@@ -267,6 +334,9 @@ class AutomaticContributionPlanner:
             or any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in counts)
         ):
             return None, "coverage observation has invalid replica counts"
+
+        if candidate.resource_plan is not None:
+            return self._evaluate_resource(candidate, excluded_spans=excluded_spans)
 
         artifact_plans = {(plan.start_block, plan.end_block): plan for plan in candidate.artifact_plans}
         if not artifact_plans and candidate.max_artifact_bytes is not None:
@@ -346,9 +416,62 @@ class AutomaticContributionPlanner:
         start = best_start
         end = start + self.num_blocks
         selected_artifacts = artifact_plans.get((start, end))
-        artifact_bytes = candidate.artifact_bytes if selected_artifacts is None else selected_artifacts.artifact_bytes
-        artifact_set_digest = None if selected_artifacts is None else selected_artifacts.artifact_set_digest
-        window = tuple(counts[start : start + self.num_blocks])
+        return self._span_decision(candidate, start, end, selected_artifacts), ""
+
+    def _evaluate_resource(
+        self,
+        candidate: PlacementCandidate,
+        *,
+        excluded_spans: Sequence[tuple[int, int]] = (),
+        maximum_blocks: int = MAX_AUTOMATIC_PLACEMENT_BLOCKS,
+    ) -> tuple[Optional[PlacementDecision], str]:
+        best = None
+        best_key = None
+        end = 0
+        for start in range(candidate.total_blocks):
+            end = max(end, start)
+            selected = None
+            if end > start and not _overlaps_any(start, end, excluded_spans):
+                selected = _resolve_resource_plan(candidate, start, end)
+            while (
+                end < candidate.total_blocks
+                and end - start < maximum_blocks
+                and not _overlaps_any(start, end + 1, excluded_spans)
+            ):
+                proposed = _resolve_resource_plan(candidate, start, end + 1)
+                if proposed is None:
+                    break
+                end += 1
+                selected = proposed
+            if selected is None:
+                continue
+            counts = candidate.health["replica_counts"][start:end]
+            key = (
+                -sum(count == 0 for count in counts),
+                -(end - start),
+                max(counts),
+                sum(counts),
+                # Prefer an available interval's edge over splitting it. This
+                # matters when the same scan supplies fair matching anchors.
+                int(start > 0 and not any(reserved_end == start for _, reserved_end in excluded_spans))
+                + int(
+                    end < candidate.total_blocks
+                    and not any(reserved_start == end for reserved_start, _ in excluded_spans)
+                ),
+                self._range_jitter(candidate.manifest_digest, start, end),
+                start,
+            )
+            if best_key is None or key < best_key:
+                best_key = key
+                best = self._span_decision(candidate, start, end, selected)
+        return best, "no exact span fits the current device-memory and artifact budgets" if best is None else ""
+
+    def _span_decision(
+        self, candidate: PlacementCandidate, start: int, end: int, artifacts: Optional[PlacementArtifactPlan]
+    ) -> PlacementDecision:
+        artifact_bytes = candidate.artifact_bytes if artifacts is None else artifacts.artifact_bytes
+        artifact_set_digest = None if artifacts is None else artifacts.artifact_set_digest
+        window = tuple(candidate.health["replica_counts"][start:end])
         minimum_replicas = min(window)
         coverage_pressure = max(0, 2 - minimum_replicas) * 100.0
         preference_bonus = 20.0 if candidate.preferred else 0.0
@@ -379,18 +502,16 @@ class AutomaticContributionPlanner:
                 f"{remote_observation.useful_tokens_per_second_milli} milli-tokens/s, reliability "
                 f"{remote_observation.reliability_milli}/1000"
             )
-        return (
-            PlacementDecision(
-                model_id=candidate.model_id,
-                manifest_digest=candidate.manifest_digest,
-                block_indices=f"{start}:{end}",
-                artifact_bytes=artifact_bytes,
-                replica_counts=window,
-                score=score,
-                reason=reason,
-                artifact_set_digest=artifact_set_digest,
-            ),
-            "",
+        return PlacementDecision(
+            model_id=candidate.model_id,
+            manifest_digest=candidate.manifest_digest,
+            block_indices=f"{start}:{end}",
+            artifact_bytes=artifact_bytes,
+            replica_counts=window,
+            score=score,
+            reason=reason,
+            artifact_set_digest=artifact_set_digest,
+            device_memory_bytes=artifacts.device_memory_bytes if isinstance(artifacts, PlacementResourcePlan) else None,
         )
 
     def propose(
@@ -447,11 +568,19 @@ class AutomaticContributionPlanner:
                 current_assignment_is_eligible = False
             else:
                 current_assignment_is_eligible = (
-                    end - start == self.num_blocks
+                    (current_candidate.resource_plan is not None or end - start == self.num_blocks)
                     and 0 <= start < end <= current_candidate.total_blocks
                     and not _overlaps_any(start, end, exclusions.get(current_candidate.manifest_digest, ()))
                 )
-            if current_assignment_is_eligible and current_candidate.artifact_plans:
+            if current_assignment_is_eligible and current_candidate.resource_plan is not None:
+                resource = _resolve_resource_plan(current_candidate, start, end)
+                current_assignment_is_eligible = (
+                    resource is not None
+                    and resource.artifact_bytes == self._current.artifact_bytes
+                    and resource.artifact_set_digest == self._current.artifact_set_digest
+                    and resource.device_memory_bytes == self._current.device_memory_bytes
+                )
+            elif current_assignment_is_eligible and current_candidate.artifact_plans:
                 plan = next(
                     (
                         plan
@@ -589,14 +718,23 @@ def _retained_span(
     if match is None:
         raise ValueError("joint placement retained decision has an invalid block range")
     start, end = int(match.group(1)), int(match.group(2))
-    if end - start != planner.num_blocks:
+    candidate = next(
+        (
+            item
+            for item in candidates
+            if item.manifest_digest == decision.manifest_digest and item.model_id == decision.model_id
+        ),
+        None,
+    )
+    resource_sized = candidate is not None and candidate.resource_plan is not None
+    if not resource_sized and end - start != planner.num_blocks:
         raise ValueError("joint placement retained decision has a mismatched block count")
     if (
         isinstance(decision.artifact_bytes, bool)
         or not isinstance(decision.artifact_bytes, int)
         or decision.artifact_bytes < 0
         or not isinstance(decision.replica_counts, tuple)
-        or len(decision.replica_counts) != planner.num_blocks
+        or len(decision.replica_counts) != end - start
         or any(isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in decision.replica_counts)
         or isinstance(decision.score, bool)
         or not isinstance(decision.score, (int, float))
@@ -613,17 +751,20 @@ def _retained_span(
     ):
         raise ValueError("joint placement retained decision has invalid bounded metadata")
 
-    candidate = next(
-        (
-            item
-            for item in candidates
-            if item.manifest_digest == decision.manifest_digest and item.model_id == decision.model_id
-        ),
-        None,
-    )
     if candidate is None or not 0 <= start < end <= candidate.total_blocks:
         raise ValueError("joint placement retained decision does not match a current candidate")
-    if candidate.artifact_plans:
+    if resource_sized:
+        if (
+            isinstance(decision.device_memory_bytes, bool)
+            or not isinstance(decision.device_memory_bytes, int)
+            or decision.device_memory_bytes <= 0
+            or decision.artifact_set_digest is None
+        ):
+            raise ValueError("joint placement retained decision has invalid resource metadata")
+        # Resource budgets and artifact metadata can change. The resource path
+        # re-resolves this old assignment before retaining it, rather than
+        # rejecting the whole replan when it legitimately needs to shrink.
+    elif candidate.artifact_plans:
         artifact_plan = next(
             (item for item in candidate.artifact_plans if (item.start_block, item.end_block) == (start, end)),
             None,
@@ -679,6 +820,12 @@ def propose_joint_placements(
             raise ValueError("joint placement candidates must be PlacementCandidate instances")
         candidate_sets[normalized] = values
 
+    if (
+        len({candidate.manifest_digest for values in candidate_sets.values() for candidate in values})
+        > MAX_AUTOMATIC_PLACEMENT_CANDIDATES
+    ):
+        raise ValueError(f"joint placement supports at most {MAX_AUTOMATIC_PLACEMENT_CANDIDATES} distinct manifests")
+
     normalized_retained = _normalize_worker_mapping(
         {} if retained_plans is None else retained_plans,
         "retained plans",
@@ -697,6 +844,15 @@ def propose_joint_placements(
             raise ValueError("joint placement retained plans overlap on one manifest")
         ranges.append((start, end))
         retained_spans[normalized] = (manifest_digest, start, end)
+
+    if any(candidate.resource_plan is not None for values in candidate_sets.values() for candidate in values):
+        return _propose_resource_joint(
+            normalized_planners,
+            candidate_sets,
+            normalized_retained,
+            sharing_enabled=sharing_enabled,
+            now=now,
+        )
 
     order = sorted(
         normalized_planners,
@@ -740,6 +896,304 @@ def propose_joint_placements(
         if _overlaps_any(start, end, ranges):
             raise ValueError("joint placement result contains overlapping local spans")
         ranges.append((start, end))
+    return result
+
+
+def _propose_resource_joint(planners, candidate_sets, retained, *, sharing_enabled, now):
+    """Match feasible cards first, then grow disjoint contiguous spans fairly.
+
+    Singleton augmenting paths maximize participating resource-sized workers.
+    Progressive growth uses monotone resolvers and bounded neighbor shifts; it
+    does not claim globally optimal interval packing for heterogeneous layers.
+    Every successful shift chain adds one occupied block, so growth terminates.
+    """
+
+    preferred = {
+        worker: planner.propose(candidate_sets[worker], sharing_enabled=sharing_enabled, now=now)
+        for worker, (_, planner) in planners.items()
+    }
+    fixed_workers = {
+        worker
+        for worker, proposal in preferred.items()
+        if not any(candidate.resource_plan is not None for candidate in candidate_sets[worker])
+        or (
+            proposal.decision is not None
+            and any(
+                candidate.manifest_digest == proposal.decision.manifest_digest and candidate.resource_plan is None
+                for candidate in candidate_sets[worker]
+            )
+        )
+    }
+    fixed = propose_joint_placements(
+        {planners[worker][0]: planners[worker][1] for worker in fixed_workers},
+        {
+            planners[worker][0]: tuple(
+                candidate for candidate in candidate_sets[worker] if candidate.resource_plan is None
+            )
+            for worker in fixed_workers
+        },
+        sharing_enabled=sharing_enabled,
+        retained_plans={
+            planners[worker][0]: retained[worker][1]
+            for worker in fixed_workers
+            if worker in retained
+            and any(
+                candidate.manifest_digest == retained[worker][1].decision.manifest_digest
+                and candidate.resource_plan is None
+                for candidate in candidate_sets[worker]
+            )
+        },
+        now=now,
+    )
+    fixed_slots = set()
+    for plan in fixed.values():
+        if plan.decision is not None:
+            start, end = map(int, plan.decision.block_indices.split(":"))
+            fixed_slots.update((plan.decision.manifest_digest, block) for block in range(start, end))
+
+    resource_workers = sorted(set(planners) - fixed_workers)
+    # Offers are bounded by workers * models * blocks, not all possible spans.
+    offers = {worker: {} for worker in resource_workers}
+    eligible = {}
+    for worker in resource_workers:
+        planner = planners[worker][1]
+        if not sharing_enabled:
+            continue
+        for candidate in candidate_sets[worker]:
+            if candidate.resource_plan is not None:
+                decision, _ = planner._evaluate(candidate)
+                if decision is not None:
+                    eligible[worker, candidate.manifest_digest] = candidate, decision
+
+    # Singleton counts alone cannot distinguish a card that fits every layer
+    # individually but only fits useful multi-layer spans at one model end.
+    # Resolve provisional fair spans, constrained cards first, and use those
+    # exact starts as matching anchors. These are hints, not reservations: the
+    # augmenting matcher can still move them to maximize participating cards.
+    anchors = {}
+    target_spans = {}
+    for digest in sorted({digest for _, digest in eligible}):
+        members = sorted(
+            (worker for worker, item_digest in eligible if item_digest == digest),
+            key=lambda worker: (len(eligible[worker, digest][1].replica_counts), worker),
+        )
+        reserved = []
+        for plan in fixed.values():
+            if plan.decision is not None and plan.decision.manifest_digest == digest:
+                reserved.append(tuple(map(int, plan.decision.block_indices.split(":"))))
+        for index, worker in enumerate(members):
+            candidate, decision = eligible[worker, digest]
+            remaining = candidate.total_blocks - sum(end - start for start, end in reserved)
+            fair_blocks = max(1, math.ceil(remaining / (len(members) - index)))
+            provisional, _ = planners[worker][1]._evaluate_resource(
+                candidate, excluded_spans=reserved, maximum_blocks=min(fair_blocks, len(decision.replica_counts))
+            )
+            if provisional is not None:
+                start, end = map(int, provisional.block_indices.split(":"))
+                anchors[worker, digest] = start
+                target_spans[worker, digest] = start, end
+                reserved.append((start, end))
+
+    for worker in resource_workers:
+        planner = planners[worker][1]
+        if not sharing_enabled:
+            continue
+        for candidate in candidate_sets[worker]:
+            if (worker, candidate.manifest_digest) not in eligible or candidate.resource_plan is None:
+                continue
+            digest = candidate.manifest_digest
+            anchor = anchors.get((worker, digest), 0)
+            current = preferred[worker].decision
+            for block in range(candidate.total_blocks):
+                slot = digest, block
+                if slot in fixed_slots:
+                    continue
+                resource = _resolve_resource_plan(candidate, block, block + 1)
+                if resource is None:
+                    continue
+                decision = planner._span_decision(candidate, block, block + 1, resource)
+                rank = (
+                    0 if current is not None and current.manifest_digest == digest else 1,
+                    -decision.score,
+                    abs(block - anchor),
+                    planner._range_jitter(digest, block, block + 1),
+                    digest,
+                    block,
+                )
+                previous = offers[worker].get(slot)
+                if previous is None or rank < previous[0]:
+                    offers[worker][slot] = rank, candidate, resource
+
+    ranked_offers = {worker: sorted(values, key=lambda item: values[item][0]) for worker, values in offers.items()}
+
+    def match(workers, blocked=()):
+        blocked = set(blocked)
+        owners = {}
+        selected = {}
+
+        def augment(worker, visited):
+            for slot in ranked_offers[worker]:
+                if slot in blocked or slot in visited:
+                    continue
+                visited.add(slot)
+                other = owners.get(slot)
+                if other is None or augment(other, visited):
+                    owners[slot] = worker
+                    selected[worker] = slot
+                    return True
+            return False
+
+        for worker in sorted(workers, key=lambda item: (len(offers[item]), item)):
+            augment(worker, set())
+        return selected
+
+    matched = match(resource_workers)
+    kept = {}
+    kept_slots = set()
+    for worker in sorted(matched):
+        planner = planners[worker][1]
+        decision = preferred[worker].decision
+        if worker not in retained or decision is None or decision != planner.current_decision:
+            continue
+        candidate = next(
+            (item for item in candidate_sets[worker] if item.manifest_digest == decision.manifest_digest), None
+        )
+        if candidate is None or candidate.resource_plan is None:
+            continue
+        start, end = map(int, decision.block_indices.split(":"))
+        resource = _resolve_resource_plan(candidate, start, end)
+        slots = {(decision.manifest_digest, block) for block in range(start, end)}
+        if (
+            resource is not None
+            and resource.artifact_bytes == decision.artifact_bytes
+            and resource.artifact_set_digest == decision.artifact_set_digest
+            and resource.device_memory_bytes == decision.device_memory_bytes
+            and not slots.intersection(fixed_slots | kept_slots)
+        ):
+            kept[worker] = candidate, resource
+            kept_slots.update(slots)
+    if kept:
+        rematched = match([worker for worker in resource_workers if worker not in kept], kept_slots)
+        if len(rematched) + len(kept) == len(matched):
+            matched = rematched
+        else:
+            # Residency cannot monopolize a model when another feasible card
+            # can participate after a coordinated split of the old assignment.
+            kept = {}
+
+    assigned = dict(kept)
+    for worker, slot in matched.items():
+        _, candidate, resource = offers[worker][slot]
+        assigned[worker] = candidate, resource
+
+    def occupancy(values):
+        occupied = dict.fromkeys(fixed_slots, "")
+        for worker, (candidate, resource) in values.items():
+            for block in range(resource.start_block, resource.end_block):
+                occupied[candidate.manifest_digest, block] = worker
+        return occupied
+
+    def grow(worker, direction, occupied):
+        changes = {}
+        candidate, old = assigned[worker]
+        start = old.start_block - (direction < 0)
+        end = old.end_block + (direction > 0)
+        resource = _resolve_resource_plan(candidate, start, end)
+        if resource is None:
+            return None
+
+        def shift(other, visiting):
+            if not other or other in kept or other in visiting:
+                return False
+            visiting.add(other)
+            peer_candidate, peer = assigned[other]
+            shifted = _resolve_resource_plan(peer_candidate, peer.start_block + direction, peer.end_block + direction)
+            if shifted is None:
+                return False
+            frontier = shifted.start_block if direction < 0 else shifted.end_block - 1
+            neighbor = occupied.get((peer_candidate.manifest_digest, frontier))
+            if neighbor is not None and neighbor != other and not shift(neighbor, visiting):
+                return False
+            changes[other] = peer_candidate, shifted
+            return True
+
+        frontier = start if direction < 0 else end - 1
+        neighbor = occupied.get((candidate.manifest_digest, frontier))
+        if neighbor is not None and not shift(neighbor, {worker}):
+            return None
+        changes[worker] = candidate, resource
+        return changes
+
+    occupied = occupancy(assigned)
+    while True:
+        changed = False
+        order = sorted(
+            assigned, key=lambda worker: (assigned[worker][1].end_block - assigned[worker][1].start_block, worker)
+        )
+        for worker in order:
+            if worker in kept:
+                continue
+            choices = []
+            for direction in (-1, 1):
+                changes = grow(worker, direction, occupied)
+                if changes is None:
+                    continue
+                candidate, resource = changes[worker]
+                counts = candidate.health["replica_counts"][resource.start_block : resource.end_block]
+                target_start, target_end = target_spans.get(
+                    (worker, candidate.manifest_digest), (resource.start_block, resource.end_block)
+                )
+                key = (
+                    -sum(count == 0 for count in counts),
+                    sum(counts),
+                    -max(0, min(resource.end_block, target_end) - max(resource.start_block, target_start)),
+                    resource.device_memory_bytes,
+                    len(changes),
+                    planners[worker][1]._range_jitter(
+                        candidate.manifest_digest, resource.start_block, resource.end_block
+                    ),
+                )
+                choices.append((key, changes))
+            if choices:
+                changes = min(choices, key=lambda item: item[0])[1]
+                # A growth adds one boundary block; every pushed neighbor moves
+                # by one. Updating only boundaries avoids rebuilding all slots
+                # for every successful probe at the 512-block limit.
+                for other, (candidate, resource) in changes.items():
+                    previous = assigned[other][1]
+                    if previous.start_block < resource.start_block:
+                        occupied.pop((candidate.manifest_digest, previous.start_block))
+                    if previous.end_block > resource.end_block:
+                        occupied.pop((candidate.manifest_digest, previous.end_block - 1))
+                for other, (candidate, resource) in changes.items():
+                    previous = assigned[other][1]
+                    if resource.start_block < previous.start_block:
+                        occupied[candidate.manifest_digest, resource.start_block] = other
+                    if resource.end_block > previous.end_block:
+                        occupied[candidate.manifest_digest, resource.end_block - 1] = other
+                assigned.update(changes)
+                changed = True
+        if not changed:
+            break
+
+    result = dict(fixed)
+    for worker in resource_workers:
+        original, planner = planners[worker]
+        if worker in assigned:
+            candidate, resource = assigned[worker]
+            decision = (
+                planner.current_decision
+                if worker in kept
+                else planner._span_decision(candidate, resource.start_block, resource.end_block, resource)
+            )
+            result[original] = PlacementPlan(decision, decision.reason, len(candidate_sets[worker]))
+        else:
+            reason = (
+                preferred[worker].reason
+                if not offers[worker]
+                else "no disjoint resource-feasible span remains for this worker"
+            )
+            result[original] = PlacementPlan(None, reason, len(candidate_sets[worker]))
     return result
 
 
