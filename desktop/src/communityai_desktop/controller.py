@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Dict
 
-from communityai_desktop.client import NodeApiError, NodeClient, NodeClientError
+from communityai_desktop.client import NodeApiError, NodeClient, NodeClientError, _valid_gpu_memory
 from communityai_desktop.telemetry import route_view
 
 
@@ -14,12 +15,78 @@ def _download_storage_estimate(size_bytes: int | None) -> str:
     return f"{size_bytes / 1_000_000_000:.1f} GB ({size_bytes:,} bytes)"
 
 
+class GpuSelectionDraft:
+    """Keep physical selection tokens with the snapshot that created a dirty draft."""
+
+    def __init__(self):
+        self.latest = self.base = None
+        self.dirty = False
+        self.invalid_reason = ""
+
+    @staticmethod
+    def _context(state):
+        if state is None:
+            return None
+        return (
+            state["config_revision"],
+            sorted(
+                (row["device"], row.get("selection_token"), row["status"], row["total_bytes"])
+                for row in state["inventory"]
+            ),
+            sorted(
+                (row["device"], row["selected"], row["max_vram"], row["max_processing_percent"])
+                for row in state["rows"]
+            ),
+        )
+
+    def observe(self, state):
+        if self.dirty and self._context(state) != self._context(self.base):
+            self.invalidate("GPUs or settings changed. Discard changes before saving.")
+        self.latest = deepcopy(state)
+        if not self.dirty:
+            self.base = deepcopy(state)
+
+    def set_dirty(self, dirty):
+        self.dirty = dirty
+        if not dirty:
+            self.base = deepcopy(self.latest)
+            self.invalid_reason = ""
+
+    def invalidate(self, reason="Connection changed. Discard changes and reload the saved GPU settings."):
+        if self.dirty:
+            self.invalid_reason = reason
+
+    def request_rows(self, rows, revision):
+        if (
+            self.invalid_reason
+            or self.base is None
+            or self.latest is None
+            or revision != self.base["config_revision"]
+            or self._context(self.latest) != self._context(self.base)
+        ):
+            raise NodeClientError(self.invalid_reason or "GPU settings changed. Discard changes before saving.")
+        if not self.latest["editable"] or self.latest["restart_required"]:
+            raise NodeClientError(self.latest["reason"] or "Pause sharing and wait for the node to become idle.")
+        tokens = {row["device"]: row.get("selection_token") for row in self.base["inventory"]}
+        result = []
+        for row in rows:
+            item = dict(row)
+            if row.get("selected") is True:
+                token = tokens.get(row.get("device"))
+                if token is None:
+                    raise NodeClientError("A selected GPU is unavailable. Discard changes before saving.")
+                item["selection_token"] = token
+            result.append(item)
+        return result
+
+
 class DesktopController:
     def __init__(self, client: NodeClient):
         self.client = client
 
     def snapshot(self) -> Dict[str, Any]:
         status = self.client.status()
+        gpu_selection = self._gpu_selection()
         auto_selection = self._auto_selection_view(status.get("auto_selection"))
         models = [self._model_view(model) for model in status["models"]]
         for model in models:
@@ -29,6 +96,13 @@ class DesktopController:
         hardware = dict(status.get("hardware") or {})
         selected = next((model for model in models if model["auto_selected"]), {})
         hardware["inference_device"] = selected.get("device")
+        if gpu_selection is not None and gpu_selection["config_revision"] != contribution["policy"]["config_revision"]:
+            gpu_selection = {
+                **gpu_selection,
+                "editable": False,
+                "runtime_ready": False,
+                "reason": "Settings changed while refreshing. Waiting for the current settings.",
+            }
         return {
             "node_status": status.get("status", "unknown"),
             "openai_base_url": status["openai_base_url"],
@@ -43,7 +117,42 @@ class DesktopController:
             "keys": [self._key_view(key) for key in self.client.list_keys()],
             "network": self._network_view(status.get("network"), models),
             "contribution": self._contribution_view(contribution, workers, hardware),
+            "gpu_selection": gpu_selection,
         }
+
+    def _gpu_selection(self):
+        getter = getattr(self.client, "get_gpu_selection", None)
+        if getter is None:
+            return None  # Shell-neutral callers may still use the legacy client protocol.
+        try:
+            return getter()
+        except NodeApiError as exc:
+            if exc.status_code in (404, 501):
+                return None  # Older nodes retain the existing single-worker controls.
+            raise
+
+    def update_gpu_selection(self, rows, *, expected_revision):
+        # The server checks paused/idle state atomically. Do not change policy or
+        # fetch replacement tokens here: either action could alter the original choice.
+        return self.client.update_gpu_selection(rows, expected_revision=expected_revision)
+
+    def _require_gpu_start_ready(self, worker_ids=None, *, contribution=None):
+        current = contribution if contribution is not None else self.client.status()["contribution"]
+        workers = current["workers"]
+        if not any(
+            worker.get("managed_by") == "desktop_gpu" and (worker_ids is None or worker["id"] in worker_ids)
+            for worker in workers
+        ):
+            return
+        if not _valid_gpu_memory(current["policy"]["policy"].get("max_vram")):
+            raise NodeClientError("Set and save a memory ceiling for each GPU before starting sharing.")
+        selection = self._gpu_selection()
+        if selection is None:
+            raise NodeClientError("GPU sharing settings are unavailable. Reload the node before starting.")
+        if selection["config_revision"] != current["policy"]["config_revision"]:
+            raise NodeClientError("GPU settings changed while refreshing. Refresh before starting sharing.")
+        if selection["restart_required"] or not selection["runtime_ready"]:
+            raise NodeClientError(selection["reason"] or "GPU sharing is not ready. Wait for the node to reload.")
 
     @staticmethod
     def _model_view(model: Dict[str, Any]) -> Dict[str, Any]:
@@ -142,6 +251,7 @@ class DesktopController:
         return {
             "id": worker["id"],
             "model": worker["model"],
+            **({field: worker[field] for field in ("device", "managed_by") if field in worker}),
             "state": state,
             "desired_running": desired_running,
             "operator_paused": worker.get("operator_paused", False),
@@ -261,6 +371,8 @@ class DesktopController:
     def set_sharing_enabled(self, enabled: bool) -> Dict[str, Any]:
         """Persist the user's sharing choice before starting or stopping workers."""
         current = self.client.status()["contribution"]
+        if enabled:
+            self._require_gpu_start_ready(contribution=current)
         if not current["editable"]:
             raise NodeClientError("Sharing settings are unavailable. Restart CommunityAI and try again.")
         if enabled and not current["workers"]:
@@ -287,6 +399,8 @@ class DesktopController:
         return {**result, "message": "Sharing is waiting to start." if waiting else "Sharing enabled."}
 
     def worker_action(self, worker_id: str, action: str) -> Dict[str, Any]:
+        if action in ("start", "restart"):
+            self._require_gpu_start_ready([worker_id])
         return self.client.worker_action(worker_id, action)
 
     def update_contribution_policy(self, policy: Dict[str, Any], *, expected_revision: str) -> Dict[str, Any]:
@@ -306,8 +420,27 @@ class DesktopController:
         saved = current["policy"]
         if saved["config_revision"] != expected_revision:
             raise NodeClientError("Settings changed elsewhere. Refresh before applying limits.")
-        if not current["editable"] or "max_processing_percent" not in saved["policy"]:
+        if not current["editable"] or (
+            "max_processing_percent" not in saved["policy"] and saved["policy"].get("processing_scope") != "per_device"
+        ):
             raise NodeClientError("Update the local node to use these resource controls.")
+        if saved["policy"].get("processing_scope") == "per_device":
+            if set(changes) != {"max_vram"}:
+                raise NodeClientError("Use each GPU's compute control to change its processing limit.")
+            selection = self._gpu_selection()
+            if (
+                selection is None
+                or selection["config_revision"] != expected_revision
+                or not selection["editable"]
+                or selection["restart_required"]
+            ):
+                raise NodeClientError(
+                    "Pause sharing and wait for the node to become idle before changing its memory ceiling."
+                )
+            result = self.client.update_contribution_policy(
+                {**saved["policy"], **changes}, expected_revision=expected_revision
+            )
+            return {**result, "message": "Memory ceiling saved. Sharing remains paused."}
         resume = [
             worker["id"]
             for worker in current["workers"]
@@ -337,6 +470,8 @@ class DesktopController:
         return result
 
     def set_workers_enabled(self, worker_ids: list[str], enabled: bool) -> list[Dict[str, Any]]:
+        if enabled:
+            self._require_gpu_start_ready(worker_ids)
         action = "start" if enabled else "pause"
         return [self.client.worker_action(worker_id, action) for worker_id in worker_ids]
 

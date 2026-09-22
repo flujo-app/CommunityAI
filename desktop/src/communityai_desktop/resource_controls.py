@@ -32,16 +32,19 @@ class ResourceControls(QWidget):
         self._vram_total = None
         self._vram_available = None
         self._vram_saved = None
+        self._gpu_mode = self._per_device = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.sliders = {}
         self.values = {}
+        self.labels = {}
         for field, title in (
             ("max_vram", "GPU memory limit"),
             ("max_processing_percent", "Computing"),
         ):
             row = QHBoxLayout()
-            row.addWidget(QLabel(title), 1)
+            self.labels[field] = QLabel(title)
+            row.addWidget(self.labels[field], 1)
             value = QLabel("100%")
             value.setObjectName(f"resource_{field}_value")
             row.addWidget(value)
@@ -67,8 +70,12 @@ class ResourceControls(QWidget):
         self._update_enabled()
 
     def _changed(self, field, percent):
+        if field == "max_processing_percent" and self._per_device:
+            return
         self._draft[field] = f"{percent}%" if field == "max_vram" else percent
-        self.values[field].setText(self._vram_text(percent) if field == "max_vram" else f"{percent}%")
+        self.values[field].setText(
+            self._vram_text(percent) if field == "max_vram" and not self._gpu_mode else f"{percent}%"
+        )
         self.message.setText("Unsaved changes")
         self._update_enabled()
 
@@ -106,6 +113,8 @@ class ResourceControls(QWidget):
                 text = self._vram_text(percent)
                 if raw and percent is None:
                     text = str(raw)
+                if self._gpu_mode:
+                    text = str(raw) if raw else "Not configured"
             else:
                 percent = raw
                 text = f"{percent:g}%"
@@ -116,13 +125,37 @@ class ResourceControls(QWidget):
             self.values[field].setText(text)
         self._update_enabled()
 
+    def set_gpu_mode(self, enabled, *, per_device=False):
+        """Keep the still-enforced node memory ceiling visible beside per-card limits."""
+        self._gpu_mode, self._per_device = bool(enabled), bool(enabled and per_device)
+        title = "Memory ceiling for each GPU" if enabled else "GPU memory limit"
+        self.labels["max_vram"].setText(title)
+        self.sliders["max_vram"].setAccessibleName(title)
+        for widget in (
+            self.labels["max_processing_percent"],
+            self.values["max_processing_percent"],
+            self.sliders["max_processing_percent"],
+        ):
+            widget.setVisible(not self._per_device)
+        if self._per_device:
+            self._draft.pop("max_processing_percent", None)
+        if self._gpu_mode:
+            raw = self._draft.get("max_vram", self._policy.get("max_vram"))
+            self.values["max_vram"].setText(str(raw) if raw else "Not configured")
+        self._update_enabled()
+
     def _update_enabled(self):
-        supported = "max_processing_percent" in self._policy
+        supported = "max_processing_percent" in self._policy or self._gpu_mode
         for slider in self.sliders.values():
             slider.setEnabled(self._editable and supported and not self._busy)
         self.sliders["max_vram"].setEnabled(
-            self._editable and supported and not self._busy and bool(self._vram_total) and self._vram_available != 0
+            self._editable
+            and supported
+            and not self._busy
+            and (self._gpu_mode or (bool(self._vram_total) and self._vram_available != 0))
         )
+        if self._per_device:
+            self.sliders["max_processing_percent"].setEnabled(False)
         self.apply_button.setEnabled(self._editable and supported and bool(self._draft) and not self._busy)
         if self._editable and not supported:
             self.message.setText("Update the local node to use both resource controls.")
@@ -273,6 +306,9 @@ class GpuResourceControls(QWidget):
         hint = QLabel("Use the master sliders to set all limits. Select the GPUs you want to share.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
+        self.inventory_summary = QLabel()
+        self.inventory_summary.setObjectName("gpuInventorySummary")
+        layout.addWidget(self.inventory_summary)
         self.rows_scroll = QScrollArea()
         self.rows_scroll.setObjectName("gpuRows")
         self.rows_scroll.setWidgetResizable(True)
@@ -422,6 +458,11 @@ class GpuResourceControls(QWidget):
             self._inventory.keys() | self._draft.keys(),
             key=lambda key: (key.split(":")[0], int(key.split(":")[-1]) if ":" in key else 0),
         )
+        detected = len(self._inventory)
+        selected_count = sum(record["selected"] for record in self._draft.values())
+        self.inventory_summary.setText(
+            f"{detected} {'GPU' if detected == 1 else 'GPUs'} detected · {selected_count} selected"
+        )
         for device in list(self.rows):
             if device not in devices:
                 row = self.rows.pop(device)
@@ -496,7 +537,7 @@ class GpuResourceControls(QWidget):
             if lost_selected
             else self._feedback
             or (
-                "Unsaved changes. Saving pauses sharing."
+                "Unsaved changes. Pause sharing before saving."
                 if self.dirty
                 else "Choose GPUs and limits, then save. Sharing starts only when you start it."
             )

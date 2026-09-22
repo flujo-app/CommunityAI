@@ -14,12 +14,14 @@ import sys
 import tempfile
 import threading
 import time
+import weakref
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Sequence, Tuple
 from uuid import UUID
 
+from drift.node.contribution_planner import MAX_AUTOMATIC_PLACEMENT_BLOCKS
 from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE
 
@@ -398,6 +400,9 @@ class _WorkerRecord:
     memory_rejected_command: Optional[Tuple[str, ...]] = None
     last_power_watts: Optional[float] = None
     suspension_stop_thread: Optional[threading.Thread] = field(default=None, repr=False)
+    cleanup_pending: bool = False
+    natural_exit_code: Optional[int] = None
+    start_after_cleanup: bool = False
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
 
 
@@ -415,11 +420,17 @@ class WorkerSupervisor:
         bandwidth_mbps: Optional[Callable[[], Optional[float]]] = None,
         power_watts: Optional[Callable[[str], Optional[float]]] = None,
         device_available: Optional[Callable[[str], bool]] = None,
+        coordinated_launches: bool = False,
     ) -> None:
         if stop_timeout <= 0 or poll_period <= 0:
             raise ValueError("worker supervisor timeouts must be positive")
+        if type(coordinated_launches) is not bool:
+            raise ValueError("coordinated_launches must be a boolean")
         launches = tuple(launches)
-        _validate_vram_pools(launches)
+        if coordinated_launches:
+            self._validate_joint_launches(launches)
+        else:
+            _validate_vram_pools(launches)
         self._records: Dict[str, _WorkerRecord] = {}
         for launch in launches:
             normalized = launch.worker_id.casefold()
@@ -443,6 +454,16 @@ class WorkerSupervisor:
         self._started = False
         self._closed = False
         self._configuration_restart_pending = False
+        self._coordinated_launches = coordinated_launches
+        self._process_containments: Dict[int, Any] = {}
+        self._process_cleanup_lock = threading.Lock()
+        self._process_cleanup_locks = weakref.WeakKeyDictionary()
+        self._verified_stops = weakref.WeakSet()
+        self._launch_transition_ids: frozenset[str] = frozenset()
+        self._launch_transition_active = False
+        self._launch_transition_state = "idle"
+        self._launch_transition_done = threading.Event()
+        self._launch_transition_done.set()
 
     def _record(self, worker_id: str) -> _WorkerRecord:
         with self._lock:
@@ -503,6 +524,8 @@ class WorkerSupervisor:
         return True, None
 
     def _resource_status_locked(self, record: _WorkerRecord) -> Tuple[bool, Optional[str]]:
+        if record.cleanup_pending:
+            return False, "worker process cleanup is incomplete"
         launch = record.launch
         device_check = launch.device_available
         if device_check is None and self._device_available is not None:
@@ -524,8 +547,9 @@ class WorkerSupervisor:
                 if other is not record
                 and other.launch.vram_device == launch.vram_device
                 and (
-                    other.suspension_stop_thread is not None
-                    or (other.process is not None and other.process.poll() is None)
+                    other.cleanup_pending
+                    or other.suspension_stop_thread is not None
+                    or (other.process is not None and (self._coordinated_launches or other.process.poll() is None))
                 )
             )
             if reserved + launch.max_vram_bytes > launch.vram_pool_bytes:
@@ -556,6 +580,15 @@ class WorkerSupervisor:
         defer_outside_schedule: bool = False,
         defer_unavailable_resources: bool = False,
     ) -> bool:
+        # The monitor must remain alive while a batch is quiescing or waiting for
+        # a cleanup retry. Public Start checks this latch before changing intent.
+        if self._launch_transition_ids:
+            record.resource_suspended = record.desired_running
+            return False
+        if self._coordinated_launches:
+            self._refresh_locked(record)
+        if record.cleanup_pending:
+            return False
         if self._configuration_restart_pending:
             raise WorkerReconfigurationBusyError("node configuration restart is pending")
         if not record.launch.policy_admitted:
@@ -604,7 +637,19 @@ class WorkerSupervisor:
         except OSError:
             record.progress_directory = None
             logger.warning("Local download progress is unavailable for worker %s", record.launch.worker_id)
+        containment = None
+        process = None
         try:
+            spawn_options = {"creationflags": self._creation_flags()}
+            if self._coordinated_launches:
+                from drift.node.edge_supervisor import _new_containment
+
+                containment = _new_containment()
+                options = containment.popen_kwargs()
+                spawn_options.update(options)
+                spawn_options["creationflags"] |= self._creation_flags()
+            elif sys.platform.startswith("linux"):
+                spawn_options["start_new_session"] = True
             process = self._popen(
                 list(record.launch.command),
                 stdin=subprocess.DEVNULL,
@@ -615,19 +660,45 @@ class WorkerSupervisor:
                 errors="replace",
                 bufsize=1,
                 env=environment,
-                creationflags=self._creation_flags(),
-                **({"start_new_session": True} if sys.platform.startswith("linux") else {}),
+                **spawn_options,
             )
+            if containment is not None:
+                self._process_containments[id(process)] = containment
+                record.process = process
+                record.cleanup_pending = True
+                containment.attach(process)
+                containment.resume(process)
+                record.cleanup_pending = False
         except Exception as exc:
-            record.process = None
+            if process is not None:
+                # A failed Windows attach leaves a suspended direct child. It
+                # must be reaped as well as any successfully attached members.
+                try:
+                    process.kill()
+                    self._terminate_launch_tree(process)
+                except Exception:
+                    record.process = process
+                    record.cleanup_pending = True
+                else:
+                    record.process = None
+                    record.cleanup_pending = False
+            elif containment is not None:
+                containment.close()
+            if process is None:
+                record.process = None
             record.state = WorkerState.CRASHED
-            record.last_error = f"{type(exc).__name__}: {exc}"
+            record.last_error = (
+                "worker process containment could not be established"
+                if self._coordinated_launches
+                else f"{type(exc).__name__}: {exc}"
+            )
             record.next_restart_at = time.monotonic() + record.launch.restart_backoff
             return False
 
         if record.started_at is not None:
             record.restart_count += 1
         record.process = process
+        record.natural_exit_code = None
         record.state = WorkerState.RUNNING
         record.schedule_suspended = False
         record.resource_suspended = False
@@ -678,10 +749,19 @@ class WorkerSupervisor:
 
     def _refresh_locked(self, record: _WorkerRecord) -> None:
         process = record.process
-        if process is None or record.state is WorkerState.STOPPING:
+        if process is None or record.state is WorkerState.STOPPING or record.cleanup_pending:
             return
         exit_code = process.poll()
         if exit_code is None:
+            return
+        if self._coordinated_launches and id(process) in self._process_containments:
+            # Parent exit does not prove its job/group has released descendants.
+            # Preserve the reservation until the asynchronous stop verifies it.
+            record.cleanup_pending = True
+            record.natural_exit_code = exit_code
+            if exit_code == DEVICE_MEMORY_BUDGET_EXIT_CODE:
+                record.memory_rejected_command = record.launch.command
+            self._suspend_locked(record)
             return
         self._kill_linux_worker_group(process)
         record.process = None
@@ -711,22 +791,47 @@ class WorkerSupervisor:
                 record.schedule_suspended = False
                 record.resource_suspended = False
                 record.state = WorkerState.CRASHED
-                record.last_error = f"{type(error).__name__}: {error}"
+                record.last_error = (
+                    "worker process cleanup is incomplete"
+                    if self._coordinated_launches
+                    else f"{type(error).__name__}: {error}"
+                )
             else:
                 if record.process is process:
                     record.process = None
                 record.last_exit_code = exit_code
                 record.last_error = None
                 record.state = WorkerState.PAUSED
+                record.cleanup_pending = False
+                explicit_start = record.start_after_cleanup and record.desired_running and not record.operator_paused
+                record.start_after_cleanup = False
+                if record.natural_exit_code is not None:
+                    record.schedule_suspended = False
+                    record.resource_suspended = False
+                    if record.natural_exit_code == DEVICE_MEMORY_BUDGET_EXIT_CODE:
+                        record.resource_suspended = record.desired_running
+                        record.last_error = self._resource_status_locked(record)[1]
+                    elif record.desired_running:
+                        record.state = WorkerState.CRASHED
+                        record.last_error = f"worker exited with code {record.natural_exit_code}"
+                        record.next_restart_at = time.monotonic() + record.launch.restart_backoff
+                    record.natural_exit_code = None
+                if explicit_start and not self._closed:
+                    if record.suspension_stop_thread is threading.current_thread():
+                        record.suspension_stop_thread = None
+                    self._spawn_locked(record, defer_outside_schedule=True, defer_unavailable_resources=True)
             if record.suspension_stop_thread is threading.current_thread():
                 record.suspension_stop_thread = None
 
         if error is not None:
-            logger.error(
-                "Failed to suspend worker %r for its contribution policy",
-                record.launch.worker_id,
-                exc_info=(type(error), error, error.__traceback__),
-            )
+            if self._coordinated_launches:
+                logger.error("Worker %r process cleanup is incomplete", record.launch.worker_id)
+            else:
+                logger.error(
+                    "Failed to suspend worker %r for its contribution policy",
+                    record.launch.worker_id,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
 
     def _suspend_locked(self, record: _WorkerRecord, *, schedule: bool = False, resource: bool = False) -> None:
         if schedule:
@@ -740,6 +845,8 @@ class WorkerSupervisor:
             record.state = WorkerState.PAUSED
             return
         record.state = WorkerState.STOPPING
+        if self._coordinated_launches:
+            record.cleanup_pending = True
         thread = threading.Thread(
             target=self._finish_suspension,
             args=(record, process),
@@ -754,6 +861,8 @@ class WorkerSupervisor:
             schedule_admitted, _ = self._schedule_status()
             with self._lock:
                 for record in self._records.values():
+                    if record.launch.worker_id.casefold() in self._launch_transition_ids:
+                        continue
                     self._refresh_locked(record)
                     if not schedule_admitted:
                         if record.desired_running and (
@@ -801,6 +910,7 @@ class WorkerSupervisor:
                 raise RuntimeError("worker supervisor is closed")
             if self._configuration_restart_pending:
                 raise WorkerReconfigurationBusyError("node configuration restart is pending")
+            self._require_no_launch_transition_locked()
             if self._started:
                 return
             self._started = True
@@ -821,6 +931,7 @@ class WorkerSupervisor:
     def start_worker(self, worker_id: str) -> bool:
         record = self._record(worker_id)
         with self._lock:
+            self._require_no_launch_transition_locked()
             if self._configuration_restart_pending:
                 raise WorkerReconfigurationBusyError("node configuration restart is pending")
             if not record.launch.policy_admitted:
@@ -834,11 +945,17 @@ class WorkerSupervisor:
                 raise WorkerPolicyError(record.launch.policy_reason)
             record.operator_paused = False
             record.desired_running = True
-            return self._spawn_locked(
-                record,
-                defer_outside_schedule=record.launch.automatic,
-                defer_unavailable_resources=record.launch.automatic,
-            )
+            if self._coordinated_launches:
+                record.start_after_cleanup = True
+            try:
+                return self._spawn_locked(
+                    record,
+                    defer_outside_schedule=record.launch.automatic,
+                    defer_unavailable_resources=record.launch.automatic,
+                )
+            finally:
+                if not record.cleanup_pending:
+                    record.start_after_cleanup = False
 
     @staticmethod
     def _kill_linux_worker_group(process: subprocess.Popen) -> None:
@@ -852,6 +969,8 @@ class WorkerSupervisor:
                 pass
 
     def _terminate(self, process: subprocess.Popen) -> int:
+        if self._coordinated_launches:
+            return self._terminate_launch_tree(process)
         try:
             if process.poll() is None:
                 process.terminate()
@@ -862,6 +981,41 @@ class WorkerSupervisor:
             return process.wait(timeout=self._stop_timeout)
         finally:
             self._kill_linux_worker_group(process)
+
+    def _terminate_launch_tree(self, process: subprocess.Popen) -> int:
+        """Reap one owned process and verify its original containment is empty."""
+        with self._process_cleanup_lock:
+            cleanup_lock = self._process_cleanup_locks.setdefault(process, threading.Lock())
+        with cleanup_lock:
+            if process in self._verified_stops:
+                return process.wait(timeout=self._stop_timeout)
+            return self._terminate_launch_tree_locked(process)
+
+    def _terminate_launch_tree_locked(self, process: subprocess.Popen) -> int:
+        from drift.node.edge_supervisor import _wait_for_containment_exit
+
+        containment = self._process_containments.get(id(process))
+        if containment is None:
+            raise RuntimeError("worker process containment is unavailable")
+        containment.terminate()
+        try:
+            exit_code = process.wait(timeout=self._stop_timeout)
+        except subprocess.TimeoutExpired:
+            containment.kill()
+            # A failed attach can leave a child outside the otherwise empty job.
+            if process.poll() is None:
+                process.kill()
+            exit_code = process.wait(timeout=self._stop_timeout)
+        interval = min(self._poll_period, 0.05)
+        if not _wait_for_containment_exit(containment, self._stop_timeout, interval):
+            containment.kill()
+            if not _wait_for_containment_exit(containment, self._stop_timeout, interval):
+                raise RuntimeError("worker process containment cleanup is incomplete")
+        containment.close()
+        del self._process_containments[id(process)]
+        with self._process_cleanup_lock:
+            self._verified_stops.add(process)
+        return exit_code
 
     def pause_worker(self, worker_id: str) -> bool:
         """Pause a worker and persist the operator's explicit stopped intent."""
@@ -879,17 +1033,31 @@ class WorkerSupervisor:
             if operator_action:
                 record.operator_paused = True
             record.desired_running = False
+            record.start_after_cleanup = False
             record.schedule_suspended = False
             record.resource_suspended = False
+            if self._launch_transition_active and worker_id.casefold() in self._launch_transition_ids:
+                # The batch owns cleanup. Pause records authoritative intent and
+                # leaves the public state STOPPING until that owner finishes.
+                return record.process is not None or record.suspension_stop_thread is not None
             suspension_stop_thread = record.suspension_stop_thread
             process = None if suspension_stop_thread is not None else record.process
+            if self._coordinated_launches and process is not None:
+                # Register the sole cleanup owner before releasing the lock so
+                # a concurrent batch can join it instead of closing the same job.
+                self._suspend_locked(record)
+                suspension_stop_thread = record.suspension_stop_thread
+                process = None
             if process is None and suspension_stop_thread is None:
                 record.state = WorkerState.PAUSED
                 return False
             if process is not None:
                 record.state = WorkerState.STOPPING
+                if self._coordinated_launches:
+                    record.cleanup_pending = True
         if suspension_stop_thread is not None:
-            suspension_stop_thread.join(timeout=(self._stop_timeout * 2) + self._poll_period)
+            multiplier = 4 if self._coordinated_launches else 2
+            suspension_stop_thread.join(timeout=(self._stop_timeout * multiplier) + self._poll_period)
             if suspension_stop_thread.is_alive():
                 raise RuntimeError(f"failed to pause worker {record.launch.worker_id!r} within the stop timeout")
             with self._lock:
@@ -912,10 +1080,12 @@ class WorkerSupervisor:
                 record.process = None
             record.last_exit_code = exit_code
             record.state = WorkerState.PAUSED
+            record.cleanup_pending = False
         return True
 
     def restart_worker(self, worker_id: str) -> bool:
         with self._lock:
+            self._require_no_launch_transition_locked()
             if self._configuration_restart_pending:
                 raise WorkerReconfigurationBusyError("node configuration restart is pending")
         self.pause_worker(worker_id)
@@ -936,6 +1106,7 @@ class WorkerSupervisor:
                         "download_progress": self._download_snapshot(record),
                         "desired_running": record.desired_running,
                         "operator_paused": record.operator_paused,
+                        "cleanup_pending": record.cleanup_pending,
                         "auto_restart": record.launch.auto_restart,
                         "policy_admitted": record.launch.policy_admitted,
                         "policy_reason": record.launch.policy_reason,
@@ -1016,17 +1187,182 @@ class WorkerSupervisor:
         with self._lock:
             return self._configuration_restart_pending
 
+    def _require_no_launch_transition_locked(self) -> None:
+        if self._launch_transition_ids:
+            raise WorkerReconfigurationBusyError("worker launch transition requires completed cleanup")
+
+    @property
+    def launch_transition_status(self) -> Dict[str, Any]:
+        """In-memory retry state; it is not a durable power-outage checkpoint."""
+        with self._lock:
+            return {
+                "state": self._launch_transition_state,
+                "worker_ids": sorted(self._launch_transition_ids),
+                "closed": self._closed,
+            }
+
+    @staticmethod
+    def _validate_joint_launches(launches: Sequence[WorkerLaunch]) -> None:
+        _validate_vram_pools(launches)
+        spans: Dict[str, list[tuple[int, int]]] = {}
+        for launch in launches:
+            if not launch.automatic or not launch.policy_admitted:
+                continue
+            # WorkerLaunch validates these exact artifact claims against the
+            # command. Loose model labels or ordinal device names are not proof.
+            if launch.placement_manifest_digest is None or not isinstance(launch.block_indices, str):
+                raise ValueError("joint automatic placement requires exact manifest ranges")
+            if re.fullmatch(r"(?:0|[1-9][0-9]{0,2}):[1-9][0-9]{0,2}", launch.block_indices) is None:
+                raise ValueError("joint automatic placement requires a canonical bounded block range")
+            start, end = map(int, launch.block_indices.split(":"))
+            if not 0 <= start < end <= MAX_AUTOMATIC_PLACEMENT_BLOCKS:
+                raise ValueError("joint automatic placement requires a canonical bounded block range")
+            prior = spans.setdefault(launch.placement_manifest_digest, [])
+            if any(start < other_end and other_start < end for other_start, other_end in prior):
+                raise ValueError("joint automatic placements overlap within an exact manifest")
+            prior.append((start, end))
+
+    def replace_launches(self, launches: Sequence[WorkerLaunch], *, start: Optional[bool] = None) -> bool:
+        """Quiesce an existing subset before atomically installing its launches.
+
+        Coordinated containment must have been enabled at construction. Every
+        supplied worker is stopped, even if its assignment compares equal. Start
+        defaults to each launch's auto_start, always subject to operator Pause.
+        A failed cleanup preserves old assignments and blocks all new starts;
+        only a retry covering the pending subset can complete the transition.
+        The caller still owns signed placement admission and aggregate budgets.
+        """
+        if not isinstance(launches, (tuple, list)) or not 1 <= len(launches) <= MAX_VISIBLE_ACCELERATORS:
+            raise ValueError("joint launch transition requires a bounded nonempty worker list")
+        if start is not None and type(start) is not bool:
+            raise ValueError("joint launch start must be a boolean or None")
+        replacements = {}
+        for launch in launches:
+            if not isinstance(launch, WorkerLaunch) or not isinstance(launch.worker_id, str):
+                raise ValueError("joint launch transition requires worker launches")
+            key = launch.worker_id.casefold()
+            if key in replacements:
+                raise ValueError("joint launch worker IDs must be unique case-insensitively")
+            replacements[key] = launch
+        with self._lock:
+            if not self._coordinated_launches:
+                raise WorkerReconfigurationBusyError("joint launches require containment from supervisor construction")
+            if self._closed:
+                raise RuntimeError("worker supervisor is closed")
+            if self._configuration_restart_pending or self._launch_transition_active:
+                raise WorkerReconfigurationBusyError("worker configuration or launch transition is busy")
+            if not replacements.keys() <= self._records.keys():
+                raise WorkerNotFoundError("joint launch transition names an unknown worker")
+            if not self._launch_transition_ids <= replacements.keys():
+                raise WorkerReconfigurationBusyError("retry must include every pending worker transition")
+            final_launches = tuple(replacements.get(key, record.launch) for key, record in self._records.items())
+            self._validate_joint_launches(final_launches)
+            records = tuple(self._records[key] for key in sorted(replacements))
+            changed = any(record.launch != replacements[record.launch.worker_id.casefold()] for record in records)
+            self._launch_transition_ids = frozenset(replacements)
+            self._launch_transition_active = True
+            self._launch_transition_state = "stopping"
+            self._launch_transition_done.clear()
+            for record in records:
+                record.desired_running = False
+                record.start_after_cleanup = False
+                record.schedule_suspended = False
+                record.resource_suspended = False
+                if record.process is not None:
+                    record.cleanup_pending = True
+                    record.state = WorkerState.STOPPING
+        try:
+            failed = False
+            for record in records:
+                try:
+                    with self._lock:
+                        stop_thread = record.suspension_stop_thread
+                    if stop_thread is not None:
+                        stop_thread.join(timeout=(self._stop_timeout * 4) + self._poll_period)
+                        if stop_thread.is_alive():
+                            raise RuntimeError("worker policy cleanup is still running")
+                    with self._lock:
+                        process = record.process
+                    if process is not None:
+                        exit_code = self._terminate_launch_tree(process)
+                        with self._lock:
+                            if record.process is process:
+                                record.process = None
+                            record.last_exit_code = exit_code
+                            record.cleanup_pending = False
+                            record.natural_exit_code = None
+                    with self._lock:
+                        if record.cleanup_pending:
+                            raise RuntimeError("worker cleanup has no completed evidence")
+                        record.state = WorkerState.PAUSED
+                        record.last_error = None
+                except Exception:
+                    # Keep stopping the rest. No old assignment is overwritten,
+                    # and neither parent exit nor an error releases reservations.
+                    failed = True
+                    with self._lock:
+                        # A timed-out stop-thread observation may already be
+                        # stale: its verified cleanup can finish before this
+                        # lock is acquired. Never recreate an orphaned cleanup
+                        # latch after that owner has released the process.
+                        if (
+                            record.process is not None
+                            or record.suspension_stop_thread is not None
+                            or record.cleanup_pending
+                        ):
+                            record.cleanup_pending = True
+                            record.state = WorkerState.STOPPING
+                            record.last_error = "worker process cleanup is incomplete; retry the launch transition"
+                        else:
+                            record.state = WorkerState.PAUSED
+                            record.last_error = None
+            with self._lock:
+                if failed or self._closed:
+                    self._launch_transition_state = "cleanup_failed"
+                    raise RuntimeError(
+                        "worker supervisor closed during launch transition"
+                        if self._closed
+                        else "worker launch transition cleanup is incomplete"
+                    )
+                # Install every new assignment before evaluating the first start.
+                # Pause writes use this same lock, so stale start intent cannot
+                # undo a Pause received while cleanup was in progress.
+                for record in records:
+                    launch = replacements[record.launch.worker_id.casefold()]
+                    record.launch = launch
+                    record.last_power_watts = None
+                    requested_start = launch.auto_start if start is None else start
+                    record.desired_running = requested_start and not record.operator_paused and launch.policy_admitted
+                self._launch_transition_ids = frozenset()
+                self._launch_transition_state = "idle"
+                if self._started:
+                    for record in records:
+                        if record.desired_running:
+                            self._spawn_locked(record, defer_outside_schedule=True, defer_unavailable_resources=True)
+                return changed
+        finally:
+            with self._lock:
+                self._launch_transition_active = False
+                if self._launch_transition_ids:
+                    self._launch_transition_state = "cleanup_failed"
+                self._launch_transition_done.set()
+
     def replace_launch(self, launch: WorkerLaunch, *, start: Optional[bool] = None) -> bool:
         """Replace one paused worker assignment without overriding an explicit pause."""
         record = self._record(launch.worker_id)
         with self._lock:
+            self._require_no_launch_transition_locked()
             if self._closed:
                 raise RuntimeError("worker supervisor is closed")
             if self._configuration_restart_pending:
                 raise WorkerReconfigurationBusyError("node configuration restart is pending")
+            final_launches = tuple(launch if other is record else other.launch for other in self._records.values())
+            if self._coordinated_launches:
+                self._validate_joint_launches(final_launches)
             self._refresh_locked(record)
             if (
                 record.desired_running
+                or record.cleanup_pending
                 or record.process is not None
                 or record.suspension_stop_thread is not None
                 or record.state in (WorkerState.STARTING, WorkerState.STOPPING)
@@ -1035,7 +1371,8 @@ class WorkerSupervisor:
                     f"pause contribution worker {record.launch.worker_id!r} before replacing its placement"
                 )
             changed = record.launch != launch
-            _validate_vram_pools(tuple(launch if other is record else other.launch for other in self._records.values()))
+            if not self._coordinated_launches:
+                _validate_vram_pools(final_launches)
             record.launch = launch
             record.schedule_suspended = False
             record.resource_suspended = False
@@ -1064,16 +1401,20 @@ class WorkerSupervisor:
         """
         launches = {launch.worker_id.casefold(): launch for launch in settings.launches}
         with self._lock:
+            self._require_no_launch_transition_locked()
             if self._closed:
                 raise RuntimeError("worker supervisor is closed")
             if self._configuration_restart_pending:
                 raise WorkerReconfigurationBusyError("node configuration restart is pending")
             if set(launches) != set(self._records):
                 raise ValueError("a policy update must preserve the configured worker set")
+            if self._coordinated_launches:
+                self._validate_joint_launches(tuple(launches.values()))
             for record in self._records.values():
                 self._refresh_locked(record)
                 if (
                     record.desired_running
+                    or record.cleanup_pending
                     or record.process is not None
                     or record.suspension_stop_thread is not None
                     or record.state in (WorkerState.STARTING, WorkerState.STOPPING)
@@ -1104,6 +1445,7 @@ class WorkerSupervisor:
         """
 
         with self._lock:
+            self._require_no_launch_transition_locked()
             if self._closed:
                 raise RuntimeError("worker supervisor is closed")
             if self._configuration_restart_pending:
@@ -1127,7 +1469,14 @@ class WorkerSupervisor:
 
     def shutdown(self) -> None:
         with self._lock:
-            if self._closed:
+            if (
+                self._closed
+                and not self._launch_transition_active
+                and all(
+                    record.process is None and record.suspension_stop_thread is None
+                    for record in self._records.values()
+                )
+            ):
                 return
             self._closed = True
             self._stop.set()
@@ -1135,16 +1484,36 @@ class WorkerSupervisor:
             monitor = self._monitor
             for record in records:
                 record.desired_running = False
+                record.start_after_cleanup = False
                 record.schedule_suspended = False
                 record.resource_suspended = False
+                if (
+                    self._coordinated_launches
+                    and record.process is not None
+                    and not (
+                        self._launch_transition_active
+                        and record.launch.worker_id.casefold() in self._launch_transition_ids
+                    )
+                ):
+                    self._suspend_locked(record)
             suspension_stop_threads = {
                 id(record): record.suspension_stop_thread
                 for record in records
                 if record.suspension_stop_thread is not None
             }
+        # A running batch observes _closed and cannot install its new launches.
+        # If it fails cleanup, shutdown can retry the retained processes. A timed
+        # out cleanup remains tracked and a later shutdown call may retry it.
+        self._launch_transition_done.wait(timeout=(self._stop_timeout * 4) + self._poll_period)
         for thread in suspension_stop_threads.values():
-            thread.join(timeout=(self._stop_timeout * 2) + self._poll_period)
+            multiplier = 4 if self._coordinated_launches else 2
+            thread.join(timeout=(self._stop_timeout * multiplier) + self._poll_period)
         for record in records:
+            with self._lock:
+                if self._launch_transition_active and record.launch.worker_id.casefold() in self._launch_transition_ids:
+                    # The batch is the sole cleanup owner and observes _closed
+                    # before installing or starting replacements.
+                    continue
             suspension_stop_thread = suspension_stop_threads.get(id(record))
             if suspension_stop_thread is not None and suspension_stop_thread.is_alive():
                 logger.error(
@@ -1160,13 +1529,22 @@ class WorkerSupervisor:
                     exit_code = self._terminate(process)
                 except Exception as exc:
                     with self._lock:
-                        record.last_error = f"{type(exc).__name__}: {exc}"
-                    logger.exception("Failed to stop worker %r", record.launch.worker_id)
+                        record.last_error = (
+                            "worker process cleanup is incomplete"
+                            if self._coordinated_launches
+                            else f"{type(exc).__name__}: {exc}"
+                        )
+                    if self._coordinated_launches:
+                        logger.error("Worker %r process cleanup is incomplete", record.launch.worker_id)
+                    else:
+                        logger.exception("Failed to stop worker %r", record.launch.worker_id)
                 else:
                     with self._lock:
                         record.last_exit_code = exit_code
                         record.process = None
                         record.state = WorkerState.PAUSED
+                        record.cleanup_pending = False
+                        record.natural_exit_code = None
         if monitor is not None:
             monitor.join(timeout=5)
         for record in records:

@@ -267,6 +267,27 @@ class DeviceBindingStore:
                 except OSError:
                     pass
 
+    def load_existing(self, worker_id: str, device: str) -> Optional[DeviceBinding]:
+        """Validate a saved selection without enrolling a missing device pin."""
+        if not isinstance(worker_id, str) or _WORKER_ID.fullmatch(worker_id) is None:
+            raise DeviceBindingError("Worker ID is invalid for private device selection")
+        device = self._validate_device(device)
+        worker_id = worker_id.casefold()
+        # Status reads must not establish a new physical choice after a lost pin.
+        if not self._directory.exists():
+            raise DeviceBindingError(_INVALID_STORE)
+        path = self._directory / (hashlib.sha256(worker_id.encode("ascii")).hexdigest() + ".json")
+        record = self._read(path)
+        if record is None or record["worker_id"] != worker_id or record["device"] != device:
+            raise DeviceBindingError(_INVALID_STORE)
+        if device == "cpu":
+            return None
+        binding = DeviceBinding(self, path, record)
+        failure = binding.check()
+        if failure is not None:
+            raise DeviceBindingError(failure)
+        return binding
+
     def bind(self, worker_id: str, device: str) -> Optional[DeviceBinding]:
         """Persist the first selection, or validate it without ever rebinding.
 

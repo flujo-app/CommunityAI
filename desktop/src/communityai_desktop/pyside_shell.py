@@ -13,6 +13,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Callable, Dict
 
+from communityai_desktop.controller import GpuSelectionDraft
 from communityai_desktop.presentation import memory_text, model_name, model_summary, sharing_reason, sharing_summary
 from communityai_desktop.startup import LoginStartupError, SingleInstanceError, login_startup_enabled, set_login_startup
 
@@ -269,6 +270,8 @@ def run(
     if instance_data_dir is not None:
         _instance_data_root(instance_data_dir, None, create=False)
 
+    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
+    from communityai_desktop.resource_controls import GpuResourceControls, ResourceControls
     from PySide6.QtCore import QLockFile, QObject, QRunnable, QStandardPaths, Qt, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -295,9 +298,6 @@ def run(
         QVBoxLayout,
         QWidget,
     )
-
-    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
-    from communityai_desktop.resource_controls import ResourceControls
 
     def label(text: str = "", name: str | None = None) -> QLabel:
         item = QLabel(text)
@@ -374,6 +374,8 @@ def run(
             self._closing = False
             self._update_notice = ""
             self._controller = controller
+            self._gpu_draft = GpuSelectionDraft()
+            self._gpu_saved_revision = None
             self._snapshot: Dict[str, Any] = {
                 "models": [],
                 "auto_selection": {
@@ -676,6 +678,15 @@ def run(
             self.resource_controls = ResourceControls()
             self.resource_controls.apply_requested.connect(self._apply_resource_limits)
             memory_layout.addWidget(self.resource_controls)
+            self.gpu_controls = GpuResourceControls()
+            self.gpu_controls.apply_requested.connect(self._apply_gpu_selection)
+            self.gpu_controls.dirty_changed.connect(self._gpu_dirty_changed)
+            self.gpu_controls.hide()
+            memory_layout.addWidget(self.gpu_controls)
+            self.gpu_detail = label("", "bodyMuted")
+            self.gpu_detail.setWordWrap(True)
+            self.gpu_detail.hide()
+            memory_layout.addWidget(self.gpu_detail)
             layout.addWidget(memory_card)
 
             advanced, advanced_layout = card()
@@ -788,6 +799,7 @@ def run(
             self.resource_controls.set_state(
                 contribution, busy=busy or self._controller is None or self._sharing_pending is not None
             )
+            self._render_gpu_controls()
             self.edit_policy_button.setDisabled(
                 busy
                 or self._controller is None
@@ -800,11 +812,17 @@ def run(
                     or self._sharing_pending is not None
                     or self._controller is None
                     or not contribution.get("editable", False)
+                    or self._gpu_start_blocked()
                 )
             for index in range(self.contribution_models_layout.count()):
                 widget = self.contribution_models_layout.itemAt(index).widget()
                 if widget is not None:
-                    widget.setDisabled(busy or self._sharing_pending is not None or self._controller is None)
+                    widget.setDisabled(
+                        busy
+                        or self._sharing_pending is not None
+                        or self._controller is None
+                        or (widget.property("gpuManaged") and self._gpu_start_blocked())
+                    )
 
         def _submit(
             self,
@@ -872,10 +890,13 @@ def run(
             self._submit(self._controller.snapshot, refreshed, refresh_failed, background=True)
 
         def _connected(self, connected_controller) -> None:  # noqa: ANN001
+            if connected_controller is not self._controller:
+                self._gpu_draft.invalidate()
             self._controller = connected_controller
             self.refresh()
 
         def _connection_failed(self, message: str) -> None:
+            self._gpu_draft.invalidate()
             self._set_connection_state(False)
             self.connection_title.setText(f"Could not connect to {application_name}")
             self.connection_detail.setText(f"Try again. If this keeps happening, restart {application_name}.")
@@ -895,11 +916,21 @@ def run(
             self._connection_failed(message)
 
         def _reset_connection(self) -> None:
+            self._gpu_draft.invalidate()
             self._controller = None
             self.refresh()
 
         def _render(self, snapshot: Dict[str, Any]) -> None:
             self._snapshot = snapshot
+            gpu_state = snapshot.get("gpu_selection")
+            self._gpu_draft.observe(gpu_state)
+            if self._gpu_saved_revision is not None and gpu_state is not None:
+                if gpu_state["config_revision"] != self._gpu_saved_revision:
+                    self._gpu_saved_revision = None
+                    self.gpu_controls.failed("Settings changed after saving. Discard changes to show saved settings.")
+                elif not gpu_state["restart_required"]:
+                    self._gpu_saved_revision = None
+                    self.gpu_controls.applied(self._gpu_widget_state(gpu_state))
             if self._awaiting_sharing_snapshot:
                 self._awaiting_sharing_snapshot = False
                 self._sharing_pending = None
@@ -999,6 +1030,7 @@ def run(
             self.resource_controls.set_state(
                 contribution, busy=self._busy > 0 or self._controller is None or self._sharing_pending is not None
             )
+            self._render_gpu_controls()
             hardware = snapshot.get("hardware", {})
             total = hardware.get("gpu_total_bytes") or contribution.get("vram_pool_bytes")
             allowed = contribution.get("vram_bytes")
@@ -1012,10 +1044,22 @@ def run(
                 "processing_percent", (contribution.get("policy") or {}).get("max_processing_percent", 100)
             )
             self.home_processing.setText(f"{percent:g}%")
+            gpu_state = snapshot.get("gpu_selection")
+            if gpu_state and contribution.get("policy", {}).get("processing_scope") == "per_device":
+                self.home_vram.setText("Per-GPU limits")
+                compute_limits = {row["max_processing_percent"] for row in gpu_state["rows"] if row["selected"]}
+                self.home_processing.setText(
+                    f"{next(iter(compute_limits)):g}%"
+                    if len(compute_limits) == 1
+                    else "Varies by GPU"
+                    if compute_limits
+                    else "None selected"
+                )
             self.memory_value.setText(hardware.get("gpu_name") or "")
-            self.memory_value.setVisible(bool(hardware.get("gpu_name")))
-            self.memory_detail.setText("")
-            self.memory_detail.hide()
+            self.memory_value.setVisible(bool(hardware.get("gpu_name")) and not gpu_state)
+            if not gpu_state:
+                self.memory_detail.setText("")
+                self.memory_detail.hide()
             downloads = {
                 worker["id"]: worker
                 for worker in snapshot.get("workers", [])
@@ -1039,8 +1083,14 @@ def run(
                 if (worker.get("placement") or {}).get("automatic"):
                     continue
                 toggle = QCheckBox(model_name(worker.get("model")))
+                toggle.setProperty("gpuManaged", worker.get("managed_by") == "desktop_gpu")
                 toggle.setChecked(worker.get("desired_running", False))
-                toggle.setEnabled(not self._busy and self._sharing_pending is None and self._controller is not None)
+                toggle.setEnabled(
+                    not self._busy
+                    and self._sharing_pending is None
+                    and self._controller is not None
+                    and not (worker.get("managed_by") == "desktop_gpu" and self._gpu_start_blocked())
+                )
                 toggle.setAccessibleName(f"Share compute with {worker['model']}")
                 toggle.toggled.connect(
                     lambda enabled, worker_id=worker["id"]: self._set_model_sharing([worker_id], enabled)
@@ -1115,6 +1165,124 @@ def run(
                 lambda: self._controller.update_resource_limits(changes, expected_revision=revision),
                 applied,
                 failed,
+            )
+
+        def _gpu_start_blocked(self):
+            state = self._snapshot.get("gpu_selection")
+            contribution = self._snapshot.get("contribution", {})
+            # Pause always remains reachable, including a failed reload or draft.
+            if contribution.get("intent_enabled") and sharing_summary(self._snapshot)[2] != "paused":
+                return False
+            if self._gpu_saved_revision is not None:
+                return True
+            if self.gpu_controls.dirty:
+                return True
+            return bool(
+                state
+                and any(row["selected"] for row in state["rows"])
+                and (not state["runtime_ready"] or state["restart_required"])
+            )
+
+        def _gpu_widget_state(self, state):
+            # Capacity alone never grants selection. Only the authenticated full-CUDA
+            # token makes an available inventory row editable.
+            inventory = [
+                {**row, "status": "unsupported"}
+                if row["device"].startswith("cuda:") and row["status"] == "available" and not row.get("selection_token")
+                else row
+                for row in state["inventory"]
+            ]
+            return {
+                **state,
+                "inventory": inventory,
+                "editable": bool(
+                    state["editable"]
+                    and not state["restart_required"]
+                    and self._gpu_draft.latest is not None
+                    and not self._gpu_draft.invalid_reason
+                ),
+            }
+
+        def _render_gpu_controls(self):
+            state = self._gpu_draft.latest or (self._gpu_draft.base if self.gpu_controls.dirty else None)
+            # Keep a disconnected dirty draft visible until it can be discarded.
+            visible = state is not None or self.gpu_controls.dirty
+            self.gpu_controls.setVisible(visible)
+            self.gpu_detail.setVisible(visible)
+            self.resource_controls.show()
+            self.resource_controls.set_gpu_mode(
+                visible,
+                per_device=self._snapshot.get("contribution", {}).get("policy", {}).get("processing_scope")
+                == "per_device",
+            )
+            if visible:
+                self.memory_detail.setText(
+                    "Each GPU uses the smaller of the configured memory ceiling and its card limit."
+                )
+                self.memory_detail.show()
+                if (
+                    state
+                    and not state["editable"]
+                    and self._snapshot.get("contribution", {}).get("policy", {}).get("processing_scope") == "per_device"
+                ):
+                    self.resource_controls.set_state(self._snapshot.get("contribution", {}), busy=True)
+            if state is None:
+                if visible:
+                    self.gpu_controls.setEnabled(False)
+                    self.gpu_detail.setText("Waiting for the node to reload GPU settings.")
+                return
+            self.gpu_controls.setEnabled(True)
+            self.gpu_controls.set_state(
+                self._gpu_widget_state(state),
+                busy=bool(
+                    self._busy
+                    or self._controller is None
+                    or self._sharing_pending is not None
+                    or self._gpu_saved_revision is not None
+                ),
+            )
+            reason = self._gpu_draft.invalid_reason or state["reason"]
+            if self._gpu_saved_revision is not None:
+                reason = "GPU settings saved. Waiting for the node to reload; sharing remains paused."
+            elif not reason and not state["runtime_ready"]:
+                reason = "This GPU configuration cannot start sharing yet."
+            self.gpu_detail.setText(
+                reason
+                or "Memory limits bound sharing reservations. Compute limits pace inference; they do not cap power or model loading."
+            )
+
+        def _gpu_dirty_changed(self, dirty):
+            self._gpu_draft.set_dirty(dirty)
+            self._set_busy(0)
+
+        def _apply_gpu_selection(self, rows, revision):
+            if self._controller is None or self._busy or self._gpu_saved_revision is not None:
+                self.gpu_controls.failed("Wait for the node to reconnect or finish reloading.")
+                return
+            try:
+                request_rows = self._gpu_draft.request_rows(rows, revision)
+            except Exception as exc:
+                self.gpu_controls.failed(str(exc))
+                self._render_gpu_controls()
+                return
+            controller = self._controller
+
+            def saved(result):
+                self._gpu_saved_revision = result["config_revision"]
+                self.gpu_controls.failed("GPU settings saved. Waiting for reload.")
+                self._render_gpu_controls()
+                self.refresh()
+
+            def failed(message):
+                self._gpu_draft.invalidate(
+                    "Save did not finish. Discard changes and reload saved settings before retrying."
+                )
+                self.gpu_controls.failed(message)
+                self._render_gpu_controls()
+                self.refresh()
+
+            self._submit(
+                lambda: controller.update_gpu_selection(request_rows, expected_revision=revision), saved, failed
             )
 
         def _edit_contribution_policy(self) -> None:
@@ -1296,6 +1464,8 @@ def run(
                 not self._snapshot.get("contribution", {}).get("intent_enabled", False)
                 or sharing_summary(self._snapshot)[2] == "paused"
             )
+            if enable and self._gpu_start_blocked():
+                return
             self._sharing_pending = enable
             self._sharing_error = None
             self._render_sharing(self._snapshot)

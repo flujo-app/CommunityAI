@@ -38,6 +38,8 @@ def model_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
 def sharing_reason(reason: str | None) -> str:
     """Translate operational reasons without dumping internal policy text into the UI."""
     text = (reason or "").casefold()
+    if "set and save a memory ceiling" in text:
+        return "Set and save a memory ceiling for each GPU before starting sharing."
     if any(word in text for word in ("vram", "gpu memory", "accelerator", "cuda", "memory budget")):
         if any(word in text for word in ("unavailable", "not available", "no cuda", "not detected")):
             return "Your graphics card is not available for sharing. Check its driver."

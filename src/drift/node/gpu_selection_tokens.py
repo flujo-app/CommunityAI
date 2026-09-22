@@ -64,13 +64,16 @@ class GpuSelectionTokens:
 
     def _token(self, device: str, revision: str) -> str:
         self._validate_inputs(device, revision)
+        return self._token_for_identity(device, revision, self._physical_identity(device))
+
+    def _physical_identity(self, device: str) -> str:
         try:
             physical = device_binding.normalize_cuda_uuid(self._identity(device))
             if physical is None or self._live(physical) is not True:
                 raise ValueError("unavailable")
         except Exception:
             raise GpuSelectionChangedError("GPU changed or is unavailable; refresh the available GPUs") from None
-        return self._token_for_identity(device, revision, physical)
+        return physical
 
     def _token_for_identity(self, device: str, revision: str, physical: str) -> str:
         message = f"communityai-gpu-selection-v1\0{revision}\0{device}\0{physical}".encode("ascii")
@@ -90,10 +93,17 @@ class GpuSelectionTokens:
         return {"schema_version": 1, "config_revision": revision, "devices": rows}
 
     def verify(self, device: str, revision: str, token: str) -> None:
+        self.verify_identity(device, revision, token)
+
+    def verify_identity(self, device: str, revision: str, token: str) -> str:
+        """Return a verified private identity for local duplicate-card admission."""
+        self._validate_inputs(device, revision)
         if not isinstance(token, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", token) is None:
             raise GpuSelectionChangedError("GPU selection token is invalid; refresh the available GPUs")
-        if not secrets.compare_digest(self._token(device, revision), token):
+        physical = self._physical_identity(device)
+        if not secrets.compare_digest(self._token_for_identity(device, revision, physical), token):
             raise GpuSelectionChangedError("GPU selection changed; refresh the available GPUs")
+        return physical
 
     def verify_enrolled(self, device: str, revision: str, token: str, physical: str) -> None:
         """Close the race between fresh token verification and immutable binding."""

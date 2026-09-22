@@ -23,6 +23,126 @@ MAX_SELECTED_WHOLE_SHARD_BYTES = 64 * 1024**4
 MAX_GPU_INVENTORY_DEVICES = 16
 MAX_HARDWARE_BYTES = 2**63 - 1
 MAX_GPU_VISIBLE_COUNT = 2**31 - 1
+_GPU_REVISION = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_GPU_MEMORY = re.compile(
+    r"([0-9]+(?:\.[0-9]+)?)\s*(b|bytes?|[kmgtpe]i?b|(?:kilo|mega|giga|tera|peta|exa)bytes?)?", re.I
+)
+
+
+def _valid_gpu_memory(value):
+    if not isinstance(value, str) or len(value) > 64 or any(ord(char) < 32 for char in value):
+        return False
+    if value.endswith("%"):
+        try:
+            percent = float(value[:-1].strip())
+        except ValueError:
+            return False
+        return math.isfinite(percent) and 0 < percent <= 100
+    match = _GPU_MEMORY.fullmatch(value.strip())
+    return match is not None and 0 < float(match[1]) < float("inf")
+
+
+def _gpu_rows(value: Any, *, request: bool = False) -> list[Dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > MAX_GPU_INVENTORY_DEVICES:
+        raise NodeClientError("GPU selection has an invalid card list")
+    rows, seen = [], set()
+    fields = {"device", "selected", "max_vram", "max_processing_percent"}
+    for row in value:
+        if not isinstance(row, dict):
+            raise NodeClientError("GPU selection has an invalid card")
+        expected = fields | ({"selection_token"} if request and row.get("selected") is True else set())
+        if set(row) != expected:
+            raise NodeClientError("GPU selection has unsupported card fields")
+        device = _public_device(row.get("device"), "GPU selection device", accelerator=True)
+        memory, compute = row.get("max_vram"), row.get("max_processing_percent")
+        if (
+            not isinstance(device, str)
+            or not device.startswith("cuda:")
+            or device in seen
+            or type(row.get("selected")) is not bool
+            or not _valid_gpu_memory(memory)
+            or isinstance(compute, bool)
+            or not isinstance(compute, (int, float))
+            or not 1 <= compute <= 100
+        ):
+            raise NodeClientError("GPU selection has invalid limits or duplicate cards")
+        if (
+            request
+            and row["selected"]
+            and (not isinstance(row["selection_token"], str) or not _GPU_REVISION.fullmatch(row["selection_token"]))
+        ):
+            raise NodeClientError("GPU selection requires its original card token")
+        seen.add(device)
+        rows.append(dict(row))
+    return rows
+
+
+def _normalize_gpu_selection(value: Any) -> Dict[str, Any]:
+    required = {
+        "schema_version",
+        "config_revision",
+        "editable",
+        "inventory",
+        "rows",
+        "restart_required",
+        "runtime_ready",
+    }
+    if (
+        not isinstance(value, dict)
+        or not required <= set(value)
+        or set(value) - required - {"reason"}
+        or type(value.get("schema_version")) is not int
+    ):
+        raise NodeClientError("Local node GPU selection response is malformed")
+    revision = value.get("config_revision")
+    if value["schema_version"] != 1 or not isinstance(revision, str) or not _GPU_REVISION.fullmatch(revision):
+        raise NodeClientError("Local node GPU selection version or revision is invalid")
+    if any(type(value.get(field)) is not bool for field in ("editable", "restart_required", "runtime_ready")):
+        raise NodeClientError("Local node GPU selection capabilities are invalid")
+    if value["restart_required"] and (value["editable"] or value["runtime_ready"]):
+        raise NodeClientError("Local node GPU selection reload state is inconsistent")
+    reason = value.get("reason", "")
+    if not isinstance(reason, str) or len(reason) > 500 or any(ord(char) < 32 for char in reason):
+        raise NodeClientError("Local node GPU selection reason is invalid")
+    inventory = value["inventory"]
+    if not isinstance(inventory, list) or len(inventory) > MAX_GPU_INVENTORY_DEVICES:
+        raise NodeClientError("Local node GPU selection inventory is invalid")
+    clean_inventory, seen = [], set()
+    for card in inventory:
+        if not isinstance(card, dict):
+            raise NodeClientError("Local node GPU selection card is invalid")
+        device = _public_device(card.get("device"), "GPU selection inventory", accelerator=True)
+        status, token = card.get("status"), card.get("selection_token")
+        total = _hardware_bytes(card.get("total_bytes"), "GPU capacity", positive=True)
+        name = card.get("name")
+        if (
+            device is None
+            or device in seen
+            or status not in ("available", "unavailable", "unsupported")
+            or (status == "available" and total is None)
+            or not isinstance(name, str)
+            or len(name) > 160
+            or any(ord(char) < 32 for char in name)
+            or (
+                token is not None
+                and (
+                    not isinstance(token, str)
+                    or not _GPU_REVISION.fullmatch(token)
+                    or not device.startswith("cuda:")
+                    or status != "available"
+                )
+            )
+        ):
+            raise NodeClientError("Local node GPU selection card is invalid")
+        seen.add(device)
+        clean = {"device": device, "name": name, "total_bytes": total, "status": status}
+        if token is not None:
+            clean["selection_token"] = token
+        clean_inventory.append(clean)
+    rows = _gpu_rows(value["rows"])
+    if len(seen | {row["device"] for row in rows}) > MAX_GPU_INVENTORY_DEVICES:
+        raise NodeClientError("Local node GPU selection exceeds the card limit")
+    return {**value, "inventory": clean_inventory, "rows": rows, "reason": reason}
 
 
 class NodeClientError(RuntimeError):
@@ -430,11 +550,14 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
             raise NodeClientError("Local node contribution status has inconsistent resource telemetry")
         resources["limits"] = clean_limits
         resources["measurements"] = clean_measurements
+        if "managed_by" in worker and worker["managed_by"] != "desktop_gpu":
+            raise NodeClientError("Local node contribution worker ownership is invalid")
         normalized_workers.append(
             {
                 "id": worker_id,
                 "model": model,
                 **device,
+                **({"managed_by": worker["managed_by"]} if "managed_by" in worker else {}),
                 "state": state,
                 "desired_running": worker["desired_running"],
                 "operator_paused": worker.get("operator_paused") is True,
@@ -707,6 +830,33 @@ class NodeClient:
             self._request("GET", "/control/v1/contribution-policy"),
             require_revision=True,
         )
+
+    def get_gpu_selection(self) -> Dict[str, Any]:
+        return _normalize_gpu_selection(self._request("GET", "/control/v1/contribution-gpu-selection"))
+
+    def update_gpu_selection(self, rows: list[Dict[str, Any]], *, expected_revision: str) -> Dict[str, Any]:
+        if not isinstance(expected_revision, str) or not _GPU_REVISION.fullmatch(expected_revision):
+            raise NodeClientError("GPU selection requires its original config revision")
+        payload = {
+            "schema_version": 1,
+            "expected_config_revision": expected_revision,
+            "rows": _gpu_rows(rows, request=True),
+        }
+        if len(json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 16 * 1024:
+            raise NodeClientError("GPU selection request is too large")
+        result = self._request("PUT", "/control/v1/contribution-gpu-selection", payload=payload)
+        if (
+            set(result) != {"schema_version", "config_revision", "restart_required", "runtime_ready"}
+            or type(result.get("schema_version")) is not int
+            or result["schema_version"] != 1
+            or not isinstance(result.get("config_revision"), str)
+            or not _GPU_REVISION.fullmatch(result["config_revision"])
+            or type(result.get("restart_required")) is not bool
+            or type(result.get("runtime_ready")) is not bool
+            or (result["restart_required"] and result["runtime_ready"])
+        ):
+            raise NodeClientError("GPU selection save response is invalid; refresh saved settings")
+        return dict(result)
 
     def set_inference_mode(self, mode: str) -> Dict[str, Any]:
         if mode not in ("auto", "local_only"):

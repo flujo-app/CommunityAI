@@ -17,6 +17,7 @@ from drift.api.server import create_app
 from drift.node.config import ContributionPolicyConfig, NodeConfigError
 from drift.node.device_binding import DeviceBindingError
 from drift.node.gpu_selection_tokens import GpuSelectionChangedError
+from drift.node.gpu_worker_selection import MAX_GPU_SELECTION_REQUEST_BYTES, parse_gpu_selection_request
 from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.node.keys import ApiKeyNotFoundError, ApiKeyStore, ApiKeyStoreError, LastActiveKeyError
 from drift.node.model_manager import (
@@ -30,6 +31,8 @@ from drift.node.policy_store import (
     ContributionPolicyConflictError,
     ContributionPolicyPersistenceError,
     ContributionPolicyStore,
+    GpuSelectionRuntimeUnavailableError,
+    ManagedGpuSelectionRequiredError,
     parse_policy_update_request,
 )
 from drift.node.worker_selection import MAX_SELECTION_REQUEST_BYTES, parse_selection_request
@@ -58,6 +61,20 @@ async def _commit_worker_selection(store, selection, manager, request_restart):
             request_restart()
         except Exception:
             raise _ConfigurationRestartSignalError("saved configuration requires a node restart") from None
+        return result
+
+    return await asyncio.get_running_loop().run_in_executor(None, commit_and_restart)
+
+
+async def _commit_gpu_selection(store, selection, manager, hardware_status, request_restart):
+    # The executor owns both effects even when the HTTP client disconnects.
+    def commit_and_restart():
+        result = store.update_gpu_selection(selection, manager=manager, hardware_status=hardware_status)
+        if result["restart_required"]:
+            try:
+                request_restart()
+            except Exception:
+                raise _ConfigurationRestartSignalError("saved configuration requires a node restart") from None
         return result
 
     return await asyncio.get_running_loop().run_in_executor(None, commit_and_restart)
@@ -118,9 +135,12 @@ def _gate_status(snapshot, prefix: str):
     }
 
 
-def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, policy_snapshot):
+def _contribution_status(
+    worker_snapshots, *, configured: bool, editable: bool, policy_snapshot, worker_provenance=None
+):
     """Return the bounded, secret-free worker view consumed by the desktop."""
     workers = []
+    worker_provenance = {} if worker_provenance is None else worker_provenance
     for snapshot in worker_snapshots:
         device = _public_device(snapshot.get("device"))
         vram_bytes = _optional_positive_int(snapshot.get("max_vram_bytes"))
@@ -128,6 +148,12 @@ def _contribution_status(worker_snapshots, *, configured: bool, editable: bool, 
         workers.append(
             {
                 "id": _bounded_text(snapshot.get("id"), "unknown worker", limit=128),
+                **(
+                    {"managed_by": "desktop_gpu"}
+                    if isinstance(snapshot.get("id"), str)
+                    and worker_provenance.get(snapshot["id"].casefold()) == "desktop_gpu"
+                    else {}
+                ),
                 "model": _bounded_text(snapshot.get("model"), "unknown model", limit=256),
                 "device": device,
                 "state": (
@@ -272,6 +298,9 @@ def create_node_app(
             configured=worker_supervisor is not None,
             editable=contribution_policy_store is not None and not restart_pending,
             policy_snapshot=policy_snapshot,
+            worker_provenance=(
+                contribution_policy_store.worker_provenance() if contribution_policy_store is not None else None
+            ),
         )
         return {
             "api_version": CONTROL_API_VERSION,
@@ -351,6 +380,10 @@ def create_node_app(
             ) from exc
         except (DeviceBindingError, GpuSelectionChangedError) as exc:
             raise HTTPException(status_code=409, detail="this GPU is unavailable or changed; select it again") from exc
+        except ManagedGpuSelectionRequiredError as exc:
+            raise HTTPException(
+                status_code=409, detail="Use the GPU selection batch control for managed GPU configurations."
+            ) from exc
         except NodeConfigError as exc:
             raise HTTPException(
                 status_code=422, detail="GPU selection cannot be prepared; previous settings remain"
@@ -372,6 +405,70 @@ def create_node_app(
             return await asyncio.get_running_loop().run_in_executor(None, store.gpu_selection_snapshot)
         except WorkerReconfigurationBusyError as exc:
             raise HTTPException(status_code=409, detail="node configuration restart is pending") from exc
+
+    @app.get("/control/v1/contribution-gpu-selection")
+    async def contribution_gpu_selection(request: Request):
+        check_control_auth(request)
+        store = require_policy_store()
+        if request_restart is None:
+            raise HTTPException(status_code=501, detail="GPU selection reload is not configured")
+        try:
+            return await asyncio.get_running_loop().run_in_executor(
+                None, lambda: store.gpu_selection_state(hardware_status=hardware_status, manager=model_manager)
+            )
+        except ContributionPolicyConflictError as exc:
+            raise HTTPException(
+                status_code=412, detail="settings changed elsewhere; restart or refresh the node"
+            ) from exc
+        except (ContributionPolicyPersistenceError, OSError, NodeConfigError) as exc:
+            raise HTTPException(status_code=503, detail="GPU selection settings are unavailable") from exc
+
+    @app.put("/control/v1/contribution-gpu-selection")
+    async def update_gpu_selection(request: Request):
+        check_control_auth(request)
+        store = require_policy_store()
+        if request_restart is None:
+            raise HTTPException(status_code=501, detail="GPU selection reload is not configured")
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().casefold() != "application/json":
+            raise HTTPException(status_code=415, detail="GPU selection must use application/json")
+        payload = bytearray()
+        async for chunk in request.stream():
+            if len(payload) + len(chunk) > MAX_GPU_SELECTION_REQUEST_BYTES:
+                raise HTTPException(status_code=413, detail="GPU selection exceeds the size limit")
+            payload.extend(chunk)
+        try:
+            selection = parse_gpu_selection_request(bytes(payload))
+        except NodeConfigError as exc:
+            raise HTTPException(status_code=422, detail="GPU selection request is invalid") from exc
+        try:
+            result = await _commit_gpu_selection(store, selection, model_manager, hardware_status, request_restart)
+        except _ConfigurationRestartSignalError as exc:
+            raise HTTPException(
+                status_code=503, detail="GPU selection was saved; restart the node to apply it"
+            ) from exc
+        except ContributionPolicyConflictError as exc:
+            raise HTTPException(status_code=412, detail="settings changed elsewhere; refresh before saving") from exc
+        except WorkerReconfigurationBusyError as exc:
+            raise HTTPException(
+                status_code=409, detail="pause sharing and finish active inference; wait for any pending node restart"
+            ) from exc
+        except (DeviceBindingError, GpuSelectionChangedError) as exc:
+            raise HTTPException(
+                status_code=409, detail="a selected GPU changed or is unavailable; select it again"
+            ) from exc
+        except GpuSelectionRuntimeUnavailableError as exc:
+            raise HTTPException(
+                status_code=422, detail="joint automatic GPU runtime is not available; previous settings remain"
+            ) from exc
+        except NodeConfigError as exc:
+            raise HTTPException(
+                status_code=422, detail="GPU selections cannot be prepared; previous settings remain"
+            ) from exc
+        except (ContributionPolicyPersistenceError, OSError) as exc:
+            raise HTTPException(
+                status_code=503, detail="GPU selections could not be saved; previous settings remain"
+            ) from exc
+        return JSONResponse(result, status_code=202 if result["restart_required"] else 200)
 
     @app.put("/control/v1/contribution-policy")
     async def update_contribution_policy(request: Request):
