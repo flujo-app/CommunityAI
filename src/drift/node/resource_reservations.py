@@ -2,8 +2,8 @@
 
 The supervisor acquires before Popen and releases only after contained cleanup.
 An abandoned journal entry is deliberately never recovered using a PID alone.
-Staging is summed for the entire generation; this is not a loading gate or an
-RSS limit. All paths/tokens/errors in this module are private control state.
+Staging is summed for the entire generation, including after loading readiness;
+the cooperative loading gate is not an RSS limit. Paths/tokens are private.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import stat
 import tempfile
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +35,13 @@ from drift.node.placement_resources import (
     ArtifactClaim,
     WorkerResourceClaim,
     evaluate_resources,
+)
+from drift.node.worker_loading import (
+    cleanup_loading_binding,
+    create_loading_binding,
+    initialize_loading_gate,
+    loading_claim_digest,
+    loading_gate,
 )
 
 _ERROR = "shared resource admission is unavailable; retained reservations require verified cleanup"
@@ -90,7 +97,11 @@ class ResourceReservationManager:
     stale-entry deletion: a restarted manager cannot certify old descendants.
     """
 
-    def __init__(self, directory: Path, *, snapshot_provider=snapshot_resources, clock=time.time):
+    def __init__(
+        self, directory: Path, *, snapshot_provider=snapshot_resources, clock=time.time, loading_protocol=False
+    ):
+        if type(loading_protocol) is not bool:
+            raise ValueError("loading protocol must be a boolean")
         self._directory = Path(directory).absolute()
         self._snapshot_provider = snapshot_provider
         self._clock = clock
@@ -104,6 +115,22 @@ class ResourceReservationManager:
         self._uncertain = False
         self._acquisition_uncertain = False
         self._cache_roots = set()
+        self._loading_protocol = loading_protocol
+        self._loading_bindings = {}
+
+    @property
+    def loading_protocol_enabled(self):
+        return self._loading_protocol
+
+    def loading_binding_for_token(self, token):
+        """Pure in-memory lookup after successful acquisition; no lock or OS I/O.
+
+        The supervisor owns the token until certified cleanup. Publication occurs
+        before acquire returns; cleanup only removes it after release succeeds.
+        """
+        if not self._loading_protocol or token not in self._owned or token not in self._loading_bindings:
+            raise ResourceReservationError(_ERROR)
+        return self._loading_bindings[token]
 
     def _check_cancelled(self, cancelled):
         if cancelled is not None and cancelled():
@@ -414,10 +441,17 @@ class ResourceReservationManager:
         # Prewarm completed-file hashes outside the supervisor transition lock;
         # acquire still samples and reserves under the journal OS lock.
         self.prepare(launch, cancelled=cancelled)
-        token = self.acquire(launch, cancelled=cancelled)
+        token = self._acquire(launch, cancelled=cancelled, prepare_loading=False)
         try:
             self._check_cancelled(cancelled)
-            yield
+            gate = (
+                loading_gate(self._directory / "loading", cancelled=cancelled)
+                if self._loading_protocol
+                else nullcontext()
+            )
+            with gate:
+                self._check_cancelled(cancelled)
+                yield
         finally:
             # Unlike Popen there is no ambiguous child handle: the synchronous
             # body has returned/raised before its loading reservation is freed.
@@ -464,6 +498,9 @@ class ResourceReservationManager:
             raise ResourceReservationError(_ERROR) from None
 
     def acquire(self, launch, *, cancelled=None):
+        return self._acquire(launch, cancelled=cancelled, prepare_loading=self._loading_protocol)
+
+    def _acquire(self, launch, *, cancelled=None, prepare_loading=False):
         try:
             with self._locked(cancelled):
                 if self._uncertain:
@@ -507,12 +544,46 @@ class ResourceReservationManager:
                 if len(self._cache_roots) > 32:
                     raise ResourceReservationError(_ERROR)
                 self._check_cancelled(cancelled)
+                token = entry["claim"].reservation_id
+                if prepare_loading:
+                    digest = loading_claim_digest(
+                        manifest_digest=launch.placement_manifest_digest,
+                        block_indices=launch.block_indices,
+                        artifact_bytes=launch.placement_artifact_bytes,
+                        artifact_set_digest=launch.placement_artifact_set_digest,
+                        cache_root=launch.placement_cache_root,
+                    )
+                if self._loading_protocol:
+                    try:
+                        # Metadata and child admission initialize under the same
+                        # journal lock; neither may race the first gate marker.
+                        initialize_loading_gate(self._directory / "loading")
+                    except Exception:
+                        self._uncertain = self._acquisition_uncertain = True
+                        raise
+                if prepare_loading:
+                    try:
+                        binding = create_loading_binding(self._directory / "loading", token, digest)
+                        self._loading_bindings[token] = binding
+                    except Exception:
+                        self._uncertain = self._acquisition_uncertain = True
+                        raise
+                    try:
+                        self._check_cancelled(cancelled)
+                    except BaseException:
+                        # No journal publication/Popen occurred; this generation
+                        # can be removed even if its cancellation arrived late.
+                        try:
+                            cleanup_loading_binding(binding)
+                            self._loading_bindings.pop(token, None)
+                        except Exception:
+                            self._uncertain = self._acquisition_uncertain = True
+                        raise
                 try:
                     self._write([*entries, entry])
                 except Exception:
-                    self._acquisition_uncertain = True
+                    self._uncertain = self._acquisition_uncertain = True
                     raise
-                token = entry["claim"].reservation_id
                 self._owned.add(token)
                 # Once publication succeeds, always hand back the token even if
                 # cancellation raced the write. The asynchronous owner must
@@ -573,11 +644,15 @@ class ResourceReservationManager:
                 if len(matches) > 1 or (not matches and token not in self._pending_release):
                     raise ValueError("resource reservation is missing")
                 self._pending_release.add(token)
+                binding = self._loading_bindings.get(token)
+                if binding is not None:
+                    cleanup_loading_binding(binding)
                 # A preceding release may have published its removal before
                 # fsync failed. Rewrite durably on retry; this is permitted only
                 # for this owner's known cleanup-certified release attempt.
                 self._write([e for e in entries if e["claim"].reservation_id != token])
                 self._owned.remove(token)
+                self._loading_bindings.pop(token, None)
                 self._pending_release.discard(token)
                 if len(self._released) >= 1024:
                     self._released.pop(next(iter(self._released)))

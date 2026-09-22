@@ -4,11 +4,12 @@ import unittest
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from communityai_desktop.model_health import DownloadCard, ModelHealthCard
-from communityai_desktop.telemetry import download_view, route_view
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+
+from communityai_desktop.model_health import DownloadCard, DownloadsPanel, ModelHealthCard
+from communityai_desktop.telemetry import download_view, route_view
 
 
 class ModelHealthTests(unittest.TestCase):
@@ -200,3 +201,126 @@ class ModelHealthTests(unittest.TestCase):
         self.assertEqual(widget.worker_downloads, {})
         self.assertTrue(widget.expand_button.isChecked())
         widget.close()
+
+    def test_managed_readiness_overrides_stale_download_ready_across_local_sharing_surfaces(self):
+        model = {
+            "id": "Community model",
+            "execution": "distributed",
+            "coverage": "0/1",
+            "state": "known",
+            "health": route_view({"total_blocks": 1, "status": "incomplete", "replica_counts": [0]}),
+        }
+        progress = download_view(
+            {"schema_version": 1, "state": "ready", "artifact_bytes": 1000, "artifact_received_bytes": 1000}
+        )
+        worker = {
+            "id": "one",
+            "model": model["id"],
+            "state": "running",
+            "placement": {"block_indices": "0:1"},
+            "download_progress": progress,
+        }
+        widget = ModelHealthCard()
+        downloads = DownloadsPanel()
+        local = {"id": "Local", "state": "known", "download_progress": dict(progress)}
+        try:
+            for load_state, ready, process_state, display in (
+                ("waiting", False, "running", "Preparing model"),
+                ("loading", False, "running", "Preparing model"),
+                ("ready", False, "running", "Waiting"),
+                (
+                    "failed",
+                    False,
+                    "paused",
+                    "Model could not start. Finish cleanup with Pause, then choose Start to retry.",
+                ),
+                ("ready", True, "running", "Sharing"),
+            ):
+                with self.subTest(load_state=load_state, ready=ready):
+                    worker.update(load_state=load_state, model_ready=ready, state=process_state, display_status=display)
+                    widget.set_state(model, [worker])
+                    downloads.set_state({"models": [local], "workers": [worker]})
+                    self.assertEqual(widget.worker_downloads["one"].title.text(), f"Sharing download · {display}")
+                    self.assertTrue(downloads.cards["worker:one"].title.text().endswith(f" · {display}"))
+                    self.assertEqual(widget.peer_table.item(0, 0).text(), "This computer")
+                    self.assertEqual(widget.peer_table.item(0, 1).text(), display)
+                    self.assertEqual(
+                        "Sharing failed on this computer" in widget.cells[0].toolTip(), load_state == "failed"
+                    )
+                    self.assertEqual(widget.worker_downloads["one"].bar.value(), 1000)
+                    self.assertEqual(progress["state"], "ready")
+                    self.assertEqual(downloads.cards["model:Local"].title.text(), "Local · Downloaded")
+            worker.pop("load_state")
+            worker.pop("model_ready")
+            widget.set_state(model, [worker])
+            downloads.set_state({"models": [local], "workers": [worker]})
+            self.assertEqual(widget.worker_downloads["one"].title.text(), "Sharing download · Ready")
+            self.assertTrue(downloads.cards["worker:one"].title.text().endswith(" · Ready"))
+            self.assertEqual(widget.peer_table.item(0, 1).text(), "Ready")
+        finally:
+            widget.close()
+            downloads.close()
+
+    def test_typed_memory_rejection_keeps_managed_guidance_after_loading_state_is_cleared(self):
+        from communityai_desktop.acceptance import _FakeNodeState
+        from communityai_desktop.client import _normalize_contribution_status
+        from communityai_desktop.controller import DesktopController
+        from drift.node.server import _contribution_status
+
+        fixture = _FakeNodeState()
+        fixture.policy["sharing_enabled"] = True
+        source = _contribution_status(
+            [
+                {
+                    "id": "gpu-0",
+                    "model": "Community model",
+                    "state": "paused",
+                    "desired_running": True,
+                    "operator_paused": False,
+                    "automatic": True,
+                    "block_indices": "0:1",
+                    "policy_admitted": True,
+                    "schedule_admitted": True,
+                    "resource_admitted": False,
+                    "resource_reason": "selected blocks exceed the VRAM budget; increase VRAM or contribute fewer blocks",
+                    "load_state": None,
+                    "model_ready": False,
+                    "download_progress": {
+                        "schema_version": 1,
+                        "state": "ready",
+                        "artifact_bytes": 1000,
+                        "artifact_received_bytes": 1000,
+                    },
+                }
+            ],
+            configured=True,
+            editable=True,
+            policy_snapshot=fixture.policy_response(),
+            worker_provenance={"gpu-0": "desktop_gpu"},
+        )
+        worker = DesktopController._worker_view(_normalize_contribution_status(source)["workers"][0])
+        self.assertEqual(worker["managed_by"], "desktop_gpu")
+        self.assertNotIn("load_state", worker)
+        self.assertFalse(worker["sharing_active"])
+        self.assertFalse(worker["can_start"])
+        display = "Waiting: Not enough GPU memory. Increase the memory limit or close another app."
+        self.assertEqual(worker["display_status"], display)
+        model = {
+            "id": worker["model"],
+            "execution": "distributed",
+            "coverage": "0/1",
+            "state": "known",
+            "health": route_view({"total_blocks": 1, "status": "incomplete", "replica_counts": [0]}),
+        }
+        widget, downloads = ModelHealthCard(), DownloadsPanel()
+        try:
+            widget.set_state(model, [worker])
+            downloads.set_state({"models": [], "workers": [worker]})
+            self.assertEqual(widget.worker_downloads["gpu-0"].title.text(), f"Sharing download · {display}")
+            self.assertTrue(downloads.cards["worker:gpu-0"].title.text().endswith(f" · {display}"))
+            self.assertEqual(widget.peer_table.item(0, 1).text(), display)
+            self.assertEqual(widget.worker_downloads["gpu-0"].bar.value(), 1000)
+            self.assertEqual(worker["download_progress"]["state"], "ready")
+        finally:
+            widget.close()
+            downloads.close()

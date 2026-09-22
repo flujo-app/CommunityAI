@@ -112,9 +112,10 @@ already-off cleanup retries, concurrent re-enable and visible retry availability
 Combined integration and optimized validation are reported separately by the final
 source-bound checkpoint; focused fixture checks alone are not release acceptance.
 
-This change does not provide global serial loading, child load-readiness
-acknowledgements, hard shared bandwidth enforcement, measured model peak-memory
-qualification, automatic orphan recovery or general all-card configuration.
+Subsequent [loading coordination](NODE_LOADING_COORDINATION.md) connects the
+global gate and generation-bound child readiness without releasing staging claims.
+Hard shared bandwidth enforcement, measured model peak-memory qualification,
+automatic orphan recovery and general all-card configuration remain unfinished.
 Native GPU inference, eight-H100 operation, installed Ubuntu behavior and hostile
 storage/under-load recovery still require their own evidence. Resource admission
 remains conservative estimated accounting, not an OS-enforced RAM cap.

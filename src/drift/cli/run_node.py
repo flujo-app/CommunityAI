@@ -1230,6 +1230,11 @@ def _build_worker_supervisor(
         coordinated_launches=any(launch.automatic for launch in settings.launches),
         acquire_resources_cancellable=None if resource_manager is None else resource_manager.acquire_cancellable,
         release_resources=None if resource_manager is None else resource_manager.release,
+        loading_binding_for_token=(
+            resource_manager.loading_binding_for_token
+            if resource_manager is not None and resource_manager.loading_protocol_enabled
+            else None
+        ),
     )
 
 
@@ -1845,7 +1850,7 @@ def _serve_once(args, parser) -> bool:
         placement_registry = PlacementRegistry()
         placement_guards = {}
         route_outcomes = RouteOutcomeTracker()
-        resource_manager = ResourceReservationManager(args.data_dir / "resource-reservations")
+        resource_manager = ResourceReservationManager(args.data_dir / "resource-reservations", loading_protocol=True)
         resource_claim_cache = {}
         worker_supervisor = _build_worker_supervisor(
             config,

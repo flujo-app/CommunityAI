@@ -553,6 +553,27 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
         resources["measurements"] = clean_measurements
         if "managed_by" in worker and worker["managed_by"] != "desktop_gpu":
             raise NodeClientError("Local node contribution worker ownership is invalid")
+        loading = {}
+        if "load_state" in worker or "model_ready" in worker:
+            if (
+                "load_state" not in worker
+                or "model_ready" not in worker
+                or not isinstance(worker["load_state"], str)
+                or worker["load_state"] not in ("waiting", "loading", "ready", "failed")
+                or type(worker["model_ready"]) is not bool
+                or (
+                    worker["model_ready"]
+                    and (
+                        worker["load_state"] != "ready"
+                        or state != "running"
+                        or not worker["desired_running"]
+                        or worker.get("operator_paused") is True
+                        or not all(gate["admitted"] for gate in (policy, schedule, resources))
+                    )
+                )
+            ):
+                raise NodeClientError("Local node contribution worker readiness is invalid")
+            loading = {"load_state": worker["load_state"], "model_ready": worker["model_ready"]}
         normalized_workers.append(
             {
                 "id": worker_id,
@@ -562,6 +583,7 @@ def _normalize_contribution_status(value: Any) -> Dict[str, Any]:
                 "state": state,
                 "desired_running": worker["desired_running"],
                 "operator_paused": worker.get("operator_paused") is True,
+                **loading,
                 "placement": placement,
                 "policy": policy,
                 "schedule": schedule,

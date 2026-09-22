@@ -38,6 +38,8 @@ def model_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
 def sharing_reason(reason: str | None) -> str:
     """Translate operational reasons without dumping internal policy text into the UI."""
     text = (reason or "").casefold()
+    if "worker loading acknowledgement failed" in text:
+        return "The model could not start. Choose Pause to finish cleanup, then Start to retry."
     if "set a shared host ram allowance" in text:
         return "Set a shared host RAM allowance in Memory, storage and other limits before starting sharing."
     if "shared host ram admission currently requires managed" in text:
@@ -96,7 +98,12 @@ def sharing_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
     contribution = snapshot.get("contribution", {})
     workers = snapshot.get("workers", [])
     wanted = contribution.get("intent_enabled", False)
-    active = [worker for worker in workers if worker.get("sharing_active", worker.get("state") == "running")]
+    active = [
+        worker
+        for worker in workers
+        if worker.get("sharing_active", worker.get("state") == "running")
+        and ("load_state" not in worker or (worker.get("load_state") == "ready" and worker.get("model_ready") is True))
+    ]
     if active:
         names = ", ".join(
             dict.fromkeys(model_name(worker.get("model")) for worker in active if worker.get("model") != "auto")
@@ -106,6 +113,12 @@ def sharing_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
         if contribution.get("editable") is False:
             return "Sharing is unavailable", "Restart CommunityAI to try again.", "waiting"
         return "Sharing is off", "", "off"
+    if any(worker.get("load_state") == "failed" and not worker.get("operator_paused") for worker in workers):
+        return (
+            "Sharing stopped",
+            "The model could not start. Choose Pause to finish cleanup, then Start to retry.",
+            "error",
+        )
     selected = [
         worker
         for worker in workers
@@ -121,6 +134,8 @@ def sharing_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
         progress = worker.get("download_progress") or {}
         if progress.get("state") in ("downloading", "verifying", "retrying"):
             return "Downloading for sharing", "You can keep using your computer.", "starting"
+        if worker.get("load_state") in ("waiting", "loading"):
+            return "Preparing to share", "Loading the model. You can keep using your computer.", "starting"
         if worker.get("state") == "crashed":
             return "Sharing stopped", "The model could not start. Try again.", "error"
         placement = worker.get("placement") or {}

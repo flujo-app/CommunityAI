@@ -125,9 +125,10 @@ placement probes and contained process termination have separate latency limits.
 See [asynchronous supervision](ASYNC_RESOURCE_SUPERVISION.md) and
 [policy/operations behavior](ASYNC_RESOURCE_ADMISSION.md).
 
-The one-automatic-worker configuration guard remains. Shared loading serialization,
-child load-readiness acknowledgements, hard shared bandwidth enforcement, robust
-orphan recovery and full platform responsiveness qualification remain unfinished. Actual
+The one-automatic-worker configuration guard remains. [Loading coordination](NODE_LOADING_COORDINATION.md)
+now serializes metadata and managed child startup and binds readiness to the exact
+reserved generation. Staging remains summed after readiness. Hard shared bandwidth
+enforcement, robust orphan recovery and full platform responsiveness qualification remain unfinished. Actual
 all-card save/reload/start/pause, eight-H100 inference, Ubuntu 20.04 installed
 operation, peak memory/performance and under-load cancellation/recovery still
 need real evidence. Protected execution, other required models/backends and

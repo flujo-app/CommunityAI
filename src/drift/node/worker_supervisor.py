@@ -24,6 +24,13 @@ from uuid import UUID
 from drift.node.contribution_planner import MAX_AUTOMATIC_PLACEMENT_BLOCKS
 from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
 from drift.node.placement_resources import WorkerResourceClaim
+from drift.node.worker_loading import (
+    LOADING_ENV_PREFIX,
+    WORKER_LOADING_FAILED_EXIT_CODE,
+    LoadingBinding,
+    read_loading_status,
+)
+from drift.node.worker_loading_identity import resolve_loading_worker_pid
 from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE
 
 logger = logging.getLogger(__name__)
@@ -32,6 +39,7 @@ _RESOURCE_WAIT = "worker is waiting for an aggregate resource reservation"
 _RESOURCE_CAPACITY = "shared host memory or cache storage is unavailable for this worker"
 _RESOURCE_RELEASE_PENDING = "worker resource release is incomplete; retry cleanup"
 _RESOURCE_SPAWN_UNCERTAIN = "worker process creation is uncertain; resource reservation remains held"
+_LOADING_FAILED = "worker loading acknowledgement failed; choose Start to retry after cleanup"
 
 
 class WorkerState(str, Enum):
@@ -431,6 +439,10 @@ class _WorkerRecord:
     resource_operation_active: bool = False
     resource_operation: Optional[tuple] = field(default=None, repr=False)
     resource_thread: Optional[threading.Thread] = field(default=None, repr=False)
+    loading_ticket: Optional[tuple] = field(default=None, repr=False)
+    loading_thread: Optional[threading.Thread] = field(default=None, repr=False)
+    load_state: Optional[str] = None
+    loading_failed: bool = False
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
 
 
@@ -452,6 +464,7 @@ class WorkerSupervisor:
         acquire_resources: Optional[Callable[[WorkerLaunch], str]] = None,
         acquire_resources_cancellable: Optional[Callable[[WorkerLaunch, threading.Event], str]] = None,
         release_resources: Optional[Callable[[str], None]] = None,
+        loading_binding_for_token: Optional[Callable[[str], LoadingBinding]] = None,
     ) -> None:
         if stop_timeout <= 0 or poll_period <= 0:
             raise ValueError("worker supervisor timeouts must be positive")
@@ -459,7 +472,7 @@ class WorkerSupervisor:
             raise ValueError("coordinated_launches must be a boolean")
         if any(
             hook is not None and not callable(hook)
-            for hook in (acquire_resources, acquire_resources_cancellable, release_resources)
+            for hook in (acquire_resources, acquire_resources_cancellable, release_resources, loading_binding_for_token)
         ):
             raise ValueError("worker resource hooks must be callable or None")
         launches = tuple(launches)
@@ -486,6 +499,7 @@ class WorkerSupervisor:
         self._acquire_resources = acquire_resources
         self._acquire_resources_cancellable = acquire_resources_cancellable
         self._release_resources = release_resources
+        self._loading_binding_for_token = loading_binding_for_token
         self._last_bandwidth_mbps: Optional[float] = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -572,6 +586,8 @@ class WorkerSupervisor:
             return False, _RESOURCE_RELEASE_PENDING
         if record.cleanup_pending:
             return False, "worker process cleanup is incomplete"
+        if record.loading_failed:
+            return False, _LOADING_FAILED
         launch = record.launch
         if launch.resource_claim is not None:
             if (
@@ -641,6 +657,107 @@ class WorkerSupervisor:
         return (
             self._coordinated_launches or record.launch.resource_claim is not None or record.resource_token is not None
         )
+
+    def _invalidate_loading_locked(self, record: _WorkerRecord) -> None:
+        if record.loading_ticket is not None:
+            record.loading_ticket[4].set()
+            record.loading_ticket = None
+        record.load_state = "failed" if record.loading_failed else None
+
+    def _loading_ticket_current_locked(self, record: _WorkerRecord, ticket: tuple) -> bool:
+        launch, process, token, binding, cancel = ticket
+        return (
+            self._records.get(launch.worker_id.casefold()) is record
+            and record.loading_ticket is ticket
+            and record.launch is launch
+            and record.process is process
+            and record.resource_token == token
+            and not cancel.is_set()
+            and record.desired_running
+            and not record.operator_paused
+            and not self._closed
+            and not self._sharing_disabled
+            and not record.loading_failed
+            and record.state is WorkerState.RUNNING
+            and process.poll() is None
+        )
+
+    def _fail_loading_locked(self, record: _WorkerRecord) -> None:
+        record.loading_failed = True
+        self._invalidate_loading_locked(record)
+        record.desired_running = False
+        record.start_after_cleanup = False
+        record.start_after_admission = False
+        record.last_error = _LOADING_FAILED
+        if record.process is not None:
+            self._suspend_locked(record)
+        else:
+            record.state = WorkerState.CRASHED
+
+    def _start_loading_observer_locked(self, record: _WorkerRecord, binding: LoadingBinding) -> None:
+        self._invalidate_loading_locked(record)
+        record.load_state = "waiting"
+        record.loading_ticket = (record.launch, record.process, record.resource_token, binding, threading.Event())
+        if record.loading_thread is None:
+            try:
+                record.loading_thread = threading.Thread(
+                    target=self._observe_loading,
+                    args=(record,),
+                    name=f"drift-worker-loading-{record.launch.worker_id}",
+                    daemon=True,
+                )
+                record.loading_thread.start()
+            except Exception:
+                record.loading_thread = None
+                self._fail_loading_locked(record)
+
+    def _observe_loading(self, record: _WorkerRecord) -> None:
+        # One runner follows the latest ticket. A blocked stale read can delay
+        # fresh observation, but never create an accumulating thread/queue.
+        observed_ticket = identity = None
+        while True:
+            with self._lock:
+                ticket = record.loading_ticket
+                if ticket is None:
+                    record.loading_thread = None
+                    return
+                if ticket is not observed_ticket:
+                    observed_ticket, identity = ticket, None
+                if not self._loading_ticket_current_locked(record, ticket):
+                    self._invalidate_loading_locked(record)
+                    continue
+            launch, process, token, binding, cancel = ticket
+            status = None
+            failed = False
+            try:
+                identity = resolve_loading_worker_pid(process, launch.command, expected_identity=identity)
+                if identity is not None:
+                    status = read_loading_status(binding, expected_pid=identity.pid)
+                    confirmed = resolve_loading_worker_pid(process, launch.command, expected_identity=identity)
+                    if confirmed is None or confirmed != identity:
+                        raise ValueError("loading process identity changed")
+                if status not in (None, "waiting", "loading", "ready", "failed", "memory_rejected"):
+                    raise ValueError("invalid loading status")
+            except Exception:
+                failed = True
+            with self._lock:
+                if self._loading_ticket_current_locked(record, ticket):
+                    if status == "memory_rejected" and not failed:
+                        record.memory_rejected_command = record.launch.command
+                        record.last_error = self._resource_status_locked(record)[1]
+                        self._suspend_locked(record, resource=True)
+                    elif failed or status == "failed":
+                        self._fail_loading_locked(record)
+                    elif status is not None:
+                        rank = {"waiting": 0, "loading": 1, "ready": 2}
+                        if rank[status] < rank.get(record.load_state, 0):
+                            self._fail_loading_locked(record)
+                        else:
+                            record.load_state = status
+                    elif record.load_state == "ready":
+                        # Missing current evidence cannot remain ready.
+                        self._fail_loading_locked(record)
+            cancel.wait(self._poll_period)
 
     def _release_resources_locked(self, record: _WorkerRecord) -> bool:
         """Release only after the owner established that no child remains.
@@ -902,8 +1019,12 @@ class WorkerSupervisor:
             self._queue_resource_operation_locked(record, ("acquire", record.launch, threading.Event()))
             return False
         record.state = WorkerState.STARTING
+        self._invalidate_loading_locked(record)
         environment = os.environ.copy()
         environment.update(record.launch.environment)
+        for key in tuple(environment):
+            if key.upper().startswith(LOADING_ENV_PREFIX):
+                del environment[key]
         environment["PYTHONUNBUFFERED"] = "1"
         environment.pop("DRIFT_DOWNLOAD_PROGRESS", None)
         try:
@@ -917,6 +1038,8 @@ class WorkerSupervisor:
         containment = None
         process = None
         spawn_attempted = False
+        loading_binding = None
+        loading_values = ()
         try:
             spawn_options = {"creationflags": self._creation_flags()}
             if self._contained_launch(record):
@@ -997,6 +1120,17 @@ class WorkerSupervisor:
                     record.schedule_suspended = not schedule_admitted and record.desired_running
                     record.resource_suspended = not resource_admitted and record.desired_running
                     return False
+            if self._loading_binding_for_token is not None and record.resource_token is not None:
+                try:
+                    loading_binding = self._loading_binding_for_token(record.resource_token)
+                    if not isinstance(loading_binding, LoadingBinding):
+                        raise ValueError("missing loading binding")
+                    loading_environment = loading_binding.environment()
+                    environment.update(loading_environment)
+                    loading_values = tuple(loading_environment.values())
+                except Exception:
+                    self._fail_loading_locked(record)
+                    raise ValueError(_LOADING_FAILED) from None
             spawn_attempted = True
             process = self._popen(
                 list(record.launch.command),
@@ -1050,9 +1184,13 @@ class WorkerSupervisor:
                     _RESOURCE_RELEASE_PENDING
                     if record.resource_release_pending
                     else (
-                        "worker process containment could not be established"
-                        if self._contained_launch(record)
-                        else f"{type(exc).__name__}: {exc}"
+                        _LOADING_FAILED
+                        if record.loading_failed
+                        else (
+                            "worker process containment could not be established"
+                            if self._contained_launch(record)
+                            else f"{type(exc).__name__}: {exc}"
+                        )
                     )
                 )
             )
@@ -1079,13 +1217,21 @@ class WorkerSupervisor:
             if private_device_ids
             else None
         )
-        thread = threading.Thread(
-            target=self._drain_output,
-            args=(record, process, private_device_pattern),
-            name=f"drift-worker-log-{record.launch.worker_id}",
-            daemon=True,
-        )
-        thread.start()
+        try:
+            thread = threading.Thread(
+                target=self._drain_output,
+                args=(record, process, private_device_pattern, loading_values),
+                name=f"drift-worker-log-{record.launch.worker_id}",
+                daemon=True,
+            )
+            thread.start()
+        except Exception:
+            if loading_binding is None:
+                raise
+            self._fail_loading_locked(record)
+            return False
+        if loading_binding is not None:
+            self._start_loading_observer_locked(record, loading_binding)
         return True
 
     def _drain_output(
@@ -1093,6 +1239,7 @@ class WorkerSupervisor:
         record: _WorkerRecord,
         process: subprocess.Popen,
         private_device_pattern: Optional[re.Pattern[str]] = None,
+        private_loading_values: Tuple[str, ...] = (),
     ) -> None:
         stream = process.stdout
         if stream is None:
@@ -1103,6 +1250,8 @@ class WorkerSupervisor:
                 if private_device_pattern is not None:
                     # Capture this launch's binding rather than a future assignment.
                     message = private_device_pattern.sub("[private device]", message)
+                for private in private_loading_values:
+                    message = message.replace(private, "[private loading binding]")
                 with self._lock:
                     record.recent_logs.append(message)
                 logger.info("worker[%s] %s", record.launch.worker_id, message)
@@ -1118,6 +1267,19 @@ class WorkerSupervisor:
         exit_code = process.poll()
         if exit_code is None:
             return
+        if (
+            exit_code == WORKER_LOADING_FAILED_EXIT_CODE
+            and self._loading_binding_for_token is not None
+            and record.resource_token is not None
+        ):
+            # The child may fail and exit before the observer reads its status.
+            # Only an explicit Start can request another admitted generation.
+            record.loading_failed = True
+            record.desired_running = False
+            record.start_after_cleanup = False
+            record.start_after_admission = False
+            record.last_error = _LOADING_FAILED
+        self._invalidate_loading_locked(record)
         if self._contained_launch(record) and id(process) in self._process_containments:
             # Parent exit does not prove its job/group has released descendants.
             # Preserve the reservation until the asynchronous stop verifies it.
@@ -1201,6 +1363,7 @@ class WorkerSupervisor:
                 )
 
     def _suspend_locked(self, record: _WorkerRecord, *, schedule: bool = False, resource: bool = False) -> None:
+        self._invalidate_loading_locked(record)
         if schedule:
             record.schedule_suspended = True
         if resource:
@@ -1214,14 +1377,26 @@ class WorkerSupervisor:
         record.state = WorkerState.STOPPING
         if self._contained_launch(record):
             record.cleanup_pending = True
-        thread = threading.Thread(
-            target=self._finish_suspension,
-            args=(record, process),
-            name=f"drift-worker-policy-stop-{record.launch.worker_id}",
-            daemon=True,
-        )
-        record.suspension_stop_thread = thread
-        thread.start()
+        thread = None
+        try:
+            thread = threading.Thread(
+                target=self._finish_suspension,
+                args=(record, process),
+                name=f"drift-worker-policy-stop-{record.launch.worker_id}",
+                daemon=True,
+            )
+            record.suspension_stop_thread = thread
+            thread.start()
+        except Exception:
+            if record.suspension_stop_thread is thread and (
+                thread is None or (thread.ident is None and not thread.is_alive())
+            ):
+                # Never leave a never-started runner for Pause/shutdown to join.
+                # A runner which did start remains the sole cleanup owner.
+                record.suspension_stop_thread = None
+            record.cleanup_pending = True
+            record.state = WorkerState.CRASHED
+            record.last_error = "worker process cleanup is incomplete"
 
     def _monitor_loop(self) -> None:
         while not self._stop.wait(self._poll_period):
@@ -1303,6 +1478,7 @@ class WorkerSupervisor:
             if record.resource_operation is not None:
                 if self._closed or self._configuration_restart_pending or self._launch_transition_ids:
                     raise WorkerReconfigurationBusyError("worker configuration or launch transition is busy")
+                record.loading_failed = False
                 record.operator_paused = False
                 record.desired_running = True
                 if record.resource_operation[0] == "release" or record.resource_operation[2].is_set():
@@ -1316,6 +1492,8 @@ class WorkerSupervisor:
                 raise RuntimeError("worker supervisor is closed")
             if self._configuration_restart_pending:
                 raise WorkerReconfigurationBusyError("node configuration restart is pending")
+            self._refresh_locked(record)
+            record.loading_failed = False
             if not record.launch.policy_admitted:
                 record.desired_running = False
                 if record.launch.automatic:
@@ -1418,6 +1596,7 @@ class WorkerSupervisor:
     def _pause_worker(self, worker_id: str, *, operator_action: bool) -> bool:
         record = self._record(worker_id)
         with self._lock:
+            self._invalidate_loading_locked(record)
             if operator_action:
                 record.operator_paused = True
                 record.start_after_admission = False
@@ -1502,6 +1681,15 @@ class WorkerSupervisor:
                         "id": record.launch.worker_id,
                         "model": record.launch.model_id,
                         "state": record.state.value,
+                        "load_state": record.load_state,
+                        "model_ready": bool(
+                            record.load_state == "ready"
+                            and record.loading_ticket is not None
+                            and self._loading_ticket_current_locked(record, record.loading_ticket)
+                            and schedule_admitted
+                            and resource_admitted
+                            and record.launch.policy_admitted
+                        ),
                         "download_progress": self._download_snapshot(record),
                         "desired_running": record.desired_running,
                         "operator_paused": record.operator_paused,
@@ -1708,6 +1896,7 @@ class WorkerSupervisor:
             self._launch_transition_done.clear()
             for record in records:
                 record.desired_running = False
+                self._invalidate_loading_locked(record)
                 record.start_after_cleanup = False
                 record.schedule_suspended = False
                 record.resource_suspended = False
@@ -1988,6 +2177,7 @@ class WorkerSupervisor:
             for record in records:
                 record.operator_paused = True
                 record.desired_running = False
+                self._invalidate_loading_locked(record)
                 record.start_after_cleanup = False
                 record.start_after_admission = False
                 record.schedule_suspended = False

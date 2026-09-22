@@ -55,6 +55,12 @@ def block_ranges(indices):
     return ", ".join(str(start) if start == end else f"{start}–{end}" for start, end in spans) or "—"
 
 
+def _managed_display_status(worker):
+    if "load_state" in worker or worker.get("managed_by") == "desktop_gpu":
+        return worker["display_status"]
+    return None
+
+
 class DownloadCard(QFrame):
     def __init__(self):
         super().__init__()
@@ -70,7 +76,7 @@ class DownloadCard(QFrame):
         for widget in (self.title, self.detail, self.bar, self.totals):
             layout.addWidget(widget)
 
-    def set_state(self, name, progress, model_state=None):
+    def set_state(self, name, progress, model_state=None, *, status_override=None):
         name = model_name(name)
         if progress is None:
             self.title.setText(f"{name} · Not downloaded")
@@ -93,7 +99,7 @@ class DownloadCard(QFrame):
         }
         if state == "ready" and model_state == "known":
             labels["ready"] = "Downloaded"
-        self.title.setText(f"{name} · {labels[state]}")
+        self.title.setText(f"{name} · {status_override or labels[state]}")
         size, received = progress["artifact_bytes"], progress["artifact_received_bytes"]
         artifact = progress.get("artifact") or "Preparing download"
         speed = progress.get("bytes_per_second") or 0
@@ -129,9 +135,17 @@ class DownloadsPanel(QFrame):
         self.cards = {}
 
     def set_state(self, snapshot):
-        entries = [(f"model:{m['id']}", m["id"], m.get("download_progress"), m["state"]) for m in snapshot["models"]]
+        entries = [
+            (f"model:{m['id']}", m["id"], m.get("download_progress"), m["state"], None) for m in snapshot["models"]
+        ]
         entries += [
-            (f"worker:{w['id']}", f"Sharing · {w['model']}", w.get("download_progress"), w["state"])
+            (
+                f"worker:{w['id']}",
+                f"Sharing · {w['model']}",
+                w.get("download_progress"),
+                w["state"],
+                _managed_display_status(w),
+            )
             for w in snapshot["workers"]
         ]
         entries = [entry for entry in entries if entry[2] is not None][:64]
@@ -140,11 +154,11 @@ class DownloadsPanel(QFrame):
             if key not in keys:
                 self.layout.removeWidget(self.cards[key])
                 self.cards.pop(key).deleteLater()
-        for key, name, progress, state in entries:
+        for key, name, progress, state, status_override in entries:
             if key not in self.cards:
                 self.cards[key] = DownloadCard()
                 self.layout.addWidget(self.cards[key])
-            self.cards[key].set_state(name, progress, state)
+            self.cards[key].set_state(name, progress, state, status_override=status_override)
         self.empty.setVisible(not entries)
 
 
@@ -311,7 +325,7 @@ class ModelHealthCard(QFrame):
                 parts = span.split(":")
                 if (
                     worker["model"] == model["id"]
-                    and worker["state"] == "crashed"
+                    and (worker["state"] == "crashed" or worker.get("load_state") == "failed")
                     and len(parts) == 2
                     and all(p.isdigit() for p in parts)
                 ):
@@ -367,7 +381,10 @@ class ModelHealthCard(QFrame):
                 card = self.worker_downloads[worker["id"]] = DownloadCard()
                 self.worker_downloads_layout.addWidget(card)
             self.worker_downloads[worker["id"]].set_state(
-                "Sharing download", worker["download_progress"], worker["state"]
+                "Sharing download",
+                worker["download_progress"],
+                worker["state"],
+                status_override=_managed_display_status(worker),
             )
         peer_rows = []
         by_id = {p["peer_id"]: p for p in health["peers"]}
@@ -427,11 +444,14 @@ class ModelHealthCard(QFrame):
         for worker in workers:
             if worker["model"] == model["id"]:
                 progress = worker.get("download_progress")
-                state = progress["state"] if progress is not None else worker["display_status"]
+                state = (
+                    _managed_display_status(worker)
+                    or (progress["state"] if progress is not None else worker["display_status"]).capitalize()
+                )
                 peer_rows.append(
                     (
                         "This computer",
-                        state.capitalize(),
+                        state,
                         worker.get("placement", {}).get("block_indices") or "Unassigned",
                         "Local contribution",
                         worker["id"],

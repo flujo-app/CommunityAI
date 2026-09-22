@@ -4,6 +4,7 @@ import logging
 import os
 import signal
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -17,6 +18,12 @@ from humanfriendly import parse_size
 import drift
 from drift.constants import DTYPE_MAP
 from drift.model_manifest import ManifestError, ModelManifest, resolve_manifest_loading
+from drift.node.worker_loading import (
+    WORKER_LOADING_FAILED_EXIT_CODE,
+    LoadingProtocolError,
+    child_loading_session_from_environment,
+    loading_claim_digest,
+)
 from drift.server.admission import (
     DEFAULT_GLOBAL_SESSION_BURST,
     DEFAULT_GLOBAL_SESSION_RATE,
@@ -46,6 +53,40 @@ _BOUND_WORKER_CLAIM_FLAGS = (
     "--expected_artifact_set_digest",
     "--expected_cache_root",
 )
+
+
+def _consume_loading_environment() -> dict:
+    # Consume before parsing or constructing anything that can spawn descendants.
+    return {key: os.environ.pop(key) for key in tuple(os.environ) if key.startswith("DRIFT_INTERNAL_LOADING_")}
+
+
+def _loading_session_for_args(args: dict, environment: dict):
+    if not environment:
+        return None
+    try:
+        if (
+            args.get("_bound_worker_parser") is not True
+            or any(args.get(option[2:]) is None for option in _BOUND_WORKER_CLAIM_FLAGS)
+            or not args.get("model_manifest")
+            or args.get("num_blocks") is not None
+            or args.get("block_indices") != args["expected_block_indices"]
+            or args.get("cache_dir") != args["expected_cache_root"]
+        ):
+            raise LoadingProtocolError()
+        binding_digest = loading_claim_digest(
+            manifest_digest=args["expected_manifest_digest"],
+            block_indices=args["expected_block_indices"],
+            artifact_bytes=args["expected_artifact_bytes"],
+            artifact_set_digest=args["expected_artifact_set_digest"],
+            cache_root=args["expected_cache_root"],
+        )
+        return child_loading_session_from_environment(environment, expected_binding_digest=binding_digest)
+    except Exception:
+        raise LoadingProtocolError() from None
+
+
+def _managed_argument_error(message):
+    raise LoadingProtocolError()
 
 
 def _uses_bound_worker_parser(argv) -> bool:
@@ -491,17 +532,40 @@ def server_from_args(args: dict) -> Server:
 
 
 def main():
-    parser = build_parser(bound_worker=_uses_bound_worker_parser(sys.argv[1:]))
-    args = vars(parser.parse_args())
-    args.pop("config", None)
-
+    loading_environment = _consume_loading_environment()
+    managed = bool(loading_environment)
+    parser = build_parser(bound_worker=managed or _uses_bound_worker_parser(sys.argv[1:]))
+    if managed:
+        parser.error = _managed_argument_error
     try:
-        server = server_from_args(args)
+        args = vars(parser.parse_args())
+        args.pop("config", None)
+        session = _loading_session_for_args(args, loading_environment)
+        with session if session is not None else nullcontext():
+            try:
+                if session is not None:
+                    args["managed_loading_session"] = session
+                server = server_from_args(args)
+                serve(server, model=server.converted_model_name_or_path)
+                if session is not None and not getattr(server, "_managed_ready", False):
+                    raise LoadingProtocolError()
+            except DeviceMemoryBudgetError:
+                if session is not None:
+                    session.fail_memory()
+                raise
     except DeviceMemoryBudgetError as exc:
-        parser.exit(DEVICE_MEMORY_BUDGET_EXIT_CODE, f"{parser.prog}: {exc}\n")
+        message = "Managed worker exceeded its device memory allowance" if managed else str(exc)
+        parser.exit(DEVICE_MEMORY_BUDGET_EXIT_CODE, f"{parser.prog}: {message}\n")
+    except LoadingProtocolError:
+        parser.exit(WORKER_LOADING_FAILED_EXIT_CODE, f"{parser.prog}: {LoadingProtocolError()}\n")
     except (ManifestError, ValueError) as exc:
+        if managed:
+            parser.exit(WORKER_LOADING_FAILED_EXIT_CODE, f"{parser.prog}: {LoadingProtocolError()}\n")
         parser.error(str(exc))
-    serve(server, model=server.converted_model_name_or_path)
+    except BaseException:
+        if managed:
+            parser.exit(WORKER_LOADING_FAILED_EXIT_CODE, f"{parser.prog}: {LoadingProtocolError()}\n")
+        raise
 
 
 if __name__ == "__main__":

@@ -135,6 +135,26 @@ def _gate_status(snapshot, prefix: str):
     }
 
 
+def _public_loading_status(snapshot):
+    state, ready = snapshot.get("load_state"), snapshot.get("model_ready")
+    if state is None and (ready is None or ready is False):
+        return {}  # Legacy workers do not make a managed readiness claim.
+    state = state if isinstance(state, str) and state in ("waiting", "loading", "ready", "failed") else "failed"
+    return {
+        "load_state": state,
+        "model_ready": bool(
+            ready is True
+            and state == "ready"
+            and snapshot.get("state") == "running"
+            and snapshot.get("desired_running") is True
+            and snapshot.get("operator_paused") is not True
+            and all(
+                snapshot.get(field) is True for field in ("policy_admitted", "schedule_admitted", "resource_admitted")
+            )
+        ),
+    }
+
+
 def _contribution_status(
     worker_snapshots, *, configured: bool, editable: bool, policy_snapshot, worker_provenance=None
 ):
@@ -163,6 +183,7 @@ def _contribution_status(
                 ),
                 "desired_running": snapshot.get("desired_running") is True,
                 "operator_paused": snapshot.get("operator_paused") is True,
+                **_public_loading_status(snapshot),
                 "download_progress": public_progress(snapshot.get("download_progress")),
                 "placement": {
                     "automatic": snapshot.get("automatic") is True,

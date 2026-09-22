@@ -25,6 +25,7 @@ import drift
 from drift.constants import DTYPE_MAP
 from drift.data_structures import CHAIN_DELIMITER, UID_DELIMITER, ModelInfo, ServerInfo, ServerState, parse_uid
 from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest
+from drift.node.worker_loading import LoadingProtocolError
 from drift.protocol_identity import (
     MAX_SIGNED_RECORD_TTL_SECONDS,
     NodeIdentity,
@@ -283,10 +284,14 @@ class Server:
         use_auto_relay: bool = True,
         adapters: Sequence[str] = (),
         health_state_path: Optional[str] = None,
+        managed_loading_session=None,
         **kwargs,
     ):
         """Create a server with one or more bloom blocks. See run_server.py for documentation."""
 
+        self._managed_loading_session = managed_loading_session
+        self._managed_lifecycle_started = False
+        self._managed_ready = False
         converted_model_name_or_path = get_compatible_model_repo(converted_model_name_or_path)
         self.converted_model_name_or_path = converted_model_name_or_path
 
@@ -761,12 +766,32 @@ class Server:
     def _run_module_container(self, block_indices: List[int]) -> bool:
         self.module_container = self._create_module_container(block_indices)
         try:
-            self.module_container.ready.wait()
+            managed_session = getattr(self, "_managed_loading_session", None)
+            if managed_session is not None:
+                if not self.module_container.ready.wait(timeout=self.ready_timeout):
+                    raise LoadingProtocolError()
+            else:
+                self.module_container.ready.wait()
             if self.stop.wait(0):
                 return True
-            if self.health_state_path is not None and not self.module_container.is_healthy():
+            if managed_session is not None and (
+                not self.module_container.ready.is_set()
+                or not self.module_container.is_alive()
+                or not self.module_container.conn_handlers
+                or not self.module_container.runtime.pools
+                or not self.module_container.is_healthy()
+            ):
+                raise LoadingProtocolError()
+            if (
+                managed_session is None
+                and self.health_state_path is not None
+                and not self.module_container.is_healthy()
+            ):
                 logger.warning("Public worker failed its initial aggregate health check")
                 return False
+            if managed_session is not None:
+                managed_session.ready()
+                self._managed_ready = True
 
             from drift.utils.download_progress import current_progress
 
@@ -779,7 +804,10 @@ class Server:
                 if self.stop.wait(timeout):
                     return True
 
-                if not self.module_container.is_healthy():
+                if (
+                    managed_session is not None
+                    and (not self.module_container.ready.is_set() or not self.module_container.is_alive())
+                ) or not self.module_container.is_healthy():
                     logger.warning("One of subprocesses crashed, restarting the server")
                     return False
 
@@ -793,6 +821,15 @@ class Server:
                 self._clean_memory_and_fds()
 
     def run(self):
+        if getattr(self, "_managed_loading_session", None) is not None:
+            if getattr(self, "_managed_lifecycle_started", False):
+                raise LoadingProtocolError()
+            self._managed_lifecycle_started = True
+            # Ready releases the cross-worker loading gate. A second load must
+            # be a new parent-owned generation with a fresh gate and reservation.
+            if not self._run_module_container(self._choose_blocks()):
+                raise LoadingProtocolError()
+            return
         while True:
             if self._run_module_container(self._choose_blocks()):
                 return

@@ -240,6 +240,8 @@ class DesktopController:
         )
         state = worker["state"]
         desired_running = worker["desired_running"]
+        load_state = worker.get("load_state")
+        managed_ready = load_state == "ready" and worker.get("model_ready") is True
         progress_state = (worker.get("download_progress") or {}).get("state")
         preparing = state in ("running", "starting") and progress_state in {
             "waiting",
@@ -249,7 +251,13 @@ class DesktopController:
             "verifying",
             "loading",
         }
-        if preparing:
+        if load_state is not None:
+            preparing = state in ("running", "starting") and load_state != "failed" and not managed_ready
+        if load_state == "failed":
+            display_status = "Model could not start. Finish cleanup with Pause, then choose Start to retry."
+        elif load_state is not None and state == "running" and not managed_ready and blocked_reason:
+            display_status = f"Waiting: {sharing_reason(blocked_reason)}"
+        elif preparing:
             display_status = "Downloading model" if progress_state in ("downloading", "retrying") else "Preparing model"
         elif state == "running":
             display_status = "Sharing"
@@ -270,9 +278,16 @@ class DesktopController:
             "state": state,
             "desired_running": desired_running,
             "operator_paused": worker.get("operator_paused", False),
-            "sharing_active": state == "running" and not preparing,
+            **({"load_state": load_state, "model_ready": managed_ready} if load_state is not None else {}),
+            "sharing_active": state == "running" and (managed_ready if load_state is not None else not preparing),
             "preparing": preparing,
-            "can_start": admitted,
+            "can_start": admitted
+            or (
+                load_state == "failed"
+                and policy["admitted"]
+                and schedule["admitted"]
+                and resources["reason"] == "worker loading acknowledgement failed; choose Start to retry after cleanup"
+            ),
             "blocked_reason": blocked_reason,
             "display_status": display_status,
             "preferred": policy["preferred"],
