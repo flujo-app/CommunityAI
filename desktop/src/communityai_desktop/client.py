@@ -365,7 +365,7 @@ def _normalize_policy(value: Any) -> Dict[str, Any]:
     }
     if (
         not isinstance(value, dict)
-        or not fields <= set(value) <= fields | {"max_processing_percent", "processing_scope"}
+        or not fields <= set(value) <= fields | {"max_processing_percent", "processing_scope", "max_host_memory"}
         or not isinstance(value["sharing_enabled"], bool)
     ):
         raise NodeClientError("Local node contribution policy is malformed")
@@ -443,6 +443,7 @@ def _normalize_policy(value: Any) -> Dict[str, Any]:
         "preferred_models": preferred,
         "denied_models": denied,
         "max_disk_space": max_disk_space,
+        **({"max_host_memory": optional_text("max_host_memory")} if "max_host_memory" in value else {}),
         "max_vram": max_vram,
         "max_bandwidth_mbps": bandwidth,
         "max_power_watts": power,

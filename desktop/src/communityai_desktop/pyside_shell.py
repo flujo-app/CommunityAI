@@ -19,7 +19,7 @@ from communityai_desktop.startup import LoginStartupError, SingleInstanceError, 
 
 APP_STYLESHEET = """
 QLabel { color: #E7EAF0; font-family: "Segoe UI"; font-size: 14px; }
-QMainWindow, QWidget#appShell, QScrollArea, QScrollArea > QWidget > QWidget {
+QMainWindow, QWidget#appShell, QDialog#sharingPolicyDialog, QScrollArea, QScrollArea > QWidget > QWidget {
     background: #090C12;
     color: #F4F6FA;
     font-family: "Segoe UI";
@@ -103,7 +103,7 @@ QSlider::handle:horizontal {
 }
 QProgressBar { background: #242C3B; border: none; border-radius: 3px; height: 6px; }
 QProgressBar::chunk { background: #6F82FF; border-radius: 3px; }
-QLineEdit {
+QLineEdit, QPlainTextEdit {
     background: #0D121C; border: 1px solid #2A3446; border-radius: 9px; color: #F4F6FA;
     padding: 10px; selection-background-color: #7657FF;
 }
@@ -270,8 +270,6 @@ def run(
     if instance_data_dir is not None:
         _instance_data_root(instance_data_dir, None, create=False)
 
-    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
-    from communityai_desktop.resource_controls import GpuResourceControls, ResourceControls
     from PySide6.QtCore import QLockFile, QObject, QRunnable, QStandardPaths, Qt, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -298,6 +296,9 @@ def run(
         QVBoxLayout,
         QWidget,
     )
+
+    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
+    from communityai_desktop.resource_controls import GpuResourceControls, ResourceControls
 
     def label(text: str = "", name: str | None = None) -> QLabel:
         item = QLabel(text)
@@ -719,7 +720,7 @@ def run(
             self.login_startup_toggle.toggled.connect(self._set_login_startup)
             body_layout.addWidget(self.login_startup_toggle)
             body_layout.addWidget(self.login_startup_detail)
-            self.edit_policy_button = QPushButton("Storage, internet and schedule…")
+            self.edit_policy_button = QPushButton("Memory, storage and other limits…")
             self.edit_policy_button.clicked.connect(self._edit_contribution_policy)
             body_layout.addWidget(self.edit_policy_button)
             self.contribution_models_layout = QVBoxLayout()
@@ -1307,7 +1308,7 @@ def run(
             dialog.setMinimumWidth(620)
             layout = QVBoxLayout(dialog)
             explanation = label(
-                "All values are validated and enforced by the local node. Leave optional limits blank to clear them.",
+                "The local node validates sharing limits. Leave optional limits blank to clear them.",
                 "bodyMuted",
             )
             explanation.setWordWrap(True)
@@ -1337,6 +1338,7 @@ def run(
             text_fields = {}
             for field, title, placeholder in (
                 ("max_disk_space", "Storage ceiling", "20GiB"),
+                ("max_host_memory", "Shared host RAM allowance", "Unset; enter a size such as 16GiB"),
                 ("max_vram", "GPU memory ceiling", "50% or 8GiB"),
                 ("max_bandwidth_mbps", "Bandwidth ceiling (Mbps)", "optional"),
                 ("max_power_watts", "Power ceiling (W)", "optional"),
@@ -1344,12 +1346,23 @@ def run(
             ):
                 editor = QLineEdit()
                 editor.setObjectName(f"policy_{field}")
-                value = policy[field]
+                value = policy.get(field)
                 editor.setText("" if value is None else f"{value:g}" if isinstance(value, float) else str(value))
                 editor.setPlaceholderText(placeholder)
                 editor.setAccessibleName(title)
                 text_fields[field] = editor
                 form.addRow(title, editor)
+                if field == "max_host_memory":
+                    host_help = label(
+                        "One RAM allowance shared by all contribution workers, separate from GPU memory. "
+                        "Currently supported for NVIDIA GPUs selected in CommunityAI. Setting this blocks manually "
+                        "configured workers. There is no default allowance. This sets a sharing allowance, "
+                        "not an OS memory cap.",
+                        "bodyMuted",
+                    )
+                    host_help.setObjectName("policy_host_memory_help")
+                    host_help.setWordWrap(True)
+                    form.addRow(host_help)
 
             schedule = QPlainTextEdit()
             schedule.setObjectName("policy_schedule")
@@ -1360,13 +1373,21 @@ def run(
             schedule.setFixedHeight(130)
             schedule.setAccessibleName("Contribution schedule JSON")
             form.addRow("Schedule (JSON)", schedule)
-            layout.addLayout(form)
+            policy_fields = QWidget()
+            policy_fields.setLayout(form)
+            policy_scroll = QScrollArea()
+            policy_scroll.setObjectName("sharingPolicyScroll")
+            policy_scroll.setWidgetResizable(True)
+            policy_scroll.setFrameShape(QFrame.NoFrame)
+            policy_scroll.setWidget(policy_fields)
+            layout.addWidget(policy_scroll)
 
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
             buttons.setObjectName("sharingPolicyButtons")
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
+            dialog.resize(620, min(860, dialog.screen().availableGeometry().height() - 80))
             if dialog.exec() != QDialog.Accepted:
                 return
 
@@ -1397,6 +1418,9 @@ def run(
                     "pause_timeout": float(text_fields["pause_timeout"].text()),
                     "schedule": None if not schedule.toPlainText().strip() else json.loads(schedule.toPlainText()),
                 }
+                host_memory = optional_text("max_host_memory")
+                if host_memory is not None or "max_host_memory" in policy:
+                    updated["max_host_memory"] = host_memory
             except (TypeError, ValueError) as exc:
                 self._sharing_action_failed(f"The sharing policy form is invalid: {str(exc)[:220]}")
                 return
@@ -1411,8 +1435,8 @@ def run(
             self._awaiting_sharing_snapshot = False
             self._sharing_error = sharing_reason(message)
             self._render_sharing(self._snapshot)
-            self.sharing_detail.setToolTip(str(message)[:300])
-            self.home_sharing_detail.setToolTip(str(message)[:300])
+            self.sharing_detail.setToolTip(self._sharing_error)
+            self.home_sharing_detail.setToolTip(self._sharing_error)
             self._set_busy(0)
             self.refresh()
 

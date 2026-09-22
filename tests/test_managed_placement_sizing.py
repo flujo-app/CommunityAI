@@ -120,12 +120,19 @@ def test_resolver_rejects_mismatched_metadata_and_missing_layer_binding(tmp_path
 @pytest.fixture
 def managed_candidates(tmp_path, monkeypatch):
     manifest, metadata = _metadata(tmp_path)
+    metadata.cache_root.mkdir()
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(manifest.canonical_json(), encoding="utf-8")
     config = NodeConfig.from_dict(
         {
             "schema_version": 1,
-            "models": [{"manifest": str(manifest_path), "initial_peers": ["fixture-peer"]}],
+            "models": [
+                {
+                    "manifest": str(manifest_path),
+                    "initial_peers": ["fixture-peer"],
+                    "cache_dir": str(metadata.cache_root),
+                }
+            ],
             "workers": [
                 {
                     "id": "gpu-0",
@@ -142,6 +149,7 @@ def managed_candidates(tmp_path, monkeypatch):
             "contribution_policy": {
                 "sharing_enabled": True,
                 "max_disk_space": "1GiB",
+                "max_host_memory": "4GiB",
                 "max_vram": "1GiB",
                 "processing_scope": "per_device",
             },

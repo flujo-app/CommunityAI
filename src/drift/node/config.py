@@ -339,6 +339,8 @@ class ContributionPolicyConfig:
     denied_models: Tuple[str, ...] = ()
     max_disk_space: Optional[str] = None
     max_disk_bytes: Optional[int] = None
+    max_host_memory: Optional[str] = None
+    max_host_memory_bytes: Optional[int] = None
     max_vram: Optional[str] = None
     max_vram_bytes: Optional[int] = None
     max_vram_fraction: Optional[float] = None
@@ -362,6 +364,7 @@ class ContributionPolicyConfig:
                 "preferred_models",
                 "denied_models",
                 "max_disk_space",
+                "max_host_memory",
                 "max_vram",
                 "max_processing_percent",
                 "processing_scope",
@@ -386,6 +389,12 @@ class ContributionPolicyConfig:
             max_disk_bytes = None
         else:
             max_disk_space, max_disk_bytes = _require_size(max_disk_value, f"{field}.max_disk_space")
+        max_host_value = source.get("max_host_memory")
+        if max_host_value is None:
+            max_host_memory = None
+            max_host_memory_bytes = None
+        else:
+            max_host_memory, max_host_memory_bytes = _require_size(max_host_value, f"{field}.max_host_memory")
         max_vram_value = source.get("max_vram")
         if max_vram_value is None:
             max_vram = None
@@ -409,6 +418,8 @@ class ContributionPolicyConfig:
             denied_models=denied,
             max_disk_space=max_disk_space,
             max_disk_bytes=max_disk_bytes,
+            max_host_memory=max_host_memory,
+            max_host_memory_bytes=max_host_memory_bytes,
             max_vram=max_vram,
             max_vram_bytes=max_vram_bytes,
             max_vram_fraction=max_vram_fraction,
@@ -445,6 +456,7 @@ class ContributionPolicyConfig:
             "pause_timeout": self.pause_timeout,
             "schedule": None if self.schedule is None else self.schedule.to_dict(),
             # Preserve the existing strict-client policy document in legacy mode.
+            **({"max_host_memory": self.max_host_memory} if self.max_host_memory is not None else {}),
             **({"processing_scope": self.processing_scope} if self.processing_scope != "node" else {}),
         }
 

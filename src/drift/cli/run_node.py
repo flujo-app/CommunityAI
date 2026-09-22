@@ -42,6 +42,7 @@ from drift.node.contribution_planner import (
 from drift.node.device_binding import DeviceBindingError, DeviceBindingStore
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery, PeerCache
 from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
+from drift.node.host_resources import canonical_cache_root, estimate_host_memory
 from drift.node.keys import ApiKeyStore, ApiKeyStoreError, load_or_create_api_key, load_or_create_control_key
 from drift.node.loading import make_text_peer_loader, validate_manifest_execution
 from drift.node.local_inference import local_route_observer, make_local_manifest_loader
@@ -53,12 +54,14 @@ from drift.node.native_credentials import (
     load_native_control_key,
 )
 from drift.node.placement_memory import load_placement_memory
+from drift.node.placement_resources import ArtifactClaim, WorkerResourceClaim
 from drift.node.placement_sizing import PlacementSpanResolver
 from drift.node.policy_store import (
     ContributionPolicyConflictError,
     ContributionPolicyPersistenceError,
     ContributionPolicyStore,
 )
+from drift.node.resource_reservations import ResourceReservationError, ResourceReservationManager
 from drift.node.route_metrics import RouteOutcomeTracker
 from drift.node.worker_supervisor import (
     NvidiaPowerMonitor,
@@ -430,6 +433,7 @@ def _automatic_placement_candidates(
     allow_remote_route_demand: bool = False,
     artifact_plan_cache: dict | None = None,
     placement_metadata_cache: dict | None = None,
+    resource_manager: ResourceReservationManager | None = None,
 ) -> tuple[PlacementCandidate, ...]:
     policy = config.contribution_policy
     allowed = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
@@ -468,6 +472,10 @@ def _automatic_placement_candidates(
             reason = f"model {descriptor.model_id!r} requires gated artifact authorization"
         elif effective_disk_bytes is None:
             reason = "automatic placement requires a finite disk budget"
+        elif worker.managed_by == "desktop_gpu" and policy.max_host_memory_bytes is None:
+            reason = "set a shared host RAM allowance before starting managed GPU sharing"
+        elif policy.max_host_memory_bytes is not None and worker.managed_by != "desktop_gpu":
+            reason = "shared host RAM admission currently requires managed GPU workers"
         else:
             reason = None
         artifact_plans = ()
@@ -497,13 +505,35 @@ def _automatic_placement_candidates(
                             None if placement_metadata_cache is None else placement_metadata_cache.get(metadata_key)
                         )
                         if metadata is None:
-                            metadata = load_placement_memory(
-                                manifest,
-                                device=device,
-                                token=token,
-                                cache_dir=cache_root,
-                                max_disk_space=effective_disk_bytes,
-                            )
+                            if resource_manager is not None:
+                                # Create only the configured cache location,
+                                # after checking its existing physical ancestor.
+                                ancestor = cache_root
+                                while not ancestor.exists():
+                                    ancestor = ancestor.parent
+                                canonical_cache_root(ancestor)
+                                cache_root.mkdir(parents=True, exist_ok=True)
+                                admission = resource_manager.metadata_admission(
+                                    manifest,
+                                    cache_dir=cache_root,
+                                    host_limit_bytes=policy.max_host_memory_bytes,
+                                    disk_limit_bytes=effective_disk_bytes,
+                                )
+                            else:
+                                admission = nullcontext()
+                            with admission:
+                                metadata = load_placement_memory(
+                                    manifest,
+                                    device=device,
+                                    token=token,
+                                    cache_dir=cache_root,
+                                    max_disk_space=effective_disk_bytes,
+                                    # Without a coordinator, this helper may
+                                    # only read already materialized metadata.
+                                    artifact_root=(cache_root / "manifest-artifacts" / manifest.digest / "snapshot")
+                                    if resource_manager is None
+                                    else None,
+                                )
                             if placement_metadata_cache is not None:
                                 if len(placement_metadata_cache) >= 16:
                                     placement_metadata_cache.pop(next(iter(placement_metadata_cache)))
@@ -667,6 +697,43 @@ def _resolve_worker_device(worker_id: str, selection: str | None, *, require_ava
     raise NodeConfigError(f"worker {worker_id!r} selected device {str(device)!r} is unavailable")
 
 
+def _managed_host_resource_claim(manifest, worker, decision, *, cache_dir, disk_limit, device_limit, token):
+    root = canonical_cache_root(cache_dir)
+    metadata = load_placement_memory(
+        manifest,
+        device=worker.device,
+        cache_dir=cache_dir,
+        max_disk_space=disk_limit,
+        token=token,
+        artifact_root=Path(cache_dir) / "manifest-artifacts" / manifest.digest / "snapshot",
+    )
+    resolver = PlacementSpanResolver(
+        manifest, metadata, max_device_memory_bytes=device_limit, max_artifact_bytes=disk_limit
+    )
+    start, end = map(int, decision.block_indices.split(":"))
+    binding = resolver(start, end)
+    if binding is None or (binding.artifact_bytes, binding.artifact_set_digest, binding.device_memory_bytes) != (
+        decision.artifact_bytes,
+        decision.artifact_set_digest,
+        decision.device_memory_bytes,
+    ):
+        raise ValueError("managed resource estimate no longer matches the selected span")
+    plan = resolver.artifact_plan(start, end)
+    estimate = estimate_host_memory(metadata.memory_profile, plan, device=worker.device)
+    return WorkerResourceClaim(
+        reservation_id="planned-" + worker.worker_id.casefold(),
+        worker_id=worker.worker_id,
+        persistent_host_bytes=estimate.persistent_bytes,
+        staging_host_bytes=estimate.staging_bytes,
+        artifacts=tuple(
+            ArtifactClaim(
+                root, f"manifest-artifacts/{manifest.digest}/snapshot/{artifact.path}", artifact.sha256, artifact.size
+            )
+            for artifact in plan.artifacts
+        ),
+    )
+
+
 def _prepare_worker_supervisor_settings(
     config: NodeConfig,
     manager: ModelManager,
@@ -674,6 +741,8 @@ def _prepare_worker_supervisor_settings(
     token: str | None = None,
     automatic_placements: Mapping[str, PlacementPlan] | None = None,
     automatic_placement_guards: Mapping[str, Callable] | None = None,
+    resource_claim_cache: dict | None = None,
+    allow_resource_metadata_io: bool = True,
 ) -> WorkerSupervisorSettings:
     policy = config.contribution_policy
     validate_processing_configuration(policy, config.workers)
@@ -692,6 +761,11 @@ def _prepare_worker_supervisor_settings(
         raise NodeConfigError("contribution policy has an inconsistent max_disk_space value")
     if policy.sharing_enabled and policy.max_disk_bytes is None:
         raise NodeConfigError("contribution policy requires max_disk_space while sharing is enabled")
+    if (policy.max_host_memory is None) != (policy.max_host_memory_bytes is None) or (
+        policy.max_host_memory_bytes is not None
+        and (type(policy.max_host_memory_bytes) is not int or not 0 < policy.max_host_memory_bytes <= 2**63 - 1)
+    ):
+        raise NodeConfigError("contribution policy has an inconsistent max_host_memory value")
     if (policy.max_vram is None) != (policy.max_vram_bytes is None and policy.max_vram_fraction is None) or (
         policy.max_vram_bytes is not None and policy.max_vram_fraction is not None
     ):
@@ -716,7 +790,7 @@ def _prepare_worker_supervisor_settings(
         automatic = worker.model.casefold() == "auto"
         if automatic and worker.num_blocks is None:
             raise NodeConfigError(f"automatic worker {worker.worker_id!r} requires a positive num_blocks value")
-        placement = automatic_placements.get(worker.worker_id.casefold())
+        placement = automatic_placements.get(worker.worker_id.casefold()) if automatic else None
         decision = None if placement is None else placement.decision
         if automatic:
             distributed = [
@@ -927,6 +1001,52 @@ def _prepare_worker_supervisor_settings(
             if worker.cache_dir is not None
             else model_config.cache_dir
         )
+        resource_claim = None
+        if (
+            policy_admitted
+            and policy.max_host_memory_bytes is not None
+            and not (automatic and worker.managed_by == "desktop_gpu")
+        ):
+            policy_admitted = False
+            policy_reason = "shared host RAM admission currently requires managed GPU workers"
+        if policy_admitted and automatic and worker.managed_by == "desktop_gpu":
+            if policy.max_host_memory_bytes is None:
+                policy_admitted = False
+                policy_reason = "set a shared host RAM allowance before starting managed GPU sharing"
+            else:
+                try:
+                    claim_key = (
+                        worker.worker_id,
+                        manifest.digest_id,
+                        decision.block_indices,
+                        decision.artifact_set_digest,
+                        decision.artifact_bytes,
+                        decision.device_memory_bytes,
+                        str(cache_dir),
+                        worker.device,
+                    )
+                    if effective_disk_bytes is None or decision.artifact_bytes > effective_disk_bytes:
+                        raise ValueError("selected artifacts exceed the current storage allowance")
+                    resource_claim = None if resource_claim_cache is None else resource_claim_cache.get(claim_key)
+                    if resource_claim is None:
+                        if not allow_resource_metadata_io:
+                            raise ValueError("resource metadata preparation must run outside policy locks")
+                        resource_claim = _managed_host_resource_claim(
+                            manifest,
+                            worker,
+                            decision,
+                            cache_dir=cache_dir,
+                            disk_limit=effective_disk_bytes,
+                            device_limit=effective_vram_bytes,
+                            token=token,
+                        )
+                        if resource_claim_cache is not None:
+                            if len(resource_claim_cache) >= 128:
+                                resource_claim_cache.pop(next(iter(resource_claim_cache)))
+                            resource_claim_cache[claim_key] = resource_claim
+                except Exception:
+                    policy_admitted = False
+                    policy_reason = "automatic placement is waiting for verified shared resource estimates"
         if automatic and decision is not None and decision.artifact_set_digest is not None:
             command.extend(
                 (
@@ -1028,6 +1148,8 @@ def _prepare_worker_supervisor_settings(
                 ),
                 placement_cache_root=None if placement_binding is None else str(cache_dir),
                 max_disk_bytes=effective_disk_bytes,
+                resource_claim=resource_claim,
+                max_host_memory_bytes=policy.max_host_memory_bytes,
                 max_vram_bytes=effective_vram_bytes,
                 device=None if detection_failed else str(configured_device),
                 # This guard must travel atomically with this exact command,
@@ -1077,6 +1199,8 @@ def _build_worker_supervisor(
     token: str | None = None,
     automatic_placements: Mapping[str, PlacementPlan] | None = None,
     automatic_placement_guards: Mapping[str, Callable] | None = None,
+    resource_manager: ResourceReservationManager | None = None,
+    resource_claim_cache: dict | None = None,
 ) -> WorkerSupervisor:
     settings = _prepare_worker_supervisor_settings(
         config,
@@ -1084,6 +1208,7 @@ def _build_worker_supervisor(
         token=token,
         automatic_placements=automatic_placements,
         automatic_placement_guards=automatic_placement_guards,
+        resource_claim_cache=resource_claim_cache,
     )
     return WorkerSupervisor(
         settings.launches,
@@ -1093,6 +1218,8 @@ def _build_worker_supervisor(
         power_watts=settings.power_watts,
         device_available=settings.device_available,
         coordinated_launches=any(launch.automatic for launch in settings.launches),
+        acquire_resources=None if resource_manager is None else resource_manager.acquire,
+        release_resources=None if resource_manager is None else resource_manager.release,
     )
 
 
@@ -1281,10 +1408,13 @@ def _build_automatic_placement_service(
     require_explicit_start: bool = False,
     policy_store: ContributionPolicyStore | None = None,
     automatic_placement_guards: dict[str, Callable] | None = None,
+    resource_manager: ResourceReservationManager | None = None,
+    resource_claim_cache: dict | None = None,
 ) -> AutomaticPlacementService | None:
     automatic_workers = tuple(worker for worker in config.workers if worker.model.casefold() == "auto")
     if not automatic_workers:
         return None
+    resource_claim_cache = {} if resource_claim_cache is None else resource_claim_cache
     planners = {
         worker.worker_id.casefold(): AutomaticContributionPlanner(
             num_blocks=worker.num_blocks,
@@ -1461,6 +1591,7 @@ def _build_automatic_placement_service(
                 ),
                 artifact_plan_cache=artifact_plan_cache,
                 placement_metadata_cache=placement_metadata_cache,
+                resource_manager=resource_manager,
             )
             for worker_id, worker in current_workers.items()
         }
@@ -1558,7 +1689,18 @@ def _build_automatic_placement_service(
             token=token,
             automatic_placements=plans,
             automatic_placement_guards=admission_guards,
+            resource_claim_cache=resource_claim_cache,
         )
+        # Hash cache warmup must not hold the supervisor or policy transition
+        # locks. This confers no admission: acquire rechecks fresh measurements
+        # and all durable reservations immediately before Popen.
+        if resource_manager is not None:
+            for launch in settings.launches:
+                if launch.policy_admitted and launch.resource_claim is not None:
+                    try:
+                        resource_manager.prepare(launch)
+                    except ResourceReservationError:
+                        logger.debug("Shared resource preparation is pending")
         desired_launches = {launch.worker_id.casefold(): launch for launch in settings.launches if launch.automatic}
 
         def validate_acceptance():
@@ -1681,12 +1823,16 @@ def _serve_once(args, parser) -> bool:
         placement_registry = PlacementRegistry()
         placement_guards = {}
         route_outcomes = RouteOutcomeTracker()
+        resource_manager = ResourceReservationManager(args.data_dir / "resource-reservations")
+        resource_claim_cache = {}
         worker_supervisor = _build_worker_supervisor(
             config,
             manager,
             token=args.token,
             automatic_placements=placement_registry.snapshot(),
             automatic_placement_guards=placement_guards,
+            resource_manager=resource_manager,
+            resource_claim_cache=resource_claim_cache,
         )
         _apply_startup_pause(args, worker_supervisor)
         policy_store = (
@@ -1701,6 +1847,8 @@ def _serve_once(args, parser) -> bool:
                     token=args.token,
                     automatic_placements=placement_registry.snapshot(),
                     automatic_placement_guards=placement_guards,
+                    resource_claim_cache=resource_claim_cache,
+                    allow_resource_metadata_io=False,
                 ),
                 expected_config=persisted_config,
             )
@@ -1719,6 +1867,8 @@ def _serve_once(args, parser) -> bool:
             require_explicit_start=getattr(args, "pause_sharing_on_start", False),
             policy_store=policy_store,
             automatic_placement_guards=placement_guards,
+            resource_manager=resource_manager,
+            resource_claim_cache=resource_claim_cache,
         )
     except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))

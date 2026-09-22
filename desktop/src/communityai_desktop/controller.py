@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from communityai_desktop.client import NodeApiError, NodeClient, NodeClientError, _valid_gpu_memory
+from communityai_desktop.presentation import sharing_reason
 from communityai_desktop.telemetry import route_view
 
 
@@ -241,9 +242,9 @@ class DesktopController:
         elif state == "starting":
             display_status = "Starting sharing"
         elif desired_running and blocked_reason:
-            display_status = f"Waiting: {blocked_reason}"
+            display_status = f"Waiting: {sharing_reason(blocked_reason)}"
         elif not admitted:
-            display_status = f"Blocked: {blocked_reason}"
+            display_status = f"Blocked: {sharing_reason(blocked_reason)}"
         elif state == "crashed":
             display_status = "Stopped unexpectedly"
         else:

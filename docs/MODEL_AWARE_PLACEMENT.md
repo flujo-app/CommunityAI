@@ -81,10 +81,13 @@ cross-process loading gate for all included workers. Existing root-local disk
 cache locks do not satisfy that condition. Old generation reservations must remain
 until descendant cleanup is verified.
 
-This primitive is not yet connected to runtime reservation persistence. Host-memory
-estimation and an explicit operator limit, measured canonical cache/volume snapshots,
-staging/load serialization, child readiness/failure acknowledgement and shared
-bandwidth enforcement remain required before lifting the one-auto guard. Complete
+Managed workers now connect this primitive to an explicit host-memory allowance,
+conservative host estimates, measured cache/volume snapshots and durable generation
+reservations before child launch. See [Shared resource admission](SHARED_RESOURCE_ADMISSION.md)
+for the implemented lifecycle and remaining recovery/responsiveness limits.
+Staging remains summed for the full generation lifetime; loading serialization,
+child readiness/failure acknowledgement and shared bandwidth enforcement remain
+required before lifting the one-auto guard. Complete
 all-card save/reload/start/pause, Ubuntu20.04 installation, real eight-H100 inference,
 under-load cancellation/recovery, performance, private/Protected routes, exact
 requested models and commerce remain full-beta gates.

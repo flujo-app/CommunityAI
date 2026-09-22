@@ -252,7 +252,7 @@ class NodeClientTests(unittest.TestCase):
         self.assertTrue(scheduled_worker["schedule_suspended"])
         self.assertEqual(
             scheduled_worker["display_status"],
-            "Waiting: Outside the configured schedule",
+            "Waiting: Sharing will start during the hours you chose.",
         )
 
         unavailable = copy.deepcopy(contribution)

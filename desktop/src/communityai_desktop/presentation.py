@@ -38,6 +38,33 @@ def model_summary(snapshot: dict[str, Any]) -> tuple[str, str, str]:
 def sharing_reason(reason: str | None) -> str:
     """Translate operational reasons without dumping internal policy text into the UI."""
     text = (reason or "").casefold()
+    if "set a shared host ram allowance" in text:
+        return "Set a shared host RAM allowance in Memory, storage and other limits before starting sharing."
+    if "shared host ram admission currently requires managed" in text:
+        return (
+            "This RAM setting supports NVIDIA GPUs selected in CommunityAI. "
+            "Clear it to use manually configured sharing workers."
+        )
+    if "invalid max host memory" in text or (
+        "max_host_memory" in text and any(word in text for word in ("positive", "non-empty", "inconsistent"))
+    ):
+        return "Enter a positive shared host RAM size, such as 16GiB."
+    if "retained reservations require verified cleanup" in text or "worker process creation is uncertain" in text:
+        return (
+            "CommunityAI cannot confirm that earlier sharing work has stopped. "
+            "Keep sharing paused until cleanup is verified."
+        )
+    if "worker resource release is incomplete" in text or "worker process cleanup is incomplete" in text:
+        return "Sharing is still stopping. Choose Pause to retry cleanup before starting again."
+    if "shared host memory or cache storage is unavailable" in text:
+        return (
+            "There is not enough shared RAM or storage available. "
+            "Close other apps, free space, or adjust your sharing limits."
+        )
+    if "aggregate resource reservation" in text:
+        return "Sharing is waiting for RAM and storage checks. Check your sharing limits and try again."
+    if "waiting for verified shared resource estimates" in text:
+        return "Checking how much RAM and storage this model needs before sharing."
     if "set and save a memory ceiling" in text:
         return "Set and save a memory ceiling for each GPU before starting sharing."
     if any(word in text for word in ("vram", "gpu memory", "accelerator", "cuda", "memory budget")):

@@ -23,9 +23,15 @@ from uuid import UUID
 
 from drift.node.contribution_planner import MAX_AUTOMATIC_PLACEMENT_BLOCKS
 from drift.node.hardware_status import MAX_VISIBLE_ACCELERATORS
+from drift.node.placement_resources import WorkerResourceClaim
 from drift.utils.resource_limits import DEVICE_MEMORY_BUDGET_EXIT_CODE
 
 logger = logging.getLogger(__name__)
+
+_RESOURCE_WAIT = "worker is waiting for an aggregate resource reservation"
+_RESOURCE_CAPACITY = "shared host memory or cache storage is unavailable for this worker"
+_RESOURCE_RELEASE_PENDING = "worker resource release is incomplete; retry cleanup"
+_RESOURCE_SPAWN_UNCERTAIN = "worker process creation is uncertain; resource reservation remains held"
 
 
 class WorkerState(str, Enum):
@@ -188,6 +194,8 @@ class WorkerLaunch:
     placement_artifact_set_digest: Optional[str] = None
     placement_cache_root: Optional[str] = None
     max_disk_bytes: Optional[int] = None
+    max_host_memory_bytes: Optional[int] = None
+    resource_claim: Optional[WorkerResourceClaim] = field(default=None, repr=False)
     max_vram_bytes: Optional[int] = None
     vram_device: Optional[str] = None
     vram_pool_bytes: Optional[int] = None
@@ -203,6 +211,16 @@ class WorkerLaunch:
     def __post_init__(self) -> None:
         if not self.worker_id or not self.command:
             raise ValueError("worker id and command must not be empty")
+        if self.max_host_memory_bytes is not None and (
+            type(self.max_host_memory_bytes) is not int or not 0 < self.max_host_memory_bytes <= 2**63 - 1
+        ):
+            raise ValueError("worker max_host_memory_bytes must be a positive bounded integer")
+        if self.resource_claim is not None and (
+            not isinstance(self.resource_claim, WorkerResourceClaim)
+            or self.resource_claim.worker_id.casefold() != self.worker_id.casefold()
+            or self.max_host_memory_bytes is None
+        ):
+            raise ValueError("worker resource claim requires a matching worker and finite host memory ceiling")
         if self.restart_backoff <= 0:
             raise ValueError("worker restart_backoff must be positive")
         if self.policy_admitted and self.policy_reason is not None:
@@ -405,6 +423,12 @@ class _WorkerRecord:
     natural_exit_code: Optional[int] = None
     start_after_cleanup: bool = False
     start_after_admission: bool = False
+    resource_token: Optional[str] = field(default=None, repr=False)
+    resource_release_pending: bool = False
+    resource_spawn_uncertain: bool = False
+    resource_acquire_failed: bool = False
+    resource_acquire_reason: Optional[str] = None
+    resource_operation_active: bool = False
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
 
 
@@ -423,11 +447,15 @@ class WorkerSupervisor:
         power_watts: Optional[Callable[[str], Optional[float]]] = None,
         device_available: Optional[Callable[[str], bool]] = None,
         coordinated_launches: bool = False,
+        acquire_resources: Optional[Callable[[WorkerLaunch], str]] = None,
+        release_resources: Optional[Callable[[str], None]] = None,
     ) -> None:
         if stop_timeout <= 0 or poll_period <= 0:
             raise ValueError("worker supervisor timeouts must be positive")
         if type(coordinated_launches) is not bool:
             raise ValueError("coordinated_launches must be a boolean")
+        if any(hook is not None and not callable(hook) for hook in (acquire_resources, release_resources)):
+            raise ValueError("worker resource hooks must be callable or None")
         launches = tuple(launches)
         if coordinated_launches:
             self._validate_joint_launches(launches)
@@ -449,6 +477,8 @@ class WorkerSupervisor:
         self._bandwidth_mbps = bandwidth_mbps
         self._power_watts = power_watts
         self._device_available = device_available
+        self._acquire_resources = acquire_resources
+        self._release_resources = release_resources
         self._last_bandwidth_mbps: Optional[float] = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -528,9 +558,18 @@ class WorkerSupervisor:
         return True, None
 
     def _resource_status_locked(self, record: _WorkerRecord) -> Tuple[bool, Optional[str]]:
+        if record.resource_spawn_uncertain:
+            return False, _RESOURCE_SPAWN_UNCERTAIN
+        if record.resource_release_pending:
+            return False, _RESOURCE_RELEASE_PENDING
         if record.cleanup_pending:
             return False, "worker process cleanup is incomplete"
         launch = record.launch
+        if launch.resource_claim is not None:
+            if self._acquire_resources is None or self._release_resources is None:
+                return False, _RESOURCE_WAIT
+            if record.resource_acquire_failed:
+                return False, record.resource_acquire_reason or _RESOURCE_WAIT
         device_check = launch.device_available
         if device_check is None and self._device_available is not None:
             device_check = lambda: self._device_available(launch.worker_id)
@@ -586,6 +625,40 @@ class WorkerSupervisor:
             last_value_attribute="last_power_watts",
         )
 
+    def _contained_launch(self, record: _WorkerRecord) -> bool:
+        return (
+            self._coordinated_launches or record.launch.resource_claim is not None or record.resource_token is not None
+        )
+
+    def _release_resources_locked(self, record: _WorkerRecord) -> bool:
+        """Release only after the owner established that no child remains.
+
+        A Popen call which did not return a handle is not no-child evidence.
+        Release callbacks must be idempotent: an uncertain journal write can
+        cause the same private generation token to be retried.
+        """
+        if record.process is not None or record.resource_spawn_uncertain:
+            return False
+        if record.resource_token is None:
+            return True
+        if record.resource_operation_active:
+            return False
+        record.resource_operation_active = True
+        try:
+            self._release_resources(record.resource_token)
+        except Exception:
+            record.resource_release_pending = True
+            record.cleanup_pending = True
+            record.last_error = _RESOURCE_RELEASE_PENDING
+            record.state = WorkerState.CRASHED
+            return False
+        finally:
+            record.resource_operation_active = False
+        record.resource_token = None
+        record.resource_release_pending = False
+        record.cleanup_pending = False
+        return True
+
     def _spawn_locked(
         self,
         record: _WorkerRecord,
@@ -598,8 +671,12 @@ class WorkerSupervisor:
         if self._launch_transition_ids:
             record.resource_suspended = record.desired_running
             return False
-        if self._coordinated_launches:
+        if record.resource_operation_active or (record.state is WorkerState.STARTING and record.process is None):
+            return False
+        if self._contained_launch(record):
             self._refresh_locked(record)
+        if record.resource_release_pending and record.process is None and record.suspension_stop_thread is None:
+            self._release_resources_locked(record)
         if record.cleanup_pending:
             return False
         if self._configuration_restart_pending:
@@ -615,6 +692,8 @@ class WorkerSupervisor:
                 return False
             record.desired_running = False
             raise WorkerPolicyError(schedule_reason)
+        record.resource_acquire_failed = False
+        record.resource_acquire_reason = None
         resource_admitted, resource_reason = self._resource_status_locked(record)
         if not resource_admitted:
             if record.process is not None and record.process.poll() is None:
@@ -652,9 +731,10 @@ class WorkerSupervisor:
             logger.warning("Local download progress is unavailable for worker %s", record.launch.worker_id)
         containment = None
         process = None
+        spawn_attempted = False
         try:
             spawn_options = {"creationflags": self._creation_flags()}
-            if self._coordinated_launches:
+            if self._contained_launch(record):
                 from drift.node.edge_supervisor import _new_containment
 
                 containment = _new_containment()
@@ -663,6 +743,60 @@ class WorkerSupervisor:
                 spawn_options["creationflags"] |= self._creation_flags()
             elif sys.platform.startswith("linux"):
                 spawn_options["start_new_session"] = True
+            if record.launch.resource_claim is not None:
+                record.resource_operation_active = True
+                try:
+                    token = self._acquire_resources(record.launch)
+                except Exception as exc:
+                    # The manager owns atomic journal failure/quarantine. A
+                    # missing token never authorizes rollback of an unknown
+                    # durable reservation.
+                    from drift.node.resource_reservations import ResourceReservationError
+
+                    reason = (
+                        _RESOURCE_CAPACITY
+                        if isinstance(exc, ResourceReservationError) and getattr(exc, "category", None) == "capacity"
+                        else _RESOURCE_WAIT
+                    )
+                    record.resource_acquire_failed = True
+                    record.resource_acquire_reason = reason
+                    record.resource_suspended = False
+                    record.state = WorkerState.CRASHED
+                    record.last_error = reason
+                    record.next_restart_at = time.monotonic() + record.launch.restart_backoff
+                    containment.close()
+                    return False
+                finally:
+                    record.resource_operation_active = False
+                if not isinstance(token, str) or not 0 < len(token) <= 128:
+                    record.resource_spawn_uncertain = True
+                    record.cleanup_pending = True
+                    record.state = WorkerState.CRASHED
+                    record.last_error = _RESOURCE_SPAWN_UNCERTAIN
+                    containment.close()
+                    return False
+                record.resource_token = token
+                # Acquiring a durable reservation can take time. Recheck live
+                # gates and any reentrant Pause/close before invoking Popen.
+                schedule_admitted, schedule_reason = self._schedule_status()
+                resource_admitted, resource_reason = self._resource_status_locked(record)
+                if (
+                    self._closed
+                    or self._configuration_restart_pending
+                    or self._launch_transition_ids
+                    or record.operator_paused
+                    or not record.desired_running
+                    or not schedule_admitted
+                    or not resource_admitted
+                ):
+                    containment.close()
+                    if self._release_resources_locked(record):
+                        record.state = WorkerState.PAUSED
+                        record.last_error = resource_reason or schedule_reason
+                        record.schedule_suspended = not schedule_admitted and record.desired_running
+                        record.resource_suspended = not resource_admitted and record.desired_running
+                    return False
+            spawn_attempted = True
             process = self._popen(
                 list(record.launch.command),
                 stdin=subprocess.DEVNULL,
@@ -696,14 +830,30 @@ class WorkerSupervisor:
                     record.process = None
                     record.cleanup_pending = False
             elif containment is not None:
-                containment.close()
+                try:
+                    containment.close()
+                except Exception:
+                    pass
             if process is None:
                 record.process = None
+                if spawn_attempted and record.resource_token is not None:
+                    record.resource_spawn_uncertain = True
+                    record.cleanup_pending = True
+            if record.resource_token is not None and record.process is None and not record.resource_spawn_uncertain:
+                self._release_resources_locked(record)
             record.state = WorkerState.CRASHED
             record.last_error = (
-                "worker process containment could not be established"
-                if self._coordinated_launches
-                else f"{type(exc).__name__}: {exc}"
+                _RESOURCE_SPAWN_UNCERTAIN
+                if record.resource_spawn_uncertain
+                else (
+                    _RESOURCE_RELEASE_PENDING
+                    if record.resource_release_pending
+                    else (
+                        "worker process containment could not be established"
+                        if self._contained_launch(record)
+                        else f"{type(exc).__name__}: {exc}"
+                    )
+                )
             )
             record.next_restart_at = time.monotonic() + record.launch.restart_backoff
             return False
@@ -767,7 +917,7 @@ class WorkerSupervisor:
         exit_code = process.poll()
         if exit_code is None:
             return
-        if self._coordinated_launches and id(process) in self._process_containments:
+        if self._contained_launch(record) and id(process) in self._process_containments:
             # Parent exit does not prove its job/group has released descendants.
             # Preserve the reservation until the asynchronous stop verifies it.
             record.cleanup_pending = True
@@ -806,7 +956,7 @@ class WorkerSupervisor:
                 record.state = WorkerState.CRASHED
                 record.last_error = (
                     "worker process cleanup is incomplete"
-                    if self._coordinated_launches
+                    if self._contained_launch(record)
                     else f"{type(error).__name__}: {error}"
                 )
             else:
@@ -816,6 +966,9 @@ class WorkerSupervisor:
                 record.last_error = None
                 record.state = WorkerState.PAUSED
                 record.cleanup_pending = False
+                if not self._release_resources_locked(record):
+                    error = RuntimeError(_RESOURCE_RELEASE_PENDING)
+            if error is None:
                 explicit_start = record.start_after_cleanup and record.desired_running and not record.operator_paused
                 record.start_after_cleanup = False
                 if record.natural_exit_code is not None:
@@ -837,7 +990,7 @@ class WorkerSupervisor:
                 record.suspension_stop_thread = None
 
         if error is not None:
-            if self._coordinated_launches:
+            if self._contained_launch(record):
                 logger.error("Worker %r process cleanup is incomplete", record.launch.worker_id)
             else:
                 logger.error(
@@ -858,7 +1011,7 @@ class WorkerSupervisor:
             record.state = WorkerState.PAUSED
             return
         record.state = WorkerState.STOPPING
-        if self._coordinated_launches:
+        if self._contained_launch(record):
             record.cleanup_pending = True
         thread = threading.Thread(
             target=self._finish_suspension,
@@ -962,7 +1115,7 @@ class WorkerSupervisor:
             record.operator_paused = False
             record.start_after_admission = False
             record.desired_running = True
-            if self._coordinated_launches:
+            if self._contained_launch(record):
                 record.start_after_cleanup = True
             try:
                 return self._spawn_locked(
@@ -986,7 +1139,11 @@ class WorkerSupervisor:
                 pass
 
     def _terminate(self, process: subprocess.Popen) -> int:
-        if self._coordinated_launches:
+        if (
+            self._coordinated_launches
+            or id(process) in self._process_containments
+            or any(record.process is process and self._contained_launch(record) for record in self._records.values())
+        ):
             return self._terminate_launch_tree(process)
         try:
             if process.poll() is None:
@@ -1060,13 +1217,15 @@ class WorkerSupervisor:
                 return record.process is not None or record.suspension_stop_thread is not None
             suspension_stop_thread = record.suspension_stop_thread
             process = None if suspension_stop_thread is not None else record.process
-            if self._coordinated_launches and process is not None:
+            if self._contained_launch(record) and process is not None:
                 # Register the sole cleanup owner before releasing the lock so
                 # a concurrent batch can join it instead of closing the same job.
                 self._suspend_locked(record)
                 suspension_stop_thread = record.suspension_stop_thread
                 process = None
             if process is None and suspension_stop_thread is None:
+                if not self._release_resources_locked(record):
+                    raise RuntimeError(record.last_error or _RESOURCE_SPAWN_UNCERTAIN)
                 record.state = WorkerState.PAUSED
                 return False
             if process is not None:
@@ -1074,12 +1233,12 @@ class WorkerSupervisor:
                 if self._coordinated_launches:
                     record.cleanup_pending = True
         if suspension_stop_thread is not None:
-            multiplier = 4 if self._coordinated_launches else 2
+            multiplier = 4 if self._contained_launch(record) else 2
             suspension_stop_thread.join(timeout=(self._stop_timeout * multiplier) + self._poll_period)
             if suspension_stop_thread.is_alive():
                 raise RuntimeError(f"failed to pause worker {record.launch.worker_id!r} within the stop timeout")
             with self._lock:
-                if record.process is not None:
+                if record.process is not None or record.cleanup_pending or record.resource_token is not None:
                     raise RuntimeError(
                         f"failed to pause worker {record.launch.worker_id!r}: "
                         f"{record.last_error or 'policy suspension failed'}"
@@ -1099,6 +1258,8 @@ class WorkerSupervisor:
             record.last_exit_code = exit_code
             record.state = WorkerState.PAUSED
             record.cleanup_pending = False
+            if not self._release_resources_locked(record):
+                raise RuntimeError(_RESOURCE_RELEASE_PENDING)
         return True
 
     def restart_worker(self, worker_id: str) -> bool:
@@ -1207,6 +1368,8 @@ class WorkerSupervisor:
             return self._configuration_restart_pending
 
     def _require_no_launch_transition_locked(self) -> None:
+        if any(record.resource_operation_active for record in self._records.values()):
+            raise WorkerReconfigurationBusyError("worker resource operation is in progress")
         if self._launch_transition_ids:
             raise WorkerReconfigurationBusyError("worker launch transition requires completed cleanup")
 
@@ -1283,7 +1446,11 @@ class WorkerSupervisor:
                 raise WorkerReconfigurationBusyError("joint launches require containment from supervisor construction")
             if self._closed:
                 raise RuntimeError("worker supervisor is closed")
-            if self._configuration_restart_pending or self._launch_transition_active:
+            if (
+                self._configuration_restart_pending
+                or self._launch_transition_active
+                or any(record.resource_operation_active for record in self._records.values())
+            ):
                 raise WorkerReconfigurationBusyError("worker configuration or launch transition is busy")
             if not replacements.keys() <= self._records.keys():
                 raise WorkerNotFoundError("joint launch transition names an unknown worker")
@@ -1338,6 +1505,8 @@ class WorkerSupervisor:
                             record.cleanup_pending = False
                             record.natural_exit_code = None
                     with self._lock:
+                        if record.process is None and not self._release_resources_locked(record):
+                            raise RuntimeError(record.last_error or _RESOURCE_RELEASE_PENDING)
                         if record.cleanup_pending:
                             raise RuntimeError("worker cleanup has no completed evidence")
                         record.state = WorkerState.PAUSED
@@ -1355,10 +1524,19 @@ class WorkerSupervisor:
                             record.process is not None
                             or record.suspension_stop_thread is not None
                             or record.cleanup_pending
+                            or record.resource_token is not None
                         ):
                             record.cleanup_pending = True
                             record.state = WorkerState.STOPPING
-                            record.last_error = "worker process cleanup is incomplete; retry the launch transition"
+                            record.last_error = (
+                                _RESOURCE_SPAWN_UNCERTAIN
+                                if record.resource_spawn_uncertain
+                                else (
+                                    _RESOURCE_RELEASE_PENDING
+                                    if record.resource_release_pending
+                                    else "worker process cleanup is incomplete; retry the launch transition"
+                                )
+                            )
                         else:
                             record.state = WorkerState.PAUSED
                             record.last_error = None
@@ -1422,6 +1600,7 @@ class WorkerSupervisor:
             if (
                 record.desired_running
                 or record.cleanup_pending
+                or record.resource_token is not None
                 or record.process is not None
                 or record.suspension_stop_thread is not None
                 or record.state in (WorkerState.STARTING, WorkerState.STOPPING)
@@ -1476,6 +1655,7 @@ class WorkerSupervisor:
                 if (
                     record.desired_running
                     or record.cleanup_pending
+                    or record.resource_token is not None
                     or record.process is not None
                     or record.suspension_stop_thread is not None
                     or record.state in (WorkerState.STARTING, WorkerState.STOPPING)
@@ -1516,6 +1696,8 @@ class WorkerSupervisor:
                 if (
                     not record.operator_paused
                     or record.desired_running
+                    or record.cleanup_pending
+                    or record.resource_token is not None
                     or record.process is not None
                     or record.suspension_stop_thread is not None
                     or record.schedule_suspended
@@ -1534,7 +1716,10 @@ class WorkerSupervisor:
                 self._closed
                 and not self._launch_transition_active
                 and all(
-                    record.process is None and record.suspension_stop_thread is None
+                    record.process is None
+                    and record.suspension_stop_thread is None
+                    and record.resource_token is None
+                    and not record.resource_spawn_uncertain
                     for record in self._records.values()
                 )
             ):
@@ -1550,7 +1735,7 @@ class WorkerSupervisor:
                 record.schedule_suspended = False
                 record.resource_suspended = False
                 if (
-                    self._coordinated_launches
+                    self._contained_launch(record)
                     and record.process is not None
                     and not (
                         self._launch_transition_active
@@ -1568,7 +1753,7 @@ class WorkerSupervisor:
         # out cleanup remains tracked and a later shutdown call may retry it.
         self._launch_transition_done.wait(timeout=(self._stop_timeout * 4) + self._poll_period)
         for thread in suspension_stop_threads.values():
-            multiplier = 4 if self._coordinated_launches else 2
+            multiplier = 4 if any(self._contained_launch(record) for record in records) else 2
             thread.join(timeout=(self._stop_timeout * multiplier) + self._poll_period)
         for record in records:
             with self._lock:
@@ -1593,10 +1778,10 @@ class WorkerSupervisor:
                     with self._lock:
                         record.last_error = (
                             "worker process cleanup is incomplete"
-                            if self._coordinated_launches
+                            if self._contained_launch(record)
                             else f"{type(exc).__name__}: {exc}"
                         )
-                    if self._coordinated_launches:
+                    if self._contained_launch(record):
                         logger.error("Worker %r process cleanup is incomplete", record.launch.worker_id)
                     else:
                         logger.exception("Failed to stop worker %r", record.launch.worker_id)
@@ -1607,6 +1792,9 @@ class WorkerSupervisor:
                         record.state = WorkerState.PAUSED
                         record.cleanup_pending = False
                         record.natural_exit_code = None
+            with self._lock:
+                if record.process is None:
+                    self._release_resources_locked(record)
         if monitor is not None:
             monitor.join(timeout=5)
         for record in records:
