@@ -104,16 +104,30 @@ required; this checkpoint deliberately supplies no unsafe automatic reset.
 
 ## Responsiveness and remaining release work
 
-The service warms verified-file caches outside supervisor/policy transition locks.
-Acquisition takes a fresh scan with a two-second cooperative budget under the
-supervisor lock. Kernel filesystem calls have no hard deadline, so slow storage
-can still delay Pause/status. Large single-file verification can exceed the
-30-second warmup budget and remain unavailable. This needs a cancellable admission
-worker and incremental verification before general all-card/large-checkpoint use.
+The selected worker owns a bounded background admission operation. Preparation,
+final fresh sampling, durable publication and reservation release execute outside
+supervisor and policy locks. Incomplete cooperative hash attempts retain bounded
+validated SHA state; only a complete matching hash grants present-file credit.
+Each retry reopens the file, validates its identity and measures the cache again.
+Cancellation invalidates unfinished hashes and suppresses child creation; if it
+races a successful journal publication, the returned token is asynchronously
+released before another generation can use the worker. The planner no longer
+performs a separate whole-weight prewarm. Paused managed GPU workers do not start
+metadata preparation, and their results completed after Pause are discarded.
+Disabled sharing prevents new metadata preparation. Legacy CPU workers retain
+their existing passive placement behavior while paused.
+
+This makes resource I/O independent of Pause/status locks, not forcibly
+interruptible kernel I/O. A blocked operation remains bounded to its record and
+keeps its reservation. Directory traversal restarts on each attempt, so an
+oversized or very slow tree can still remain unavailable. Existing device and
+placement probes and contained process termination have separate latency limits.
+See [asynchronous supervision](ASYNC_RESOURCE_SUPERVISION.md) and
+[policy/operations behavior](ASYNC_RESOURCE_ADMISSION.md).
 
 The one-automatic-worker configuration guard remains. Shared loading serialization,
 child load-readiness acknowledgements, hard shared bandwidth enforcement, robust
-orphan recovery and bounded asynchronous admission remain unfinished. Actual
+orphan recovery and full platform responsiveness qualification remain unfinished. Actual
 all-card save/reload/start/pause, eight-H100 inference, Ubuntu 20.04 installed
 operation, peak memory/performance and under-load cancellation/recovery still
 need real evidence. Protected execution, other required models/backends and

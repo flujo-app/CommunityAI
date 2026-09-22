@@ -78,13 +78,19 @@ is exhausted from an arbitrary filesystem or reservation error. Messages on the
 sharing panels, model cards, and sharing-error tooltips use fixed operator copy;
 private paths and internal reservation tokens are not recovery instructions.
 
-Cache verification is warmed outside policy and supervisor transition locks.
-Final admission still performs a short cooperative scan while holding the
-supervisor lock, with a two-second scan budget. Filesystem calls themselves have
-no hard timeout, so slow storage can delay Pause/status beyond that budget. This
-change does not claim an unconditional responsiveness guarantee. There is no
-general desktop repair action for uncertain journal state; verified cleanup and
-state recovery remain an operational limitation.
+Production cache verification, admission and reservation release run in bounded
+background operations outside policy and supervisor transition locks. Pause
+cancels pending admission; a late token is retained until its asynchronous release
+succeeds. Turning sharing off can persist while those cancelled operations drain,
+but changing resource limits still requires completed cleanup. Large files use
+bounded incremental hashes with no credit until the complete hash is verified.
+See [asynchronous admission](ASYNC_RESOURCE_ADMISSION.md).
+
+Filesystem calls already in progress cannot be forcibly interrupted. Other
+existing device/placement probes and process cleanup also retain their own
+latency, so this is not an unconditional deadline for every Pause/status action.
+There is no general desktop repair action for uncertain journal state; verified
+cleanup and state recovery remain an operational limitation.
 
 Focused tests in `tests/test_host_memory_policy.py` cover legacy omission,
 positive-size conversion, invalid input, real API persistence and clearing,

@@ -429,6 +429,8 @@ class _WorkerRecord:
     resource_acquire_failed: bool = False
     resource_acquire_reason: Optional[str] = None
     resource_operation_active: bool = False
+    resource_operation: Optional[tuple] = field(default=None, repr=False)
+    resource_thread: Optional[threading.Thread] = field(default=None, repr=False)
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
 
 
@@ -448,13 +450,17 @@ class WorkerSupervisor:
         device_available: Optional[Callable[[str], bool]] = None,
         coordinated_launches: bool = False,
         acquire_resources: Optional[Callable[[WorkerLaunch], str]] = None,
+        acquire_resources_cancellable: Optional[Callable[[WorkerLaunch, threading.Event], str]] = None,
         release_resources: Optional[Callable[[str], None]] = None,
     ) -> None:
         if stop_timeout <= 0 or poll_period <= 0:
             raise ValueError("worker supervisor timeouts must be positive")
         if type(coordinated_launches) is not bool:
             raise ValueError("coordinated_launches must be a boolean")
-        if any(hook is not None and not callable(hook) for hook in (acquire_resources, release_resources)):
+        if any(
+            hook is not None and not callable(hook)
+            for hook in (acquire_resources, acquire_resources_cancellable, release_resources)
+        ):
             raise ValueError("worker resource hooks must be callable or None")
         launches = tuple(launches)
         if coordinated_launches:
@@ -478,6 +484,7 @@ class WorkerSupervisor:
         self._power_watts = power_watts
         self._device_available = device_available
         self._acquire_resources = acquire_resources
+        self._acquire_resources_cancellable = acquire_resources_cancellable
         self._release_resources = release_resources
         self._last_bandwidth_mbps: Optional[float] = None
         self._lock = threading.RLock()
@@ -486,6 +493,7 @@ class WorkerSupervisor:
         self._started = False
         self._closed = False
         self._configuration_restart_pending = False
+        self._sharing_disabled = False
         self._coordinated_launches = coordinated_launches
         self._process_containments: Dict[int, Any] = {}
         self._process_cleanup_lock = threading.Lock()
@@ -566,7 +574,11 @@ class WorkerSupervisor:
             return False, "worker process cleanup is incomplete"
         launch = record.launch
         if launch.resource_claim is not None:
-            if self._acquire_resources is None or self._release_resources is None:
+            if (
+                self._acquire_resources is None and self._acquire_resources_cancellable is None
+            ) or self._release_resources is None:
+                return False, _RESOURCE_WAIT
+            if record.resource_operation is not None:
                 return False, _RESOURCE_WAIT
             if record.resource_acquire_failed:
                 return False, record.resource_acquire_reason or _RESOURCE_WAIT
@@ -643,6 +655,12 @@ class WorkerSupervisor:
             return True
         if record.resource_operation_active:
             return False
+        if self._acquire_resources_cancellable is not None:
+            record.resource_release_pending = True
+            record.cleanup_pending = True
+            record.last_error = _RESOURCE_RELEASE_PENDING
+            self._queue_resource_operation_locked(record, ("release", record.resource_token, None))
+            return False
         record.resource_operation_active = True
         try:
             self._release_resources(record.resource_token)
@@ -659,12 +677,168 @@ class WorkerSupervisor:
         record.cleanup_pending = False
         return True
 
+    @staticmethod
+    def _acquire_error_reason(error: Exception) -> str:
+        from drift.node.resource_reservations import ResourceReservationError
+
+        return (
+            _RESOURCE_CAPACITY
+            if isinstance(error, ResourceReservationError) and error.category == "capacity"
+            else _RESOURCE_WAIT
+        )
+
+    def _queue_resource_operation_locked(self, record: _WorkerRecord, operation: tuple) -> None:
+        # One callback runner per record. A completion can enqueue its release
+        # or a newer Start onto this same runner, never an unbounded queue.
+        if record.resource_operation is not None:
+            raise WorkerReconfigurationBusyError("worker resource operation is in progress")
+        record.resource_operation = operation
+        record.resource_operation_active = True
+        if record.resource_thread is None:
+            record.resource_thread = threading.Thread(
+                target=self._run_resource_operations,
+                args=(record,),
+                name=f"drift-worker-resource-{record.launch.worker_id}",
+                daemon=True,
+            )
+            try:
+                record.resource_thread.start()
+            except Exception:
+                # Thread.start failed before the callback ran. Keep any token
+                # awaiting release, but do not leave a nonexistent runner busy.
+                record.resource_thread = None
+                record.resource_operation = None
+                record.resource_operation_active = False
+                record.state = WorkerState.CRASHED
+                if operation[0] == "acquire":
+                    record.resource_acquire_failed = True
+                    record.resource_acquire_reason = _RESOURCE_WAIT
+                    record.last_error = _RESOURCE_WAIT
+                else:
+                    record.resource_release_pending = record.cleanup_pending = True
+                    record.last_error = _RESOURCE_RELEASE_PENDING
+                record.next_restart_at = time.monotonic() + record.launch.restart_backoff
+
+    def _cancel_resource_acquisition_locked(self, record: _WorkerRecord) -> bool:
+        operation = record.resource_operation
+        if operation is not None and operation[0] == "acquire":
+            operation[2].set()
+            record.cleanup_pending = True
+            record.state = WorkerState.STOPPING
+            return True
+        return False
+
+    def _run_resource_operations(self, record: _WorkerRecord) -> None:
+        while True:
+            with self._lock:
+                operation = record.resource_operation
+                if operation is None:
+                    record.resource_thread = None
+                    return
+            kind, value, cancel = operation
+            token = error = None
+            try:
+                if kind == "acquire":
+                    token = self._acquire_resources_cancellable(value, cancel)
+                else:
+                    self._release_resources(value)
+            except Exception as exc:
+                error = exc
+            with self._lock:
+                # The exact ticket, not launch equality, owns this completion.
+                if record.resource_operation is not operation:
+                    raise RuntimeError("worker resource operation ownership changed")
+                record.resource_operation = None
+                record.resource_operation_active = False
+                if kind == "release":
+                    if error is not None:
+                        record.resource_release_pending = True
+                        record.cleanup_pending = True
+                        record.state = WorkerState.CRASHED
+                        record.last_error = _RESOURCE_RELEASE_PENDING
+                        record.next_restart_at = time.monotonic() + record.launch.restart_backoff
+                        continue
+                    record.resource_token = None
+                    record.resource_release_pending = False
+                    record.cleanup_pending = False
+                    record.state = WorkerState.PAUSED
+                    record.last_error = None
+                    if record.natural_exit_code is not None:
+                        record.schedule_suspended = record.resource_suspended = False
+                        if record.natural_exit_code == DEVICE_MEMORY_BUDGET_EXIT_CODE:
+                            record.resource_suspended = record.desired_running
+                            record.last_error = self._resource_status_locked(record)[1]
+                        elif record.desired_running:
+                            record.state = WorkerState.CRASHED
+                            record.last_error = f"worker exited with code {record.natural_exit_code}"
+                            record.next_restart_at = time.monotonic() + record.launch.restart_backoff
+                        record.natural_exit_code = None
+                    self._resume_after_resource_cleanup_locked(record)
+                    continue
+                record.cleanup_pending = False
+                if error is not None:
+                    record.state = WorkerState.PAUSED if cancel.is_set() else WorkerState.CRASHED
+                    record.resource_acquire_failed = not cancel.is_set()
+                    record.resource_acquire_reason = None if cancel.is_set() else self._acquire_error_reason(error)
+                    record.last_error = record.resource_acquire_reason
+                    record.next_restart_at = time.monotonic() + record.launch.restart_backoff
+                    if cancel.is_set():
+                        self._resume_after_resource_cleanup_locked(record)
+                    continue
+                if not isinstance(token, str) or not 0 < len(token) <= 128:
+                    record.resource_spawn_uncertain = record.cleanup_pending = True
+                    record.state = WorkerState.CRASHED
+                    record.last_error = _RESOURCE_SPAWN_UNCERTAIN
+                    continue
+                record.resource_token = token
+                record.state = WorkerState.PAUSED
+                current = self._records.get(value.worker_id.casefold())
+                try:
+                    if (
+                        current is record
+                        and record.launch is value
+                        and not cancel.is_set()
+                        and record.desired_running
+                        and not record.operator_paused
+                        and not self._closed
+                        and not self._configuration_restart_pending
+                        and not self._launch_transition_ids
+                    ):
+                        self._spawn_locked(
+                            record,
+                            defer_outside_schedule=True,
+                            defer_unavailable_resources=True,
+                            resources_acquired=True,
+                        )
+                        if record.process is not None:
+                            record.start_after_cleanup = False
+                except Exception:
+                    record.state = WorkerState.CRASHED
+                    record.last_error = _RESOURCE_WAIT
+                finally:
+                    if record.process is None and not record.resource_spawn_uncertain:
+                        self._release_resources_locked(record)
+
+    def _resume_after_resource_cleanup_locked(self, record: _WorkerRecord) -> None:
+        if (
+            record.start_after_cleanup
+            and record.desired_running
+            and not record.operator_paused
+            and not self._closed
+            and not self._sharing_disabled
+            and not self._launch_transition_ids
+            and not self._configuration_restart_pending
+        ):
+            record.start_after_cleanup = False
+            self._spawn_locked(record, defer_outside_schedule=True, defer_unavailable_resources=True)
+
     def _spawn_locked(
         self,
         record: _WorkerRecord,
         *,
         defer_outside_schedule: bool = False,
         defer_unavailable_resources: bool = False,
+        resources_acquired: bool = False,
     ) -> bool:
         # The monitor must remain alive while a batch is quiescing or waiting for
         # a cleanup retry. Public Start checks this latch before changing intent.
@@ -681,6 +855,8 @@ class WorkerSupervisor:
             return False
         if self._configuration_restart_pending:
             raise WorkerReconfigurationBusyError("node configuration restart is pending")
+        if self._sharing_disabled:
+            raise WorkerPolicyError("sharing is disabled by contribution policy")
         if not record.launch.policy_admitted:
             record.desired_running = False
             raise WorkerPolicyError(record.launch.policy_reason)
@@ -716,6 +892,15 @@ class WorkerSupervisor:
             return False
         if record.process is not None and record.process.poll() is None:
             return False
+        if (
+            record.launch.resource_claim is not None
+            and self._acquire_resources_cancellable is not None
+            and not resources_acquired
+        ):
+            record.state = WorkerState.STARTING
+            record.start_after_cleanup = False
+            self._queue_resource_operation_locked(record, ("acquire", record.launch, threading.Event()))
+            return False
         record.state = WorkerState.STARTING
         environment = os.environ.copy()
         environment.update(record.launch.environment)
@@ -743,7 +928,7 @@ class WorkerSupervisor:
                 spawn_options["creationflags"] |= self._creation_flags()
             elif sys.platform.startswith("linux"):
                 spawn_options["start_new_session"] = True
-            if record.launch.resource_claim is not None:
+            if record.launch.resource_claim is not None and not resources_acquired:
                 record.resource_operation_active = True
                 try:
                     token = self._acquire_resources(record.launch)
@@ -795,6 +980,22 @@ class WorkerSupervisor:
                         record.last_error = resource_reason or schedule_reason
                         record.schedule_suspended = not schedule_admitted and record.desired_running
                         record.resource_suspended = not resource_admitted and record.desired_running
+                    return False
+            if resources_acquired:
+                schedule_admitted, schedule_reason = self._schedule_status()
+                resource_admitted, resource_reason = self._resource_status_locked(record)
+                if (
+                    not schedule_admitted
+                    or not resource_admitted
+                    or self._closed
+                    or self._sharing_disabled
+                    or record.operator_paused
+                    or not record.desired_running
+                ):
+                    containment.close()
+                    self._release_resources_locked(record)
+                    record.schedule_suspended = not schedule_admitted and record.desired_running
+                    record.resource_suspended = not resource_admitted and record.desired_running
                     return False
             spawn_attempted = True
             process = self._popen(
@@ -989,7 +1190,7 @@ class WorkerSupervisor:
             if record.suspension_stop_thread is threading.current_thread():
                 record.suspension_stop_thread = None
 
-        if error is not None:
+        if error is not None and record.resource_operation is None:
             if self._contained_launch(record):
                 logger.error("Worker %r process cleanup is incomplete", record.launch.worker_id)
             else:
@@ -1097,7 +1298,20 @@ class WorkerSupervisor:
     def start_worker(self, worker_id: str) -> bool:
         record = self._record(worker_id)
         with self._lock:
-            self._require_no_launch_transition_locked()
+            if self._sharing_disabled:
+                raise WorkerPolicyError("sharing is disabled by contribution policy")
+            if record.resource_operation is not None:
+                if self._closed or self._configuration_restart_pending or self._launch_transition_ids:
+                    raise WorkerReconfigurationBusyError("worker configuration or launch transition is busy")
+                record.operator_paused = False
+                record.desired_running = True
+                if record.resource_operation[0] == "release" or record.resource_operation[2].is_set():
+                    record.start_after_cleanup = True
+                return False
+            if self._acquire_resources_cancellable is None:
+                self._require_no_launch_transition_locked()
+            elif self._launch_transition_ids:
+                raise WorkerReconfigurationBusyError("worker launch transition requires completed cleanup")
             if self._closed:
                 raise RuntimeError("worker supervisor is closed")
             if self._configuration_restart_pending:
@@ -1124,7 +1338,7 @@ class WorkerSupervisor:
                     defer_unavailable_resources=record.launch.automatic,
                 )
             finally:
-                if not record.cleanup_pending:
+                if not record.cleanup_pending and record.resource_operation is None:
                     record.start_after_cleanup = False
 
     @staticmethod
@@ -1211,6 +1425,8 @@ class WorkerSupervisor:
             record.start_after_cleanup = False
             record.schedule_suspended = False
             record.resource_suspended = False
+            if self._cancel_resource_acquisition_locked(record):
+                return False
             if self._launch_transition_active and worker_id.casefold() in self._launch_transition_ids:
                 # The batch owns cleanup. Pause records authoritative intent and
                 # leaves the public state STOPPING until that owner finishes.
@@ -1225,6 +1441,8 @@ class WorkerSupervisor:
                 process = None
             if process is None and suspension_stop_thread is None:
                 if not self._release_resources_locked(record):
+                    if record.resource_operation is not None:
+                        return False
                     raise RuntimeError(record.last_error or _RESOURCE_SPAWN_UNCERTAIN)
                 record.state = WorkerState.PAUSED
                 return False
@@ -1238,6 +1456,8 @@ class WorkerSupervisor:
             if suspension_stop_thread.is_alive():
                 raise RuntimeError(f"failed to pause worker {record.launch.worker_id!r} within the stop timeout")
             with self._lock:
+                if record.process is None and record.resource_operation is not None:
+                    return True
                 if record.process is not None or record.cleanup_pending or record.resource_token is not None:
                     raise RuntimeError(
                         f"failed to pause worker {record.launch.worker_id!r}: "
@@ -1287,9 +1507,19 @@ class WorkerSupervisor:
                         "operator_paused": record.operator_paused,
                         "start_after_admission": record.start_after_admission,
                         "cleanup_pending": record.cleanup_pending,
+                        "resource_operation": None
+                        if record.resource_operation is None
+                        else record.resource_operation[0],
+                        "resource_cancel_requested": bool(
+                            record.resource_operation is not None
+                            and record.resource_operation[0] == "acquire"
+                            and record.resource_operation[2].is_set()
+                        ),
                         "auto_restart": record.launch.auto_restart,
-                        "policy_admitted": record.launch.policy_admitted,
-                        "policy_reason": record.launch.policy_reason,
+                        "policy_admitted": record.launch.policy_admitted and not self._sharing_disabled,
+                        "policy_reason": "sharing is disabled by contribution policy"
+                        if self._sharing_disabled
+                        else record.launch.policy_reason,
                         "schedule_admitted": schedule_admitted,
                         "schedule_reason": schedule_reason,
                         "schedule_suspended": record.schedule_suspended,
@@ -1664,6 +1894,7 @@ class WorkerSupervisor:
                         "pause all contribution workers before changing the contribution policy"
                     )
             persist()
+            self._sharing_disabled = False
             for normalized, record in self._records.items():
                 record.launch = launches[normalized]
                 record.schedule_suspended = False
@@ -1675,6 +1906,31 @@ class WorkerSupervisor:
             self._power_watts = settings.power_watts
             self._device_available = settings.device_available
             self._last_bandwidth_mbps = None
+
+    def persist_sharing_disabled(self, persist: Callable[[], None]) -> None:
+        """Persist only master Pause while cancelled resource work drains.
+
+        The policy store must validate that the sole document change is disabling
+        sharing. No launch/settings/operation is replaced through this escape.
+        """
+        if not callable(persist):
+            raise ValueError("sharing persistence must be callable")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("worker supervisor is closed")
+            if self._configuration_restart_pending or self._launch_transition_active:
+                raise WorkerReconfigurationBusyError("worker configuration or launch transition is busy")
+            for record in self._records.values():
+                operation = record.resource_operation
+                if (
+                    not record.operator_paused
+                    or record.desired_running
+                    or (operation is not None and operation[0] == "acquire" and not operation[2].is_set())
+                ):
+                    raise WorkerReconfigurationBusyError("pause all contribution workers before disabling sharing")
+            persist()
+            self._sharing_disabled = True
+            self._launch_transition_start_requests = {key: False for key in self._launch_transition_start_requests}
 
     def commit_configuration_restart(self, persist: Callable[[], None]) -> None:
         """Durably commit a node configuration while contribution is explicitly quiescent.
@@ -1720,6 +1976,7 @@ class WorkerSupervisor:
                     and record.suspension_stop_thread is None
                     and record.resource_token is None
                     and not record.resource_spawn_uncertain
+                    and not record.resource_operation_active
                     for record in self._records.values()
                 )
             ):
@@ -1729,11 +1986,13 @@ class WorkerSupervisor:
             records = tuple(self._records.values())
             monitor = self._monitor
             for record in records:
+                record.operator_paused = True
                 record.desired_running = False
                 record.start_after_cleanup = False
                 record.start_after_admission = False
                 record.schedule_suspended = False
                 record.resource_suspended = False
+                self._cancel_resource_acquisition_locked(record)
                 if (
                     self._contained_launch(record)
                     and record.process is not None

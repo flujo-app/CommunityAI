@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,6 +45,14 @@ _CHECKPOINT_ROLES = {"weight", "converted_weight", "quantized_weight"}
 
 class HostResourceError(RuntimeError):
     """A fixed, operator-safe reason for unavailable resource evidence."""
+
+
+class ResourceScanPending(HostResourceError):
+    """A cooperative budget expired; retry with the same verification cache."""
+
+
+class ResourceScanCancelled(HostResourceError):
+    """The caller cancelled or invalidated this scan; no snapshot is available."""
 
 
 def _bytes(value, *, positive=False):
@@ -150,14 +158,68 @@ def canonical_cache_root(path) -> str:
 
 
 class VerificationCache:
-    """Process-local completed SHA checks; stat keys are not hostile-writer locks."""
+    """Bounded SHA state without retained handles; stat keys are not writer locks."""
 
-    def __init__(self, max_entries=MAX_FILES):
+    def __init__(self, max_entries=MAX_FILES, *, max_partial_entries=16):
         if type(max_entries) is not int or not 1 <= max_entries <= MAX_FILES:
             raise ValueError("verification cache capacity must be between 1 and 4096")
+        if type(max_partial_entries) is not int or not 1 <= max_partial_entries <= 2 * MAX_WORKERS:
+            raise ValueError("partial verification capacity must be between 1 and 32")
         self._max_entries = max_entries
+        self._max_partial_entries = max_partial_entries
         self._entries = OrderedDict()
+        self._partials = OrderedDict()
+        self._epoch = 0
         self._lock = threading.Lock()
+
+    def discard_pending(self):
+        """Cancel saved/in-flight partial work, including between retry attempts."""
+        with self._lock:
+            self._partials.clear()
+            self._epoch += 1
+
+    def _generation(self):
+        with self._lock:
+            return self._epoch
+
+    def _check_generation(self, epoch):
+        with self._lock:
+            if epoch != self._epoch:
+                raise ResourceScanCancelled("resource verification was cancelled; retry with a new request")
+
+    def _resume(self, key, epoch):
+        with self._lock:
+            if epoch != self._epoch:
+                raise ResourceScanCancelled("resource verification was cancelled; retry with a new request")
+            for old in tuple(self._partials):
+                if old[0] == key[0] and old != key:
+                    del self._partials[old]
+            state = self._partials.get(key)
+            if state is None:
+                return None
+            self._partials.move_to_end(key)
+            offset, digest, opened = state
+            return offset, digest.copy(), opened
+
+    def _save_partial(self, key, offset, digest, opened, epoch):
+        with self._lock:
+            if epoch != self._epoch:
+                raise ResourceScanCancelled("resource verification was cancelled; retry with a new request")
+            previous = self._partials.get(key)
+            # Concurrent readers own independent digest copies; an older reader
+            # must not roll back a farther verified prefix or a completed check.
+            if key in self._entries or (previous is not None and previous[0] >= offset):
+                return
+            self._partials[key] = (offset, digest.copy(), opened)
+            self._partials.move_to_end(key)
+            while len(self._partials) > self._max_partial_entries:
+                self._partials.popitem(last=False)
+
+    def _prune_missing(self, records, roots):
+        with self._lock:
+            for key in tuple(self._partials):
+                if any(_inside(key[0], root) for root in roots) and records.get(key[0]) != key[3]:
+                    del self._partials[key]
 
     def _contains(self, key):
         with self._lock:
@@ -166,8 +228,11 @@ class VerificationCache:
             self._entries.move_to_end(key)
             return True
 
-    def _add(self, key):
+    def _add(self, key, epoch=None):
         with self._lock:
+            if epoch is not None and epoch != self._epoch:
+                raise ResourceScanCancelled("resource verification was cancelled; retry with a new request")
+            self._partials.pop(key, None)
             self._entries[key] = True
             self._entries.move_to_end(key)
             while len(self._entries) > self._max_entries:
@@ -243,6 +308,7 @@ def snapshot_resources(
     cache_limits,
     now,
     verification_cache=None,
+    cancelled: Callable[[], bool] | None = None,
     maximum_scan_seconds=30.0,
     maximum_entries=100000,
     maximum_hash_bytes=2**40,
@@ -254,6 +320,7 @@ def snapshot_resources(
     Time limits are cooperative around OS calls and chunks, not kernel-I/O
     deadlines. ``observed_at`` is the supplied scan-start time, conservatively.
     Hash/stat caches are never persisted; child artifact verification is required.
+    Pending budgets confer no credit. Only unchanged partial hashes can resume.
     """
     _bytes(host_limit_bytes, positive=True)
     _bytes(host_reserve_bytes)
@@ -268,17 +335,91 @@ def snapshot_resources(
         raise ValueError("resource scan deadline must be within 300 seconds")
     if verification_cache is not None and not isinstance(verification_cache, VerificationCache):
         raise ValueError("resource verification cache has an invalid type")
+    if cancelled is not None and not callable(cancelled):
+        raise ValueError("resource cancellation must be callable")
     if not isinstance(claims, (tuple, list)) or len(claims) > 2 * MAX_WORKERS:
         raise ValueError("resource claims must contain at most 32 generations")
     if not isinstance(cache_limits, Mapping) or len(cache_limits) > 2 * MAX_WORKERS:
         raise ValueError("resource cache limits must be a bounded map")
     started = time.monotonic()
+    epoch = None if verification_cache is None else verification_cache._generation()
+
+    def check_cancelled():
+        if cancelled is not None:
+            try:
+                stopped = cancelled()
+            except Exception:
+                raise HostResourceError("resource cancellation status is unavailable") from None
+            if stopped:
+                raise ResourceScanCancelled("resource verification was cancelled; retry with a new request")
+        if verification_cache is not None:
+            verification_cache._check_generation(epoch)
 
     def check_time():
+        check_cancelled()
         if time.monotonic() - started > maximum_scan_seconds:
-            raise HostResourceError("resource verification timed out; retry after preflight verification")
+            raise ResourceScanPending("resource verification timed out; retry after preflight verification")
+
+    hashed_bytes = 0
+
+    def verify(path, fingerprint, artifact):
+        nonlocal hashed_bytes
+        key = (os.path.normcase(path), artifact.sha256, artifact.size_bytes, fingerprint)
+        check_time()
+        if verification_cache is not None and verification_cache._contains(key):
+            return
+        resumed = None if verification_cache is None else verification_cache._resume(key, epoch)
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            stream = os.fdopen(descriptor, "rb", buffering=0)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        with stream:
+            opened = _fingerprint(os.fstat(stream.fileno()))
+            if not _same_open_file(fingerprint, opened) or (resumed is not None and resumed[2] != opened):
+                raise HostResourceError("resource artifact changed during verification")
+            offset, digest = (0, hashlib.sha256()) if resumed is None else resumed[:2]
+            stream.seek(offset)
+
+            def unchanged():
+                if (
+                    _fingerprint(os.fstat(stream.fileno())) != opened
+                    or _fingerprint(_checked_stat(path)) != fingerprint
+                ):
+                    raise HostResourceError("resource artifact changed during verification")
+
+            try:
+                while offset < artifact.size_bytes:
+                    check_time()
+                    remaining = maximum_hash_bytes - hashed_bytes
+                    if remaining <= 0:
+                        raise ResourceScanPending("resource verification reached its byte bound; retry verification")
+                    chunk = stream.read(min(_CHUNK_BYTES, remaining, artifact.size_bytes - offset))
+                    if not chunk:
+                        raise HostResourceError("resource artifact changed during verification")
+                    hashed_bytes += len(chunk)
+                    offset += len(chunk)
+                    digest.update(chunk)
+                check_time()
+                unchanged()
+            except ResourceScanPending:
+                # A timeout is resumable only after validating the still-open
+                # descriptor and its current path. No descriptor survives return.
+                unchanged()
+                check_cancelled()
+                if verification_cache is not None and offset:
+                    verification_cache._save_partial(key, offset, digest, opened, epoch)
+                raise
+            if digest.hexdigest() != artifact.sha256:
+                raise HostResourceError("resource artifact hash differs from its verified claim")
+        check_cancelled()
+        if verification_cache is not None:
+            verification_cache._add(key, epoch)
 
     try:
+        check_time()
         if os.name != "nt" and not sys.platform.startswith("linux"):
             raise HostResourceError("resource measurement supports native Windows and Linux volumes")
         roots = {}
@@ -290,11 +431,13 @@ def snapshot_resources(
                 raise ValueError("resource cache keys must be unique canonical root strings")
             roots[root] = _bytes(limit, positive=True)
         for root in roots:
+            check_time()
             if any(other != root and _inside(root, other) for other in roots):
                 raise HostResourceError("resource cache roots overlap")
         mounts = _linux_mounts()
         local_filesystems = {"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "tmpfs", "ramfs", "overlay"}
         for mount_source, mount, filesystem in mounts:
+            check_time()
             if any(
                 (mount != root and _inside(mount, root)) or (mount_source != "/" and _inside(root, mount))
                 for root in roots
@@ -303,10 +446,12 @@ def snapshot_resources(
             if filesystem not in local_filesystems and any(_inside(root, mount) for root in roots):
                 raise HostResourceError("resource measurement requires a supported local filesystem")
         for claim in claims:
+            check_time()
             if not isinstance(claim, WorkerResourceClaim):
                 raise ValueError("resource claims must be WorkerResourceClaim instances")
             WorkerResourceClaim.__post_init__(claim)
             for artifact in claim.artifacts:
+                check_time()
                 ArtifactClaim.__post_init__(artifact)
                 if artifact.cache_root not in roots:
                     raise ValueError("resource claim cache is missing its configured limit")
@@ -316,8 +461,8 @@ def snapshot_resources(
         records = {}
         caches = []
         volumes = {}
-        hashed_bytes = 0
         for root, limit in sorted(roots.items()):
+            check_time()
             root_info = _checked_stat(root)
             root_device = root_info.st_dev
             seen_files = set()
@@ -355,31 +500,9 @@ def snapshot_resources(
                     raise HostResourceError("resource artifact path has an ambiguous file identity")
                 if info.st_size != artifact.size_bytes:
                     raise HostResourceError("resource artifact size differs from its verified claim")
-                key = (os.path.normcase(path), artifact.sha256, artifact.size_bytes, fingerprint)
-                if verification_cache is None or not verification_cache._contains(key):
-                    digest = hashlib.sha256()
-                    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-                    with os.fdopen(os.open(path, flags), "rb") as stream:
-                        opened = _fingerprint(os.fstat(stream.fileno()))
-                        if not _same_open_file(fingerprint, opened):
-                            raise HostResourceError("resource artifact changed during verification")
-                        while True:
-                            check_time()
-                            chunk = stream.read(_CHUNK_BYTES)
-                            if not chunk:
-                                break
-                            hashed_bytes += len(chunk)
-                            if hashed_bytes > maximum_hash_bytes:
-                                raise HostResourceError("resource verification exceeds its byte bound")
-                            digest.update(chunk)
-                        if _fingerprint(os.fstat(stream.fileno())) != opened:
-                            raise HostResourceError("resource artifact changed during verification")
-                    if digest.hexdigest() != artifact.sha256:
-                        raise HostResourceError("resource artifact hash differs from its verified claim")
+                verify(path, fingerprint, artifact)
                 if _fingerprint(_checked_stat(path)) != fingerprint:
                     raise HostResourceError("resource artifact changed during verification")
-                if verification_cache is not None:
-                    verification_cache._add(key)
                 present.append(artifact)
             if len(present) > MAX_FILES:
                 raise HostResourceError("verified resource inventory exceeds its bound")
@@ -394,18 +517,28 @@ def snapshot_resources(
             if _fingerprint(_checked_stat(path)) != fingerprint:
                 raise HostResourceError("resource cache changed during measurement; retry")
         for root in roots:
+            check_time()
             if canonical_cache_root(root) != root:
                 raise HostResourceError("resource cache physical path changed during measurement")
         if _linux_mounts() != mounts:
             raise HostResourceError("resource mount topology changed during measurement")
         available = _bytes(psutil.virtual_memory().available)
-        check_time()
-        return ResourceSnapshot(
+        result = ResourceSnapshot(
             now,
             host_limit_bytes,
             max(0, available - host_reserve_bytes),
             tuple(caches),
             tuple(VolumeSnapshot(volume, free) for volume, free in sorted(volumes.items())),
         )
-    except (OSError, psutil.Error):
-        raise HostResourceError("resource measurement is unavailable or unreadable; retry") from None
+        if verification_cache is not None:
+            verification_cache._prune_missing({os.path.normcase(p): fp for p, fp in records.items()}, roots)
+        check_time()
+        return result
+    except ResourceScanPending:
+        raise
+    except BaseException as error:
+        if verification_cache is not None:
+            verification_cache.discard_pending()
+        if isinstance(error, (OSError, psutil.Error)):
+            raise HostResourceError("resource measurement is unavailable or unreadable; retry") from None
+        raise

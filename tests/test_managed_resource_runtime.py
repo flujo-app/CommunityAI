@@ -7,17 +7,29 @@ sleep instead of loading a model; this does not qualify accelerator execution.
 import json
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from test_joint_placement_runtime import joint_runtime
 from test_managed_placement_sizing import _candidates, managed_candidates
 
 from drift.cli import run_node
 from drift.node import device_binding
 from drift.node.contribution_planner import AutomaticContributionPlanner
+from drift.node.discovery import PeerCache
 from drift.node.placement_resources import CacheSnapshot, ResourceSnapshot, VolumeSnapshot
 from drift.node.resource_reservations import ResourceReservationManager
+
+
+def eventually(predicate):
+    deadline = time.monotonic() + 5
+    while not predicate():
+        if time.monotonic() >= deadline:
+            pytest.fail("asynchronous resource operation did not complete")
+        time.sleep(0.01)
 
 
 @pytest.fixture
@@ -217,17 +229,22 @@ def test_real_child_cannot_spawn_before_journal_and_releases_only_after_pause(ma
         host[0] = 1
         assert supervisor.start_worker("gpu-0") is False
         assert children == []
-        assert "shared host memory or cache storage" in supervisor.snapshot("gpu-0")["resource_reason"]
+        eventually(
+            lambda: "shared host memory or cache storage" in (supervisor.snapshot("gpu-0")["resource_reason"] or "")
+        )
         host[0] = 100 * 1024**3
         supervisor.start_worker("gpu-0")
+        eventually(lambda: len(children) == 1 and supervisor.snapshot("gpu-0")["pid"] is not None)
         assert len(children) == 1 and children[0].poll() is None
         token = json.loads((directory / "generations.json").read_text(encoding="utf-8"))["reservations"][0]["claim"][
             "reservation_id"
         ]
         supervisor.pause_worker("gpu-0")
         assert children[0].poll() is not None
+        eventually(lambda: supervisor.snapshot("gpu-0")["resource_operation"] is None)
         assert json.loads((directory / "generations.json").read_text(encoding="utf-8"))["reservations"] == []
         supervisor.start_worker("gpu-0")
+        eventually(lambda: len(children) == 2 and supervisor.snapshot("gpu-0")["pid"] is not None)
         newer = json.loads((directory / "generations.json").read_text(encoding="utf-8"))["reservations"][0]["claim"][
             "reservation_id"
         ]
@@ -238,4 +255,87 @@ def test_real_child_cannot_spawn_before_journal_and_releases_only_after_pause(ma
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=5)
+        eventually(lambda: supervisor.snapshot("gpu-0")["resource_operation"] is None)
     assert json.loads((directory / "generations.json").read_text(encoding="utf-8"))["reservations"] == []
+
+
+@pytest.mark.parametrize("disabled", [True, False])
+def test_disabled_or_paused_candidate_does_not_materialize_metadata(managed_candidates, tmp_path, disabled):
+    fixture = managed_candidates
+    fixture.config = replace(
+        fixture.config,
+        contribution_policy=replace(fixture.config.contribution_policy, sharing_enabled=not disabled),
+    )
+    directory = tmp_path / "never-reserved"
+    resources = ResourceReservationManager(directory)
+    before = fixture.loader.call_count
+    candidate = _candidates(fixture, resource_manager=resources, resource_cancelled=lambda: not disabled)[0]
+    assert candidate.policy_reason is not None
+    assert fixture.loader.call_count == before
+    assert not directory.exists()
+
+
+@pytest.mark.parametrize("during_loader", [False, True])
+def test_metadata_cancellation_does_not_publish_ready_candidate(managed_candidates, tmp_path, during_loader):
+    fixture = managed_candidates
+    cancel = threading.Event()
+    directory = tmp_path / "metadata-cancel"
+    before = fixture.loader.call_count
+
+    def snapshot(claims, *, host_limit_bytes, cache_limits, now, **kwargs):
+        if kwargs["maximum_scan_seconds"] == 2.0 and not during_loader:
+            cancel.set()
+        return ResourceSnapshot(
+            now,
+            host_limit_bytes,
+            100 * 1024**3,
+            tuple(CacheSnapshot(root, "disk", 0, limit) for root, limit in cache_limits.items()),
+            (VolumeSnapshot("disk", 100 * 1024**3),),
+        )
+
+    resources = ResourceReservationManager(directory, snapshot_provider=snapshot)
+
+    def load(*args, **kwargs):
+        assert len(json.loads((directory / "generations.json").read_text())["reservations"]) == 1
+        cancel.set()
+        return fixture.metadata
+
+    fixture.loader.side_effect = load
+    metadata_cache = {}
+    candidate = _candidates(
+        fixture, resource_manager=resources, resource_cancelled=cancel.is_set, placement_metadata_cache=metadata_cache
+    )[0]
+    assert candidate.policy_reason is not None and not metadata_cache
+    assert fixture.loader.call_count == before + int(during_loader)
+    assert json.loads((directory / "generations.json").read_text())["reservations"] == []
+
+
+def test_paused_managed_reconcile_keeps_map_without_metadata_or_publication(joint_runtime, monkeypatch, tmp_path):
+    runtime = joint_runtime(1)
+    runtime.service.reconcile_once()
+    before = runtime.registry.snapshot()
+    published = runtime.publication.call_count
+    runtime.supervisor.pause_worker("gpu-0")
+    # Only the planner's managed-worker classification changes in this fixture;
+    # no GPU probe, admission, model or child is authorized by this paused path.
+    config = replace(runtime.config, workers=(replace(runtime.config.workers[0], managed_by="desktop_gpu"),))
+    service = run_node._build_automatic_placement_service(
+        config,
+        runtime.manager,
+        runtime.discovery,
+        runtime.supervisor,
+        runtime.registry,
+        token=None,
+        config_path=None,
+        peer_cache=PeerCache(tmp_path / "paused-peers.json"),
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("paused placement must not prepare new candidates")
+
+    monkeypatch.setattr(run_node, "_automatic_placement_candidates", forbidden)
+    runtime.clock[0] += 700  # Even an expired lease does not authorize work while paused.
+    service.reconcile_once()
+    assert runtime.registry.snapshot() == before
+    assert runtime.publication.call_count == published
+    assert not runtime.children

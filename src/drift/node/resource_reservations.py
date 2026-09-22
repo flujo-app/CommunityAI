@@ -21,7 +21,13 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from drift.model_manifest import ModelManifest
-from drift.node.host_resources import VerificationCache, canonical_cache_root, snapshot_resources
+from drift.node.host_resources import (
+    ResourceScanCancelled,
+    ResourceScanPending,
+    VerificationCache,
+    canonical_cache_root,
+    snapshot_resources,
+)
 from drift.node.placement_memory import MAX_CONFIG_METADATA_BYTES, MAX_INDEX_METADATA_BYTES
 from drift.node.placement_resources import (
     MAX_BYTES,
@@ -99,10 +105,28 @@ class ResourceReservationManager:
         self._acquisition_uncertain = False
         self._cache_roots = set()
 
+    def _check_cancelled(self, cancelled):
+        if cancelled is not None and cancelled():
+            self._verification_cache.discard_pending()
+            raise ResourceScanCancelled("resource admission was cancelled")
+
     @contextmanager
-    def _locked(self):
+    def _local_lock(self, cancelled):
+        # A different admitted generation may be blocked in kernel filesystem
+        # I/O. Cancellation must not wait for that operation's Python mutex.
+        self._check_cancelled(cancelled)
+        while not self._mutex.acquire(timeout=0.05):
+            self._check_cancelled(cancelled)
+        try:
+            self._check_cancelled(cancelled)
+            yield
+        finally:
+            self._mutex.release()
+
+    @contextmanager
+    def _locked(self, cancelled=None):
         # A stable lock inode is never removed or replaced during journal writes.
-        with self._mutex:
+        with self._local_lock(cancelled):
             self._directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             canonical = canonical_cache_root(self._directory)
             if os.path.normcase(str(self._directory)) != canonical:
@@ -147,6 +171,10 @@ class ResourceReservationManager:
                         _regular(self._path)
                     except FileNotFoundError:
                         self._write([])
+                # Creating the initialization marker commits us to establishing
+                # its empty journal; cancellation must not leave a lost-journal
+                # state in an otherwise brand-new node directory.
+                self._check_cancelled(cancelled)
                 yield
             finally:
                 if locked:
@@ -312,23 +340,28 @@ class ResourceReservationManager:
                 self._acquisition_uncertain = True
                 raise
 
-    def register_cache_roots(self, roots):
+    def register_cache_roots(self, roots, *, cancelled=None):
         """Durably remember existing physical roots before materialization.
 
         This records storage ownership, not permission to download or spawn.
         Use metadata_admission before synchronous config/index materialization.
         """
         try:
-            with self._locked():
+            with self._locked(cancelled):
                 if self._uncertain:
                     raise ValueError("uncertain resource state")
                 entries = self._read()
+                self._check_cancelled(cancelled)
                 self._remember_roots_locked(roots, entries)
+        except ResourceScanCancelled:
+            if cancelled is not None:
+                raise
+            raise ResourceReservationError(_ERROR) from None
         except Exception:
             raise ResourceReservationError(_ERROR) from None
 
     @contextmanager
-    def metadata_admission(self, manifest, *, cache_dir, host_limit_bytes, disk_limit_bytes):
+    def metadata_admission(self, manifest, *, cache_dir, host_limit_bytes, disk_limit_bytes, cancelled=None):
         """Reserve exact metadata growth before yielding synchronous load permission.
 
         The caller creates/validates its trusted root first and must not leave
@@ -338,8 +371,9 @@ class ResourceReservationManager:
         No weights or tokenizer paths receive admission here.
         """
         try:
+            self._check_cancelled(cancelled)
             root = canonical_cache_root(cache_dir)
-            self.register_cache_roots((root,))
+            self.register_cache_roots((root,), cancelled=cancelled)
             if not isinstance(manifest, ModelManifest):
                 raise ValueError("metadata admission requires a verified manifest")
             configs = manifest.artifacts_for_roles({"config"})
@@ -379,16 +413,17 @@ class ResourceReservationManager:
             raise ResourceReservationError(_ERROR) from None
         # Prewarm completed-file hashes outside the supervisor transition lock;
         # acquire still samples and reserves under the journal OS lock.
-        self.prepare(launch)
-        token = self.acquire(launch)
+        self.prepare(launch, cancelled=cancelled)
+        token = self.acquire(launch, cancelled=cancelled)
         try:
+            self._check_cancelled(cancelled)
             yield
         finally:
             # Unlike Popen there is no ambiguous child handle: the synchronous
             # body has returned/raised before its loading reservation is freed.
             self.release(token)
 
-    def _snapshot(self, entries, *, seconds, known_roots):
+    def _snapshot(self, entries, *, seconds, known_roots, cancelled=None):
         shared_limit = min(entry["disk_limit"] for entry in entries)
         roots = {root: shared_limit for root in known_roots}
         for entry in entries:
@@ -401,37 +436,48 @@ class ResourceReservationManager:
             now=self._clock(),
             verification_cache=self._verification_cache,
             maximum_scan_seconds=seconds,
+            **({"cancelled": cancelled} if cancelled is not None else {}),
         )
 
-    def prepare(self, launch):
+    def prepare(self, launch, *, cancelled=None):
         """Warm file verifications outside supervisor/store transition locks.
 
         This makes no reservation and confers no permission to spawn. A fresh
         bounded snapshot and the entire journal are rechecked by acquire().
         """
         try:
-            with self._locked():
+            with self._locked(cancelled):
                 if self._uncertain:
                     raise ValueError("uncertain resource state")
                 entries = self._read()
                 entry = self._entry(launch)
+                self._check_cancelled(cancelled)
                 self._remember_roots_locked(tuple({a.cache_root for a in entry["claim"].artifacts}), entries)
                 known_roots = tuple(self._cache_roots)
-            self._snapshot([*entries, entry], seconds=30.0, known_roots=known_roots)
+            self._snapshot([*entries, entry], seconds=30.0, known_roots=known_roots, cancelled=cancelled)
+            self._check_cancelled(cancelled)
+        except (ResourceScanPending, ResourceScanCancelled):
+            if cancelled is not None:
+                raise
+            raise ResourceReservationError(_ERROR) from None
         except Exception:
             raise ResourceReservationError(_ERROR) from None
 
-    def acquire(self, launch):
+    def acquire(self, launch, *, cancelled=None):
         try:
-            with self._locked():
+            with self._locked(cancelled):
                 if self._uncertain:
                     raise ValueError("uncertain resource state")
                 entries = self._read()
                 entry = self._entry(launch)
+                self._check_cancelled(cancelled)
                 self._remember_roots_locked(tuple({a.cache_root for a in entry["claim"].artifacts}), entries)
                 if len(entries) >= MAX_WORKERS:
                     raise ResourceReservationError(_LIMIT, category="capacity")
-                snapshot = self._snapshot([*entries, entry], seconds=2.0, known_roots=tuple(self._cache_roots))
+                snapshot = self._snapshot(
+                    [*entries, entry], seconds=2.0, known_roots=tuple(self._cache_roots), cancelled=cancelled
+                )
+                self._check_cancelled(cancelled)
                 # Old entries can be waiting to spawn or orphaned. Do not assume
                 # their persistent estimate is included in measured usage yet.
                 snapshot = replace(
@@ -460,6 +506,7 @@ class ResourceReservationManager:
                 self._cache_roots.update(cache.root for cache in snapshot.caches)
                 if len(self._cache_roots) > 32:
                     raise ResourceReservationError(_ERROR)
+                self._check_cancelled(cancelled)
                 try:
                     self._write([*entries, entry])
                 except Exception:
@@ -467,10 +514,50 @@ class ResourceReservationManager:
                     raise
                 token = entry["claim"].reservation_id
                 self._owned.add(token)
+                # Once publication succeeds, always hand back the token even if
+                # cancellation raced the write. The asynchronous owner must
+                # release it; raising here would lose a known cleanup handle.
                 return token
+        except (ResourceScanPending, ResourceScanCancelled):
+            if cancelled is not None:
+                raise
+            raise ResourceReservationError(_ERROR) from None
         except ResourceReservationError:
             raise
         except Exception:
+            raise ResourceReservationError(_ERROR) from None
+
+    def acquire_cancellable(self, launch, cancel_event):
+        """Run only on a supervisor-owned background operation.
+
+        Retry incomplete cooperative verification, retaining bounded hash
+        progress. Each attempt rereads the journal and samples live resources;
+        errors and capacity denials are never converted into retry success.
+        Cancellation can interrupt mutex waits and user-space scanning, not a
+        kernel call already in progress. No additional thread/process is made.
+        """
+        if not isinstance(cancel_event, threading.Event):
+            raise TypeError("resource admission requires a cancellation event")
+        prepared = False
+        try:
+            while True:
+                self._check_cancelled(cancel_event.is_set)
+                try:
+                    if not prepared:
+                        self.prepare(launch, cancelled=cancel_event.is_set)
+                        prepared = True
+                    return self.acquire(launch, cancelled=cancel_event.is_set)
+                except ResourceScanPending:
+                    cancel_event.wait(0.05)
+                except ResourceScanCancelled:
+                    # Another worker can invalidate this node's shared partial
+                    # cache epoch. That discards evidence, not this worker's
+                    # Start intent. Only our own Event authorizes cancellation.
+                    self._check_cancelled(cancel_event.is_set)
+                    prepared = False
+                    cancel_event.wait(0.05)
+        except ResourceScanCancelled:
+            self._verification_cache.discard_pending()
             raise ResourceReservationError(_ERROR) from None
 
     def release(self, token):

@@ -85,35 +85,61 @@ the eventual evaluator must accept its actual age or request a new observation.
 
 ## Bounded verification and reuse
 
-Optional keyword arguments are `verification_cache=None`,
+Optional keyword arguments are `verification_cache=None`, `cancelled=None`,
 `maximum_scan_seconds=30.0`, `maximum_entries=100000`,
 `maximum_hash_bytes=2**40`, `host_reserve_bytes=2**30` and
-`disk_reserve_bytes=2**30`. Scan deadlines may not exceed 300 seconds. Entry and
-byte bounds, read failures or mutation cause fixed operator-safe errors without
-embedding file paths or private exception strings.
+`disk_reserve_bytes=2**30`. Scan deadlines may not exceed 300 seconds. Time and
+byte budgets produce `ResourceScanPending`, a `HostResourceError` subclass. No
+snapshot or partial present-file credit is returned. Read failures, entry-count
+overflow and mutation remain ordinary fixed operator-safe errors without file
+paths or private exception strings. Only `ResourceScanPending` is retryable as
+unfinished verification; callers supply fresh `now` and reuse the same cache.
 
-`VerificationCache(max_entries=4096)` stores only completed successful SHA checks,
+`VerificationCache(max_entries=4096, max_partial_entries=16)` stores completed successful SHA checks,
 keyed by exact path, expected hash/size and device/inode/mode/size/nanosecond
 mtime/ctime/link-count identity. Every cache hit still participates in fresh link
-and identity checks. Changed files rehash. A partial hash never receives credit;
-completed earlier files can remain cached when a later file times out. The cache
-is trusted process-local state and must never be persisted across restarts.
+and identity checks. It also keeps a separate LRU of at most 32 configurable
+partial hashes, storing only SHA state, offset and path/opened-file fingerprints.
+No file handles or payload buffers survive a call. Resuming reopens the file and
+checks both complete fingerprints before seeking to the saved offset. A changed
+path identity restarts the hash; inconsistent opened-file identity, read failure
+or detected mutation discards partial work and fails closed. Missing partial
+files are removed from the cache after the fresh inventory completes. Eviction
+restarts the affected file. Each call reads at most `maximum_hash_bytes` across
+all desired files, including a final read shorter than the normal 4 MiB chunk.
+Repeated positive small budgets can therefore verify files larger than one call's
+budget. A partial hash never receives credit; completed earlier files can remain
+cached when a later file times out. The cache is trusted process-local state and
+must never be persisted across restarts. Parallel scans copy digest state under
+a lock and may only advance saved offsets, never roll progress backward.
 On Windows, Python's path ctime can mean creation time while descriptor ctime
 means change time. Cross-API comparisons use the remaining identity fields;
 each API retains its own complete before/after comparison. Timestamp-based cache
 reuse therefore does not provide a hostile-writer guarantee on either platform.
 
-Prewarm outside the supervisor lock, then use the same cache with a short scan
-budget during admission. The deadline is cooperative around filesystem calls and
-4 MiB chunks: a blocked kernel operation cannot be interrupted by this helper.
-Large single files can exceed the preflight budget and remain ineligible; no
-partial-verification shortcut is provided. Do not describe this as a hard Pause
-latency bound. Stat-key reuse is not safe against every adversarial same-user
-mutation; the manifested child loader must independently reverify artifact hashes.
+`cancelled` is an optional synchronous zero-argument callable, such as an event's
+`is_set`. It is checked during traversal and hashing, after reads and before
+snapshot publication. Cancellation raises `ResourceScanCancelled`, another
+`HostResourceError` subclass, and discards partial work without returning credit.
+The cache publication epoch prevents already-running scans from restoring that
+discarded progress. Completed checks remain subject to fresh identity checks.
+Call `cache.discard_pending()` when cancellation arrives during retry backoff,
+outside the helper. A failing cancellation callback yields a fixed error and
+also discards partial work. Callbacks should be inexpensive and must not block.
+
+Perform these observations outside the supervisor lock. Time budgets and
+cancellation are cooperative around filesystem calls and hash chunks: a blocked
+kernel operation cannot be interrupted by this helper. Directory traversal and
+final inventory revalidation restart each call, so a directory inventory that
+cannot fit the time budget can remain pending even though large-file hashing
+resumes. This is not a hard Pause latency bound or an atomic filesystem lock.
+Stat-key reuse is not safe against every adversarial same-user mutation; the
+manifested child loader must independently reverify artifact hashes.
 
 Tests use tiny temporary files, native volume queries, hardlinks and synthetic
 model profiles. They cover corruption, missing roots, partials, shared volumes,
-cache invalidation, mutation detection, malformed limits and bounded failure.
+cache invalidation, mutation detection, malformed limits, incremental time/byte
+budgets, cancellation, bounded eviction and descriptor closure.
 They do not establish runtime reservations, full aggregate enforcement, real
 multi-GPU inference, installed Linux acceptance or permission to remove the
 configuration's one-automatic-worker guard.

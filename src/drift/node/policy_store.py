@@ -397,7 +397,6 @@ class ContributionPolicyStore:
             candidate_document = dict(document)
             candidate_document["contribution_policy"] = policy.to_dict()
             candidate_config = NodeConfig.from_dict(candidate_document, base_dir=self.path.parent)
-            settings = self._prepare(candidate_config)
             encoded = (
                 json.dumps(
                     candidate_document,
@@ -407,10 +406,21 @@ class ContributionPolicyStore:
                 )
                 + "\n"
             ).encode("utf-8")
-            self._supervisor.reconfigure(
-                settings,
-                persist=lambda: self._atomic_replace(encoded, expected_revision=disk_revision),
+            persist = lambda: self._atomic_replace(encoded, expected_revision=disk_revision)
+            only_disabling = (
+                self._policy.sharing_enabled
+                and not policy.sharing_enabled
+                and dict(policy.to_dict()) == {**self._policy.to_dict(), "sharing_enabled": False}
             )
+            if only_disabling:
+                # Master Pause may finish recording stopped intent before an
+                # asynchronous resource operation has drained. Preserve that
+                # operation and its cleanup ownership while durably disabling
+                # sharing; every other policy edit still requires quiescence.
+                self._supervisor.persist_sharing_disabled(persist=persist)
+            else:
+                settings = self._prepare(candidate_config)
+                self._supervisor.reconfigure(settings, persist=persist)
             self._policy = candidate_config.contribution_policy
             self._revision = _revision(encoded)
             return {

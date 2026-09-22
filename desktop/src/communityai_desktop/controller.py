@@ -16,6 +16,20 @@ def _download_storage_estimate(size_bytes: int | None) -> str:
     return f"{size_bytes / 1_000_000_000:.1f} GB ({size_bytes:,} bytes)"
 
 
+def _worker_cleanup_pending(worker: Dict[str, Any]) -> bool:
+    reason = worker.get("resource_reason") or worker.get("resources", {}).get("reason")
+    return bool(
+        worker.get("cleanup_pending")
+        or worker.get("resource_operation")
+        or worker.get("state") in {"starting", "stopping"}
+        or reason
+        in {
+            "worker resource release is incomplete; retry cleanup",
+            "worker process creation is uncertain; resource reservation remains held",
+        }
+    )
+
+
 class GpuSelectionDraft:
     """Keep physical selection tokens with the snapshot that created a dirty draft."""
 
@@ -356,7 +370,7 @@ class DesktopController:
             "enabled": bool(active_models),
             "intent_enabled": intent_enabled,
             "can_start": contribution["editable"] and bool(workers),
-            "can_pause": intent_enabled,
+            "can_pause": intent_enabled or any(_worker_cleanup_pending(worker) for worker in workers),
             "active_models": active_models,
             "selected_models": selected_models,
             "blocked_reasons": blocked_reasons,
@@ -379,16 +393,40 @@ class DesktopController:
         if enabled and not current["workers"]:
             raise NodeClientError("No community model is available for sharing yet.")
         saved = current["policy"]
+        cleanup_pending = False
         for worker in current["workers"]:
-            self.client.worker_action(worker["id"], "pause")
+            try:
+                response = self.client.worker_action(worker["id"], "pause")
+            except NodeApiError as exc:
+                if enabled or exc.status_code not in (409, 503):
+                    raise
+                # Persisting off has its own authoritative paused-intent guard.
+                # A failed cleanup must not prevent attempting the other workers.
+                cleanup_pending = True
+            else:
+                if isinstance(response, dict):
+                    cleanup_pending |= _worker_cleanup_pending(response.get("worker", {}))
+        if not enabled and not saved["policy"]["sharing_enabled"]:
+            # Pause remains a cleanup retry after off was saved. Verify the saved
+            # choice without requiring a no-op reconfiguration of busy workers.
+            saved = self.client.get_contribution_policy()
         policy = {**saved["policy"], "sharing_enabled": enabled}
         if enabled:
             policy["max_disk_space"] = policy.get("max_disk_space") or "20GiB"
             policy["max_vram"] = policy.get("max_vram") or "100%"
             policy["max_processing_percent"] = policy.get("max_processing_percent", 100)
-        result = self.client.update_contribution_policy(policy, expected_revision=saved["config_revision"])
+        result = (
+            saved
+            if not enabled and not saved["policy"]["sharing_enabled"]
+            else self.client.update_contribution_policy(policy, expected_revision=saved["config_revision"])
+        )
         if not enabled:
-            return {**result, "message": "Sharing paused."}
+            message = (
+                "Sharing is saved off. Cleanup is still pending; use Pause to retry."
+                if cleanup_pending
+                else "Sharing paused."
+            )
+            return {**result, "message": message}
         waiting = False
         for worker in current["workers"]:
             try:

@@ -61,7 +61,7 @@ from drift.node.policy_store import (
     ContributionPolicyPersistenceError,
     ContributionPolicyStore,
 )
-from drift.node.resource_reservations import ResourceReservationError, ResourceReservationManager
+from drift.node.resource_reservations import ResourceReservationManager
 from drift.node.route_metrics import RouteOutcomeTracker
 from drift.node.worker_supervisor import (
     NvidiaPowerMonitor,
@@ -434,6 +434,7 @@ def _automatic_placement_candidates(
     artifact_plan_cache: dict | None = None,
     placement_metadata_cache: dict | None = None,
     resource_manager: ResourceReservationManager | None = None,
+    resource_cancelled: Callable[[], bool] | None = None,
 ) -> tuple[PlacementCandidate, ...]:
     policy = config.contribution_policy
     allowed = _resolve_policy_models(manager, policy.allowed_models, "allowed_models")
@@ -464,7 +465,11 @@ def _automatic_placement_candidates(
     candidates = []
     for model_config, manifest, descriptor, key in manifested:
         artifact_bytes = sum(artifact.size for artifact in manifest.artifacts)
-        if key in denied:
+        if not policy.sharing_enabled:
+            reason = "sharing is disabled by contribution policy"
+        elif resource_cancelled is not None and resource_cancelled():
+            reason = "automatic placement is paused"
+        elif key in denied:
             reason = f"model {descriptor.model_id!r} is denied by contribution policy"
         elif allowed and key not in allowed:
             reason = f"model {descriptor.model_id!r} is not in the contribution allowlist"
@@ -518,10 +523,13 @@ def _automatic_placement_candidates(
                                     cache_dir=cache_root,
                                     host_limit_bytes=policy.max_host_memory_bytes,
                                     disk_limit_bytes=effective_disk_bytes,
+                                    cancelled=resource_cancelled,
                                 )
                             else:
                                 admission = nullcontext()
                             with admission:
+                                if resource_cancelled is not None and resource_cancelled():
+                                    raise RuntimeError("automatic placement is paused")
                                 metadata = load_placement_memory(
                                     manifest,
                                     device=device,
@@ -534,6 +542,8 @@ def _automatic_placement_candidates(
                                     if resource_manager is None
                                     else None,
                                 )
+                                if resource_cancelled is not None and resource_cancelled():
+                                    raise RuntimeError("automatic placement is paused")
                             if placement_metadata_cache is not None:
                                 if len(placement_metadata_cache) >= 16:
                                     placement_metadata_cache.pop(next(iter(placement_metadata_cache)))
@@ -1218,7 +1228,7 @@ def _build_worker_supervisor(
         power_watts=settings.power_watts,
         device_available=settings.device_available,
         coordinated_launches=any(launch.automatic for launch in settings.launches),
-        acquire_resources=None if resource_manager is None else resource_manager.acquire,
+        acquire_resources_cancellable=None if resource_manager is None else resource_manager.acquire_cancellable,
         release_resources=None if resource_manager is None else resource_manager.release,
     )
 
@@ -1568,6 +1578,15 @@ def _build_automatic_placement_service(
             # Preserve the normal placement/lease maintenance after first opt-in;
             # clearing only its registry would leave an old admitted launch alive.
             awaiting_explicit_start = False
+        if all(
+            worker.managed_by == "desktop_gpu" and supervisor.snapshot(worker.worker_id)["operator_paused"]
+            for worker in current_workers.values()
+        ):
+            # Preserve the acknowledged map while explicitly paused. Pause is
+            # not an empty coverage observation and must not cause metadata
+            # materialization or replacement proposals. Its existing lease may
+            # expire normally; a later explicit Start obtains a fresh one.
+            return
         previous_plans = registry.snapshot()
         plans = {}
         retained_ids = set()
@@ -1592,9 +1611,19 @@ def _build_automatic_placement_service(
                 artifact_plan_cache=artifact_plan_cache,
                 placement_metadata_cache=placement_metadata_cache,
                 resource_manager=resource_manager,
+                resource_cancelled=(
+                    (lambda worker_id=worker_id: supervisor.snapshot(worker_id)["operator_paused"])
+                    if worker.managed_by == "desktop_gpu"
+                    else None
+                ),
             )
             for worker_id, worker in current_workers.items()
         }
+        if all(
+            worker.managed_by == "desktop_gpu" and supervisor.snapshot(worker.worker_id)["operator_paused"]
+            for worker in current_workers.values()
+        ):
+            return
         # Retention is a planning preference, never a renewed signed lease.
         # Eligible resource spans retain residency unless participation of an
         # additional feasible card requires a coordinated split.
@@ -1691,16 +1720,9 @@ def _build_automatic_placement_service(
             automatic_placement_guards=admission_guards,
             resource_claim_cache=resource_claim_cache,
         )
-        # Hash cache warmup must not hold the supervisor or policy transition
-        # locks. This confers no admission: acquire rechecks fresh measurements
-        # and all durable reservations immediately before Popen.
-        if resource_manager is not None:
-            for launch in settings.launches:
-                if launch.policy_admitted and launch.resource_claim is not None:
-                    try:
-                        resource_manager.prepare(launch)
-                    except ResourceReservationError:
-                        logger.debug("Shared resource preparation is pending")
+        # Full artifact verification belongs to the cancellable admission
+        # operation for the selected launch. Planner reconciliation must not
+        # perform a second uninterruptible whole-cache prewarm of its own.
         desired_launches = {launch.worker_id.casefold(): launch for launch in settings.launches if launch.automatic}
 
         def validate_acceptance():
