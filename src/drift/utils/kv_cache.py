@@ -54,14 +54,23 @@ class KVCacheStrategy(ABC):
     ) -> int:
         """Estimate one block's cache budget before its weights are loaded.
 
-        The default preserves the historical dense-GQA accounting formula. Cache strategies
+        The default accounts for the same head geometry as dense-GQA descriptors. Cache strategies
         with fixed-size or otherwise non-standard state must override this method so server
         admission never advertises less memory than one real session will allocate.
         """
 
         del cls, block_index
-        cache_values = 2 * config.hidden_size * max_length
-        cache_values //= config.num_key_value_groups
+        num_heads, groups = config.num_attention_heads, config.num_key_value_groups
+        if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in (num_heads, groups)):
+            raise ValueError("cache attention heads and key/value groups must be positive integers")
+        if num_heads % groups:
+            raise ValueError("cache attention heads must be divisible by key/value groups")
+        head_dim = getattr(config, "head_dim", None) or config.hidden_size // num_heads
+        if isinstance(head_dim, bool) or not isinstance(head_dim, int) or head_dim <= 0:
+            raise ValueError("cache head_dim must be a positive integer")
+        if isinstance(max_length, bool) or not isinstance(max_length, int) or max_length < 0:
+            raise ValueError("cache max_length must be a non-negative integer")
+        cache_values = 2 * (num_heads // groups) * head_dim * max_length
         return cache_values * torch.tensor([], dtype=dtype).element_size()
 
     @abstractmethod
@@ -184,12 +193,40 @@ class MLACache(StandardGQACache):
     HF's DeepSeek attention *decompresses* the KV latent (``kv_b_proj``) before writing to the
     cache, so DRIFT-LLM keeps the per-head BLOOM layout rather than caching the latent. MLA only
     breaks one assumption of :class:`StandardGQACache`: keys and values have different head dims
-    (key ``= qk_nope_head_dim + qk_rope_head_dim``, value ``= v_head_dim``), so only the descriptor
-    sizing changes here -- ``select_layer_past`` / ``update_cache`` already handle asymmetric dims.
+    (key ``= qk_nope_head_dim + qk_rope_head_dim``, value ``= v_head_dim``), so descriptor sizing
+    and pre-load accounting change here; ``select_layer_past`` / ``update_cache`` already handle
+    asymmetric dims.
 
     Caching the compressed latent instead (MLA's memory win) would need a custom attention kernel
     and belongs with the paged-cache engine (Phase 5); this keeps DeepSeek correct and swarm-ready.
     """
+
+    @classmethod
+    def estimate_cache_bytes(
+        cls,
+        config: PretrainedConfig,
+        max_length: int,
+        *,
+        dtype: torch.dtype,
+        block_index: Optional[int] = None,
+    ) -> int:
+        del cls, block_index
+        dimensions = (
+            config.num_attention_heads,
+            config.num_key_value_groups,
+            config.qk_nope_head_dim,
+            config.qk_rope_head_dim,
+            config.v_head_dim,
+            max_length,
+        )
+        if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in dimensions):
+            raise ValueError("MLA cache dimensions must be positive integers")
+        if config.num_attention_heads % config.num_key_value_groups:
+            raise ValueError("MLA attention heads must be divisible by key/value groups")
+        num_kv_heads = config.num_attention_heads // config.num_key_value_groups
+        key_head_dim = config.qk_nope_head_dim + config.qk_rope_head_dim
+        cache_values = num_kv_heads * (key_head_dim + config.v_head_dim) * max_length
+        return cache_values * torch.tensor([], dtype=dtype).element_size()
 
     def get_cache_descriptors(
         self,

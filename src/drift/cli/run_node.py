@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
+import re
 import secrets
 import sys
 import time
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 import torch
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
@@ -27,12 +29,14 @@ from drift.node.config import (
     validate_processing_configuration,
 )
 from drift.node.contribution_planner import (
+    MAX_AUTOMATIC_PLACEMENT_BLOCKS,
     AutomaticContributionPlanner,
     AutomaticPlacementService,
     PlacementArtifactPlan,
     PlacementCandidate,
     PlacementPlan,
     PlacementRegistry,
+    propose_joint_placements,
 )
 from drift.node.device_binding import DeviceBindingError, DeviceBindingStore
 from drift.node.discovery import CoverageTarget, ModelCoverageDiscovery, PeerCache
@@ -47,7 +51,11 @@ from drift.node.native_credentials import (
     NativeCredentialLocation,
     load_native_control_key,
 )
-from drift.node.policy_store import ContributionPolicyPersistenceError, ContributionPolicyStore
+from drift.node.policy_store import (
+    ContributionPolicyConflictError,
+    ContributionPolicyPersistenceError,
+    ContributionPolicyStore,
+)
 from drift.node.route_metrics import RouteOutcomeTracker
 from drift.node.worker_supervisor import (
     NvidiaPowerMonitor,
@@ -561,6 +569,7 @@ def _prepare_worker_supervisor_settings(
     *,
     token: str | None = None,
     automatic_placements: Mapping[str, PlacementPlan] | None = None,
+    automatic_placement_guards: Mapping[str, Callable] | None = None,
 ) -> WorkerSupervisorSettings:
     policy = config.contribution_policy
     validate_processing_configuration(policy, config.workers)
@@ -862,6 +871,19 @@ def _prepare_worker_supervisor_settings(
             command.extend(("--revocation_file", str(revocation_file)))
         placement_binding = decision if decision is not None and decision.artifact_set_digest is not None else None
 
+        def worker_placement_available(
+            guard=None
+            if automatic_placement_guards is None
+            else automatic_placement_guards.get(worker.worker_id.casefold()),
+            selected_worker=worker,
+            selected_decision=decision,
+        ):
+            return (
+                guard is not None
+                and selected_decision is not None
+                and guard(selected_worker, selected_decision) is None
+            )
+
         def worker_device_available(check=device_check):
             if check is None:
                 return False
@@ -896,6 +918,9 @@ def _prepare_worker_supervisor_settings(
                 # This guard must travel atomically with this exact command,
                 # mask and reservation during automatic placement replacement.
                 device_available=worker_device_available,
+                placement_available=(
+                    worker_placement_available if automatic and automatic_placement_guards is not None else None
+                ),
                 vram_device=vram_device,
                 vram_pool_bytes=policy_vram_bytes,
                 max_bandwidth_mbps=effective_bandwidth_mbps,
@@ -936,12 +961,14 @@ def _build_worker_supervisor(
     *,
     token: str | None = None,
     automatic_placements: Mapping[str, PlacementPlan] | None = None,
+    automatic_placement_guards: Mapping[str, Callable] | None = None,
 ) -> WorkerSupervisor:
     settings = _prepare_worker_supervisor_settings(
         config,
         manager,
         token=token,
         automatic_placements=automatic_placements,
+        automatic_placement_guards=automatic_placement_guards,
     )
     return WorkerSupervisor(
         settings.launches,
@@ -950,6 +977,7 @@ def _build_worker_supervisor(
         bandwidth_mbps=settings.bandwidth_mbps,
         power_watts=settings.power_watts,
         device_available=settings.device_available,
+        coordinated_launches=any(launch.automatic for launch in settings.launches),
     )
 
 
@@ -1065,6 +1093,41 @@ def _automatic_placement_seed(worker) -> str:
         return secrets.token_hex(32)
 
 
+def _final_joint_placement_plans(plans, retained_ids):
+    """Keep verified fallback spans authoritative after intent publication.
+
+    A recent coverage gap may retain an old acknowledged span that another
+    worker's otherwise valid proposal selected. Retain that existing assignment
+    and defer conflicting replacements; never install overlapping final claims.
+    """
+    result = {}
+    spans = {}
+    for worker_id in sorted(plans, key=lambda key: (key not in retained_ids, key)):
+        plan = plans[worker_id]
+        if plan.decision is None:
+            result[worker_id] = plan
+            continue
+        decision = plan.decision
+        if not plan.intent_published or not plan.remote_acknowledged:
+            raise ValueError("joint placement requires acknowledged final claims")
+        if re.fullmatch(r"(?:0|[1-9][0-9]{0,2}):[1-9][0-9]{0,2}", decision.block_indices) is None:
+            raise ValueError("joint placement requires canonical bounded final ranges")
+        start, end = map(int, decision.block_indices.split(":"))
+        if not 0 <= start < end <= MAX_AUTOMATIC_PLACEMENT_BLOCKS:
+            raise ValueError("joint placement requires canonical bounded final ranges")
+        prior = spans.setdefault(decision.manifest_digest, [])
+        if any(start < old_end and old_start < end for old_start, old_end in prior):
+            if worker_id in retained_ids:
+                raise ValueError("retained automatic placements overlap")
+            result[worker_id] = PlacementPlan(
+                None, "automatic placement is waiting for a disjoint local range", plan.evaluated_models
+            )
+        else:
+            prior.append((start, end))
+            result[worker_id] = plan
+    return result
+
+
 def _build_automatic_placement_service(
     config: NodeConfig,
     manager: ModelManager,
@@ -1078,6 +1141,8 @@ def _build_automatic_placement_service(
     route_outcomes: RouteOutcomeTracker | None = None,
     route_identity_path: Path | None = None,
     require_explicit_start: bool = False,
+    policy_store: ContributionPolicyStore | None = None,
+    automatic_placement_guards: dict[str, Callable] | None = None,
 ) -> AutomaticPlacementService | None:
     automatic_workers = tuple(worker for worker in config.workers if worker.model.casefold() == "auto")
     if not automatic_workers:
@@ -1101,6 +1166,32 @@ def _build_automatic_placement_service(
     route_sequences = {}
     route_leases = {}
     awaiting_explicit_start = require_explicit_start
+    admission_guards = {} if automatic_placement_guards is None else automatic_placement_guards
+    guarded_workers = set()
+
+    def placement_admission_reason(worker, decision):
+        try:
+            identity_key_id = NodeIdentity.load(worker.identity_path).key_id
+            key = _placement_decision_key(worker, decision, identity_key_id)
+        except (OSError, ProtocolSecurityError, RuntimeError, TypeError, ValueError):
+            return "automatic placement identity is unavailable"
+        lease = intent_leases.get(worker.worker_id.casefold())
+        expires_at = None if lease is None else lease.get("expires_at")
+        now = get_dht_time()
+        if (
+            lease is None
+            or lease.get("decision_key") != key
+            or isinstance(expires_at, bool)
+            or not isinstance(expires_at, (int, float))
+            or not math.isfinite(expires_at)
+            or not math.isfinite(now)
+            or expires_at <= now
+        ):
+            return "automatic placement requires a live matching signed intent"
+        return None
+
+    for worker_id in planners:
+        admission_guards[worker_id] = placement_admission_reason
 
     def publish_route_demand(manifest: ModelManifest) -> None:
         if route_outcomes is None or route_identity_path is None:
@@ -1183,6 +1274,9 @@ def _build_automatic_placement_service(
 
     def reconcile() -> None:
         nonlocal awaiting_explicit_start
+        # Metadata preparation/publication may take time. The store transaction
+        # below verifies this revision again before changing any live assignment.
+        revision = None if policy_store is None else policy_store.snapshot()["config_revision"]
         current = config if config_path is None else NodeConfig.load(config_path)
         if current.catalog_path != config.catalog_path:
             # A verified update is waiting for the current request leases to
@@ -1192,6 +1286,10 @@ def _build_automatic_placement_service(
         current_workers = {
             worker.worker_id.casefold(): worker for worker in current.workers if worker.model.casefold() == "auto"
         }
+        if set(current_workers) != set(planners):
+            # Adding/removing a worker requires the existing saved-config reload
+            # path, which constructs new identities, supervisor and planners.
+            return
         if awaiting_explicit_start:
             if all(supervisor.snapshot(worker.worker_id)["operator_paused"] for worker in current_workers.values()):
                 # The first Start of this node process gates metadata preparation
@@ -1203,6 +1301,7 @@ def _build_automatic_placement_service(
             awaiting_explicit_start = False
         previous_plans = registry.snapshot()
         plans = {}
+        retained_ids = set()
         route_demand_authorities_unchanged = current.route_demand_authority_roots == config.route_demand_authority_roots
         if current.contribution_policy.sharing_enabled and route_demand_authorities_unchanged:
             for model_config in current.models:
@@ -1210,11 +1309,8 @@ def _build_automatic_placement_service(
                     manifest = ModelManifest.load(model_config.manifest_path)
                     if manager.catalog_allows_contribution(manifest.digest_id):
                         publish_route_demand(manifest)
-        for worker_id, planner in planners.items():
-            worker = current_workers.get(worker_id)
-            if worker is None:
-                continue
-            candidates = _automatic_placement_candidates(
+        candidates_by_worker = {
+            worker_id: _automatic_placement_candidates(
                 current,
                 manager,
                 discovery,
@@ -1226,10 +1322,14 @@ def _build_automatic_placement_service(
                 ),
                 artifact_plan_cache=artifact_plan_cache,
             )
-            proposal = planner.propose(
-                candidates,
-                sharing_enabled=current.contribution_policy.sharing_enabled,
-            )
+            for worker_id, worker in current_workers.items()
+        }
+        proposals = propose_joint_placements(
+            planners, candidates_by_worker, sharing_enabled=current.contribution_policy.sharing_enabled
+        )
+        for worker_id, proposal in proposals.items():
+            worker = current_workers[worker_id]
+            candidates = candidates_by_worker[worker_id]
             if proposal.decision is None and current.contribution_policy.sharing_enabled:
                 previous = previous_plans.get(worker_id)
                 if previous is not None and previous.decision is not None:
@@ -1258,6 +1358,7 @@ def _build_automatic_placement_service(
                             now=get_dht_time(),
                         ):
                             plans[worker_id] = previous
+                            retained_ids.add(worker_id)
                             continue
             if proposal.decision is not None:
                 published, identity_key_id = publish_intent(worker_id, worker, proposal.decision)
@@ -1281,36 +1382,65 @@ def _build_automatic_placement_service(
                             proposal.evaluated_models,
                         )
                     )
+                    if plans[worker_id] is previous:
+                        retained_ids.add(worker_id)
                     continue
-                planner.commit(proposal)
                 proposal = replace(
                     proposal,
                     intent_published=True,
                     remote_acknowledged=True,
                 )
             plans[worker_id] = proposal
-        registry.replace(plans)
+        plans = _final_joint_placement_plans(plans, retained_ids)
         settings = _prepare_worker_supervisor_settings(
             current,
             manager,
             token=token,
-            automatic_placements=registry.snapshot(),
+            automatic_placements=plans,
+            automatic_placement_guards=admission_guards,
         )
         desired_launches = {launch.worker_id.casefold(): launch for launch in settings.launches if launch.automatic}
-        current_launches = {launch.worker_id.casefold(): launch for launch in supervisor.launches if launch.automatic}
-        for worker_id, launch in desired_launches.items():
-            previous = current_launches.get(worker_id)
-            if previous is None or previous == launch:
-                continue
-            snapshot = supervisor.snapshot(launch.worker_id)
-            was_desired = snapshot["desired_running"]
-            operator_paused = snapshot["operator_paused"]
-            if was_desired or snapshot["state"] in ("starting", "running", "stopping"):
-                supervisor.pause_worker_for_reconfiguration(launch.worker_id)
-            # A newly eligible placeholder honors auto-start unless the operator
-            # explicitly paused it while coverage or policy kept it ineligible.
-            start = False if operator_paused else (None if not previous.policy_admitted else was_desired)
-            supervisor.replace_launch(launch, start=start)
+
+        def validate_acceptance():
+            if config_path is not None and revision is not None:
+                if "sha256:" + hashlib.sha256(config_path.read_bytes()).hexdigest() != revision:
+                    raise ContributionPolicyConflictError("node configuration changed during placement cleanup")
+            for worker_id, plan in plans.items():
+                if plan.decision is not None and placement_admission_reason(current_workers[worker_id], plan.decision):
+                    raise ValueError("joint placement lost a live matching signed intent before acceptance")
+
+        transaction = (
+            nullcontext() if policy_store is None else policy_store.placement_transaction(expected_revision=revision)
+        )
+        with transaction:
+            current_launches = {
+                launch.worker_id.casefold(): launch for launch in supervisor.launches if launch.automatic
+            }
+            if set(desired_launches) != set(current_launches):
+                raise ValueError("automatic placement cannot change the configured worker set")
+            transition = supervisor.launch_transition_status
+            pending_ids = set(transition["worker_ids"])
+            replacements = []
+            for worker_id, launch in desired_launches.items():
+                snapshot = supervisor.snapshot(launch.worker_id)
+                if (
+                    current_launches[worker_id] != launch
+                    or worker_id in pending_ids
+                    or worker_id not in guarded_workers
+                    or (launch.policy_admitted and snapshot.get("start_after_admission", False))
+                ):
+                    replacements.append(launch)
+            validate_acceptance()
+            if replacements:
+                supervisor.replace_launches(
+                    tuple(replacements), preserve_start_intent=True, before_install=validate_acceptance
+                )
+            # Only an installed final map becomes authoritative for policy
+            # preparation or planner hysteresis. Failed batches leave both old.
+            registry.replace(plans)
+            for worker_id, plan in plans.items():
+                planners[worker_id].commit(plan)
+            guarded_workers.update(desired_launches)
 
     return AutomaticPlacementService(
         reconcile=reconcile,
@@ -1389,12 +1519,14 @@ def _serve_once(args, parser) -> bool:
             # input/output weights or wait for a local synthetic generation probe.
             # Complete end-to-end availability is checked by the manager/discovery.
         placement_registry = PlacementRegistry()
+        placement_guards = {}
         route_outcomes = RouteOutcomeTracker()
         worker_supervisor = _build_worker_supervisor(
             config,
             manager,
             token=args.token,
             automatic_placements=placement_registry.snapshot(),
+            automatic_placement_guards=placement_guards,
         )
         _apply_startup_pause(args, worker_supervisor)
         policy_store = (
@@ -1408,6 +1540,7 @@ def _serve_once(args, parser) -> bool:
                     manager,
                     token=args.token,
                     automatic_placements=placement_registry.snapshot(),
+                    automatic_placement_guards=placement_guards,
                 ),
                 expected_config=persisted_config,
             )
@@ -1424,6 +1557,8 @@ def _serve_once(args, parser) -> bool:
             route_outcomes=route_outcomes,
             route_identity_path=args.data_dir / "route-demand.key",
             require_explicit_start=getattr(args, "pause_sharing_on_start", False),
+            policy_store=policy_store,
+            automatic_placement_guards=placement_guards,
         )
     except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))

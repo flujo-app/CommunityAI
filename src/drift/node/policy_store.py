@@ -9,8 +9,9 @@ import re
 import stat
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 from drift.node.config import ContributionPolicyConfig, NodeConfig, NodeConfigError
 from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
@@ -213,6 +214,7 @@ class ContributionPolicyStore:
         self.path = _safe_config_path(config_path)
         self._supervisor = supervisor
         self._prepare = prepare
+        self._coordination_lock = threading.Lock()
         self._lock = threading.Lock()
         self._restart_pending = False
         self._gpu_selection_tokens = GpuSelectionTokens()
@@ -226,6 +228,39 @@ class ContributionPolicyStore:
         self._runtime_worker_provenance = {
             worker.worker_id.casefold(): worker.managed_by for worker in config.workers if worker.managed_by is not None
         }
+
+    @contextmanager
+    def _coordinated_mutation(self) -> Iterator[None]:
+        # Policy preparation reads the placement registry. Serialize the whole
+        # preparation/commit against placement acceptance, without blocking an
+        # async control handler behind a potentially long worker cleanup.
+        if not self._coordination_lock.acquire(blocking=False):
+            raise WorkerReconfigurationBusyError("policy or placement transaction is already in progress")
+        try:
+            yield
+        finally:
+            self._coordination_lock.release()
+
+    @contextmanager
+    def placement_transaction(self, *, expected_revision: str) -> Iterator[None]:
+        """Serialize runtime acceptance and metadata commit against policy writes.
+
+        Proposals, external publication and launch preparation happen before
+        entry. The caller applies the runtime batch and commits its registry and
+        planner state inside this context. Snapshot reads and direct supervisor
+        Pause remain available while cleanup runs. Nested store mutations fail
+        busy instead of deadlocking. This is process-local coordination, not a
+        lock against an external editor changing the config after entry.
+        """
+        with self._coordinated_mutation():
+            with self._lock:
+                self._require_no_restart()
+                if self._supervisor.configuration_restart_pending:
+                    raise WorkerReconfigurationBusyError("node configuration restart is pending")
+                if not isinstance(expected_revision, str) or expected_revision != self._revision:
+                    raise ContributionPolicyConflictError("node config changed; refresh before placement")
+                self._read_current_config()
+            yield
 
     def _read(self) -> tuple[dict[str, Any], bytes]:
         _safe_config_path(self.path)
@@ -332,7 +367,7 @@ class ContributionPolicyStore:
     def update_inference_mode(self, mode: str, *, expected_revision: str) -> dict[str, Any]:
         if mode not in ("auto", "local_only"):
             raise NodeConfigError("inference mode must be auto or local_only")
-        with self._lock:
+        with self._coordinated_mutation(), self._lock:
             self._require_no_restart()
             if expected_revision != self._revision:
                 raise ContributionPolicyConflictError("node config changed; refresh before saving")
@@ -349,7 +384,7 @@ class ContributionPolicyStore:
     def update(self, source: Mapping[str, Any], *, expected_revision: str) -> dict[str, Any]:
         if not isinstance(expected_revision, str) or not expected_revision.startswith("sha256:"):
             raise ContributionPolicyConflictError("policy update has an invalid config revision")
-        with self._lock:
+        with self._coordinated_mutation(), self._lock:
             self._require_no_restart()
             if expected_revision != self._revision:
                 raise ContributionPolicyConflictError("node config changed; refresh the policy before saving")
@@ -597,7 +632,7 @@ class ContributionPolicyStore:
     def update_gpu_selection(self, request: dict, *, manager, hardware_status) -> dict[str, Any]:
         """Persist a complete paused managed set without relaxing automatic runtime admission."""
         request = validate_gpu_selection_request(request)
-        with self._lock:
+        with self._coordinated_mutation(), self._lock:
             self._require_no_restart()
             if request["expected_config_revision"] != self._revision:
                 raise ContributionPolicyConflictError("node config changed; refresh before saving")
@@ -666,7 +701,7 @@ class ContributionPolicyStore:
         Rebuilding the whole node avoids stale planners and telemetry closures.
         """
         request = validate_selection_request(request)
-        with self._lock:
+        with self._coordinated_mutation(), self._lock:
             self._require_no_restart()
             if request["expected_config_revision"] != self._revision:
                 raise ContributionPolicyConflictError("node config changed; refresh before saving")

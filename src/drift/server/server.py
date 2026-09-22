@@ -36,7 +36,7 @@ from drift.protocol_identity import (
 from drift.server import block_selection
 from drift.server.admission import AdmissionPolicy, AdmissionRejected, AdmissionState
 from drift.server.backend import TransformerBackend, merge_inference_pools_inplace
-from drift.server.block_utils import get_block_size, resolve_block_dtype
+from drift.server.block_utils import resolve_block_dtype
 from drift.server.from_pretrained import load_pretrained_block
 from drift.server.handler import TransformerConnectionHandler
 from drift.server.health import (
@@ -45,6 +45,7 @@ from drift.server.health import (
     validate_health_state_path,
     write_public_worker_health,
 )
+from drift.server.memory_budget import build_model_memory_profile, estimate_device_memory
 from drift.server.memory_cache import MemoryCache
 from drift.server.processing_budget import ProcessingBudget
 from drift.server.reachability import ReachabilityProtocol, check_direct_reachability
@@ -62,7 +63,6 @@ from drift.utils.hardware import (
     set_device_memory_limit,
     supports_dtype,
 )
-from drift.utils.kv_cache import StandardGQACache
 from drift.utils.misc import format_all_thread_stacks, get_size_in_bytes
 from drift.utils.ping import PingAggregator
 from drift.utils.random import sample_up_to
@@ -480,37 +480,10 @@ class Server:
         self.paged_cache = cache == "paged"
         self.page_size = page_size
 
-        # For attention cache in GPU or RAM
-        if attn_cache_tokens is None:
-            attn_cache_tokens = 16384 if is_multiquery_attn else 4096
-        cache_strategy = getattr(self.block_config, "kv_cache_strategy", StandardGQACache)
-        cache_bytes_by_block = [
-            cache_strategy.estimate_cache_bytes(
-                self.block_config,
-                attn_cache_tokens,
-                dtype=self.torch_dtype,
-                block_index=block_index,
-            )
-            for block_index in range(self.block_config.num_hidden_layers)
-        ]
-        self._cache_bytes_by_block = tuple(cache_bytes_by_block)
-        self._cache_bytes_per_block = max(cache_bytes_by_block)
-
         # For disk cache
         self.cache_dir = cache_dir
         self.max_disk_space = max_disk_space
         self.adapters = adapters
-        self._block_memory_bytes_by_block = tuple(
-            get_block_size(
-                self.block_config,
-                "memory",
-                dtype=self.torch_dtype,
-                quant_type=self.quant_type,
-                layer_idx=block_index,
-            )
-            + self._cache_bytes_by_block[block_index]
-            for block_index in range(self.block_config.num_hidden_layers)
-        )
         self._adapter_memory_per_block = 0
         if self.adapters:
             from drift.utils.peft import estimate_adapter_memory_per_block
@@ -523,6 +496,19 @@ class Server:
                 cache_dir=self.cache_dir,
                 max_disk_space=self.max_disk_space,
             )
+
+        # Share exact per-layer accounting with node placement before loading any weights.
+        self.memory_profile = build_model_memory_profile(
+            self.block_config,
+            dtype=self.torch_dtype,
+            quant_type=self.quant_type,
+            attn_cache_tokens=attn_cache_tokens,
+            num_devices=len(self.tensor_parallel_devices),
+            adapter_memory_per_block=self._adapter_memory_per_block,
+        )
+        self._cache_bytes_by_block = self.memory_profile.block_cache_bytes
+        self._cache_bytes_per_block = max(self._cache_bytes_by_block)
+        self._block_memory_bytes_by_block = self.memory_profile.block_memory_bytes
 
         assert num_blocks is None or block_indices is None, "Please specify num_blocks or block_indices, not both"
         if num_blocks is None and block_indices is None:
@@ -582,7 +568,7 @@ class Server:
 
         gib = 1024**3
         self.attn_cache_bytes = (
-            sum(cache_bytes_by_block[block_index] for block_index in block_indices)
+            sum(self._cache_bytes_by_block[block_index] for block_index in block_indices)
             if block_indices is not None
             else self._cache_bytes_per_block * num_blocks
         )
@@ -672,15 +658,14 @@ class Server:
             )
 
     def _estimate_device_memory(self, num_blocks: int, block_indices: Optional[Sequence[int]] = None) -> int:
-        num_devices = len(self.tensor_parallel_devices)
-        gib = 1024**3
-        autograd_memory = 2 * gib * num_devices / 14336 * self.block_config.hidden_size
-        block_memory = (
-            sum(self._block_memory_bytes_by_block[index] for index in block_indices)
-            if block_indices is not None
-            else sum(sorted(self._block_memory_bytes_by_block, reverse=True)[:num_blocks])
+        return estimate_device_memory(
+            self._block_memory_bytes_by_block,
+            hidden_size=self.block_config.hidden_size,
+            num_devices=len(self.tensor_parallel_devices),
+            num_blocks=num_blocks,
+            block_indices=block_indices,
+            adapter_memory_per_block=self._adapter_memory_per_block,
         )
-        return math.ceil(autograd_memory + block_memory + num_blocks * self._adapter_memory_per_block)
 
     def _choose_num_blocks(self) -> int:
         assert is_accelerator(self.device), (

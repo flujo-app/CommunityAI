@@ -183,6 +183,161 @@ def test_coordinated_constructor_rejects_overlapping_initial_ranges_before_start
     assert not children.processes
 
 
+@pytest.mark.parametrize("result", [True, False, None, "synthetic-private-identity", "exception"])
+def test_signed_placement_resource_guard_has_fixed_reason_and_never_exposes_private_details(
+    make_supervisor, caplog, result
+):
+    def placement_available():
+        if result == "exception":
+            raise OSError("synthetic-private-identity in a private signing path")
+        return result
+
+    launch = replace(_automatic("first", 0), placement_available=placement_available)
+    supervisor, children = make_supervisor([launch])
+    supervisor.start_service()
+    status = supervisor.snapshot("first")
+    if result is True:
+        assert status["resource_admitted"] and len(children.processes) == 1
+    else:
+        assert not status["resource_admitted"] and not children.processes
+        assert status["resource_reason"] == "automatic placement is waiting for a live signed intent"
+        assert "reselect" not in status["resource_reason"]
+    assert "synthetic-private-identity" not in repr(status) + repr(launch) + caplog.text
+
+
+def test_physical_resource_guard_keeps_device_reselection_reason(make_supervisor):
+    launch = replace(_automatic("first", 0), device_available=lambda: False, placement_available=lambda: True)
+    supervisor, children = make_supervisor([launch])
+    supervisor.start_service()
+    assert not children.processes
+    assert supervisor.snapshot("first")["resource_reason"] == (
+        "selected device is unavailable or has changed; reselect it before sharing"
+    )
+
+
+@pytest.mark.parametrize("replacement_mode", ["single", "batch"])
+def test_explicit_placeholder_start_survives_denial_and_reconfiguration_until_admitted(
+    make_supervisor, replacement_mode
+):
+    first = _automatic("first", 0, auto_start=False)
+    denied = replace(first, policy_admitted=False, policy_reason="waiting for acknowledgement")
+    sibling = replace(
+        _automatic("second", 1, device=1, auto_start=False), policy_admitted=False, policy_reason="pending"
+    )
+    supervisor, children = make_supervisor((denied, sibling))
+    supervisor.start_service()
+    assert not supervisor.start_worker("first")
+    assert supervisor.snapshot("first")["start_after_admission"]
+    supervisor.replace_launch(denied, start=False)
+    supervisor.replace_launches([denied, sibling], start=False)
+    persisted = []
+    supervisor.reconfigure(
+        WorkerSupervisorSettings((denied, sibling), stop_timeout=1), persist=lambda: persisted.append(True)
+    )
+    assert persisted == [True]
+    assert supervisor.snapshot("first")["start_after_admission"]
+    assert not children.processes
+    if replacement_mode == "single":
+        supervisor.replace_launch(first, start=False)
+    else:
+        supervisor.replace_launches([first, sibling], start=False)
+    status = supervisor.snapshot("first")
+    assert status["desired_running"] and not status["start_after_admission"]
+    assert status["pid"] is not None
+    assert not supervisor.snapshot("second")["desired_running"]
+    assert len(children.processes) == 1
+
+
+def test_operator_pause_cancels_pending_placeholder_start_and_untouched_disabled_worker_stays_idle(make_supervisor):
+    launches = (_automatic("first", 0, auto_start=False), _automatic("second", 1, device=1, auto_start=False))
+    denied = tuple(replace(launch, policy_admitted=False, policy_reason="pending") for launch in launches)
+    supervisor, children = make_supervisor(denied)
+    supervisor.start_service()
+    supervisor.start_worker("first")
+    supervisor.pause_worker("first")
+    supervisor.replace_launches(launches, preserve_start_intent=True)
+    assert all(
+        not status["desired_running"] and not status["start_after_admission"] for status in supervisor.snapshots()
+    )
+    assert supervisor.snapshot("first")["operator_paused"]
+    assert not children.processes
+
+
+@pytest.mark.parametrize("failure", ["cleanup", "callback"])
+@pytest.mark.parametrize("pause_before_retry", [False, True])
+def test_preserved_start_intent_survives_failed_batch_and_superset_retry(
+    make_supervisor, monkeypatch, failure, pause_before_retry
+):
+    initial = tuple(_automatic(f"gpu-{index}", index, device=index, auto_start=False) for index in range(3))
+    replacements = (replace(initial[0], model_id="replacement"), initial[1])
+    supervisor, children = make_supervisor(initial)
+    supervisor.start_service()
+    supervisor.start_worker("gpu-0")
+    supervisor.start_worker("gpu-2")
+    old_first, old_third = tuple(children.processes)
+    actual_cleanup = supervisor._terminate_launch_tree
+
+    def fail_cleanup(process):
+        if process is old_first:
+            raise OSError("controlled cleanup failure")
+        return actual_cleanup(process)
+
+    def fail_callback():
+        assert old_first.poll() is not None
+        assert supervisor.launches == initial
+        raise ValueError("admission expired after cleanup")
+
+    if failure == "cleanup":
+        monkeypatch.setattr(supervisor, "_terminate_launch_tree", fail_cleanup)
+    with pytest.raises((RuntimeError, ValueError), match="cleanup is incomplete|admission expired"):
+        supervisor.replace_launches(
+            replacements,
+            preserve_start_intent=True,
+            before_install=fail_callback if failure == "callback" else None,
+        )
+    assert supervisor.launches == initial
+    assert supervisor.launch_transition_status["state"] == "cleanup_failed"
+    assert len(children.processes) == 2 and old_third.poll() is None
+    monkeypatch.setattr(supervisor, "_terminate_launch_tree", actual_cleanup)
+    if pause_before_retry:
+        supervisor.pause_worker("gpu-0")
+    supervisor.replace_launches((*replacements, initial[2]), preserve_start_intent=True)
+    assert supervisor.snapshot("gpu-0")["desired_running"] is not pause_before_retry
+    assert not supervisor.snapshot("gpu-1")["desired_running"]
+    assert supervisor.snapshot("gpu-2")["desired_running"]
+    assert old_first.poll() is not None and old_third.poll() is not None
+    assert supervisor.launch_transition_status["state"] == "idle"
+
+
+def test_admitted_user_start_survives_temporary_policy_denial_with_disabled_configuration(make_supervisor):
+    admitted = _automatic("first", 0, auto_start=False)
+    supervisor, children = make_supervisor([admitted])
+    supervisor.start_service()
+    supervisor.start_worker("first")
+    denied = replace(admitted, policy_admitted=False, policy_reason="lease expired")
+    supervisor.replace_launches([denied], preserve_start_intent=True)
+    assert supervisor.snapshot("first")["start_after_admission"]
+    assert not supervisor.snapshot("first")["desired_running"]
+    supervisor.replace_launches([admitted], preserve_start_intent=True)
+    assert supervisor.snapshot("first")["desired_running"]
+    assert not supervisor.snapshot("first")["start_after_admission"]
+    assert len(children.processes) == 2
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"before_install": False}, {"preserve_start_intent": 1}, {"preserve_start_intent": True, "start": False}],
+)
+def test_invalid_final_admission_options_reject_before_stopping_workers(make_supervisor, options):
+    launch = _automatic("first", 0)
+    supervisor, children = make_supervisor([launch])
+    supervisor.start_service()
+    with pytest.raises(ValueError):
+        supervisor.replace_launches([launch], **options)
+    assert len(children.processes) == 1 and children.processes[0].poll() is None
+    assert supervisor.launch_transition_status["state"] == "idle"
+
+
 def test_eight_card_range_swap_retires_every_old_process_before_install_or_spawn(make_supervisor, monkeypatch):
     initial = tuple(_automatic(f"gpu-{index}", index, device=index) for index in range(8))
     replacements = tuple(_automatic(f"gpu-{index}", (index + 1) % 8, device=index) for index in range(8))

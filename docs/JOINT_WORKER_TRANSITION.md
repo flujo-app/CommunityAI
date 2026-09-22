@@ -1,9 +1,10 @@
 # Coordinated worker launch transitions
 
 This component supplies the process transition needed by the all-card Sharing
-runtime. It does not lift the one-automatic-worker configuration guard or connect
-joint placement to `run_node`. No volunteer binary, model execution or GPU
-qualification is claimed.
+runtime. Joint placement is now connected to `run_node`; see
+[Joint automatic placement runtime](JOINT_PLACEMENT_RUNTIME.md) for transaction
+ordering and the live signed-intent guard. The one-automatic-worker configuration
+guard remains. No volunteer binary, model execution or GPU qualification is claimed.
 
 ## API and integration contract
 
@@ -18,7 +19,8 @@ VRAM-pool checks as a replacement, before any service or child can start.
 In coordinated mode, legacy single replacement and full reconfiguration also
 validate the complete final map before runtime side effects or persistence.
 
-`replace_launches(launches, *, start=None) -> bool` accepts a nonempty list or
+`replace_launches(launches, *, start=None, before_install=None,
+preserve_start_intent=False) -> bool` accepts a nonempty list or
 tuple of at most 16 existing workers. IDs are unique case-insensitively. A subset
 is allowed; omitted workers keep their launch and process. The method validates
 the complete resulting map before changing any intent: declared VRAM pools must
@@ -41,8 +43,18 @@ barrier. `True` means at least one launch compared different; it is not proof th
 all new children started. After all old contained processes are verified absent,
 all replacements are installed under the supervisor lock before the first new
 spawn. Schedule, resource and policy gates still apply. `start=None` uses each
-launch's `auto_start`; an explicit boolean applies to all supplied workers.
-Neither choice overrides an operator Pause.
+launch's `auto_start`; an explicit boolean supplies the batch start policy.
+A remembered explicit Start on a worker waiting for admission takes precedence
+over `start=False`. Neither choice overrides an operator Pause.
+
+The automatic placement caller uses `preserve_start_intent=True` with `start=None`
+to capture existing start requests under the supervisor lock. A public Start on
+an automatic worker waiting for admission is retained even when its saved launch
+has `auto_start=False`; a later Pause cancels it. Untouched disabled workers remain
+disabled. The optional `before_install` callback runs after verified cleanup, under
+the supervisor lock, before any assignment is installed. It must not acquire the
+policy-store coordination lock or reverse the established lock order. A callback
+exception keeps the old map and complete retry latch.
 
 ## Failure and recovery
 
@@ -84,7 +96,7 @@ Coordinated cleanup errors use fixed public/log messages: a timeout exception
 can carry the original command, so its raw text or traceback is not exported by
 the new cleanup path. Legacy non-coordinated error behavior remains unchanged.
 
-## Evidence
+## Historical evidence at source checkpoint 258b4c8
 
 Recovered after the owner's 2026-09-22 resumption. The source and test hashes
 matched the 2026-09-16 paused checkpoint before edits. Sole integration task
@@ -93,7 +105,7 @@ The bounded source component passed final integrated validation and three scoped
 internal review passes; no release qualification is implied. The coordinator's
 September 22 checkpoint records the resulting commit and complete evidence.
 
-The current five-suite run passed **114 tests, with five platform skips**, exit
+That checkpoint's five-suite run passed **114 tests, with five platform skips**, exit
 0 and ten stable source/test hashes (29.188 seconds runner wall time), on
 2026-09-22. The suites were joint transitions, worker supervisor, edge
 supervisor, process lifetime and volunteer placement pause. Source SHA256:
@@ -132,7 +144,8 @@ accelerator memory. POSIX-only skips, real GPU execution, installed Linux and
 frozen multiprocessing remain unqualified. Raw evidence is saved under
 `C:/Users/Moe/.communityai-beta/joint-worker-transition-*`; the old atomic paused
 checkpoint remains historical recovery evidence. The integration coordinator
-will bind current results and remaining review gates in its shared checkpoint.
+records the newer runtime integration's results and remaining review gates in its
+separate joint-runtime checkpoint.
 
 No new spending, dependency/model download, external message, publication or
 change to other full-beta acceptance gates is included.

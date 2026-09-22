@@ -198,6 +198,7 @@ class WorkerLaunch:
     # Keep the guard with the exact child mask and resource reservation when an
     # automatic placement is replaced. Fresh equivalent probes do not reassign it.
     device_available: Optional[Callable[[], bool]] = field(default=None, compare=False, repr=False)
+    placement_available: Optional[Callable[[], bool]] = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.worker_id or not self.command:
@@ -403,6 +404,7 @@ class _WorkerRecord:
     cleanup_pending: bool = False
     natural_exit_code: Optional[int] = None
     start_after_cleanup: bool = False
+    start_after_admission: bool = False
     recent_logs: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=50))
 
 
@@ -460,6 +462,8 @@ class WorkerSupervisor:
         self._process_cleanup_locks = weakref.WeakKeyDictionary()
         self._verified_stops = weakref.WeakSet()
         self._launch_transition_ids: frozenset[str] = frozenset()
+        self._launch_transition_start_requests: Dict[str, bool] = {}
+        self._launch_transition_preserve_start_intent = False
         self._launch_transition_active = False
         self._launch_transition_state = "idle"
         self._launch_transition_done = threading.Event()
@@ -538,6 +542,15 @@ class WorkerSupervisor:
                 device_available = False
             if device_available is not True:
                 return False, "selected device is unavailable or has changed; reselect it before sharing"
+        if launch.placement_available is not None:
+            try:
+                placement_available = launch.placement_available()
+            except Exception:
+                # Signed-placement checks can contain private keys or paths in
+                # failures. A fixed operational reason is sufficient to retry.
+                placement_available = False
+            if placement_available is not True:
+                return False, "automatic placement is waiting for a live signed intent"
         if record.memory_rejected_command == launch.command:
             return False, "selected blocks exceed the VRAM budget; increase VRAM or contribute fewer blocks"
         if launch.max_vram_bytes is not None:
@@ -932,6 +945,8 @@ class WorkerSupervisor:
         record = self._record(worker_id)
         with self._lock:
             self._require_no_launch_transition_locked()
+            if self._closed:
+                raise RuntimeError("worker supervisor is closed")
             if self._configuration_restart_pending:
                 raise WorkerReconfigurationBusyError("node configuration restart is pending")
             if not record.launch.policy_admitted:
@@ -941,9 +956,11 @@ class WorkerSupervisor:
                     # is pending. The reconciler may start it only after every
                     # policy and signed-placement check admits its next launch.
                     record.operator_paused = False
+                    record.start_after_admission = True
                     return False
                 raise WorkerPolicyError(record.launch.policy_reason)
             record.operator_paused = False
+            record.start_after_admission = False
             record.desired_running = True
             if self._coordinated_launches:
                 record.start_after_cleanup = True
@@ -1032,6 +1049,7 @@ class WorkerSupervisor:
         with self._lock:
             if operator_action:
                 record.operator_paused = True
+                record.start_after_admission = False
             record.desired_running = False
             record.start_after_cleanup = False
             record.schedule_suspended = False
@@ -1106,6 +1124,7 @@ class WorkerSupervisor:
                         "download_progress": self._download_snapshot(record),
                         "desired_running": record.desired_running,
                         "operator_paused": record.operator_paused,
+                        "start_after_admission": record.start_after_admission,
                         "cleanup_pending": record.cleanup_pending,
                         "auto_restart": record.launch.auto_restart,
                         "policy_admitted": record.launch.policy_admitted,
@@ -1222,7 +1241,14 @@ class WorkerSupervisor:
                 raise ValueError("joint automatic placements overlap within an exact manifest")
             prior.append((start, end))
 
-    def replace_launches(self, launches: Sequence[WorkerLaunch], *, start: Optional[bool] = None) -> bool:
+    def replace_launches(
+        self,
+        launches: Sequence[WorkerLaunch],
+        *,
+        start: Optional[bool] = None,
+        before_install: Optional[Callable[[], None]] = None,
+        preserve_start_intent: bool = False,
+    ) -> bool:
         """Quiesce an existing subset before atomically installing its launches.
 
         Coordinated containment must have been enabled at construction. Every
@@ -1231,11 +1257,19 @@ class WorkerSupervisor:
         A failed cleanup preserves old assignments and blocks all new starts;
         only a retry covering the pending subset can complete the transition.
         The caller still owns signed placement admission and aggregate budgets.
+        An optional final admission callback runs under the supervisor lock after
+        cleanup and before installation. It must not acquire higher-order locks.
+        Preserving start intent captures each worker's current request under that
+        same lock and keeps it across a failed batch until complete-set retry.
         """
         if not isinstance(launches, (tuple, list)) or not 1 <= len(launches) <= MAX_VISIBLE_ACCELERATORS:
             raise ValueError("joint launch transition requires a bounded nonempty worker list")
         if start is not None and type(start) is not bool:
             raise ValueError("joint launch start must be a boolean or None")
+        if before_install is not None and not callable(before_install):
+            raise ValueError("joint launch before_install must be callable or None")
+        if type(preserve_start_intent) is not bool or (preserve_start_intent and start is not None):
+            raise ValueError("preserve_start_intent must be a boolean and requires start=None when enabled")
         replacements = {}
         for launch in launches:
             if not isinstance(launch, WorkerLaunch) or not isinstance(launch.worker_id, str):
@@ -1255,10 +1289,22 @@ class WorkerSupervisor:
                 raise WorkerNotFoundError("joint launch transition names an unknown worker")
             if not self._launch_transition_ids <= replacements.keys():
                 raise WorkerReconfigurationBusyError("retry must include every pending worker transition")
+            if self._launch_transition_ids and preserve_start_intent != self._launch_transition_preserve_start_intent:
+                raise WorkerReconfigurationBusyError("retry must preserve the launch transition start-intent mode")
             final_launches = tuple(replacements.get(key, record.launch) for key, record in self._records.items())
             self._validate_joint_launches(final_launches)
             records = tuple(self._records[key] for key in sorted(replacements))
             changed = any(record.launch != replacements[record.launch.worker_id.casefold()] for record in records)
+            if preserve_start_intent:
+                for record in records:
+                    key = record.launch.worker_id.casefold()
+                    self._launch_transition_start_requests.setdefault(
+                        key,
+                        record.desired_running
+                        or record.start_after_admission
+                        or (not record.launch.policy_admitted and replacements[key].auto_start),
+                    )
+            self._launch_transition_preserve_start_intent = preserve_start_intent
             self._launch_transition_ids = frozenset(replacements)
             self._launch_transition_active = True
             self._launch_transition_state = "stopping"
@@ -1324,16 +1370,29 @@ class WorkerSupervisor:
                         if self._closed
                         else "worker launch transition cleanup is incomplete"
                     )
+                if before_install is not None:
+                    before_install()
                 # Install every new assignment before evaluating the first start.
                 # Pause writes use this same lock, so stale start intent cannot
                 # undo a Pause received while cleanup was in progress.
                 for record in records:
-                    launch = replacements[record.launch.worker_id.casefold()]
+                    key = record.launch.worker_id.casefold()
+                    launch = replacements[key]
                     record.launch = launch
                     record.last_power_watts = None
-                    requested_start = launch.auto_start if start is None else start
+                    requested_start = (
+                        self._launch_transition_start_requests[key]
+                        if preserve_start_intent
+                        else (launch.auto_start if start is None else start) or record.start_after_admission
+                    )
                     record.desired_running = requested_start and not record.operator_paused and launch.policy_admitted
+                    if record.desired_running:
+                        record.start_after_admission = False
+                    elif preserve_start_intent and launch.automatic and not launch.policy_admitted:
+                        record.start_after_admission = requested_start and not record.operator_paused
                 self._launch_transition_ids = frozenset()
+                self._launch_transition_start_requests = {}
+                self._launch_transition_preserve_start_intent = False
                 self._launch_transition_state = "idle"
                 if self._started:
                     for record in records:
@@ -1377,12 +1436,14 @@ class WorkerSupervisor:
             record.schedule_suspended = False
             record.resource_suspended = False
             record.last_power_watts = None
-            requested_start = launch.auto_start if start is None else start
+            requested_start = (launch.auto_start if start is None else start) or record.start_after_admission
             # This decision is made while holding the same lock as pause_worker().
             # An operator pause that lands after a reconciler snapshot therefore
             # remains authoritative over stale automatic-start intent.
             should_start = requested_start and not record.operator_paused
             record.desired_running = should_start and launch.policy_admitted
+            if record.desired_running:
+                record.start_after_admission = False
             if self._started and record.desired_running:
                 self._spawn_locked(
                     record,
@@ -1485,6 +1546,7 @@ class WorkerSupervisor:
             for record in records:
                 record.desired_running = False
                 record.start_after_cleanup = False
+                record.start_after_admission = False
                 record.schedule_suspended = False
                 record.resource_suspended = False
                 if (
