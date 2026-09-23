@@ -350,6 +350,7 @@ def test_batch_waits_for_every_old_release_and_retries_whole_set(harness):
     s.start_worker("one")
     s.start_worker("two")
     wait_for(lambda: len(h.children) == 2)
+    wait_for(lambda: all(s.snapshot(item.worker_id)["pid"] is not None for item in items))
     h.release_gate.clear()
     new = tuple(replace(item, model_id="replacement") for item in items)
     with pytest.raises(RuntimeError, match="cleanup is incomplete"):

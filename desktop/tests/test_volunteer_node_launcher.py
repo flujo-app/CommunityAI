@@ -513,6 +513,7 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
             ["server", "--self-test"],
             ["--native-self-test"],
             ["--native-self-test", "--require-cuda"],
+            ["--cgroup-extension-self-test"],
             ["--help"],
             ["server", "--help"],
             ["bootstrap", "--help"],
@@ -533,6 +534,9 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
             ["server", "--self-test", "--config", "ordinary.yml"],
             ["--self-test", "--data_dir", str(self.home)],
             ["--native-self-test", "unexpected"],
+            ["--cgroup-extension-self-test", "--worker-cgroup-root", "/private/root"],
+            ["--cgroup-extension-self-test=/private/root"],
+            ["server", "--cgroup-extension-self-test"],
         ):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 self._run(arguments)

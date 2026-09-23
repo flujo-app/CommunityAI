@@ -55,15 +55,18 @@ def validate_cgroup_backend() -> None:
 validate_capability = validate_cgroup_backend
 
 
-def _read_handshake(descriptor: int, expected: bytes) -> None:
+def _read_handshake(descriptor: int, expected: bytes, *, cancel=None) -> None:
     poller = select.poll()
     poller.register(descriptor, select.POLLIN | select.POLLHUP | select.POLLERR)
     deadline = time.monotonic() + _HANDSHAKE_TIMEOUT
     while True:
+        if cancel is not None and cancel.is_set():
+            raise LinuxCgroupProcessError()
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise LinuxCgroupProcessError()
-        if not poller.poll(max(1, math.ceil(remaining * 1000))):
+        interval = remaining if cancel is None else min(remaining, 0.05)
+        if not poller.poll(max(1, math.ceil(interval * 1000))):
             continue
         try:
             value = os.read(descriptor, 1)
@@ -139,14 +142,39 @@ class LinuxCgroupProcess:
         with self._resume_lock:
             if self._resumed:
                 raise LinuxCgroupProcessError()
-            self._resumed = True
-            _, gate, status = self._native.descriptors()
             try:
-                if os.write(gate, b"G") != 1:
-                    raise LinuxCgroupProcessError()
-                # Only successful exec closes this writer via CLOEXEC. Waiting
-                # here prevents loading identity inspection of pre-exec argv.
-                _read_handshake(status, b"")
+                self._release_gate_locked()
+            except Exception:
+                self._abort_unaccepted()
+                raise LinuxCgroupProcessError() from None
+        self.await_exec()
+
+    def release_gate(self):
+        """Commit execution with one pipe write, without waiting for exec."""
+        with self._resume_lock:
+            self._release_gate_locked()
+
+    def _release_gate_locked(self):
+        if self._resumed:
+            raise LinuxCgroupProcessError()
+        self._resumed = True
+        _, gate, _ = self._native.descriptors()
+        try:
+            if os.write(gate, b"G") != 1:
+                raise LinuxCgroupProcessError()
+        except Exception:
+            # The caller owns cleanup; never wait under its intent lock.
+            self._native.close_control()
+            raise LinuxCgroupProcessError() from None
+
+    def await_exec(self, *, cancel=None):
+        """Observe exec outside the supervisor lock; cancellation retains proof."""
+        with self._resume_lock:
+            if not self._resumed:
+                raise LinuxCgroupProcessError()
+            try:
+                # Only successful exec closes this writer via CLOEXEC.
+                _read_handshake(self._native.descriptors()[2], b"", cancel=cancel)
             except Exception:
                 self._abort_unaccepted()
                 raise LinuxCgroupProcessError() from None

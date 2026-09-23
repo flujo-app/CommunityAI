@@ -1138,6 +1138,11 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
             patch.object(build_desktop.platform, "system", return_value="Linux"),
             patch.object(build_desktop, "_source_identity", return_value=("a" * 40, "b" * 40)),
             patch.object(build_desktop, "_check_build_storage"),
+            patch.object(
+                build_desktop,
+                "_build_cgroup_extension",
+                return_value={"path": self.project / "build" / "fresh" / "_linux_cgroup_spawn.cpython-test.so"},
+            ) as native_build,
             patch.object(build_desktop, "_run_pyinstaller", side_effect=package),
             patch.dict(sys.modules, {"PyInstaller": pyinstaller, "PyInstaller.__main__": pyinstaller_main}),
         ):
@@ -1146,6 +1151,12 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         arguments, options = calls[1]
         self.assertEqual(arguments[0], str(self.project / "launch_volunteer_node.py"))
         self.assertIn(str(self.project / "src"), arguments)
+        self.assertIn(build_desktop.cgroup_extension.MODULE_NAME, arguments)
+        self.assertIn(
+            f"{self.project / 'build' / 'fresh' / '_linux_cgroup_spawn.cpython-test.so'}{os.pathsep}drift/node",
+            arguments,
+        )
+        native_build.assert_called_once_with(self.project.parent, self.project / "build" / "multigpu-volunteer")
         self.assertEqual(options, {"config_dir": self.project / "build" / "multigpu-volunteer" / "pyinstaller-cache"})
         self.assertIn("desktop/launch_volunteer_node.py", build_desktop._RELEASE_SOURCE_PATHS)
 
@@ -1412,7 +1423,7 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         git("config", "user.name", "Release Test")
         git("add", ".gitattributes")
         git("commit", "-m", "baseline")
-        for relative_path in ("desktop/launch_volunteer.py", "setup.py"):
+        for relative_path in ("desktop/launch_volunteer.py", "setup.py", "desktop/cgroup_extension.py"):
             with self.subTest(source=relative_path):
                 source = repository / relative_path
                 source.parent.mkdir(parents=True, exist_ok=True)
@@ -1430,6 +1441,133 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
                     build_desktop._source_identity(repository, head)
                 git("checkout", "--", relative_path)
+
+
+class CgroupExtensionBuildTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.repository = self.root / "repository"
+        self.source = self.repository / "src" / "drift" / "node" / "_linux_cgroup_spawn.c"
+        self.source.parent.mkdir(parents=True)
+        self.source.write_bytes(b"current source fixture")
+        self.recipe = self.repository / "setup.py"
+        self.recipe.write_bytes(b"current recipe fixture")
+        self.build_root = self.root / "build"
+        self.binary_name = "_linux_cgroup_spawn.cpython-test.so"
+        self.suffixes = patch.object(
+            build_desktop.cgroup_extension.importlib.machinery, "EXTENSION_SUFFIXES", [".cpython-test.so"]
+        )
+        self.suffixes.start()
+        self.addCleanup(self.suffixes.stop)
+
+    def _compile(self, command, **kwargs):
+        self.assertEqual(command[:3], [sys.executable, str(self.recipe), "build_ext"])
+        self.assertIn("--force", command)
+        self.assertEqual(kwargs["cwd"], self.repository)
+        self.assertTrue(kwargs["check"])
+        self.assertEqual(kwargs["timeout"], 180)
+        library = Path(command[command.index("--build-lib") + 1])
+        self.assertTrue(library.is_relative_to(self.build_root))
+        directory = library / "drift" / "node"
+        directory.mkdir(parents=True)
+        (directory / self.binary_name).write_bytes(b"fresh compiler fixture")
+
+    def _build(self):
+        with patch.object(build_desktop.subprocess, "run", side_effect=self._compile) as compile_process:
+            result = build_desktop._build_cgroup_extension(self.repository, self.build_root)
+        compile_process.assert_called_once()
+        return result
+
+    def _diagnostic(self, build):
+        return {
+            "schema_version": 1,
+            "application": "CommunityAI-Cgroup-Extension",
+            "module": "drift.node._linux_cgroup_spawn",
+            "frozen": True,
+            "abi_import_passed": True,
+            "kernel_operations_tested": False,
+            "delegation_verified": False,
+            "installed_recovery_qualified": False,
+            "worker_spawned": False,
+            "model_loading_performed": False,
+            "network_join_performed": False,
+            "binary_name": self.binary_name,
+            "binary_sha256": build["binary_sha256"],
+        }
+
+    def _bundle(self, build):
+        bundle = self.root / "bundle"
+        binary = bundle / "node" / "_internal" / "drift" / "node" / self.binary_name
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(build["path"].read_bytes())
+        return bundle, binary
+
+    def test_fresh_build_binds_recipe_source_and_binary_without_reusing_editable_output(self):
+        (self.source.parent / self.binary_name).write_bytes(b"old editable binary")
+        build = self._build()
+        self.assertEqual(build["binary_sha256"], hashlib.sha256(b"fresh compiler fixture").hexdigest())
+        self.assertEqual(build["source_sha256"], hashlib.sha256(self.source.read_bytes()).hexdigest())
+        self.assertEqual(build["recipe_sha256"], hashlib.sha256(self.recipe.read_bytes()).hexdigest())
+        with patch.object(build_desktop.subprocess, "run") as compile_process:
+            with self.assertRaisesRegex(RuntimeError, "fresh Linux cgroup extension build"):
+                build_desktop._build_cgroup_extension(self.repository, self.build_root)
+        compile_process.assert_not_called()
+
+    def test_successful_optional_build_without_extension_is_a_failure(self):
+        with patch.object(build_desktop.subprocess, "run"), self.assertRaisesRegex(RuntimeError, "fresh Linux cgroup"):
+            build_desktop._build_cgroup_extension(self.repository, self.build_root)
+
+    def test_ambiguous_output_and_changed_compile_inputs_are_rejected(self):
+        for failure in ("ambiguous", "source", "recipe"):
+            with self.subTest(failure=failure):
+                build_root = self.build_root / failure
+
+                def compile_bad(command, **kwargs):
+                    self._compile(command, **kwargs)
+                    if failure == "ambiguous":
+                        library = Path(command[command.index("--build-lib") + 1])
+                        (library / "drift" / "node" / "_linux_cgroup_spawn.abi3.so").write_bytes(b"another binary")
+                    else:
+                        (self.source if failure == "source" else self.recipe).write_bytes(b"changed during compile")
+
+                with (
+                    patch.object(build_desktop.subprocess, "run", side_effect=compile_bad),
+                    self.assertRaisesRegex(RuntimeError, "fresh Linux cgroup extension build"),
+                ):
+                    build_desktop._build_cgroup_extension(self.repository, build_root)
+
+    def test_frozen_digest_must_match_fresh_build_before_evidence_is_written(self):
+        build = self._build()
+        bundle, _ = self._bundle(build)
+        diagnostic = {**self._diagnostic(build), "binary_sha256": "0" * 64}
+        with self.assertRaises(build_desktop.cgroup_extension.CgroupExtensionError):
+            build_desktop._write_cgroup_extension_evidence(bundle, build, diagnostic)
+        self.assertFalse((bundle / build_desktop.cgroup_extension.EVIDENCE_NAME).exists())
+
+    def test_separate_evidence_is_strict_and_bound_to_the_packaged_binary(self):
+        build = self._build()
+        bundle, binary = self._bundle(build)
+        build_desktop._verify_cgroup_extension_evidence(bundle)  # Historical v1 artifact, no new claim.
+        with self.assertRaisesRegex(RuntimeError, "extension evidence is invalid"):
+            build_desktop._verify_cgroup_extension_evidence(bundle, required=True)
+        build_desktop._write_cgroup_extension_evidence(bundle, build, self._diagnostic(build))
+        evidence_path = bundle / build_desktop.cgroup_extension.EVIDENCE_NAME
+        valid_bytes = evidence_path.read_bytes()
+        evidence = json.loads(valid_bytes)
+        self.assertEqual(evidence["source_sha256"], build["source_sha256"])
+        self.assertNotIn(str(self.root), valid_bytes.decode("utf-8"))
+        binary.write_bytes(b"different collected binary")
+        with self.assertRaisesRegex(RuntimeError, "extension evidence is invalid"):
+            build_desktop._verify_cgroup_extension_evidence(bundle)
+        binary.write_bytes(build["path"].read_bytes())
+        evidence["diagnostic"]["delegation_verified"] = True
+        evidence_path.write_bytes(build_desktop._canonical_json(evidence).encode("utf-8"))
+        with self.assertRaisesRegex(RuntimeError, "extension evidence is invalid"):
+            build_desktop._verify_cgroup_extension_evidence(bundle)
+        evidence_path.write_bytes(valid_bytes)
+        build_desktop._verify_cgroup_extension_evidence(bundle, required=True)
 
 
 if __name__ == "__main__":

@@ -28,8 +28,19 @@ rules still apply; restarting the app or observing a missing PID is not proof of
 cleanup. An unresolved operation blocks policy changes, configuration restart and
 placement transitions that would replace its ownership.
 
+After acquisition, the same single runner owns a separate `spawn` ticket. Native
+creation, Linux identity checks, READY/exec acknowledgement waits and cancelled
+birth cleanup run outside the supervisor lock. The process stays private to that
+ticket until exec is acknowledged. Pause cancels the ticket and can return while
+cleanup remains pending; it never releases the reservation merely because no PID
+has yet been published. A fresh Start waits for that exact generation to drain.
+On Linux, the final one-byte gate write is serialized with current intent; an
+already-committed child may execute before cancellation takes effect, but cannot
+publish late readiness after Pause. Unknown creation without a returned handle
+retains the claim for recovery. Shutdown draining includes pending birth.
+
 Raw worker snapshots and worker-action responses expose `resource_operation`
-(`acquire`, `release`, or null), `resource_cancel_requested`, and `cleanup_pending`.
+(`acquire`, `spawn`, `release`, or null), `resource_cancel_requested`, and `cleanup_pending`.
 The bounded contribution status response uses the existing worker state and
 resource reason. Cancellation, cleanup and saved policy are separate facts; a
 saved sharing-off policy does not assert that all background cleanup has finished.
@@ -44,7 +55,7 @@ change is **true to false**. It skips launch preparation and preserves every old
 launch, operation and token while recording the disabled policy on disk.
 
 The supervisor accepts that callback only after every worker has explicit paused
-intent and no desired running intent, and every pending acquisition has been
+intent and no desired running intent, and every pending acquisition or spawn has been
 cancelled. A configuration restart or placement transition still makes it busy.
 Only successful revision-checked persistence sets the node-wide disabled latch and
 publishes the new policy revision. Start is then denied while old cleanup drains,

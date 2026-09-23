@@ -409,6 +409,18 @@ class WorkerSupervisorSettings:
             raise ValueError("worker stop timeout must be positive")
 
 
+@dataclass(frozen=True)
+class _PreparedSpawn:
+    launch: WorkerLaunch
+    token: str
+    environment: dict
+    options: dict
+    containment: Any
+    spawn: Callable
+    loading_binding: Optional[LoadingBinding]
+    loading_values: tuple
+
+
 @dataclass
 class _WorkerRecord:
     progress_directory: Any = field(default=None, init=False, repr=False)
@@ -587,7 +599,9 @@ class WorkerSupervisor:
             return False, f"{label} usage {value:.2f} {unit} exceeds the {limit:.2f} {unit} contribution budget"
         return True, None
 
-    def _resource_status_locked(self, record: _WorkerRecord) -> Tuple[bool, Optional[str]]:
+    def _resource_status_locked(
+        self, record: _WorkerRecord, *, ignore_operation: bool = False
+    ) -> Tuple[bool, Optional[str]]:
         if record.resource_spawn_uncertain:
             return False, _RESOURCE_SPAWN_UNCERTAIN
         if record.resource_release_pending:
@@ -602,7 +616,7 @@ class WorkerSupervisor:
                 self._acquire_resources is None and self._acquire_resources_cancellable is None
             ) or self._release_resources is None:
                 return False, _RESOURCE_WAIT
-            if record.resource_operation is not None:
+            if record.resource_operation is not None and not ignore_operation:
                 return False, _RESOURCE_WAIT
             if record.resource_acquire_failed:
                 return False, record.resource_acquire_reason or _RESOURCE_WAIT
@@ -846,7 +860,7 @@ class WorkerSupervisor:
 
     def _cancel_resource_acquisition_locked(self, record: _WorkerRecord) -> bool:
         operation = record.resource_operation
-        if operation is not None and operation[0] == "acquire":
+        if operation is not None and operation[0] in ("acquire", "spawn"):
             operation[2].set()
             record.cleanup_pending = True
             record.state = WorkerState.STOPPING
@@ -861,6 +875,9 @@ class WorkerSupervisor:
                     record.resource_thread = None
                     return
             kind, value, cancel = operation
+            if kind == "spawn":
+                self._run_spawn_operation(record, operation)
+                continue
             token = error = None
             try:
                 if kind == "acquire":
@@ -956,6 +973,131 @@ class WorkerSupervisor:
         ):
             record.start_after_cleanup = False
             self._spawn_locked(record, defer_outside_schedule=True, defer_unavailable_resources=True)
+
+    def _spawn_ticket_current_locked(self, record: _WorkerRecord, operation: tuple) -> bool:
+        _, prepared, cancel = operation
+        if not (
+            record.resource_operation is operation
+            and self._records.get(prepared.launch.worker_id.casefold()) is record
+            and record.launch is prepared.launch
+            and record.resource_token == prepared.token
+            and not cancel.is_set()
+            and record.desired_running
+            and not record.operator_paused
+            and not self._closed
+            and not self._sharing_disabled
+            and not self._configuration_restart_pending
+            and not self._launch_transition_ids
+        ):
+            return False
+        schedule, _ = self._schedule_status()
+        resources, _ = self._resource_status_locked(record, ignore_operation=True)
+        record.schedule_suspended = not schedule
+        record.resource_suspended = not resources
+        return schedule and resources
+
+    def _run_spawn_operation(self, record: _WorkerRecord, operation: tuple) -> None:
+        """The reservation runner owns birth, handshakes and uncertain cleanup.
+
+        The process remains private to this operation until exec is acknowledged.
+        Pause can invalidate the ticket without contending on cgroup or pipe I/O.
+        Only the final gate write is serialized with Pause; Linux exec observation
+        and identity validation run outside the control lock.
+        """
+        _, prepared, cancel = operation
+        process = None
+        attempted = False
+        error = None
+        cleaned = True
+        try:
+            with self._lock:
+                current = self._spawn_ticket_current_locked(record, operation)
+            if current:
+                attempted = True
+                process = prepared.spawn(
+                    list(prepared.launch.command),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    env=prepared.environment,
+                    **prepared.options,
+                )
+                if prepared.containment is not None:
+                    with self._lock:
+                        self._process_containments[id(process)] = prepared.containment
+                    prepared.containment.attach(process)
+                    split_resume = callable(getattr(prepared.containment, "release_gate", None))
+                    with self._lock:
+                        current = self._spawn_ticket_current_locked(record, operation)
+                        if current:
+                            if split_resume:
+                                prepared.containment.release_gate(process)
+                            else:
+                                prepared.containment.resume(process)
+                    if current and split_resume:
+                        prepared.containment.await_exec(process, cancel=cancel)
+                with self._lock:
+                    if current and self._spawn_ticket_current_locked(record, operation):
+                        record.resource_operation = None
+                        record.resource_operation_active = False
+                        record.cleanup_pending = False
+                        record.start_after_cleanup = False
+                        try:
+                            self._publish_spawn_locked(
+                                record, process, prepared.environment, prepared.loading_binding, prepared.loading_values
+                            )
+                        except Exception:
+                            # Publication (for example log-thread startup) may
+                            # fail after storing the process. Restore this sole
+                            # owner before exposing state to Pause or shutdown.
+                            record.resource_operation = operation
+                            record.resource_operation_active = True
+                            record.process = None
+                            record.cleanup_pending = True
+                            raise
+                        return
+        except Exception as exc:
+            error = exc
+        # A cancelled or failed generation cannot publish readiness. Keep its
+        # exact containment and token until this same runner proves its death.
+        if process is not None:
+            try:
+                process.kill()
+                self._terminate(process)
+                if process.stdout is not None:
+                    process.stdout.close()
+            except Exception:
+                cleaned = False
+        elif prepared.containment is not None:
+            try:
+                prepared.containment.close()
+            except Exception:
+                pass
+        with self._lock:
+            if record.resource_operation is not operation:
+                raise RuntimeError("worker spawn operation ownership changed")
+            record.resource_operation = None
+            record.resource_operation_active = False
+            record.process = None if cleaned else process
+            record.resource_spawn_uncertain = attempted and process is None
+            record.cleanup_pending = not cleaned or record.resource_spawn_uncertain
+            record.state = WorkerState.PAUSED if cancel.is_set() else WorkerState.CRASHED
+            record.last_error = (
+                _RESOURCE_SPAWN_UNCERTAIN
+                if record.resource_spawn_uncertain
+                else "worker process cleanup is incomplete"
+                if not cleaned
+                else "worker process containment could not be established"
+                if error is not None
+                else None
+            )
+            record.next_restart_at = time.monotonic() + record.launch.restart_backoff
+            if record.process is None and not record.resource_spawn_uncertain:
+                self._release_resources_locked(record)
 
     def _spawn_locked(
         self,
@@ -1158,8 +1300,27 @@ class WorkerSupervisor:
                 except Exception:
                     self._fail_loading_locked(record)
                     raise ValueError(_LOADING_FAILED) from None
-            spawn_attempted = True
             spawn = getattr(containment, "spawn", self._popen) if recovery_mode else self._popen
+            if resources_acquired and self._acquire_resources_cancellable is not None:
+                self._queue_resource_operation_locked(
+                    record,
+                    (
+                        "spawn",
+                        _PreparedSpawn(
+                            record.launch,
+                            record.resource_token,
+                            environment,
+                            spawn_options,
+                            containment,
+                            spawn,
+                            loading_binding,
+                            loading_values,
+                        ),
+                        threading.Event(),
+                    ),
+                )
+                return False
+            spawn_attempted = True
             process = spawn(
                 list(record.launch.command),
                 stdin=subprocess.DEVNULL,
@@ -1225,6 +1386,9 @@ class WorkerSupervisor:
             record.next_restart_at = time.monotonic() + record.launch.restart_backoff
             return False
 
+        return self._publish_spawn_locked(record, process, environment, loading_binding, loading_values)
+
+    def _publish_spawn_locked(self, record, process, environment, loading_binding, loading_values) -> bool:
         if record.started_at is not None:
             record.restart_count += 1
         record.process = process
@@ -1728,7 +1892,7 @@ class WorkerSupervisor:
                         else record.resource_operation[0],
                         "resource_cancel_requested": bool(
                             record.resource_operation is not None
-                            and record.resource_operation[0] == "acquire"
+                            and record.resource_operation[0] in ("acquire", "spawn")
                             and record.resource_operation[2].is_set()
                         ),
                         "auto_restart": record.launch.auto_restart,
@@ -2142,7 +2306,7 @@ class WorkerSupervisor:
                 if (
                     not record.operator_paused
                     or record.desired_running
-                    or (operation is not None and operation[0] == "acquire" and not operation[2].is_set())
+                    or (operation is not None and operation[0] in ("acquire", "spawn") and not operation[2].is_set())
                 ):
                     raise WorkerReconfigurationBusyError("pause all contribution workers before disabling sharing")
             persist()
@@ -2330,5 +2494,5 @@ class WorkerSupervisor:
         if monitor is not None:
             monitor.join(timeout=5)
         for record in records:
-            if record.process is None and record.progress_directory is not None:
+            if record.process is None and record.resource_operation is None and record.progress_directory is not None:
                 record.progress_directory.cleanup()

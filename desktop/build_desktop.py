@@ -24,8 +24,10 @@ from communityai_desktop.acceptance import run_self_test
 from communityai_desktop.pyside_shell import check_runtime
 
 try:  # Direct script execution and repository test imports use different roots.
+    import cgroup_extension
     from runtime_packaging import normalize_runtime
 except ModuleNotFoundError:
+    from desktop import cgroup_extension
     from desktop.runtime_packaging import normalize_runtime
 
 APP_NAME = "CommunityAI"
@@ -100,6 +102,7 @@ _RELEASE_SOURCE_PATHS = (
     ".gitattributes",
     ".github/workflows/desktop.yaml",
     "desktop/build_desktop.py",
+    "desktop/cgroup_extension.py",
     "desktop/runtime_packaging.py",
     "desktop/launch_desktop.py",
     "desktop/launch_volunteer.py",
@@ -292,6 +295,113 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _build_cgroup_extension(repository: Path, build_root: Path) -> dict[str, object]:
+    """Compile this source into an exclusive tree, never reuse an editable binary."""
+    native_root = build_root / "cgroup-extension-build"
+    try:
+        if native_root.exists() or _is_link_or_junction(native_root):
+            raise RuntimeError("native build tree must be new")
+        native_root.mkdir(parents=True)
+        recipe = repository / "setup.py"
+        source = repository / "src" / "drift" / "node" / "_linux_cgroup_spawn.c"
+        recipe_digest = cgroup_extension.binary_sha256(recipe)
+        source_digest = cgroup_extension.binary_sha256(source)
+        library = native_root / "lib"
+        subprocess.run(
+            [
+                sys.executable,
+                str(recipe),
+                "build_ext",
+                "--build-lib",
+                str(library),
+                "--build-temp",
+                str(native_root / "temp"),
+                "--force",
+            ],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        # setup.py deliberately makes this extension optional for ordinary source
+        # installs. The volunteer artifact requires a fresh concrete result.
+        binary = cgroup_extension.find_extension(library / "drift" / "node")
+        for directory in (library, library / "drift", library / "drift" / "node"):
+            if _is_link_or_junction(directory) or not directory.is_dir():
+                raise RuntimeError("native build output is redirected")
+        if not binary.resolve(strict=True).is_relative_to(native_root.resolve(strict=True)):
+            raise RuntimeError("native build output escaped its tree")
+        if (
+            cgroup_extension.binary_sha256(recipe) != recipe_digest
+            or cgroup_extension.binary_sha256(source) != source_digest
+        ):
+            raise RuntimeError("native build inputs changed")
+        return {
+            "path": binary,
+            "binary_sha256": cgroup_extension.binary_sha256(binary),
+            "source_sha256": source_digest,
+            "recipe_sha256": recipe_digest,
+        }
+    except Exception:
+        raise RuntimeError("fresh Linux cgroup extension build is unavailable") from None
+
+
+def _verify_cgroup_extension_evidence(bundle_root: Path, *, required: bool = False) -> None:
+    """Verify optional extension evidence without changing historical v1 metrics."""
+    evidence_path = bundle_root / cgroup_extension.EVIDENCE_NAME
+    if not evidence_path.exists() and not _is_link_or_junction(evidence_path) and not required:
+        return  # Older v1 artifacts make no extension-import qualification claim.
+    try:
+        if _is_link_or_junction(evidence_path) or not evidence_path.is_file():
+            raise ValueError("unsafe extension evidence")
+        payload = evidence_path.read_bytes()
+        evidence = json.loads(payload.decode("utf-8"))
+        if (
+            type(evidence) is not dict
+            or set(evidence) != {"schema_version", "scope", "source_sha256", "recipe_sha256", "diagnostic"}
+            or type(evidence["schema_version"]) is not int
+            or evidence["schema_version"] != 1
+            or evidence["scope"] != "extension-import-only"
+            or payload != _canonical_json(evidence).encode("utf-8")
+        ):
+            raise ValueError("invalid extension evidence")
+        for key in ("source_sha256", "recipe_sha256"):
+            if not isinstance(evidence[key], str) or re.fullmatch("[0-9a-f]{64}", evidence[key]) is None:
+                raise ValueError("invalid source binding")
+        internal = bundle_root / NODE_DIRECTORY / PYINSTALLER_CONTENTS_DIRECTORY
+        for directory in (internal, internal / "drift", internal / "drift" / "node"):
+            if _is_link_or_junction(directory) or not directory.is_dir():
+                raise ValueError("unsafe extension directory")
+        binary = cgroup_extension.find_extension(internal / "drift" / "node", current_abi=False)
+        cgroup_extension.validate_contract(
+            evidence["diagnostic"],
+            expected_sha256=cgroup_extension.binary_sha256(binary),
+            expected_name=binary.name,
+        )
+    except Exception:
+        raise RuntimeError("packaged Linux cgroup extension evidence is invalid") from None
+
+
+def _write_cgroup_extension_evidence(bundle_root: Path, build: dict[str, object], diagnostic) -> None:
+    cgroup_extension.validate_contract(
+        diagnostic, expected_sha256=build["binary_sha256"], expected_name=build["path"].name
+    )
+    # Keep import evidence separate: adding a nested runtime key would also
+    # break the strict historical schema-v1 desktop metrics contract.
+    evidence = {
+        "schema_version": 1,
+        "scope": "extension-import-only",
+        "source_sha256": build["source_sha256"],
+        "recipe_sha256": build["recipe_sha256"],
+        "diagnostic": diagnostic,
+    }
+    destination = bundle_root / cgroup_extension.EVIDENCE_NAME
+    with destination.open("xb") as stream:
+        stream.write(_canonical_json(evidence).encode("utf-8"))
+    _verify_cgroup_extension_evidence(bundle_root, required=True)
 
 
 def _internal_file_symlink_artifact(
@@ -857,6 +967,7 @@ def _verify_release_attestations(
 ) -> dict[str, object]:
     output_root = output_root.resolve()
     artifacts = _bundle_artifacts(output_root / profile.app_name, profile=profile)
+    _verify_cgroup_extension_evidence(output_root / profile.app_name)
     expected_checksums = _render_sha256sums(artifacts, profile=profile)
     checksums_path = output_root / CHECKSUMS_NAME
     if not checksums_path.is_file() or checksums_path.is_symlink():
@@ -1519,6 +1630,7 @@ def main() -> int:
             publication_evidence,
         )
 
+    cgroup_build = _build_cgroup_extension(repository, build_root) if profile == VOLUNTEER_BUILD_PROFILE else None
     sidecar_dist = build_root / "sidecar-dist"
     node_args = [
         str(project / profile.node_launcher),
@@ -1546,6 +1658,14 @@ def main() -> int:
         # The sidecar imports only the stdlib-only profile module from desktop;
         # it must not acquire the Qt UI runtime.
         node_args.extend(("--paths", str(project / "src")))
+        node_args.extend(
+            (
+                "--hidden-import",
+                cgroup_extension.MODULE_NAME,
+                "--add-binary",
+                f"{cgroup_build['path']}{os.pathsep}drift/node",
+            )
+        )
     if platform.system() == "Linux":
         # Approved desktop profiles use eager/native kernels. Optional PEFT/bitsandbytes
         # imports otherwise initialize Triton's JIT on GPU hosts, requiring a compiler
@@ -1596,6 +1716,11 @@ def main() -> int:
         _run_bundle(node_executable, ("bootstrap", "--help"), environment, timeout=180)
         _run_bundle(node_executable, ("server", "--help"), environment, timeout=180)
         _run_bundle(node_executable, ("edge-acquire", "--help"), environment, timeout=180)
+        if cgroup_build is not None:
+            diagnostic = json.loads(
+                _run_bundle(node_executable, cgroup_extension.DIAGNOSTIC_FLAG, environment, timeout=30).stdout
+            )
+            _write_cgroup_extension_evidence(bundle_root, cgroup_build, diagnostic)
     bundle_bytes, file_count = _directory_metrics(bundle_root)
     node_bytes, node_file_count = _directory_metrics(node_root)
     metrics = {

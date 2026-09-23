@@ -183,6 +183,22 @@ def main() -> int:
     # Torch, Hivemind, or any application modules.
     multiprocessing.freeze_support()
     argv = sys.argv[1:]
+    if any(argument.split("=", 1)[0] == "--cgroup-extension-self-test" for argument in argv):
+        try:
+            from cgroup_extension import CgroupExtensionError, import_contract, unavailable_contract
+        except ModuleNotFoundError:
+            from desktop.cgroup_extension import CgroupExtensionError, import_contract, unavailable_contract
+
+        if argv != ["--cgroup-extension-self-test"]:
+            print(json.dumps(unavailable_contract(), sort_keys=True))
+            return 2
+        try:
+            result = import_contract()
+        except CgroupExtensionError:
+            print(json.dumps(unavailable_contract(), sort_keys=True))
+            return 1
+        print(json.dumps(result, sort_keys=True))
+        return 0
     if argv == ["--self-test"]:
         print(json.dumps(_runtime_contract(), sort_keys=True))
         return 0

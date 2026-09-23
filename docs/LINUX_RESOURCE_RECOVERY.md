@@ -44,12 +44,22 @@ operation that the kernel implements. A legacy or hybrid hierarchy, read-only
 mount, invalid domain, unavailable native extension or denied operation must
 remain unavailable rather than using spawn-then-migrate containment.
 
-The compiled native extension must be built for and included in the exact Linux
-runtime artifact. Frozen bundle collection, ABI compatibility and execution under
-the installed user's actual security policy need their own checks. Importing a
-module or running an uncontained Python fallback is not qualification of atomic
-creation. No package installation, kernel change or service provisioning follows
-from this document.
+The volunteer builder now compiles the current `setup.py`/C source into a fresh
+private build directory and explicitly includes the resulting extension. An
+absent, ambiguous or mismatched binary fails the build. Its frozen sidecar runs
+the exact `--cgroup-extension-self-test` diagnostic and compares the loaded
+binary's hash with that fresh build. This diagnostic loads the extension directly
+without importing model packages or invoking kernel operations. It accepts no
+cgroup path. The separate `cgroup-extension-import.json` artifact records its
+limited ABI-import evidence and source/build hashes; historical schema-v1 desktop
+metrics remain compatible. An older artifact without this record makes no new
+extension claim.
+
+Actual installed-user kernel/delegation policy and complete frozen worker execution
+still require qualification. A tiny frozen diagnostic artifact can prove inclusion
+and ABI loading only. Importing a module or running an uncontained Python fallback
+is not qualification of atomic creation. No package installation, kernel change
+or service provisioning follows from this document.
 
 The kernel's subtree `populated` state includes descendants; a parent PID exit
 or a list of currently observed PIDs does not replace that state. Existing
@@ -112,7 +122,12 @@ Restart=no
 ```
 
 The real helper must establish its control subgroup before starting node or
-worker work, and discover its own verified mount/delegation. The node needs a
+worker work, and discover its own verified mount/delegation. It must launch the
+node inside that delegated hierarchy: merely passing a sibling service's writable
+path does not establish permission to create children across the common ancestor.
+Its mount, user and cgroup namespaces must remain stable across node restarts;
+per-node namespace replacement invalidates retained recovery identities.
+The node needs a
 checked reference to that exact root. An arbitrary environment string is not an
 authenticated grant, and writable cgroup files alone do not establish ownership.
 The helper must preserve the profile's native credential namespace, private
@@ -154,9 +169,21 @@ No private cgroup path, owner token or raw OS error belongs in public messages.
 
 ## Acceptance still required
 
-Source-level manager/native tests do not qualify the connected Linux
-WorkerSupervisor and child CLI loading-ready, Pause and reload workflow. That
-end-to-end source workflow and the installed workflow both remain required.
+`tests/test_linux_cgroup_supervisor_runtime.py` exercises the real node builder,
+WorkerSupervisor, managed CLI, private loading protocol and durable manager against
+an actual private Linux cgroup hierarchy. Controlled server bodies report waiting,
+loading and ready; tests cover descendant cleanup, paused configuration restart,
+owner hard exit and fresh supervised admission. Native birth/exec barriers also
+verify responsive status/Pause/shutdown, retained claims and rejection of late
+readiness. Model bodies, resource snapshots and builder GPU inventory are fixtures.
+This source workflow does not qualify installed desktop/service ownership, models,
+accelerators or actual host reboot/power loss.
+
+The supervisor's one resource runner owns pending birth and cleanup. Linux READY
+and exec waits do not hold its control lock; the final gate write alone commits
+execution under current intent. Cancellation after that commit may leave a child
+running until certified subtree cleanup, with its full reservation still held.
+Other live policy/device probes and kernel I/O keep their separate latency limits.
 
 - Verify explicit selection, no-selection boot-only compatibility and absence
   of fallback after any explicit-profile failure, through the real node builder

@@ -435,6 +435,22 @@ class LinuxCgroupContainment:
         except Exception:
             raise RecoverableStateError() from None
 
+    def release_gate(self, process):
+        # attach() must already have validated the native identity outside the
+        # supervisor lock. This step only commits the exact owned child's gate.
+        _require(process is self._process and process is not None)
+        try:
+            process.release_gate()
+        except Exception:
+            raise RecoverableStateError() from None
+
+    def await_exec(self, process, *, cancel=None):
+        _require(process is self._process and process is not None)
+        try:
+            process.await_exec(cancel=cancel)
+        except Exception:
+            raise RecoverableStateError() from None
+
     def has_members(self):
         try:
             self._validate()

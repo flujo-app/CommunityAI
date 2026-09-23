@@ -261,6 +261,32 @@ class LinuxCgroupProcessNativeTests(unittest.TestCase):
         with self.assertRaises(self.backend.LinuxCgroupProcessError):
             process.resume()
 
+    def test_synchronous_gate_write_failure_reaps_without_executing_body(self):
+        marker = self.evidence / "executed"
+        process = self.spawn("from pathlib import Path;import sys;Path(sys.argv[1]).touch()", str(marker))
+        gate = process._native.descriptors()[1]
+        original = os.write
+
+        def failed_write(descriptor, data):
+            if descriptor == gate:
+                raise BrokenPipeError("controlled gate failure")
+            return original(descriptor, data)
+
+        with patch.object(self.backend.os, "write", side_effect=failed_write):
+            with self.assertRaises(self.backend.LinuxCgroupProcessError):
+                process.resume()
+        self.assertIsNotNone(process.poll())
+        self.assertFalse(marker.exists())
+        _wait_for(lambda: not _populated(self.leaf))
+
+    def test_duplicate_resume_does_not_kill_an_already_running_child(self):
+        process = self.spawn("import time;time.sleep(60)")
+        process.resume()
+        with self.assertRaises(self.backend.LinuxCgroupProcessError):
+            process.resume()
+        self.assertIsNone(process.poll())
+        self.assertTrue(_populated(self.leaf))
+
     def test_ready_closes_inherited_owner_lease_before_execution(self):
         import fcntl
 

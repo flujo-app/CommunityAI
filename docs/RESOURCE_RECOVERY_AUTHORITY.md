@@ -191,6 +191,15 @@ Structural recovery validation still permits frozen groups so `cgroup.kill`
 can terminate their members. Successful orphan cleanup does not permit new
 admission while the configured anchor remains frozen.
 
+The asynchronous supervisor validates attachment outside its control lock, then
+uses `release_gate` to serialize the exact owned child's one-byte execution grant
+with Pause. `await_exec` observes the acknowledgement on the resource runner.
+Pause cannot revoke a grant already written, so cancellation retains the complete
+reservation through whole-subtree cleanup and rejects any late ready observation.
+No generation is published as running until its exec acknowledgement is accepted.
+The synchronous `resume` adapter preserves its direct-child cleanup on a failed
+first grant; duplicate resume rejection does not terminate a healthy child.
+
 The child must start in an unfrozen cgroup and close inherited authority
 descriptors before signalling readiness and waiting on the parent gate. It must close rather than unlock a
 copied flock descriptor. Creating an already-frozen child could leave that child

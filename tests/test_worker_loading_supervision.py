@@ -76,6 +76,7 @@ def harness(tmp_path):
 def start(h):
     h.supervisor.start_worker("worker")
     wait_for(lambda: bool(h.children))
+    wait_for(lambda: h.supervisor.snapshot("worker")["pid"] is not None)
     process = h.children[-1]
     identities = []
 
@@ -141,6 +142,7 @@ def test_invalid_or_failed_ack_stops_contained_child_without_restart(harness, ba
     assert len(h.children) == 1
     s.start_worker("worker")
     wait_for(lambda: len(h.children) == 2)
+    wait_for(lambda: s.snapshot("worker")["pid"] is not None)
     assert s.snapshot("worker")["load_state"] == "waiting"
     assert h.environments[0]["DRIFT_INTERNAL_LOADING_TOKEN"] != h.environments[1]["DRIFT_INTERNAL_LOADING_TOKEN"]
 

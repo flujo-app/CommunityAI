@@ -268,6 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ["server", "--self-test"],
         ["--native-self-test"],
         ["--native-self-test", "--require-cuda"],
+        ["--cgroup-extension-self-test"],
         ["--help"],
         ["bootstrap", "--help"],
         ["server", "--help"],
