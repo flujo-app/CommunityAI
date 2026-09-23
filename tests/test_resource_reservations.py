@@ -165,6 +165,64 @@ def test_checked_close_zero_timeout_still_attempts_an_uncontended_journal(admiss
     assert admission.manager.close(timeout=0)
 
 
+def test_drain_guard_holds_real_global_lock_through_ack_and_does_not_close(admission):
+    manager = admission.manager
+    competing = ResourceReservationManager(admission.directory, snapshot_provider=admission.snapshot, clock=lambda: 100)
+    with manager.drain_guard():
+        with pytest.raises(ResourceReservationError):
+            competing.acquire(admission.launch())
+        assert records(admission) == []
+    token = competing.acquire(admission.launch())
+    competing.release(token)
+    token = manager.acquire(admission.launch())
+    manager.release(token)
+    assert manager.close()
+
+
+def test_failed_ack_releases_global_lock_without_forging_cleanup(admission):
+    with pytest.raises(OSError):
+        with admission.manager.drain_guard():
+            raise OSError("durable acknowledgement failed")
+    token = admission.manager.acquire(admission.launch())
+    admission.manager.release(token)
+
+
+@pytest.mark.parametrize("field", ["_owned", "_pending_release", "_uncertain", "_recovery_containments"])
+def test_drain_guard_refuses_retained_local_uncertainty(admission, field):
+    setattr(admission.manager, field, {"retained"})
+    with pytest.raises(ResourceReservationError):
+        with admission.manager.drain_guard():
+            pytest.fail("uncertainty is not clean")
+
+
+def test_drain_guard_refuses_foreign_record_and_missing_journal(admission):
+    competing = ResourceReservationManager(admission.directory, snapshot_provider=admission.snapshot, clock=lambda: 100)
+    token = competing.acquire(admission.launch())
+    with pytest.raises(ResourceReservationError):
+        with admission.manager.drain_guard():
+            pytest.fail("foreign record is not empty")
+    competing.release(token)
+    (admission.directory / "generations.json").unlink()
+    with pytest.raises(Exception):
+        with admission.manager.drain_guard():
+            pytest.fail("missing journal is not empty")
+
+
+def test_drain_guard_propagates_worker_subtree_failure(admission, monkeypatch):
+    from drift.node import linux_cgroup_recovery
+    from drift.node.resource_recovery import RecoverableStateError
+
+    admission.manager._worker_cgroup_root = "/fixture/workers"
+
+    def populated(*args):
+        raise RecoverableStateError("cleanup_pending")
+
+    monkeypatch.setattr(linux_cgroup_recovery, "verify_cgroup_tree_empty", populated)
+    with pytest.raises(RecoverableStateError):
+        with admission.manager.drain_guard():
+            pytest.fail("live subtree cannot acknowledge a drain")
+
+
 def test_checked_close_verifies_an_explicit_worker_subtree_after_empty_journal(admission, monkeypatch):
     from drift.node import linux_cgroup_recovery
 

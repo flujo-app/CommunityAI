@@ -231,6 +231,55 @@ installed support is claimed.
 
 ## Public status and operator behavior
 
+### Durable anchor intent primitive (not yet connected to node launch)
+
+`linux_anchor_state.py` supplies a serialized single-owner intent store for the
+fixed volunteer profile. A profile-level `anchor-state.lock` is a persistent
+initialization marker, separate from `anchor/state.json`. Default open is strictly
+existing-only: it never recreates missing marker/state/directory, including when
+both artifacts are lost. First creation requires explicit `initialize=True` and
+an empty private profile directory, before any configuration or work exists;
+its exclusive marker creator alone may initialize. The caller must possess
+fresh-profile bootstrap authority independently of file absence; the flag is
+never an automatic recovery fallback. Even an empty directory could reflect
+lost state rather than first use. Deleting evidence is not a recovery procedure.
+
+The record binds the actual service invocation/process identity, host and boot,
+the exact four cgroup profiles, and native profile/directory/lock identities.
+Reopening requires that same binding and live layout; this is not replacement
+anchor or reboot recovery. Private files, no-follow opens, lifetime OS exclusion,
+strict bounded JSON, file and directory fsync, atomic replacement, readback and
+revision compare-and-swap protect publication. A per-instance lock serializes
+snapshots, validation, writes and close. Existing-state reopen confirms file and
+directory durability under the verified lease before exposing the observed
+intent, including a prior replacement whose acknowledgement was lost. Once a write is uncertain, that
+owner is permanently poisoned and retains its lease until explicitly closed.
+A subsequent reader may inspect an on-disk intent but must reconcile real state:
+even an `idle` record is **not** cleanup, admission, readiness or maintenance
+authority. Partial initialization is retained, never silently reset.
+
+The separate `node_lease` is currently only a tested locking primitive; existing
+launchers do not enforce it. No command launches nodes, receives caller-supplied
+commands/paths, or turns sharing on. The production anchor channel is unchanged
+and read-only. Durable birth-before-exec, node lease handoff, exact generation
+binding, asynchronous cancellation/drain, desktop reconnect, maintenance and
+installer integration remain the next implementation work.
+
+`ResourceReservationManager.drain_guard()` now exposes the same global empty
+journal/local-ownership/worker-subtree proof used by checked close, while holding
+the actual OS journal lock through a caller's acknowledgement transaction. It
+does not close the manager, stop processes, exclude future starts, or authorize
+maintenance. Callers must separately exclude node admission and prove complete
+node-tree death; they must not publish a successful acknowledgement after a
+failed guard or durable write. Calling another operation on the same manager
+inside the guard is unsupported because its lock is deliberately non-reentrant.
+
+Native tests exercise real Linux file replacement/fsync, process flock exclusion,
+and actual cgroup identities with fixture systemd/machine observations in a
+private Docker namespace. Injected write failures are not physical power-loss
+tests. No installed user manager, package upgrade, GPU or model is qualified by
+this component.
+
 Recovery status remains a cached, fixed public object. Its API callback must not
 probe cgroupfs or wait for recovery locks. Checking and retryable cleanup may
 progress in the background while sharing is off; neither creates Start intent.

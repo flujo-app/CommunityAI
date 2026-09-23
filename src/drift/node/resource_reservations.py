@@ -233,19 +233,7 @@ class ResourceReservationManager:
 
         while True:
             try:
-                with self._locked(deadline_reached):
-                    if (
-                        self._read()
-                        or self._owned
-                        or self._pending_release
-                        or self._uncertain
-                        or self._recovery_containments
-                    ):
-                        return False
-                    if self._worker_cgroup_root is not None:
-                        from drift.node.linux_cgroup_recovery import verify_cgroup_tree_empty
-
-                        verify_cgroup_tree_empty(self._worker_cgroup_root)
+                with self.drain_guard(cancelled=deadline_reached):
                     if self._owner_lease is not None:
                         self._owner_lease.close()
                         self._owner_lease = None
@@ -257,6 +245,22 @@ class ResourceReservationManager:
                 time.sleep(min(0.05, remaining))
             except Exception:
                 return False
+
+    @contextmanager
+    def drain_guard(self, *, cancelled=None):
+        """Hold the global empty-journal proof while a caller commits its ack.
+
+        This does not exclude a future node start. The caller separately owns
+        node admission and complete node-tree death for the whole transaction.
+        """
+        with self._locked(cancelled):
+            if self._read() or self._owned or self._pending_release or self._uncertain or self._recovery_containments:
+                raise ResourceReservationError(_ERROR)
+            if self._worker_cgroup_root is not None:
+                from drift.node.linux_cgroup_recovery import verify_cgroup_tree_empty
+
+                verify_cgroup_tree_empty(self._worker_cgroup_root)
+            yield
 
     @staticmethod
     def _recovery_digest(entry, kind):
