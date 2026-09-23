@@ -7,7 +7,6 @@ from unittest.mock import Mock
 
 import pytest
 from communityai_desktop import anchor_lifecycle as lifecycle
-from communityai_desktop.credentials import CredentialProvision
 from communityai_desktop.lifecycle import NodeLifecycleError
 from communityai_desktop.profiles import VolunteerProfile
 
@@ -89,8 +88,7 @@ def fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "control_anchor", anchor)
     monkeypatch.setattr(lifecycle, "inspect_profile_entry", lambda *args: "fixture-proof")
     store = Mock()
-    store.provision.return_value = CredentialProvision("control", "generated", None)
-    store.get_or_migrate.return_value = "control"
+    store.get.return_value = "control"
     clients = []
     status_hook = [lambda: None]
 
@@ -153,7 +151,8 @@ def test_running_attach_uses_existing_credential_without_start_or_rotation(fixtu
     f.supervisor.ensure_client()
     assert f.anchor.calls == []
     f.store.provision.assert_not_called()
-    f.store.get_or_migrate.assert_called_once()
+    f.store.get.assert_called_once()
+    f.store.get_or_migrate.assert_not_called()
 
 
 def test_generation_change_during_status_is_not_returned_or_stopped(fixture):
@@ -204,13 +203,28 @@ def test_duplicate_app_window_never_connects_or_drains(fixture, monkeypatch):
     assert f.anchor.calls == [] and f.store.mock_calls == []
 
 
-def test_catalog_missing_refuses_before_key_or_start(fixture):
+def test_catalog_missing_defers_preparation_to_anchor_start_and_only_reads_key(fixture):
     f = fixture
     f.profile.config_path.unlink()
-    with pytest.raises(NodeLifecycleError, match="exclusive anchor transaction"):
-        f.supervisor.ensure_client()
+    f.supervisor.ensure_client()
     f.supervisor.close()
-    assert f.anchor.calls == [] and f.store.mock_calls == []
+    assert [op for op, _ in f.anchor.calls] == ["start", "drain"]
+    assert [call[0] for call in f.store.mock_calls] == ["get"]
+
+
+def test_safe_pre_effect_rejection_has_one_start_no_drain_and_explicit_retry(fixture):
+    f = fixture
+    original = f.anchor.run_generation
+    f.anchor.run_generation = lambda _: f.anchor.node.update(phase="idle", drain_complete=True)
+    with pytest.raises(NodeLifecycleError, match="Unlock the native credential store"):
+        f.supervisor.ensure_client()
+    assert [op for op, _ in f.anchor.calls] == ["start"]
+    assert f.store.mock_calls == [] and not f.supervisor._engaged
+    f.anchor.run_generation = original
+    f.supervisor.ensure_client()
+    assert [op for op, _ in f.anchor.calls] == ["start", "start"]
+    f.supervisor.close()
+    assert [op for op, _ in f.anchor.calls] == ["start", "start", "drain"]
 
 
 @pytest.mark.parametrize("transition", ["start", "pid", "drain", "idle"])
@@ -338,13 +352,20 @@ def test_linux_maintenance_refuses_even_without_gui_or_qt(tmp_path, monkeypatch)
     assert not (tmp_path / "absent").exists()
 
 
-def test_close_wins_during_legacy_retirement_and_no_client_is_returned(fixture):
+def test_close_wins_during_read_only_key_access_and_no_client_is_returned(fixture):
     f = fixture
-    f.store.provision.return_value = CredentialProvision("control", "migrated", None)
-    f.store.retire_legacy_file.side_effect = lambda provision: f.supervisor.close()
+
+    def key():
+        f.supervisor.close()
+        return "control"
+
+    f.store.get.side_effect = key
     with pytest.raises(NodeLifecycleError, match="closing"):
         f.supervisor.ensure_client()
     assert f.anchor.node["drain_complete"] and f.supervisor._closed
+    f.store.provision.assert_not_called()
+    f.store.get_or_migrate.assert_not_called()
+    f.store.retire_legacy_file.assert_not_called()
 
 
 def test_concurrent_close_retires_start_without_mixed_command_or_late_retry(fixture, monkeypatch):

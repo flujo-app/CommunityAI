@@ -36,6 +36,7 @@ from drift.node.config_lock import (
     NodeConfigWriteLockError,
     _acquire as _acquire_process_lock,
     _release as _release_process_lock,
+    _require_bound_lock,
     node_config_write_lock,
 )
 
@@ -94,7 +95,7 @@ def _unsafe_lock_metadata(metadata: os.stat_result) -> bool:
 
 
 @contextmanager
-def _catalog_bootstrap_lock(path: Path) -> Iterator[None]:
+def _catalog_bootstrap_lock(path: Path, *, expected_identity=None) -> Iterator[None]:
     """Hold a kernel lock, released even if the bootstrap process is killed.
 
     Keep the sidecar: unlinking it lets concurrent installers lock different
@@ -114,10 +115,15 @@ def _catalog_bootstrap_lock(path: Path) -> Iterator[None]:
             _unsafe_lock_metadata(existing) or not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1
         ):
             raise CatalogBootstrapError("Refusing unsafe catalog bootstrap lock file")
-        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        if expected_identity is not None:
+            _require_bound_lock(path.lstat(), expected_identity)
+        flags = os.O_RDWR | (os.O_CREAT if expected_identity is None else 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         descriptor = os.open(path, flags, 0o600)
         opened = os.fstat(descriptor)
+        _require_bound_lock(opened, expected_identity)
         current = path.lstat()
+        _require_bound_lock(current, expected_identity)
         if (
             not stat.S_ISREG(opened.st_mode)
             or opened.st_nlink != 1
@@ -131,9 +137,10 @@ def _catalog_bootstrap_lock(path: Path) -> Iterator[None]:
             raise CatalogBootstrapError("Another first-install catalog bootstrap is already in progress") from exc
         acquired = True
         current = path.lstat()
+        _require_bound_lock(current, expected_identity)
         if _unsafe_lock_metadata(current) or not os.path.samestat(opened, current):
             raise CatalogBootstrapError("Catalog bootstrap lock changed while it was acquired")
-    except OSError as exc:
+    except (OSError, NodeConfigWriteLockError) as exc:
         raise CatalogBootstrapError(f"Could not lock catalog bootstrap in {path.parent}: {exc}") from exc
     else:
         yield
@@ -551,6 +558,49 @@ class CatalogBootstrapInstaller:
             created=False,
         )
 
+    def _require_write_authority(self):
+        from drift.node.linux_anchor_entry import anchored_catalog_paths, require_admitted_catalog_writer
+
+        try:
+            anchored = anchored_catalog_paths(self.data_dir, self.config_path)
+        except Exception:
+            raise CatalogBootstrapError("Refusing unsafe catalog bootstrap lock ownership evidence") from None
+        if anchored:
+            try:
+                return require_admitted_catalog_writer(self.data_dir, self.config_path)
+            except Exception:
+                raise CatalogBootstrapError(
+                    "Anchored catalog writes require the exact admitted node; use anchor Start for first setup"
+                ) from None
+
+    @contextmanager
+    def _catalog_writer(self):
+        authority = self._require_write_authority()
+        expected = None if authority is None else authority["node/.catalog-bootstrap.lock"]
+        with _catalog_bootstrap_lock(self.lock_path, expected_identity=expected):
+            self._require_write_authority()
+            if authority is None:
+                yield False
+            else:
+                try:
+                    with node_config_write_lock(
+                        self.config_path, expected_identity=authority["node/.node-config.json.write.lock"]
+                    ):
+                        self._require_write_authority()
+                        yield True
+                        self._require_write_authority()
+                except NodeConfigWriteLockError as exc:
+                    raise CatalogBootstrapError("Anchored configuration writer lock is unavailable") from exc
+
+    @contextmanager
+    def _config_writer(self, already_locked):
+        if already_locked:
+            self._require_write_authority()
+            yield
+        else:
+            with node_config_write_lock(self.config_path):
+                yield
+
     def _load_catalog(self, source: str, rendered: str, guard: CatalogRollbackGuard) -> ModelCatalog:
         try:
             envelope = SignedModelCatalog.from_json(rendered)
@@ -595,12 +645,12 @@ class CatalogBootstrapInstaller:
                 paths.add(model.manifest_path)
         return paths
 
-    def _repair_existing_config(self) -> CatalogBootstrapResult:
+    def _repair_existing_config(self, *, config_locked=False) -> CatalogBootstrapResult:
         """Remove proven retired managed entries, retaining model files and user settings."""
         if not self.config_path.is_file() or self.config_path.is_symlink():
             raise CatalogBootstrapError("Catalog migration requires a safe existing node configuration")
         try:
-            with node_config_write_lock(self.config_path):
+            with self._config_writer(config_locked):
                 original = self.config_path.read_text(encoding="utf-8")
                 config = NodeConfig.from_json(original, base_dir=self.config_path.parent)
                 catalog = self._installed_catalog(config)
@@ -617,6 +667,7 @@ class CatalogBootstrapInstaller:
                     if model.manifest_path not in retired
                 ]
                 NodeConfig.from_dict(previous, base_dir=self.config_path.parent)
+                self._require_write_authority()
                 _atomic_write(
                     self.config_path,
                     json.dumps(previous, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -636,8 +687,8 @@ class CatalogBootstrapInstaller:
 
     def repair_existing_config(self) -> CatalogBootstrapResult:
         """Apply offline application migrations before starting an existing node."""
-        with _catalog_bootstrap_lock(self.lock_path):
-            return self._repair_existing_config()
+        with self._catalog_writer() as locked:
+            return self._repair_existing_config(config_locked=locked)
 
     def _install_manifests(self, catalog: ModelCatalog) -> Tuple[Path, ...]:
         import drift
@@ -691,6 +742,7 @@ class CatalogBootstrapInstaller:
                 selectors[folded] = manifest.digest_id
 
             path = self.manifest_dir / f"{manifest.digest}.json"
+            self._require_write_authority()
             _atomic_write(path, manifest.canonical_json() + "\n", overwrite=True)
             installed.append(path)
         return tuple(installed)
@@ -748,7 +800,13 @@ class CatalogBootstrapInstaller:
         return json.dumps(source, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     def _try_candidate(
-        self, source: str, rendered: str, persisted_guard: CatalogRollbackGuard, *, refresh: bool = False
+        self,
+        source: str,
+        rendered: str,
+        persisted_guard: CatalogRollbackGuard,
+        *,
+        refresh: bool = False,
+        config_locked=False,
     ) -> CatalogBootstrapResult:
         guard = CatalogRollbackGuard.from_dict(persisted_guard.to_dict())
         catalog = self._load_catalog(source, rendered, guard)
@@ -757,23 +815,28 @@ class CatalogBootstrapInstaller:
 
         # Configuration points at an immutable envelope. A later failed refresh
         # cannot silently change the policy used by the still-running old config.
+        self._require_write_authority()
         _atomic_write(
             self.catalog_dir / f"{catalog.sequence}-{catalog.digest.removeprefix('sha256:')}.signed.json",
             rendered,
             overwrite=True,
         )
+        self._require_write_authority()
         _atomic_write(self.installed_bootstrap_path, json.dumps(self.bootstrap.to_dict()), overwrite=True)
 
+        self._require_write_authority()
         _atomic_write(
             self.cached_catalog_path,
             json.dumps(SignedModelCatalog.from_json(rendered).to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
             + "\n",
             overwrite=True,
         )
+        self._require_write_authority()
         guard.save(self.rollback_path)
+        self._require_write_authority()
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with node_config_write_lock(self.config_path):
+            with self._config_writer(config_locked):
                 if refresh:
                     original = self.config_path.read_text(encoding="utf-8")
                     old_config = NodeConfig.from_json(original, base_dir=self.config_path.parent)
@@ -828,6 +891,7 @@ class CatalogBootstrapInstaller:
                         previous[field] = generated[field]
                     NodeConfig.from_dict(previous, base_dir=self.config_path.parent)
                     config_text = json.dumps(previous, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+                self._require_write_authority()
                 _atomic_write(self.config_path, config_text, overwrite=refresh)
         except NodeConfigWriteLockError as exc:
             raise CatalogBootstrapError("Another node configuration writer is active") from exc
@@ -843,9 +907,10 @@ class CatalogBootstrapInstaller:
 
     def refresh(self) -> CatalogBootstrapResult:
         """Authenticate a newer sequence while preserving user policy and local settings."""
+        self._require_write_authority()
         if not self.config_path.is_file() or self.config_path.is_symlink():
             raise CatalogBootstrapError("Catalog refresh requires a safe existing node configuration")
-        with _catalog_bootstrap_lock(self.lock_path):
+        with self._catalog_writer() as locked:
             guard = CatalogRollbackGuard.load(self.rollback_path)
             existing = NodeConfig.load(self.config_path)
             current = None
@@ -865,21 +930,22 @@ class CatalogBootstrapInstaller:
                     rendered = self.fetch_text(url, MAX_CATALOG_BYTES)
                     candidate = self._load_catalog(url, rendered, CatalogRollbackGuard.from_dict(guard.to_dict()))
                     if current is not None and candidate.digest == current.digest:
-                        return self._repair_existing_config()
-                    return self._try_candidate(url, rendered, guard, refresh=True)
+                        return self._repair_existing_config(config_locked=locked)
+                    return self._try_candidate(url, rendered, guard, refresh=True, config_locked=locked)
                 except (CatalogBootstrapError, ModelCatalogError, ManifestError, OSError) as exc:
                     errors.append(str(exc))
                     guard = CatalogRollbackGuard.load(self.rollback_path)
             raise CatalogBootstrapError("No trusted catalog update could be activated: " + "; ".join(errors))
 
     def install(self) -> CatalogBootstrapResult:
+        self._require_write_authority()
         if self.config_path.is_symlink():
             raise CatalogBootstrapError(f"Refusing unsafe node configuration symlink {self.config_path}")
         if self.config_path.is_file():
             return self._existing_result()
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with _catalog_bootstrap_lock(self.lock_path):
+        with self._catalog_writer() as locked:
             if self.config_path.is_file() and not self.config_path.is_symlink():
                 return self._existing_result()
             try:
@@ -891,7 +957,7 @@ class CatalogBootstrapInstaller:
             for url in self.bootstrap.catalog_mirrors:
                 try:
                     rendered = self.fetch_text(url, MAX_CATALOG_BYTES)
-                    return self._try_candidate(url, rendered, persisted_guard)
+                    return self._try_candidate(url, rendered, persisted_guard, config_locked=locked)
                 except CatalogBootstrapError as exc:
                     errors.append(str(exc))
                     # _try_candidate persists rollback state before activating the
@@ -910,6 +976,7 @@ class CatalogBootstrapInstaller:
                         "last-known-good cache",
                         rendered,
                         persisted_guard,
+                        config_locked=locked,
                     )
                 except (OSError, UnicodeError, CatalogBootstrapError) as exc:
                     errors.append(f"Could not use last-known-good catalog: {exc}")

@@ -124,9 +124,13 @@ class VolunteerProfileTests(unittest.TestCase):
             store.assert_not_called()
 
     def test_app_wires_fixed_profile_and_never_constructs_normal_updater(self):
-        with patch("communityai_desktop.app.VolunteerProfile.for_current_user", return_value=self.profile), patch(
-            "communityai_desktop.app.NativeCredentialStore"
-        ) as store, patch("communityai_desktop.app.NodeLifecycleSupervisor") as lifecycle, patch(
+        # Legacy direct supervisor wiring is the non-Linux path; Linux anchor
+        # wiring and refused maintenance have separate platform tests.
+        with patch("communityai_desktop.app.sys.platform", "win32"), patch(
+            "communityai_desktop.app.VolunteerProfile.for_current_user", return_value=self.profile
+        ), patch("communityai_desktop.app.NativeCredentialStore") as store, patch(
+            "communityai_desktop.app.NodeLifecycleSupervisor"
+        ) as lifecycle, patch(
             "communityai_desktop.pyside_shell.run", return_value=0
         ) as run, patch(
             "communityai_desktop.updater.installed_root"
@@ -155,9 +159,11 @@ class VolunteerProfileTests(unittest.TestCase):
 
     def test_profile_maintenance_still_works_when_config_is_invalid(self):
         self.write_config(workers=[{"identity_path": "../../outside.key"}])
-        with patch("communityai_desktop.app.VolunteerProfile.for_current_user", return_value=self.profile), patch(
-            "communityai_desktop.maintenance.prepare_update", return_value=0
-        ) as stop, patch("communityai_desktop.app.NativeCredentialStore") as store:
+        with patch("communityai_desktop.app.sys.platform", "win32"), patch(
+            "communityai_desktop.app.VolunteerProfile.for_current_user", return_value=self.profile
+        ), patch("communityai_desktop.maintenance.prepare_update", return_value=0) as stop, patch(
+            "communityai_desktop.app.NativeCredentialStore"
+        ) as store:
             self.assertEqual(main(["--profile", "multigpu-volunteer", "--prepare-update"]), 0)
         stop.assert_called_once_with(
             application_name=self.profile.application_name, instance_data_dir=self.profile.instance_dir

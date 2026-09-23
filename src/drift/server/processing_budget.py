@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import Event
 from typing import Callable
 
-from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
+from drift.node.config_lock import NodeConfigWriteLockError, persistent_sidecar_lock
 
 
 class ProcessingBudget:
@@ -36,7 +36,9 @@ class ProcessingBudget:
         if self.percent == 100:
             return operation()
         while not self.stop.is_set():
-            lock = nullcontext() if self.path is None else node_config_write_lock(self.path)
+            # This is a distinct worker-budget path, not the node configuration.
+            # Preserve its sidecar protocol without borrowing config authority.
+            lock = nullcontext() if self.path is None else persistent_sidecar_lock(self.path)
             try:
                 lock.__enter__()
                 break

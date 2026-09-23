@@ -418,18 +418,109 @@ live generation allows the configured shutdown bound plus API startup time.
 Sharing Start/Pause remain node API operations, distinct from node Start/Drain.
 The initial node always starts sharing-paused with local inference CPU-only.
 
-Linux GUI and launcher catalog bootstrap/refresh are deliberately refused until
-an anchor-exclusive transaction covers the entire mutation. An idle snapshot is
-not write authority. This component supports existing provisioned configurations
-only; first installation/migration remain required beta work, not dropped scope.
+Standalone Linux GUI/launcher catalog bootstrap and migration remain refused.
+First-use setup now belongs to the internal anchor Start transaction below;
+an idle snapshot is never write authority. The running node's authenticated
+catalog refresh is a separate trusted writer, not a GUI setup permission.
 Linux volunteer probe-only is refused without desktop instance ownership, and
 update/removal refuses even with no GUI. The shell cannot emit a successful
 maintenance acknowledgement merely because the node was drained.
 All other Linux fixed-launcher modes, including help/diagnostics and supervised
 workers, require existing root/node directories and cannot recreate their loss.
+The sole build-only exception is exact `--bootstrap-plan-self-test`: it validates
+the fixed packaged bundle without preparing a profile or accessing credentials.
 Explicit desktop credential store/delete commands refuse before preflight or
-keyring access until exclusive credential recovery exists. Normal idle Start
-may provision the existing profile credential; it never rotates a live key.
+keyring access until exclusive credential recovery exists. The desktop only
+reads the native credential after a running generation exists; it never
+provisions, migrates, retires a legacy file or rotates a key from an idle receipt.
+
+## Anchor-owned first-use preparation
+
+`linux_anchor_bootstrap.py` builds a pure, bounded exact-byte plan from the fixed
+sidecar `_internal/bootstrap` publication bundle. Volunteer builds require an
+explicit verified `--publication-bundle`, stage it into both GUI and node, and
+verify both copies against the same input evidence. A missing/invalid package
+refuses before creating the profile. Signature threshold, index/member hashes,
+manifest runtime/execution rules, selector uniqueness and current first-install
+expiry checks remain mandatory; this path does not fetch URLs or weights.
+
+Only explicit `anchor-initialize` seeds `anchor/bootstrap.json` and its private
+output directories. It binds the current service/machine/layout/storage, fixed
+credential location, bundle and ordered output-plan digests, directory identities,
+stable transaction ID, first-admission time and progress. Shared catalog/config
+writer lock inodes are created, fsynced and pinned at initialization, then held
+in catalog-to-config order across preparation. Standalone catalog writers refuse
+anchored paths; only the exact admitted child can run the existing refresh.
+That child pins the ready bootstrap marker and both writer inodes at entry;
+refresh/repair opens existing bound locks (never creates substitutes) and holds
+both across writes. A durable discriminator inside the catalog lock also rejects
+generic writers using an intact node-directory mount alias before directory creation.
+Every node-config writer, including live policy/selection persistence, inherits
+the same admitted config-lock identity from the shared lock wrapper; policy
+publication revalidates it immediately before its atomic exchange. Independent
+worker compute-budget sidecars keep their separate kernel-lock primitive and
+paths; this component does not qualify budget-lock recovery or all-card limits.
+These checks are cooperative ownership, not isolation from a malicious same-UID
+process or an administrator who removes or rewrites evidence.
+The libc/kernel/filesystem rename primitive is exercised before credential or
+catalog output effects. A missing marker, legacy key or preexisting
+configuration is not fresh-install authority. Older profiles require a separate
+checked migration; deleting them to enable initialization is not supported.
+
+Start writes its planned generation/request intent before any preparation
+effect, retaining lifetime ownership plus the resource-manager drain guard.
+The planned generation has no PID/cgroup/API identity yet. Native credential
+creation/readback is followed by immutable manifests/catalog/bootstrap, cached
+catalog and rollback state, with node configuration activated last. Each output
+has durable pending intent, private file fsync, Linux no-replace rename, bound
+parent fsync, exact readback and durable progress. Unknown/mismatched output is
+retained. Only an exact durably pending output can be adopted after lost progress
+acknowledgement; acknowledged output must still exist. No reset or overwrite.
+Current signature time validity is required before the first durable Start
+admission. A later attempt may finish that same exact admitted plan after expiry;
+it cannot admit new or changed bytes. Explicit initialization carries its
+pre-root admission time so crossing expiry does not strand directory creation.
+
+The journal holds only a verifier of the high-entropy control key, never the
+secret. An uncertain keyring set is reread even after an exception. Missing,
+unreadable or different results block without regeneration. A ready profile
+also refuses missing/changed credentials. Filesystem and keyring commits are
+not falsely described as one atomic transaction. A locked/unavailable keyring
+on an attempt's initial read can safely retry in absent, pending or ready state,
+without a new set for a pending/ready digest. An unavailable read immediately
+after a set remains an uncertain effect and blocks. Owner death after pending intent but
+before set leaves a non-reconstructible secret digest: retain and require the
+future checked credential-recovery transaction, never generate another key.
+
+Drain/SIGTERM remains observable during preparation. Cancellation stops only at
+a reconciled durable boundary and prevents node birth. An uncertain effect
+poisons the owner and withholds clean acknowledgement. Unit storage rebind
+tests demonstrate exact-file reconciliation, not a reachable production recovery
+command for a poisoned owner; that command is still required. Native keyring calls are
+synchronous and have no enforced upper bound: a hung backend retains ownership;
+neither the desktop's 300-second startup allowance nor its shutdown timeout proves
+that backend stopped. A bounded keyring mechanism and installed stop-latency
+qualification remain required before unattended release.
+
+After durable ready, Start preserves user settings and checks intact private
+paths, the exact installed bootstrap trust configuration, signed active catalog,
+manifest identities and matching monotonic rollback state. Existing signed
+membership can be authenticated historically after expiry, consistent with the
+node's installed-catalog policy; new first-use admission cannot. Trust-root or
+package-plan replacement needs checked maintenance, not automatic adoption.
+The exact old sidecar, bundle and renderer must remain available until that
+transaction exists. Ready configuration cannot target the mutable catalog cache.
+Runtime/execution and selector checks are repeated before birth.
+No native node leaf is created before readiness. The node still launches
+sharing-paused and with local inference CPU-only.
+
+This is same-invocation preparation/retry, not replacement-service, logout,
+reboot, physical power-loss or frozen Ubuntu qualification. Service enrollment,
+legacy migration, credential recovery and full installer maintenance remain
+required, as do all actual multi-GPU/model and commercial acceptance gates.
+The build includes a read-only fixed-sidecar plan smoke; adding this check is not
+evidence that an actual frozen build or ordinary-user Secret Service test ran.
+Installed fixed diagnostic reason codes and full first-use UI remain open.
 
 Recovery status remains a cached, fixed public object. Its API callback must not
 probe cgroupfs or wait for recovery locks. Checking and retryable cleanup may

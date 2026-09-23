@@ -22,10 +22,6 @@ MAINTENANCE_ERROR = (
     "Linux test-profile update/removal requires checked anchor maintenance, which is not available yet. "
     "Stopping the desktop or node does not authorize replacing application files."
 )
-CATALOG_ERROR = (
-    "The Linux test profile requires an already provisioned node configuration. "
-    "Catalog installation and migration need an exclusive anchor transaction, which is not available yet."
-)
 
 
 def _stable_observation(profile, *, expected=None, sleeper=time.sleep):
@@ -80,7 +76,7 @@ class LinuxAnchorLifecycle:
         credential_store,
         *,
         prepared=None,
-        startup_timeout=45.0,
+        startup_timeout=300.0,
         client_timeout=5.0,
         poll_interval=0.2,
         shutdown_timeout=GRACEFUL_NODE_SHUTDOWN_TIMEOUT + 30.0,
@@ -146,7 +142,6 @@ class LinuxAnchorLifecycle:
     def _connect(self):
         deadline = self._clock() + self.startup_timeout
         transition_allowance = False
-        provision = None
         secret = None
         while self._clock() < deadline:
             if self._closing.is_set():
@@ -168,16 +163,28 @@ class LinuxAnchorLifecycle:
                 transition_allowance = True
             if node["phase"] == "blocked":
                 raise NodeLifecycleError(SETUP_ERROR)
+            if (
+                start_command is not None
+                and node["request_id"] == start_command["request_id"]
+                and node["operation"] == "start"
+                and node["phase"] == "idle"
+                and node["drain_complete"]
+                and node["pending_request_id"] is None
+            ):
+                with self._lock:
+                    self._start_command = None
+                    self._target = None
+                    self._engaged = False
+                raise NodeLifecycleError(
+                    "The anchor could not complete setup. Unlock the native credential store and verify "
+                    "the installed catalog package before retrying. No node was started."
+                )
             if node["phase"] == "idle" and node["drain_complete"] and start_command is None:
                 self.profile.validate_config()
-                if not self.config_path.is_file() or self.config_path.is_symlink():
-                    raise NodeLifecycleError(CATALOG_ERROR)
                 receipt = self._observe()
                 node = receipt["node"]
                 if node["phase"] != "idle" or not node["drain_complete"]:
                     raise NodeLifecycleError("The anchored node changed before Start; reconnect")
-                provision = self.credential_store.provision(self.data_dir / "control-api.key")
-                secret = provision.secret
                 with self._lock:
                     if self._closing.is_set():
                         raise NodeLifecycleError("The anchored node supervisor is closing")
@@ -207,7 +214,7 @@ class LinuxAnchorLifecycle:
                     self._engaged = True
                 if node["phase"] == "running" and node["pending_request_id"] is None:
                     if secret is None:
-                        secret = self.credential_store.get_or_migrate(self.data_dir / "control-api.key")
+                        secret = self.credential_store.get()
                     client = self._client_factory(
                         self.node_url, secret, timeout=self.client_timeout, transport=NodeControlTransport(receipt)
                     )
@@ -222,8 +229,6 @@ class LinuxAnchorLifecycle:
                             or after["pending_request_id"] is not None
                         ):
                             raise NodeClientError("The node changed while connecting")
-                        if provision is not None and provision.source == "migrated":
-                            self.credential_store.retire_legacy_file(provision)
                         with self._lock:
                             if self._closing.is_set():
                                 raise NodeLifecycleError("The anchored node supervisor is closing")

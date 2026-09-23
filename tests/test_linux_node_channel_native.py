@@ -18,7 +18,6 @@ from urllib.request import Request, urlopen
 import pytest
 from communityai_desktop.anchor_lifecycle import LinuxAnchorLifecycle, prepare_anchored_profile
 from communityai_desktop.client import NodeClient, NodeClientError
-from communityai_desktop.credentials import CredentialProvision
 from communityai_desktop.profiles import VolunteerProfile
 from test_linux_anchor_node_native import command, condition, observe, running_node, until, wait_file
 
@@ -35,9 +34,12 @@ pytestmark = pytest.mark.skipif(
 
 class CredentialFixture:
     def provision(self, path):
-        return CredentialProvision("fixture-control", "generated", None)
+        raise AssertionError("anchored desktop may not provision credentials")
 
     def get_or_migrate(self, path):
+        raise AssertionError("anchored desktop may not migrate credentials")
+
+    def get(self):
         return "fixture-control"
 
 

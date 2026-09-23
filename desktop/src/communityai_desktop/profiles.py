@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 VOLUNTEER_PROFILE = "multigpu-volunteer"
+FROZEN_CONTENTS_DIRECTORY = "_internal"
 _MAX_CONFIG_BYTES = 256 * 1024
 
 

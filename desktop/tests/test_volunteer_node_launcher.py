@@ -165,6 +165,7 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
 
         executable = self.home / "CommunityAI-Node"
         executable.write_bytes(b"fixture, not a qualified frozen artifact")
+        self._anchor_bundle(executable)
         layout = types.SimpleNamespace(validate=lambda: None, service=types.SimpleNamespace(pid=os.getpid()))
         sync = linux_anchor_state._sync_directory
         synced = []
@@ -193,12 +194,14 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
 
         executable = self.home / "CommunityAI-Node"
         executable.write_bytes(b"fixture, not a qualified frozen artifact")
+        self._anchor_bundle(executable)
         layout = types.SimpleNamespace(validate=lambda: None)
         with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)):
             with patch.object(linux_anchor_node, "AnchorNode", return_value="controller") as owner:
                 self.assertEqual(launcher._anchor_controller(layout, initialize=True), "controller")
                 factory = owner.call_args.args[2]
                 self.assertTrue(owner.call_args.kwargs["initialize"])
+                self.assertEqual(owner.call_args.kwargs["bootstrap"].profile, self.profile)
                 # The mocked owner has not provisioned its node directory.
                 # A launch must retain this partial profile, not repair it.
                 with self.assertRaisesRegex(ValueError, "provisioned test profile"):
@@ -212,6 +215,52 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
                 self.assertNotIn(launcher.PARENT_PID_ENV, env)
             with self.assertRaises(FileExistsError):
                 launcher._anchor_controller(layout, initialize=True)
+
+    def _anchor_bundle(self, executable):
+        from test_catalog_publication import _documents
+
+        from drift.catalog_release import write_catalog_publication_bundle
+
+        config, envelope, manifests = _documents()
+        write_catalog_publication_bundle(executable.parent / "_internal" / "bootstrap", config, envelope, manifests)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux fixed anchor launcher")
+    def test_missing_packaged_bundle_refuses_before_creating_profile(self):
+        executable = self.home / "CommunityAI-Node"
+        executable.write_bytes(b"fixture only")
+        layout = types.SimpleNamespace(validate=lambda: None)
+        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)):
+            with self.assertRaises(ValueError):
+                launcher._anchor_controller(layout, initialize=True)
+        self.assertFalse(self.profile.root.exists())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux fixed sidecar plan")
+    def test_fixed_packaged_plan_diagnostic_reads_actual_bundle_without_profile_mutation(self):
+        executable = self.home / "CommunityAI-Node"
+        executable.write_bytes(b"fixture only, not a frozen executable qualification")
+        self._anchor_bundle(executable)
+        output = io.StringIO()
+        with patch.object(sys, "frozen", True, create=True), patch.object(
+            sys, "executable", str(executable)
+        ), patch.object(sys, "stdout", output):
+            self.assertEqual(launcher.main(["--bootstrap-plan-self-test"]), 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["outputs"], 7)
+        self.assertFalse(report["profile_mutated"])
+        self.assertFalse(self.profile.root.exists())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux directory no-link checks")
+    def test_fixed_bundle_refuses_linked_packaging_ancestor_before_profile(self):
+        executable = self.home / "CommunityAI-Node"
+        executable.write_bytes(b"fixture only")
+        self._anchor_bundle(executable)
+        internal = self.home / "_internal"
+        internal.rename(self.home / "retained-internal")
+        internal.symlink_to(self.home / "retained-internal", target_is_directory=True)
+        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)):
+            with self.assertRaisesRegex(ValueError, "symbolic links"):
+                launcher._packaged_bootstrap_plan(self.profile, initialize=True)
+        self.assertFalse(self.profile.root.exists())
 
     def test_linux_node_rejects_missing_anchor_before_profile_or_runtime_mutation(self):
         seen = []

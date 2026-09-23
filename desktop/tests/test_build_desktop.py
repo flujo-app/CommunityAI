@@ -512,6 +512,8 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
         source_tree = git("rev-parse", "HEAD^{tree}")
 
         self.assertEqual(build_desktop._source_identity(repository, head), (head, source_tree))
+        with self.assertRaisesRegex(RuntimeError, "does not match"):
+            build_desktop._source_identity(repository, "0" * 40)
         source_file.write_text("print('dirty')\n", encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "differ from the checked-out Git HEAD"):
             build_desktop._source_identity(repository, head)
@@ -543,8 +545,6 @@ class DesktopReleaseArtifactTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(RuntimeError, "source commit"):
             build_desktop._normalize_source_commit("not-a-commit")
-        with self.assertRaisesRegex(RuntimeError, "does not match"):
-            build_desktop._source_identity(REPOSITORY, "0" * 40)
 
         output_root, _, _ = self._write("claims")
         metadata_path = output_root / build_desktop.RELEASE_METADATA_NAME
@@ -1115,6 +1115,7 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
             pass
 
         calls = []
+        _, _, bundle_path, _ = _release_bundle(self.tmp_path / "explicit")
 
         def package(arguments, **options):
             calls.append((arguments, options))
@@ -1125,6 +1126,7 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
             executable = root / name / (name + (".exe" if os.name == "nt" else ""))
             executable.parent.mkdir(parents=True)
             executable.write_bytes(b"fixture only; never executed")
+            shutil.copytree(bundle_path, executable.parent / "_internal" / "bootstrap")
 
         pyinstaller = types.ModuleType("PyInstaller")
         pyinstaller.__version__ = "6.test"
@@ -1132,7 +1134,17 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         pyinstaller.__main__ = pyinstaller_main
         with (
             patch.object(
-                sys, "argv", ["build_desktop.py", "--profile", "multigpu-volunteer", "--source-commit", "a" * 40]
+                sys,
+                "argv",
+                [
+                    "build_desktop.py",
+                    "--profile",
+                    "multigpu-volunteer",
+                    "--source-commit",
+                    "a" * 40,
+                    "--publication-bundle",
+                    str(bundle_path),
+                ],
             ),
             patch.object(build_desktop, "__file__", str(self.project / "build_desktop.py")),
             patch.object(build_desktop.platform, "system", return_value="Linux"),
@@ -1159,6 +1171,8 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         self.assertNotIn("communityai_anchor", exclusions)
         self.assertEqual(arguments[0], str(self.project / "launch_volunteer_node.py"))
         self.assertIn(str(self.project / "src"), arguments)
+        self.assertIn(f"{bundle_path}{os.pathsep}bootstrap", arguments)
+        self.assertEqual(arguments[arguments.index("--contents-directory") + 1], "_internal")
         self.assertIn(build_desktop.cgroup_extension.MODULE_NAME, arguments)
         self.assertIn(
             f"{self.project / 'build' / 'fresh' / '_linux_cgroup_spawn.cpython-test.so'}{os.pathsep}drift/node",
@@ -1168,11 +1182,14 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         self.assertEqual(options, {"config_dir": self.project / "build" / "multigpu-volunteer" / "pyinstaller-cache"})
         self.assertIn("desktop/launch_volunteer_node.py", build_desktop._RELEASE_SOURCE_PATHS)
 
-    def test_volunteer_cli_uses_fixed_launcher_and_separate_defaults_without_implicit_catalog(self):
+    def test_volunteer_cli_uses_fixed_launcher_and_separate_defaults_with_explicit_catalog(self):
         # The ordinary product bundle exists but is deliberately invalid. A
         # volunteer build must neither validate nor silently include this input.
         (self.project / "release" / "catalog-publication-bundle").mkdir(parents=True)
-        package, storage = self._capture_build(["--profile", "multigpu-volunteer", "--source-commit", "a" * 40])
+        _, _, bundle_path, _ = _release_bundle(self.tmp_path / "explicit")
+        package, storage = self._capture_build(
+            ["--profile", "multigpu-volunteer", "--source-commit", "a" * 40, "--publication-bundle", str(bundle_path)]
+        )
         arguments = package.args[0]
         self.assertEqual(arguments[0], str(self.project / "launch_volunteer.py"))
         self.assertEqual(arguments[arguments.index("--name") + 1], "CommunityAI-MultiGPU-Test")
@@ -1188,8 +1205,16 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         self.assertEqual(
             storage.args, (self.project / "dist" / "multigpu-volunteer", self.project / "build" / "multigpu-volunteer")
         )
-        self.assertFalse(any("catalog-publication-bundle" in item for item in arguments))
+        self.assertIn(f"{bundle_path}{os.pathsep}bootstrap", arguments)
         self.assertFalse((self.project / "dist").exists())
+        self.assertFalse((self.project / "build").exists())
+
+    def test_volunteer_missing_explicit_bundle_refuses_before_build(self):
+        (self.project / "release" / "catalog-publication-bundle").mkdir(parents=True)
+        with patch.object(sys, "stderr", new_callable=io.StringIO) as error:
+            with self.assertRaises(SystemExit):
+                self._capture_build(["--profile", "multigpu-volunteer", "--source-commit", "a" * 40])
+        self.assertIn("explicit verified --publication-bundle", error.getvalue())
         self.assertFalse((self.project / "build").exists())
 
     def test_standard_cli_retains_launcher_defaults_and_implicit_verified_catalog(self):
@@ -1377,6 +1402,11 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         ordinary.parent.mkdir(parents=True)
         ordinary.write_bytes(b"ordinary application state must survive unchanged")
         environment = build_desktop._smoke_environment(home)
+        profile_root = home / ".communityai" / "multigpu-volunteer"
+        before_profile = {
+            str(path.relative_to(profile_root)): path.read_bytes() if path.is_file() else None
+            for path in profile_root.rglob("*")
+        }
         environment["PYTHONPATH"] = os.pathsep.join(
             (str(DESKTOP_SOURCE), str(REPOSITORY / "src"), environment.get("PYTHONPATH", ""))
         )
@@ -1390,9 +1420,20 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
             check=False,
             timeout=60,
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["api_version"], 1)
-        self.assertTrue((home / ".communityai" / "multigpu-volunteer" / "node").is_dir())
+        if sys.platform.startswith("linux"):
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("verified running anchor", result.stderr)
+            self.assertEqual(
+                {
+                    str(path.relative_to(profile_root)): path.read_bytes() if path.is_file() else None
+                    for path in profile_root.rglob("*")
+                },
+                before_profile,
+            )
+        else:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["api_version"], 1)
+            self.assertTrue((home / ".communityai" / "multigpu-volunteer" / "node").is_dir())
         for overrides in (
             ["--profile", "standard"],
             ["--profile=standard"],

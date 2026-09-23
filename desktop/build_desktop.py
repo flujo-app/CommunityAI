@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, NamedTuple, Sequence
 
 from communityai_desktop.acceptance import run_self_test
+from communityai_desktop.profiles import FROZEN_CONTENTS_DIRECTORY
 from communityai_desktop.pyside_shell import check_runtime
 
 try:  # Direct script execution and repository test imports use different roots.
@@ -33,7 +34,7 @@ except ModuleNotFoundError:
 APP_NAME = "CommunityAI"
 NODE_NAME = "CommunityAI-Node"
 NODE_DIRECTORY = "node"
-PYINSTALLER_CONTENTS_DIRECTORY = "_internal"
+PYINSTALLER_CONTENTS_DIRECTORY = FROZEN_CONTENTS_DIRECTORY
 FORBIDDEN_RUNTIME_PACKAGES = ("drift", "torch", "transformers", "hivemind", "accelerate")
 CHECKSUMS_NAME = "SHA256SUMS"
 PROVENANCE_NAME = "provenance.json"
@@ -1556,6 +1557,8 @@ def main() -> int:
     build_root = args.build_root or project / "build" / profile.directory
     if profile == VOLUNTEER_BUILD_PROFILE:
         _check_volunteer_roots(project, output_root, build_root)
+        if args.publication_bundle is None:
+            parser.error("volunteer builds require an explicit verified --publication-bundle")
     output_root = output_root.resolve()
     build_root = build_root.resolve()
     _check_build_storage(output_root, build_root)
@@ -1642,6 +1645,8 @@ def main() -> int:
         "--onedir",
         "--noconfirm",
         "--clean",
+        "--contents-directory",
+        PYINSTALLER_CONTENTS_DIRECTORY,
         "--paths",
         str(repository / "src"),
         "--distpath",
@@ -1658,9 +1663,11 @@ def main() -> int:
         "PySide6",
     ]
     if profile == VOLUNTEER_BUILD_PROFILE:
-        # The sidecar imports only the stdlib-only profile module from desktop;
-        # it must not acquire the Qt UI runtime.
+        # Fixed profile/credential adapters only, never the Qt UI runtime.
         node_args.extend(("--paths", str(project / "src")))
+        if publication_evidence is None:
+            raise RuntimeError("The volunteer anchor requires a verified publication bundle")
+        node_args.extend(("--add-data", f"{publication_bundle}{os.pathsep}bootstrap"))
         node_args.extend(
             (
                 "--hidden-import",
@@ -1696,6 +1703,8 @@ def main() -> int:
     node_executable = node_root / f"{NODE_NAME}{'.exe' if os.name == 'nt' else ''}"
     if not node_executable.is_file():
         raise RuntimeError(f"packaged node executable was not staged: {node_executable}")
+    if profile == VOLUNTEER_BUILD_PROFILE:
+        _verify_packaged_release_inputs(node_root / PYINSTALLER_CONTENTS_DIRECTORY / "bootstrap", publication_evidence)
 
     normalization = normalize_runtime(
         node_root, target_platform=platform.system(), torch_version=importlib.metadata.version("torch")
@@ -1720,6 +1729,14 @@ def main() -> int:
         _run_bundle(node_executable, ("server", "--help"), environment, timeout=180)
         _run_bundle(node_executable, ("edge-acquire", "--help"), environment, timeout=180)
         if cgroup_build is not None:
+            preparation_diagnostic = json.loads(
+                _run_bundle(node_executable, "--bootstrap-plan-self-test", environment, timeout=180).stdout
+            )
+            if (
+                preparation_diagnostic.get("bundle_index_digest") != publication_evidence["bundle_index_digest"]
+                or preparation_diagnostic.get("profile_mutated") is not False
+            ):
+                raise RuntimeError("packaged anchor bootstrap plan does not match its release input")
             diagnostic = json.loads(
                 _run_bundle(node_executable, cgroup_extension.DIAGNOSTIC_FLAG, environment, timeout=30).stdout
             )

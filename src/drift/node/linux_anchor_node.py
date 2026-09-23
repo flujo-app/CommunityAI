@@ -24,8 +24,9 @@ GRACEFUL_NODE_DRAIN_SECONDS = 3030.0
 
 
 class AnchorNode:
-    def __init__(self, layout, profile_root, launch_factory, *, initialize=False):
+    def __init__(self, layout, profile_root, launch_factory, *, initialize=False, bootstrap=None):
         self.layout, self.root, self.launch_factory = layout, Path(profile_root), launch_factory
+        self._bootstrap = bootstrap
         self._lock = threading.Lock()
         self._close_lock = threading.Lock()
         self._wake, self._cancel, self.finished = threading.Event(), threading.Event(), threading.Event()
@@ -73,6 +74,10 @@ class AnchorNode:
                 anchor._require(self._manager.recover())
                 with self._manager.drain_guard():
                     self._resources = resources.create_resources(self.root, self._state.binding)
+                    if self._bootstrap is not None:
+                        self._bootstrap.bind(self._state, self._ownership, initialize=True)
+            elif self._bootstrap is not None:
+                self._bootstrap.bind(self._state, self._ownership)
             self._publish(blocked=True)
             self._runner = threading.Thread(target=self._run, name="anchor-node-owner", daemon=True)
             self._runner.start()
@@ -161,6 +166,8 @@ class AnchorNode:
         try:
             self._ownership()
             self._state.validate()
+            if self._bootstrap is not None:
+                self._bootstrap.validate()
         except Exception:
             self._fatal = True
             raise
@@ -235,6 +242,17 @@ class AnchorNode:
             self._release_leaf()
             generation = dict(id=uuid4().hex, token=uuid4().hex, cgroup=None, pid=None, start_ticks=None)
             self._write(phase="starting", generation=generation, request_id=request_id, operation="start")
+            if self._bootstrap is not None:
+                try:
+                    self._bootstrap.prepare(self._state.value, cancelled=self._cancel.is_set)
+                except Exception:
+                    if self._bootstrap.poisoned:
+                        self._fatal = True
+                    raise
+                self._integrity()
+                anchor.cg.verify_cgroup_tree_empty(self.layout.profiles[2].root)
+            if self._cancel.is_set():
+                raise RecoverableStateError("cleanup_pending")
         parent = anchor.cg._open_root(self.layout.profiles[2].root)
         try:
             anchor._require(anchor.cg._observe_root(self.layout.profiles[2].root, parent) == self.layout.profiles[2])
@@ -408,6 +426,8 @@ class AnchorNode:
                 except Exception:
                     try:
                         failed_start = command is not None and command[0] == "start" and not self._cancel.is_set()
+                        if self._bootstrap is not None and self._bootstrap.retryable and not self._bootstrap.poisoned:
+                            failed_start = False
                         self._cleanup(final_phase="blocked" if failed_start else "idle")
                     except Exception:
                         self._publish(blocked=True)

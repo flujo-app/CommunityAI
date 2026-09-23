@@ -19,6 +19,8 @@ if __name__ == "__main__":
         module = types.ModuleType(name)
         module.__path__ = [str(Path(__file__).resolve().parents[1] / "src" / folder)]
         sys.modules[name] = module
+    # Runtime metadata fixture only; no actual model execution in this driver.
+    sys.modules["drift"].__version__ = "2.3.0.dev2"
 else:
     import pytest
 
@@ -146,6 +148,110 @@ def node_runtime(profile, worker_root, mode):
     durable = json.loads((profile / "anchor" / "state.json").read_text())
     assert durable["generation"]["pid"] == os.getpid()
     generation = durable["generation"]["id"]
+    if mode.startswith("bootstrap_"):
+        prepared = json.loads((profile / "anchor" / "bootstrap.json").read_text())
+        assert prepared["ready"] and prepared["attempt"]["generation"] == generation
+        assert (profile / "node" / "node-config.json").is_file()
+        from drift.node.linux_anchor_entry import require_admitted_catalog_writer
+
+        require_admitted_catalog_writer(profile / "node", profile / "node" / "node-config.json")
+        if mode.startswith("bootstrap_writer_"):
+            from contextlib import ExitStack
+
+            from drift.node.catalog_bootstrap import (
+                CatalogBootstrapConfig,
+                CatalogBootstrapError,
+                CatalogBootstrapInstaller,
+                _catalog_bootstrap_lock,
+            )
+            from drift.node.config_lock import persistent_sidecar_lock
+            from drift.node.policy_store import ContributionPolicyConflictError, ContributionPolicyStore
+            from drift.node.worker_supervisor import WorkerSupervisor, WorkerSupervisorSettings
+
+            config_path = profile / "node" / "node-config.json"
+            config = json.loads(config_path.read_text())
+            installer = CatalogBootstrapInstaller(
+                CatalogBootstrapConfig.load(config["catalog_bootstrap_path"]),
+                data_dir=profile / "node",
+                config_path=config_path,
+                fetch_text=lambda *_: Path(config["catalog_path"]).read_text(),
+            )
+            # Actual admitted child, actual original writer locks; no repair
+            # is needed, so intact refresh has no catalog/config write effect.
+            installer.repair_existing_config()
+            installer.refresh()
+            # Real policy persistence, with an empty worker-supervisor fixture:
+            # this qualifies config writes, not model/worker execution.
+            policy = ContributionPolicyStore(
+                config_path, WorkerSupervisor(()), lambda _: WorkerSupervisorSettings(launches=(), stop_timeout=1)
+            )
+            snapshot = policy.snapshot()
+            policy.update(
+                dict(snapshot["policy"], max_processing_percent=73), expected_revision=snapshot["config_revision"]
+            )
+            assert json.loads(config_path.read_text())["contribution_policy"]["max_processing_percent"] == 73
+            snapshot = policy.snapshot()
+            before = config_path.read_bytes()
+            _, _, kind, fault = mode.split("_")
+            lock = (
+                profile / "node" / (".catalog-bootstrap.lock" if kind == "catalog" else ".node-config.json.write.lock")
+            )
+
+            def lose_lock():
+                lock.rename(lock.with_name(lock.name + ".retained"))
+                if fault.endswith("replaced"):
+                    lock.write_bytes(b"{}")
+                    lock.chmod(0o600)
+
+            original_fsync = os.fsync
+
+            def lose_during_persistence(descriptor):
+                original_fsync(descriptor)
+                target = os.readlink("/proc/self/fd/" + str(descriptor))
+                if ".node-config.json." in target and target.endswith(".tmp"):
+                    lose_lock()
+
+            results = []
+            with ExitStack() as held:
+                if fault.startswith("late-"):
+                    # The real policy writer already holds its original FD
+                    # when fsync returns; authority must be rechecked before exchange.
+                    os.fsync = lose_during_persistence
+                else:
+                    authority = require_admitted_catalog_writer(profile / "node", config_path)
+                    held.enter_context(
+                        _catalog_bootstrap_lock(
+                            profile / "node" / ".catalog-bootstrap.lock",
+                            expected_identity=authority["node/.catalog-bootstrap.lock"],
+                        )
+                    )
+                    held.enter_context(
+                        persistent_sidecar_lock(
+                            config_path, expected_identity=authority["node/.node-config.json.write.lock"]
+                        )
+                    )
+                    lose_lock()
+                try:
+                    policy.update(
+                        dict(snapshot["policy"], max_processing_percent=74),
+                        expected_revision=snapshot["config_revision"],
+                    )
+                except ContributionPolicyConflictError:
+                    results.append("refused")
+                else:
+                    raise AssertionError("lost writer lock authorized policy mutation")
+                finally:
+                    os.fsync = original_fsync
+                for method in (installer.repair_existing_config, installer.refresh, installer.install):
+                    try:
+                        method()
+                    except CatalogBootstrapError:
+                        results.append("refused")
+                    else:
+                        raise AssertionError("lost writer lock authorized mutation")
+            assert config_path.read_bytes() == before
+            assert lock.exists() == fault.endswith("replaced")
+            (profile / "writer-refusals.json").write_text(json.dumps(results))
     if mode == "api":
         from linux_anchor_api_fixture import serve
 
@@ -397,9 +503,60 @@ def service(root, directory, mode):
                 return
 
     threading.Thread(target=stop_watcher, daemon=True).start()
+    preparation = None
+    if mode.startswith("bootstrap_"):
+        from communityai_desktop.credentials import CredentialMissingError
+        from communityai_desktop.profiles import VolunteerProfile
+
+        from drift.node.linux_anchor_bootstrap import AnchorBootstrap, build_bootstrap_plan
+        from drift.utils.auto_config import _CLASS_MAPPING
+
+        # This standalone driver omits drift's heavyweight model registration.
+        # Capability metadata is a fixture; the separate plan suite tests the
+        # actual registered runtime validator and no models execute here.
+        _CLASS_MAPPING.setdefault("llama", {})
+
+        fixed_profile = VolunteerProfile(profile)
+        plan = build_bootstrap_plan(directory / "bundle", fixed_profile, initialize=True)
+
+        class KeyringFixture:
+            service, account = fixed_profile.credential_service, fixed_profile.credential_account
+            secret = None
+            sets = 0
+
+            def get(self):
+                if mode == "bootstrap_locked" and not (directory / "keyring-unlocked").exists():
+                    raise OSError("fixture locked before first set")
+                if mode == "bootstrap_ready_locked" and (directory / "keyring-locked").exists():
+                    raise OSError("fixture locked ready keyring")
+                if self.sets and mode == "bootstrap_unknown":
+                    raise OSError("fixture cannot establish keyring outcome")
+                if self.secret is None:
+                    raise CredentialMissingError()
+                return self.secret
+
+            def set(self, secret):
+                self.secret = secret
+                self.sets += 1
+                (directory / "keyring-sets").write_text(str(self.sets))
+                if mode in {"bootstrap_key_barrier", "bootstrap_unknown"}:
+                    barrier()
+
+        preparation = AnchorBootstrap(plan, fixed_profile, KeyringFixture())
+        if mode == "bootstrap_config_barrier":
+            commit = preparation._commit
+
+            def held_commit(index):
+                commit(index)
+                if index == len(plan.outputs) - 1 and not (directory / "release").exists():
+                    barrier()
+
+            preparation._commit = held_commit
     try:
         return anchor.serve_anchor(
-            controller_factory=lambda layout: AnchorNode(layout, profile, launch, initialize=True)
+            controller_factory=lambda layout: AnchorNode(
+                layout, profile, launch, initialize=True, bootstrap=preparation
+            )
         )
     finally:
         done.set()
@@ -419,6 +576,13 @@ if __name__ != "__main__":
         children = []
 
         def start(mode="normal"):
+            if mode.startswith("bootstrap_"):
+                from test_catalog_publication import _documents
+
+                from drift.catalog_release import write_catalog_publication_bundle
+
+                bootstrap, envelope, manifests = _documents()
+                write_catalog_publication_bundle(tmp_path / "bundle", bootstrap, envelope, manifests)
             process = native.spawn(
                 descriptor,
                 [sys.executable, str(Path(__file__).resolve()), "anchor", str(root), str(tmp_path), mode],
@@ -480,8 +644,8 @@ if __name__ != "__main__":
             except RecoverableStateError:
                 assert time.monotonic() < deadline, value
 
-    def wait_file(path):
-        deadline = time.monotonic() + 5
+    def wait_file(path, timeout=5):
+        deadline = time.monotonic() + timeout
         while not path.exists():
             assert time.monotonic() < deadline, path
             time.sleep(0.02)
@@ -520,6 +684,158 @@ if __name__ != "__main__":
         command("start")
         second = until(lambda s: s["phase"] == "running")
         assert second["generation"]["id"] != running["generation"]["id"]
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 0
+
+    def test_signed_bootstrap_is_ready_before_real_native_node_birth_and_restart(running_node):
+        root, directory, start = running_node
+        process = start("bootstrap_normal")
+        until(lambda s: s["drain_complete"])
+        _, request = command("start")
+        first = until(lambda s: s["phase"] == "running")
+        wait_file(directory / "profile" / "entered.json")
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        assert marker["ready"] and marker["attempt"] == dict(request_id=request, generation=first["generation"]["id"])
+        assert (directory / "keyring-sets").read_text() == "1"
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        command("start")
+        second = until(lambda s: s["phase"] == "running")
+        assert second["generation"]["id"] != first["generation"]["id"]
+        assert (directory / "keyring-sets").read_text() == "1"
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 0
+
+    @pytest.mark.parametrize("kind", ["catalog", "config"])
+    @pytest.mark.parametrize("fault", ["missing", "replaced", "late-missing", "late-replaced"])
+    def test_real_admitted_catalog_writer_refuses_lost_pinned_lock(running_node, kind, fault):
+        root, directory, start = running_node
+        process = start("bootstrap_writer_" + kind + "_" + fault)
+        until(lambda s: s["drain_complete"])
+        command("start")
+        path = directory / "profile" / "writer-refusals.json"
+        # This fixture imports the full catalog/policy stack in a fresh child.
+        # Allow cold imports under parallel test load, not a production UX SLA.
+        wait_file(path, timeout=30)
+        assert json.loads(path.read_text()) == ["refused"] * 4
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) != 0  # Lost evidence cannot be clean exit.
+
+    def test_ready_locked_keyring_retries_same_controller_without_new_set(running_node):
+        root, directory, start = running_node
+        process = start("bootstrap_ready_locked")
+        until(lambda s: s["drain_complete"])
+        command("start")
+        until(lambda s: s["phase"] == "running")
+        wait_file(directory / "profile" / "entered.json")
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        (directory / "keyring-locked").touch()
+        _, request = command("start")
+        idle = until(lambda s: s["drain_complete"] and s["request_id"] == request)
+        assert idle["phase"] == "idle" and process.poll() is None
+        (directory / "keyring-locked").unlink()
+        command("start")
+        until(lambda s: s["phase"] == "running")
+        assert (directory / "keyring-sets").read_text() == "1"
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 0
+
+    @pytest.mark.parametrize("mode", ["bootstrap_key_barrier", "bootstrap_config_barrier"])
+    @pytest.mark.parametrize("stop", ["drain", "sigterm"])
+    def test_bootstrap_cancel_keeps_exclusion_and_no_child_birth_until_reconciled(running_node, mode, stop):
+        root, directory, start = running_node
+        process = start(mode)
+        until(lambda s: s["drain_complete"])
+        _, request = command("start")
+        wait_file(directory / "barrier")
+        planned = observe()
+        assert planned["phase"] == "starting" and planned["generation"]["pid"] is None
+        assert planned["api_identity"] is None and not planned["drain_complete"]
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        assert marker["attempt"]["request_id"] == request
+        assert not any(path.is_dir() for path in (root / "nodes").iterdir())
+        import fcntl
+
+        for lock in (
+            "anchor-state.lock",
+            "node-lifetime.lock",
+            "node/resource-reservations/admission.lock",
+            "node/.catalog-bootstrap.lock",
+            "node/.node-config.json.write.lock",
+        ):
+            descriptor = os.open(directory / "profile" / lock, os.O_RDWR)
+            try:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(descriptor)
+        if stop == "drain":
+            before = time.monotonic()
+            command("drain")
+            assert time.monotonic() - before < 2
+            assert not observe()["drain_complete"]
+        else:
+            os.kill(process.pid, signal.SIGTERM)
+            wait_file(directory / "shutdown-requested")
+        assert process.poll() is None
+        assert not (directory / "profile" / "entered.json").exists()
+        (directory / "release").touch()
+        if stop == "sigterm":
+            assert process.wait(timeout=8) == 0
+        else:
+            until(lambda s: s["drain_complete"])
+            assert not (directory / "profile" / "entered.json").exists()
+            command("start")
+            until(lambda s: s["phase"] == "running")
+            wait_file(directory / "profile" / "entered.json")
+            command("drain")
+            until(lambda s: s["drain_complete"])
+            (directory / "stop").touch()
+            assert process.wait(timeout=8) == 0
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        assert "populated 0" in (root / "workers" / "cgroup.events").read_text()
+        assert (directory / "keyring-sets").read_text() == "1"
+
+    def test_unknown_keyring_result_blocks_drain_and_never_claims_clean_exit(running_node):
+        root, directory, start = running_node
+        process = start("bootstrap_unknown")
+        until(lambda s: s["drain_complete"])
+        command("start")
+        wait_file(directory / "barrier")
+        command("drain")
+        (directory / "release").touch()
+        blocked = until(lambda s: s["phase"] == "blocked" and s["pending_request_id"] is None)
+        assert not blocked["drain_complete"]
+        assert not (directory / "profile" / "entered.json").exists()
+        assert not (directory / "profile" / "node" / "node-config.json").exists()
+        assert (directory / "keyring-sets").read_text() == "1"
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) != 0
+
+    def test_locked_keyring_before_set_retries_without_replacing_anchor_or_journal(running_node):
+        root, directory, start = running_node
+        process = start("bootstrap_locked")
+        until(lambda s: s["drain_complete"])
+        _, request = command("start")
+        idle = until(lambda s: s["drain_complete"] and s["request_id"] == request)
+        assert idle["phase"] == "idle" and idle["operation"] == "start"
+        assert not (directory / "keyring-sets").exists()
+        assert not (directory / "profile" / "entered.json").exists()
+        marker_path = directory / "profile" / "anchor" / "bootstrap.json"
+        transaction = json.loads(marker_path.read_text())["transaction"]
+        (directory / "keyring-unlocked").touch()
+        command("start")
+        until(lambda s: s["phase"] == "running")
+        wait_file(directory / "profile" / "entered.json")
+        assert json.loads(marker_path.read_text())["transaction"] == transaction
+        assert (directory / "keyring-sets").read_text() == "1"
         command("drain")
         until(lambda s: s["drain_complete"])
         (directory / "stop").touch()

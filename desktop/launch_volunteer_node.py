@@ -6,6 +6,7 @@ authentication mechanism or a sandbox against another process of the same user.
 
 from __future__ import annotations
 
+import json
 import multiprocessing
 import os
 import re
@@ -78,7 +79,9 @@ def _safe_path(raw: str, *, base: Path, directory: bool = False, required: bool 
             raise ValueError("volunteer paths must not use redirected paths")
         if ancestor == path and stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
             raise ValueError("volunteer paths must not use shared hard-linked files")
-    if required and not path.is_file():
+    if required and not (path.is_dir() if directory else path.is_file()):
+        if directory:
+            raise ValueError("volunteer input directory is missing or not a directory")
         raise ValueError("volunteer input file is missing or not a regular file")
     if path.exists() and ((directory and not path.is_dir()) or (not directory and not path.is_file())):
         raise ValueError("volunteer path has the wrong file type")
@@ -255,11 +258,28 @@ def _worker_arguments(mode: str, arguments: Sequence[str], profile) -> list[str]
     return result
 
 
+def _packaged_bootstrap_plan(profile, *, initialize=False):
+    from communityai_desktop.profiles import FROZEN_CONTENTS_DIRECTORY
+
+    from drift.node import linux_anchor as anchor
+    from drift.node.linux_anchor_bootstrap import build_bootstrap_plan
+
+    anchor._require(sys.platform.startswith("linux") and getattr(sys, "frozen", False) is True)
+    executable = _safe_path(sys.executable, base=Path.cwd(), required=True)
+    anchor._require(executable.name == "CommunityAI-Node")
+    bundle = _safe_path(
+        str(executable.parent / FROZEN_CONTENTS_DIRECTORY / "bootstrap"), base=Path.cwd(), directory=True, required=True
+    )
+    return build_bootstrap_plan(bundle, profile, initialize=initialize)
+
+
 def _anchor_controller(layout, *, initialize=False):
     """Trusted fixed launcher wiring, invoked only after live service proof."""
+    from communityai_desktop.credentials import NativeCredentialStore
     from communityai_desktop.profiles import VolunteerProfile
 
     from drift.node import linux_anchor as anchor
+    from drift.node.linux_anchor_bootstrap import AnchorBootstrap
     from drift.node.linux_anchor_node import AnchorNode
     from drift.node.linux_anchor_state import _sync_directory
 
@@ -268,6 +288,11 @@ def _anchor_controller(layout, *, initialize=False):
     anchor._require(executable.name == "CommunityAI-Node")
     layout.validate()
     profile = VolunteerProfile.for_current_user()
+    # Fixed sidecar data only: no environment, GUI or wire-selected bundle.
+    plan = _packaged_bootstrap_plan(profile, initialize=initialize)
+    preparation = AnchorBootstrap(
+        plan, profile, NativeCredentialStore(profile.credential_service, profile.credential_account)
+    )
     if initialize:
         # This exact provisioning mode is explicit first-install authority,
         # never selected automatically from missing marker/state. Existing
@@ -302,7 +327,7 @@ def _anchor_controller(layout, *, initialize=False):
             str(profile.data_dir),
         )
 
-    return AnchorNode(layout, profile.root, launch, initialize=initialize)
+    return AnchorNode(layout, profile.root, launch, initialize=initialize, bootstrap=preparation)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -312,6 +337,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     from communityai_desktop.profiles import VolunteerProfile
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments == ["--bootstrap-plan-self-test"]:
+        plan = _packaged_bootstrap_plan(VolunteerProfile.for_current_user(), initialize=True)
+        print(
+            json.dumps(
+                dict(
+                    bundle_index_digest=plan.bundle_digest,
+                    plan_digest=plan.digest,
+                    outputs=len(plan.outputs),
+                    profile_mutated=False,
+                ),
+                sort_keys=True,
+            )
+        )
+        return 0
     if arguments[:1] in (["anchor"], ["anchor-initialize"]):
         if len(arguments) != 1:
             raise ValueError("the volunteer anchor accepts no options")

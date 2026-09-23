@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
 from drift.node.config import ContributionPolicyConfig, NodeConfig, NodeConfigError
-from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock
+from drift.node.config_lock import NodeConfigWriteLockError, node_config_write_lock, require_node_config_write_authority
 from drift.node.device_binding import DeviceBindingError, DeviceBindingStore
 from drift.node.gpu_selection_tokens import GpuSelectionChangedError, GpuSelectionTokens
 from drift.node.gpu_worker_selection import candidate_gpu_selection, validate_gpu_selection_request
@@ -316,6 +316,7 @@ class ContributionPolicyStore:
             if _revision(self.path.read_bytes()) != expected_revision:
                 raise ContributionPolicyConflictError("node config changed; refresh the policy before saving")
 
+            require_node_config_write_authority(self.path)
             displaced = _exchange_paths(temporary, self.path)
             temporary = displaced
             if _revision(displaced.read_bytes()) != expected_revision:
