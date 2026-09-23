@@ -295,6 +295,7 @@ def create_node_app(
     request_restart: Optional[Callable[[], None]] = None,
     request_shutdown: Optional[Callable[[], None]] = None,
     resource_recovery_status: Optional[Callable[[], dict]] = None,
+    control_identity: Optional[dict] = None,
 ):
     """Compose the OpenAI API and authenticated local control surface."""
     if api_key_store is None and (not api_keys or any(not isinstance(key, str) or not key for key in api_keys)):
@@ -316,6 +317,10 @@ def create_node_app(
     if contribution_policy_store is not None and worker_supervisor is None:
         raise ValueError("persistent contribution policy requires a worker supervisor")
     control_keys = tuple(control_keys)
+    from drift.node.linux_node_identity import HEADER, identity_header, validate_identity
+
+    control_identity = None if control_identity is None else validate_identity(control_identity)
+    generation_header = None if control_identity is None else identity_header(control_identity)
     app = create_app(
         model_manager=model_manager,
         api_keys=api_keys,
@@ -326,12 +331,36 @@ def create_node_app(
     )
     started_at = int(time.time())
 
+    if generation_header is not None:
+
+        @app.middleware("http")
+        async def generation_response(request, call_next):
+            if request.url.path.startswith("/control/v1/") and (
+                not isinstance(getattr(app.state, "anchor_control_address", None), str)
+                or request.scope.get("server") != (app.state.anchor_control_address, None)
+                or request.headers.getlist(HEADER) != [generation_header]
+            ):
+                # Before endpoint/body parsing or any credential/config/model
+                # effect. Anchored controls are Unix-only, not a TCP fallback.
+                return JSONResponse(
+                    {"detail": "The anchored node generation changed; reconnect"},
+                    status_code=409,
+                    headers={HEADER: generation_header},
+                )
+            response = await call_next(request)
+            if request.url.path.startswith("/control/v1/"):
+                response.headers[HEADER] = generation_header
+            return response
+
     def check_control_auth(request: Request) -> None:
-        auth = request.headers.get("authorization", "")
+        auth_values = request.headers.getlist("authorization")
+        auth = auth_values[0] if len(auth_values) == 1 else ""
         candidate = auth[len("Bearer ") :] if auth.startswith("Bearer ") else ""
         valid = any(secrets.compare_digest(candidate, key) for key in control_keys)
         if not valid:
             raise HTTPException(status_code=401, detail="Invalid control key")
+        if generation_header is not None and request.headers.getlist(HEADER) != [generation_header]:
+            raise HTTPException(status_code=409, detail="The anchored node generation changed; reconnect")
 
     @app.get("/control/v1/status")
     async def node_status(request: Request):
@@ -361,6 +390,7 @@ def create_node_app(
             contribution["recovery"] = _public_resource_recovery(resource_recovery_status)
         return {
             "api_version": CONTROL_API_VERSION,
+            **({"node_identity": dict(control_identity)} if control_identity is not None else {}),
             "status": "stopping" if model_manager.closed or restart_pending else "running",
             "configuration_restart_pending": restart_pending,
             "started_at": started_at,

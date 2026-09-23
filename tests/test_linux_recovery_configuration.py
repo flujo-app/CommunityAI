@@ -9,13 +9,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from communityai_desktop.client import _normalize_contribution_status
+from communityai_desktop.controller import DesktopController
+from communityai_desktop.presentation import sharing_summary
 from fastapi.testclient import TestClient
 from test_loading_resource_reservations import loading_admission
 from test_resource_reservations import admission, metadata_manifest, records
 
-from communityai_desktop.client import _normalize_contribution_status
-from communityai_desktop.controller import DesktopController
-from communityai_desktop.presentation import sharing_summary
 from drift.cli import run_node
 from drift.node import linux_cgroup_recovery, resource_recovery, worker_recovery_containment
 from drift.node.model_manager import ModelManager
@@ -71,7 +71,7 @@ def test_real_node_builder_passes_selection_to_each_resource_manager(tmp_path, m
         arguments.extend(("--worker-cgroup-root", root))
     parser = run_node.build_parser()
     args = parser.parse_args(arguments)
-    config = SimpleNamespace(models=())
+    config = SimpleNamespace(models=(), contribution_policy=SimpleNamespace(pause_timeout=30))
     monkeypatch.setattr(run_node, "_load_persisted_and_runtime_config", lambda args: (config, config))
     monkeypatch.setattr(run_node, "_merge_cached_initial_peers", lambda config, cache: config)
     monkeypatch.setattr(run_node, "_build_model_manager", lambda *args, **kwargs: (Mock(), [], Mock()))

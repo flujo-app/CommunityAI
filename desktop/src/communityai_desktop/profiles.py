@@ -86,7 +86,7 @@ class VolunteerProfile:
             "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1",
         }
 
-    def prepare(self) -> None:
+    def prepare(self, *, existing_anchor=False) -> None:
         """Check known state before keyring access, then create private directories."""
         root = _private_path(self.root)
         if not self.root.is_absolute() or root == Path(root.anchor):
@@ -96,7 +96,11 @@ class VolunteerProfile:
         self.validate_state_paths()
         self.validate_config()
         for path in paths:
-            _private_path(path).mkdir(mode=0o700, parents=True, exist_ok=True)
+            if existing_anchor and path in (root, self.data_dir):
+                if not _private_path(path).is_dir():
+                    raise ValueError("The provisioned test profile is missing; checked recovery is required")
+            else:
+                _private_path(path).mkdir(mode=0o700, parents=not existing_anchor, exist_ok=True)
             if os.name != "nt":
                 info = path.stat()
                 if info.st_uid != os.getuid() or info.st_mode & 0o077:

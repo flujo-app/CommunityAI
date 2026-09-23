@@ -116,6 +116,10 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
             "allow_login_startup": False,
         }
     )
+    anchored = profile is not None and sys.platform.startswith("linux")
+    anchor_prepared = None
+    if anchored:
+        shell_profile_options.update(allow_instance_directory_creation=False, allow_maintenance_ack=False)
     if args.gate13_ui_playthrough is None:
         if args.gate13_ui_evidence is not None or args.gate13_ui_screenshot is not None:
             parser.error("Gate 13 evidence options require --gate13-ui-playthrough")
@@ -124,9 +128,24 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
     if bool(args.resource_ui_playthrough) != bool(args.resource_ui_evidence):
         parser.error("Resource UI playthrough requires both plan and evidence paths")
     try:
+        if anchored and (args.store_control_key or args.delete_control_key):
+            raise NodeLifecycleError(
+                "Linux test-profile credential changes require exclusive anchor recovery, which is not available yet"
+            )
+        if anchored and args.probe_only:
+            raise NodeLifecycleError("Linux test-profile probe-only is unavailable without desktop instance ownership")
         if profile is not None and not args.prepare_update:
-            profile.prepare()
+            if anchored:
+                from communityai_desktop.anchor_lifecycle import LinuxAnchorLifecycle, prepare_anchored_profile
+
+                anchor_prepared = prepare_anchored_profile(profile)
+            else:
+                profile.prepare()
         if args.prepare_update:
+            if anchored:
+                from communityai_desktop.anchor_lifecycle import MAINTENANCE_ERROR
+
+                raise NodeLifecycleError(MAINTENANCE_ERROR)
             try:
                 from communityai_desktop.maintenance import prepare_update
 
@@ -208,6 +227,13 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
         lifecycle = (
             None
             if args.no_manage_node
+            else LinuxAnchorLifecycle(
+                profile,
+                credential_store,
+                prepared=anchor_prepared,
+                client_timeout=args.timeout,
+            )
+            if anchored
             else NodeLifecycleSupervisor(
                 node_url,
                 credential_store,
@@ -261,9 +287,8 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
 
         updater = None
         if qualification_automation is None and profile is None:
-            from PySide6.QtCore import QStandardPaths
-
             from communityai_desktop.updater import UpdateManager, installed_root
+            from PySide6.QtCore import QStandardPaths
 
             root = installed_root()
             if root is not None:
@@ -292,6 +317,13 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
             if lifecycle is not None:
                 lifecycle.close()
     except (CredentialError, NodeClientError, NodeLifecycleError, SingleInstanceError, ValueError, OSError) as exc:
+        if anchored and getattr(sys, "frozen", False) and sys.stderr is None:
+            # A windowed unprovisioned build must not silently disappear. This
+            # does not create the profile, provision a key, or start a service.
+            from PySide6.QtWidgets import QApplication, QMessageBox
+
+            application = QApplication.instance() or QApplication([])
+            QMessageBox.critical(None, profile.application_name, str(exc))
         parser.exit(2, f"communityai-desktop: {exc}\n")
 
 

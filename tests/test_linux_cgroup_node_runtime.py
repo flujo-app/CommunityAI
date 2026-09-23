@@ -14,6 +14,7 @@ import textwrap
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -31,6 +32,24 @@ ROOT = os.environ.get("COMMUNITYAI_TEST_CGROUP_ROOT")
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux") or not ROOT, reason="requires explicit native Linux cgroup delegation"
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_worker_root(monkeypatch):
+    """The still-running owner/driver must be outside its drainable worker tree."""
+    from drift.node.linux_cgroup_recovery import verify_cgroup_tree_empty
+
+    root = Path(ROOT) / ("node-runtime-workers-" + uuid4().hex)
+    root.mkdir(mode=0o700)
+    monkeypatch.setitem(globals(), "ROOT", str(root))
+    assert (root / "cgroup.procs").read_text() == ""
+    yield
+    # Fixture cleanup has no pruning authority until real tree death is proved.
+    verify_cgroup_tree_empty(root)
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_dir():
+            path.rmdir()
+    root.rmdir()
 
 
 def snapshot(claims, *, host_limit_bytes, cache_limits, now, **kwargs):

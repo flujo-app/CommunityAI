@@ -22,9 +22,7 @@ if __name__ == "__main__":
 else:
     import pytest
 
-from drift.node import linux_anchor as anchor
-from drift.node import linux_anchor_control as control
-from drift.node import linux_cgroup_process as native
+from drift.node import linux_anchor as anchor, linux_anchor_control as control, linux_cgroup_process as native
 from drift.node.linux_anchor_entry import NODE_TOKEN_ENV
 from drift.node.linux_anchor_node import AnchorNode
 from drift.node.resource_recovery import RecoverableStateError
@@ -148,6 +146,16 @@ def node_runtime(profile, worker_root, mode):
     durable = json.loads((profile / "anchor" / "state.json").read_text())
     assert durable["generation"]["pid"] == os.getpid()
     generation = durable["generation"]["id"]
+    if mode == "api":
+        from linux_anchor_api_fixture import serve
+
+        try:
+            return serve(profile, worker_root)
+        except BaseException:
+            import traceback
+
+            (profile / "api-fixture-error.txt").write_text(traceback.format_exc())
+            raise
     worker = manager = None
     if mode in ("entry_loss", "entry_replacement", "binding_loss", "binding_replacement"):
         from drift.node.resource_reservations import ResourceReservationError
@@ -453,13 +461,21 @@ if __name__ != "__main__":
             assert time.monotonic() < deadline, json.dumps(value, sort_keys=True)
             time.sleep(0.02)
 
+    def condition(value):
+        generation = value["generation"]
+        return dict(
+            generation=None if generation is None else generation["id"], pending_request_id=value["pending_request_id"]
+        )
+
     def command(operation, request_id=None):
         request_id = request_id or uuid4().hex
         deadline = time.monotonic() + 5
         while True:
             value = observe()
             try:
-                result = control.control_anchor(operation, revision=value["revision"], request_id=request_id)
+                result = control.control_anchor(
+                    operation, revision=value["revision"], request_id=request_id, condition=condition(value)
+                )
                 return result["node"], request_id
             except RecoverableStateError:
                 assert time.monotonic() < deadline, value
@@ -483,10 +499,14 @@ if __name__ != "__main__":
         assert entered["pid"] == running["generation"]["pid"]
         assert entered["phase"] in ("starting", "running")
         assert not running["api_ready"] and not running["maintenance"]
-        same = control.control_anchor("start", revision=0, request_id=request_id)["node"]
+        same = control.control_anchor(
+            "start", revision=0, request_id=request_id, condition=dict(generation=None, pending_request_id=None)
+        )["node"]
         assert same["generation"] == running["generation"]
         with pytest.raises(RecoverableStateError):
-            control.control_anchor("start", revision=running["revision"], request_id=uuid4().hex)
+            control.control_anchor(
+                "start", revision=running["revision"], request_id=uuid4().hex, condition=condition(running)
+            )
         command("drain")
         idle = until(lambda s: s["drain_complete"])
         assert idle["request_id"] != request_id
@@ -604,13 +624,15 @@ if __name__ != "__main__":
         assert not (directory / "profile" / "entered.json").exists()
         assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
         with pytest.raises(RecoverableStateError):
-            control.control_anchor("start", revision=blocked["revision"], request_id=uuid4().hex)
+            control.control_anchor(
+                "start", revision=blocked["revision"], request_id=uuid4().hex, condition=condition(blocked)
+            )
 
     def test_stale_unknown_or_path_injected_protocol_never_changes_generation(running_node):
         root, directory, start = running_node
         start()
         idle = until(lambda s: s["drain_complete"])
-        bad = control.request("start", "a" * 64, idle["revision"], uuid4().hex)
+        bad = control.request("start", "a" * 64, idle["revision"], uuid4().hex, condition(idle))
         bad["argv"] = ["/private/command"]
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(2)
@@ -619,7 +641,9 @@ if __name__ != "__main__":
             connection.shutdown(socket.SHUT_WR)
             assert connection.recv(1) == b""
         with pytest.raises(RecoverableStateError):
-            control.control_anchor("start", revision=idle["revision"] - 1, request_id=uuid4().hex)
+            control.control_anchor(
+                "start", revision=idle["revision"] - 1, request_id=uuid4().hex, condition=condition(idle)
+            )
         assert observe()["generation"] is None
 
     @pytest.mark.parametrize("mode", ["dequeue_barrier", "publish_barrier"])
@@ -633,12 +657,16 @@ if __name__ != "__main__":
         assert value["revision"] == initial["revision"]
         assert value["pending_request_id"] == start_id and not value["drain_complete"]
         drain_id = uuid4().hex
-        accepted = control.control_anchor("drain", revision=value["revision"], request_id=drain_id)["node"]
+        accepted = control.control_anchor(
+            "drain", revision=value["revision"], request_id=drain_id, condition=condition(value)
+        )["node"]
         assert accepted["pending_request_id"] == drain_id and not accepted["drain_complete"]
-        control.control_anchor("drain", revision=value["revision"], request_id=drain_id)
+        control.control_anchor("drain", revision=value["revision"], request_id=drain_id, condition=condition(value))
         for operation in ("start", "drain"):
             with pytest.raises(RecoverableStateError):
-                control.control_anchor(operation, revision=value["revision"], request_id=uuid4().hex)
+                control.control_anchor(
+                    operation, revision=value["revision"], request_id=uuid4().hex, condition=condition(value)
+                )
         (directory / "release").touch()
         until(lambda s: s["drain_complete"])
         assert not (directory / "profile" / "entered.json").exists()
@@ -652,10 +680,12 @@ if __name__ != "__main__":
         wait_file(directory / "barrier")
         value = observe()
         assert value["pending_request_id"] == request_id and not value["drain_complete"]
-        control.control_anchor("drain", revision=value["revision"], request_id=request_id)
+        control.control_anchor("drain", revision=value["revision"], request_id=request_id, condition=condition(value))
         for operation in ("start", "drain"):
             with pytest.raises(RecoverableStateError):
-                control.control_anchor(operation, revision=value["revision"], request_id=uuid4().hex)
+                control.control_anchor(
+                    operation, revision=value["revision"], request_id=uuid4().hex, condition=condition(value)
+                )
         (directory / "release").touch()
         until(lambda s: s["drain_complete"])
 
@@ -668,7 +698,9 @@ if __name__ != "__main__":
         value = observe()
         assert not value["drain_complete"] and value["pending_request_id"] is not None
         with pytest.raises(RecoverableStateError):
-            control.control_anchor("start", revision=value["revision"], request_id=uuid4().hex)
+            control.control_anchor(
+                "start", revision=value["revision"], request_id=uuid4().hex, condition=condition(value)
+            )
         (directory / "release").touch()
         blocked = until(lambda s: s["phase"] == "blocked" and s["pending_request_id"] is None)
         assert not blocked["drain_complete"]

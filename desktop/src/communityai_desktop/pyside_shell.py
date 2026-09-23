@@ -260,6 +260,8 @@ def run(
     application_name: str = "CommunityAI",
     instance_data_dir: Path | str | None = None,
     allow_login_startup: bool = True,
+    allow_instance_directory_creation: bool = True,
+    allow_maintenance_ack: bool = True,
     before_termination_restore: Callable[[], None] | None = None,
     qualification_automation=None,  # noqa: ANN001
     updater=None,  # noqa: ANN001
@@ -270,6 +272,8 @@ def run(
     if instance_data_dir is not None:
         _instance_data_root(instance_data_dir, None, create=False)
 
+    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
+    from communityai_desktop.resource_controls import GpuResourceControls, ResourceControls
     from PySide6.QtCore import QLockFile, QObject, QRunnable, QStandardPaths, Qt, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtGui import QFont, QGuiApplication, QIcon
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -296,9 +300,6 @@ def run(
         QVBoxLayout,
         QWidget,
     )
-
-    from communityai_desktop.model_health import DownloadCard, ModelHealthCard
-    from communityai_desktop.resource_controls import GpuResourceControls, ResourceControls
 
     def label(text: str = "", name: str | None = None) -> QLabel:
         item = QLabel(text)
@@ -900,7 +901,12 @@ def run(
             self._gpu_draft.invalidate()
             self._set_connection_state(False)
             self.connection_title.setText(f"Could not connect to {application_name}")
-            self.connection_detail.setText(f"Try again. If this keeps happening, restart {application_name}.")
+            self.connection_detail.setText(
+                f"Try again. If this keeps happening, restart {application_name}."
+                if allow_maintenance_ack
+                else "Reconnect only to the verified anchor. If recovery is required, use the checked recovery workflow; "
+                "do not delete profile files."
+            )
             self.connection_detail.setToolTip(str(message)[:300])
             self.hero_title.setText("Model unavailable")
             self.hero_subtitle.setText(f"Waiting for {application_name} to reconnect.")
@@ -1565,7 +1571,9 @@ def run(
         default_location = (
             QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation) if instance_data_dir is None else None
         )
-        data_root = _instance_data_root(instance_data_dir, default_location, create=True)
+        data_root = _instance_data_root(instance_data_dir, default_location, create=allow_instance_directory_creation)
+        if not data_root.is_dir():
+            raise SingleInstanceError("The verified desktop instance directory is missing; recovery is required")
         instance_server_name = _instance_server_name(
             data_root, instance_name, profile_scoped=instance_data_dir is not None
         )
@@ -1662,8 +1670,15 @@ def run(
                 message = raw_message.strip() if len(raw_message) <= 32 and socket.bytesAvailable() == 0 else b""
                 should_activate = should_activate or message == b"activate"
                 if message == b"shutdown":
-                    shutdown_sockets.append(socket)
-                    should_shutdown = True
+                    if allow_maintenance_ack:
+                        shutdown_sockets.append(socket)
+                        should_shutdown = True
+                    else:
+                        socket.write(b"failed\n")
+                        socket.flush()
+                        socket.waitForBytesWritten(250)
+                        socket.disconnectFromServer()
+                        socket.deleteLater()
                 else:
                     socket.abort()
                     socket.deleteLater()
@@ -1704,7 +1719,8 @@ def run(
         try:
             if before_termination_restore is not None:
                 before_termination_restore()
-            response = b"stopped\n"
+            if allow_maintenance_ack:
+                response = b"stopped\n"
         finally:
             for socket in shutdown_sockets:
                 socket.write(response)

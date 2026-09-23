@@ -1149,6 +1149,14 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
             with self.assertRaises(NodeBuildReached):
                 build_desktop.main()
         arguments, options = calls[1]
+        gui_arguments = calls[0][0]
+        gui_paths = [gui_arguments[index + 1] for index, value in enumerate(gui_arguments) if value == "--paths"]
+        self.assertIn(str(self.project.parent / "src"), gui_paths)
+        exclusions = [
+            gui_arguments[index + 1] for index, value in enumerate(gui_arguments) if value == "--exclude-module"
+        ]
+        self.assertIn("drift", exclusions)
+        self.assertNotIn("communityai_anchor", exclusions)
         self.assertEqual(arguments[0], str(self.project / "launch_volunteer_node.py"))
         self.assertIn(str(self.project / "src"), arguments)
         self.assertIn(build_desktop.cgroup_extension.MODULE_NAME, arguments)

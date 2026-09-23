@@ -258,6 +258,7 @@ def _worker_arguments(mode: str, arguments: Sequence[str], profile) -> list[str]
 def _anchor_controller(layout, *, initialize=False):
     """Trusted fixed launcher wiring, invoked only after live service proof."""
     from communityai_desktop.profiles import VolunteerProfile
+
     from drift.node import linux_anchor as anchor
     from drift.node.linux_anchor_node import AnchorNode
     from drift.node.linux_anchor_state import _sync_directory
@@ -286,7 +287,7 @@ def _anchor_controller(layout, *, initialize=False):
         _sync_directory(profile.root.parent, parent_identity)
 
     def launch(worker_root):
-        profile.prepare()
+        profile.prepare(existing_anchor=True)
         environment = os.environ.copy()
         for name, value in profile.child_environment().items():
             if value is None:
@@ -351,7 +352,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             forwarded[forwarded.index("--worker-cgroup-root") + 1] if "--worker-cgroup-root" in forwarded else None
         )
         validate_node_entry(profile.root, token, worker_root)
-    profile.prepare()
+    if mode == "bootstrap" and sys.platform.startswith("linux"):
+        raise ValueError(
+            "Linux catalog bootstrap requires an exclusive anchor transaction; no profile files were changed"
+        )
+    # Only anchor-initialize may create the Linux fixed root/node. Diagnostics,
+    # help and supervised workers must not poison first init or recreate loss.
+    profile.prepare(existing_anchor=sys.platform.startswith("linux"))
     for name, value in profile.child_environment().items():
         if value is None:
             os.environ.pop(name, None)

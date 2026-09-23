@@ -13,11 +13,10 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from drift.node import linux_anchor as anchor
-from drift.node import linux_anchor_resources as resources
-from drift.node import linux_cgroup_process as native
+from drift.node import linux_anchor as anchor, linux_anchor_resources as resources, linux_cgroup_process as native
 from drift.node.linux_anchor_entry import NODE_TOKEN_ENV
 from drift.node.linux_anchor_state import AnchorState, node_lease
+from drift.node.linux_node_identity import make_identity
 from drift.node.resource_recovery import RecoverableStateError
 from drift.node.resource_reservations import ResourceReservationManager
 
@@ -46,6 +45,7 @@ class AnchorNode:
             operation=None,
             drain_complete=False,
             api_ready=False,
+            api_identity=None,
             maintenance=False,
             pending_request_id=None,
         )
@@ -104,6 +104,7 @@ class AnchorNode:
             operation=value["operation"],
             drain_complete=value["phase"] == "idle" and not blocked and not self._fatal and not self._state.poisoned,
             api_ready=False,
+            api_identity=make_identity(value["binding"], generation),
             maintenance=False,
             pending_request_id=None,
         )
@@ -114,10 +115,17 @@ class AnchorNode:
         self._state.write(self._state.value["revision"], **changes)
         self._publish()
 
-    def submit(self, operation, revision, request_id):
+    def submit(self, operation, revision, request_id, *, condition=None):
         anchor._require(type(operation) is str and operation in {"start", "drain"})
         anchor._require(type(revision) is int and 0 <= revision < 2**63)
         anchor._require(type(request_id) is str and anchor.re.fullmatch("[0-9a-f]{32}", request_id) is not None)
+        anchor._require(type(condition) is dict and set(condition) == {"generation", "pending_request_id"})
+        anchor._require(
+            all(
+                value is None or (type(value) is str and anchor.re.fullmatch("[0-9a-f]{32}", value) is not None)
+                for value in condition.values()
+            )
+        )
         with self._lock:
             anchor._require(not self._stop and not self._fatal and not self._state.poisoned)
             command = (operation, revision, request_id)
@@ -128,6 +136,16 @@ class AnchorNode:
             if request_id == self._cached["request_id"]:
                 anchor._require(operation == self._cached["operation"])
                 return
+            if condition is not None:
+                generation = self._cached["generation"]
+                current = self._pending or self._active
+                anchor._require(
+                    condition
+                    == dict(
+                        generation=None if generation is None else generation["id"],
+                        pending_request_id=None if current is None else current[2],
+                    )
+                )
             anchor._require(revision == self._cached["revision"] and self._pending is None)
             anchor._require(self._active is None or (self._active[0] == "start" and operation == "drain"))
             anchor._require(

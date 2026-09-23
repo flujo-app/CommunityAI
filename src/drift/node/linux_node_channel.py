@@ -2,6 +2,6 @@
 
 import sys as _sys
 
-from communityai_anchor import linux_cgroup_recovery as _implementation
+from communityai_anchor import linux_node_channel as _implementation
 
 _sys.modules[__name__] = _implementation

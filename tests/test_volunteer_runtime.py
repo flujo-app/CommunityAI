@@ -180,9 +180,9 @@ def test_node_applies_profile_guards_before_services_and_registering_local_loade
         with pytest.raises(run_node.NodeResourceDrainError):
             run_node._serve_once(args, parser)
     resource_manager = create_app.call_args.kwargs["resource_recovery_status"].__self__
-    assert resource_manager._closed is drain_complete
-    # The mocked incomplete-drain path has no actual work; retire its fixture
-    # owner explicitly instead of leaving the intentionally retained runner.
+    # Resource cleanup is independently attempted even if worker drain fails.
+    # This empty fixture owner can close; failed worker proof still raised above.
+    assert resource_manager._closed is True
     assert resource_manager.close()
     assert server.should_exit is (exit_request is not None)
     manager.shutdown.assert_called_once_with()

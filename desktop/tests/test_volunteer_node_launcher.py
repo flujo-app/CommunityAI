@@ -55,6 +55,7 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         entry = types.ModuleType("drift.node.linux_anchor_entry")
         entry.NODE_TOKEN_ENV = "COMMUNITYAI_ANCHOR_NODE_TOKEN"
         entry.validate_node_entry = entry_validator or (lambda *args: None)
+        entry.inspect_profile_entry = lambda *args: None
         runtime_modules = {
             "launch_node": generic,
             "drift.cli.run_node": self._runtime_module("node"),
@@ -63,7 +64,9 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
             "drift.cli.run_edge_acquisition": self._runtime_module("edge_acquisition"),
             "drift.node.linux_anchor_entry": entry,
         }
-        with patch.dict(sys.modules, runtime_modules):
+        with patch.dict(sys.modules, runtime_modules), patch.object(
+            sys, "platform", "win32" if entry_validator is None else sys.platform
+        ):
             return launcher.main(arguments)
 
     def _worker(self):
@@ -196,6 +199,12 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
                 self.assertEqual(launcher._anchor_controller(layout, initialize=True), "controller")
                 factory = owner.call_args.args[2]
                 self.assertTrue(owner.call_args.kwargs["initialize"])
+                # The mocked owner has not provisioned its node directory.
+                # A launch must retain this partial profile, not repair it.
+                with self.assertRaisesRegex(ValueError, "provisioned test profile"):
+                    factory("/fixture/workers")
+                self.assertEqual(list(self.profile.root.iterdir()), [])
+                self.profile.data_dir.mkdir(mode=0o700)  # Models explicit owner provisioning.
                 command, env, cwd = factory("/fixture/workers")
                 self.assertEqual(command[0], str(executable))
                 self.assertEqual(command[-2:], ["--worker-cgroup-root", "/fixture/workers"])
@@ -217,7 +226,46 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         self.assertFalse(self.profile.root.exists())
         self.assertEqual(self.dispatches, [])
 
+    def test_linux_diagnostics_and_help_never_create_a_profile(self):
+        for arguments in (
+            ["--self-test"],
+            ["server", "--self-test"],
+            ["--native-self-test"],
+            ["--native-self-test", "--require-cuda"],
+            ["--cgroup-extension-self-test"],
+            ["--help"],
+            ["server", "--help"],
+            ["bootstrap", "--help"],
+            ["edge-acquire", "--help"],
+        ):
+            with self.subTest(arguments=arguments), patch.object(sys, "platform", "linux"):
+                with self.assertRaises(ValueError):
+                    self._run(arguments, entry_validator=lambda *args: None)
+                self.assertFalse(self.profile.root.exists())
+        self.assertEqual(self.dispatches, [])
+
+    def test_linux_worker_after_validation_never_recreates_lost_profile(self):
+        for mode in ("server", "edge-acquire"):
+            for missing in ("root", "node"):
+                with self.subTest(mode=mode, missing=missing), TemporaryDirectory() as directory:
+                    profile = VolunteerProfile(Path(directory) / "profile")
+                    profile.prepare()
+                    lost = profile.root if missing == "root" else profile.data_dir
+
+                    def validated(*args):
+                        lost.rename(lost.with_name(lost.name + "-retained"))
+                        return [mode]
+
+                    with patch.object(VolunteerProfile, "for_current_user", return_value=profile), patch.object(
+                        launcher, "_worker_arguments", side_effect=validated
+                    ), patch.object(sys, "platform", "linux"):
+                        with self.assertRaises(ValueError):
+                            self._run([mode], entry_validator=lambda *args: None)
+                    self.assertFalse(lost.exists())
+        self.assertEqual(self.dispatches, [])
+
     def test_linux_node_consumes_exact_birth_token_before_dispatch(self):
+        self.profile.prepare()  # Fixture models the already provisioned anchor.
         seen = []
         os.environ["COMMUNITYAI_ANCHOR_NODE_TOKEN"] = "a" * 32
         with patch.object(sys, "platform", "linux"):
@@ -230,6 +278,14 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         self.assertEqual(seen, [(self.profile.root, "a" * 32, "/fixture/workers")])
         self.assertNotIn("COMMUNITYAI_ANCHOR_NODE_TOKEN", self.dispatches[0][2])
         self.assertIn("--pause_sharing_on_start", self.dispatches[0][0])
+
+    def test_linux_bootstrap_refuses_before_profile_mutation(self):
+        bootstrap = self.home / "catalog-bootstrap.json"
+        bootstrap.write_text("{}")
+        with patch.object(sys, "platform", "linux"), self.assertRaisesRegex(ValueError, "exclusive anchor transaction"):
+            self._run(["bootstrap", str(bootstrap)], entry_validator=lambda *args: None)
+        self.assertFalse(self.profile.root.exists())
+        self.assertEqual(self.dispatches, [])
 
     def test_explicit_cgroup_root_is_forwarded_without_widening_the_fixed_node_profile(self):
         root = "/delegated/communityai-volunteer"
@@ -605,7 +661,8 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         self.assertEqual(outside.read_text(encoding="utf-8"), "{}")
         self.assertEqual(self.dispatches, [])
 
-    def test_exact_diagnostics_remain_available_without_supervisor_and_in_isolated_state(self):
+    def test_exact_diagnostics_remain_available_without_supervisor_in_provisioned_isolated_state(self):
+        self.profile.prepare()  # Diagnostics do not have Linux first-install authority.
         os.environ.pop(launcher.PARENT_PID_ENV, None)
         cases = (
             ["--self-test"],

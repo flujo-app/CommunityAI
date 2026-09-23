@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import ast
+import json
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -9,6 +12,23 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "communityai_deskto
 
 
 class RuntimeBoundaryTests(unittest.TestCase):
+    def test_anchor_desktop_imports_in_fresh_stdlib_only_interpreter(self):
+        desktop = PACKAGE_ROOT.parents[1]
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                str(desktop / "tests" / "anchor_import_probe.py"),
+                json.dumps([str(desktop / "src"), str(desktop.parent / "src")]),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(json.loads(result.stdout), {"result": "import-only", "forbidden_attempts": []})
+
     def test_desktop_source_does_not_import_model_or_network_runtimes(self):
         violations = []
         for path in sorted(PACKAGE_ROOT.glob("*.py")):

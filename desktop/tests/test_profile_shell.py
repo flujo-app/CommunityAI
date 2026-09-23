@@ -10,12 +10,12 @@ from unittest import mock
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PySide6.QtCore import QStandardPaths
-from PySide6.QtWidgets import QApplication, QLabel
-
+from communityai_desktop.lifecycle import NodeLifecycleError
 from communityai_desktop.maintenance import prepare_update
 from communityai_desktop.pyside_shell import _instance_data_root, run
 from communityai_desktop.startup import SingleInstanceError
+from PySide6.QtCore import QStandardPaths
+from PySide6.QtWidgets import QApplication, QLabel
 
 
 class ProfileShellTests(unittest.TestCase):
@@ -24,6 +24,62 @@ class ProfileShellTests(unittest.TestCase):
         cls.application = QApplication.instance() or QApplication([])
         if cls.application.platformName() != "offscreen":
             raise RuntimeError("profile shell tests require an offscreen QApplication")
+
+    def test_anchored_shell_rejects_raw_maintenance_without_quitting_or_cleanup(self):
+        from communityai_desktop.pyside_shell import _instance_server_name
+        from PySide6.QtCore import QTimer
+        from PySide6.QtNetwork import QLocalSocket
+
+        errors, observations, sockets = [], {}, []
+        cleanup = mock.Mock()
+
+        class Automation:
+            def install(self, window, application, qt):
+                def request():
+                    try:
+                        window._connection_failed("fixture recovery")
+                        observations["detail"] = window.connection_detail.text()
+                        endpoint = QLocalSocket(application)
+                        sockets.append(endpoint)
+                        endpoint.connectToServer(_instance_server_name(root, None, profile_scoped=True))
+                        assert endpoint.waitForConnected(500)
+                        endpoint.write(b"shutdown\n")
+                        endpoint.flush()
+                    except BaseException as exc:
+                        errors.append(exc)
+                    QTimer.singleShot(250, verify)
+
+                def verify():
+                    try:
+                        assert sockets and bytes(sockets[0].readAll()) == b"failed\n"
+                        assert cleanup.call_count == 0 and window.isVisible()
+                    except BaseException as exc:
+                        errors.append(exc)
+                    finally:
+                        application.exit(0)
+
+                QTimer.singleShot(20, request)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.assertEqual(
+                run(
+                    connect=lambda: None,
+                    application_name="CommunityAI Multi-GPU Test",
+                    instance_data_dir=root,
+                    allow_login_startup=False,
+                    allow_instance_directory_creation=False,
+                    allow_maintenance_ack=False,
+                    before_termination_restore=cleanup,
+                    qualification_automation=Automation(),
+                    auto_close_seconds=3,
+                ),
+                0,
+            )
+        if errors:
+            raise errors[0]
+        self.assertIn("do not delete profile files", observations["detail"])
+        cleanup.assert_called_once()
 
     def test_profile_window_identity_and_startup_guard_do_not_touch_regular_settings(self):
         errors = []
@@ -137,7 +193,9 @@ class ProfileShellTests(unittest.TestCase):
                 link.symlink_to(target, target_is_directory=True)
             with self.assertRaisesRegex(SingleInstanceError, "symlinks or junctions"):
                 _instance_data_root(link / "instance", None, create=True)
-            with self.assertRaisesRegex(SingleInstanceError, "symlinks or junctions"):
+            with self.assertRaisesRegex(
+                (SingleInstanceError, NodeLifecycleError), "symlinks or junctions|anchor maintenance"
+            ):
                 prepare_update(application_name="CommunityAI Multi-GPU Test", instance_data_dir=link / "instance")
             self.assertEqual(list(target.iterdir()), [])
 
@@ -145,9 +203,13 @@ class ProfileShellTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve() / "unused-profile" / "instance"
             with mock.patch.object(QStandardPaths, "writableLocation", side_effect=AssertionError("regular path read")):
-                self.assertEqual(
-                    prepare_update(application_name="CommunityAI Multi-GPU Test", instance_data_dir=root), 0
-                )
+                if sys.platform.startswith("linux"):
+                    with self.assertRaisesRegex(NodeLifecycleError, "anchor maintenance"):
+                        prepare_update(application_name="CommunityAI Multi-GPU Test", instance_data_dir=root)
+                else:
+                    self.assertEqual(
+                        prepare_update(application_name="CommunityAI Multi-GPU Test", instance_data_dir=root), 0
+                    )
             self.assertFalse(root.parent.exists())
 
     def test_maintenance_stops_only_the_matching_profile_in_two_real_shell_processes(self):
@@ -202,7 +264,11 @@ with patch.object(QStandardPaths, "writableLocation", default_location), patch("
                     timeout=10,
                     creationflags=flags,
                 )
-                self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace")[-1000:])
+                if mode == "volunteer" and sys.platform.startswith("linux"):
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b"anchor maintenance", result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace")[-1000:])
 
             try:
                 for mode, root in roots.items():
@@ -228,8 +294,12 @@ with patch.object(QStandardPaths, "writableLocation", default_location), patch("
                     json.loads((roots["volunteer"] / "ready.json").read_text())["title"], "CommunityAI Multi-GPU Test"
                 )
                 stop("volunteer")
-                self.assertEqual(processes["volunteer"].wait(timeout=10), 0)
-                self.assertEqual((roots["volunteer"] / "stopped.txt").read_text(), "owned cleanup complete")
+                if sys.platform.startswith("linux"):
+                    self.assertIsNone(processes["volunteer"].poll())
+                    self.assertFalse((roots["volunteer"] / "stopped.txt").exists())
+                else:
+                    self.assertEqual(processes["volunteer"].wait(timeout=10), 0)
+                    self.assertEqual((roots["volunteer"] / "stopped.txt").read_text(), "owned cleanup complete")
                 self.assertIsNone(processes["regular"].poll())
                 self.assertFalse((roots["regular"] / "stopped.txt").exists())
                 stop("volunteer")

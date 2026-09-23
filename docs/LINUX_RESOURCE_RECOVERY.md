@@ -326,10 +326,12 @@ Layout observation checks exact identities even when a node/worker root is
 frozen, so freezing cannot veto Stop. Admission and a completed-drain proof
 still require unfrozen roots; a frozen root is contained but remains blocked.
 
-The current Linux volunteer GUI still uses its direct node-launch path and has
-not been adapted to this new entry contract. Do not share a new test bundle
-until generation-bound GUI/API reconnect, checked profile bootstrap/migration,
-service provisioning and installer maintenance are integrated. Crash/replaced
+The Linux volunteer GUI now requires the already-provisioned fixed anchor and
+uses scoped Start/Drain and exact-generation private Unix control transport.
+There is no direct launch, port-based adoption, TCP control or recovery fallback.
+This source component does not make a test bundle shareable: checked profile
+bootstrap/migration, service provisioning and installer maintenance are still
+required. Crash/replaced
 anchor and reboot recovery remain explicit later transactions, not restarts
 with renamed/deleted evidence. The service unit's stop allowance must cover
 the 3,030-second graceful node drain plus bounded cleanup; the placeholder unit
@@ -351,6 +353,83 @@ private Docker namespace. Injected write failures are not physical power-loss
 tests. No installed user manager, package upgrade, GPU or model is qualified by
 this component. Node/model bodies and resource snapshots in these tests are
 controlled fixtures, not model execution or hardware-budget measurements.
+
+## Generation-bound desktop/control transport
+
+Every mutating v2 command must name both its expected generation (or null) and
+pending request (or null), in addition to revision and request ID. The controller
+compares that scope under its control lock; an old idle receipt cannot cancel a
+new accepted-but-not-yet-published Start. Exact retries remain idempotent.
+
+The admitted node publishes a secret-free identity: generation, PID/start ticks,
+and SHA256 fingerprints of its native cgroup and complete anchor binding. Its
+actual Uvicorn app serves ordinary `/v1/` on TCP and privileged `/control/v1/`
+only on a newly created private generation-specific Unix socket. Both listeners
+are non-inheritable before discovery/contribution starts. All control requests
+must carry the exact generation digest, and middleware rejects wrong transport
+or missing/duplicate/stale generation headers before parsing bodies or effects.
+The control credential remains independently required and unique. Ordinary
+non-anchored nodes retain their existing TCP control behavior.
+An admitted node's termination scope remains active through complete cleanup:
+Uvicorn's re-raised SIGTERM/SIGINT latches shutdown rather than invoking a default
+process kill before socket/resource finalizers. Termination overrides reload;
+original handlers are restored only after cleanup. The anchor still owns the
+bounded whole-tree fallback if graceful cleanup cannot finish.
+
+The desktop revalidates anchor receipt, socket/directory identities and the
+actual peer UID/PID/start/cgroup before sending HTTP credentials, then validates
+again after the response. It verifies the response generation header and never
+reuses a connection or replays a request over TCP. Socket replacement, ambiguous
+effects, changed service/generation or missing evidence fail closed. A connected
+descriptor cannot be redirected by replacing the pathname. Cleanup unlinks only
+the exact socket it owns; stale/replaced sockets remain for checked recovery.
+This is a same-user cooperative ownership contract, not a same-UID sandbox.
+
+The desktop uses the shared `communityai_anchor` package, without importing
+`drift`, Torch or the model/network runtime. Legacy node imports alias the same
+module objects so admission state and exception classes are never duplicated.
+Read-only topology observation checks the same native filesystem identities,
+but does not probe process-birth capability. Actual execution admission still
+requires the native backend. The desktop wheel and self-contained source
+archive include only the shared protocol and desktop packages; the GUI freezer
+keeps its model-runtime exclusions. This is not frozen-binary qualification.
+Non-editable desktop and runtime wheels require separate environments: both
+currently contain the shared package, so mixed-wheel upgrade/uninstall is not
+supported. Same-checkout editable development still uses one authoritative
+source. General co-installable wheels require a single separately versioned
+shared dependency; no such distribution or qualification is claimed here.
+
+Read-only desktop preflight requires intact storage and the active anchor lease
+before profile/keyring/single-instance setup. Bounded receipt/state stabilization
+handles ordinary durable-write/publication races without adopting new storage
+or service authority. A lifecycle that never connected/started owns nothing:
+duplicate desktop activation cannot Drain the existing instance. Normal close
+uses a fresh scoped Drain and latches failure so shell/app cleanup cannot repeat
+the long timeout after releasing the instance lock. Completed Drain authorizes
+neither replacement nor deletion of application/profile files.
+An unverified Drain failure is terminal for that lifecycle: it retains target
+and command evidence, and queued/repeated close or Retry returns the same
+failure without another command, observation or shutdown window. Recovery needs
+a freshly verified lifecycle; this does not grant permission to delete evidence.
+
+Start/reconnect use the exact admitted generation; a same-generation config
+reload may rebind its socket after all previous resources close. Reconnect to a
+live generation allows the configured shutdown bound plus API startup time.
+Sharing Start/Pause remain node API operations, distinct from node Start/Drain.
+The initial node always starts sharing-paused with local inference CPU-only.
+
+Linux GUI and launcher catalog bootstrap/refresh are deliberately refused until
+an anchor-exclusive transaction covers the entire mutation. An idle snapshot is
+not write authority. This component supports existing provisioned configurations
+only; first installation/migration remain required beta work, not dropped scope.
+Linux volunteer probe-only is refused without desktop instance ownership, and
+update/removal refuses even with no GUI. The shell cannot emit a successful
+maintenance acknowledgement merely because the node was drained.
+All other Linux fixed-launcher modes, including help/diagnostics and supervised
+workers, require existing root/node directories and cannot recreate their loss.
+Explicit desktop credential store/delete commands refuse before preflight or
+keyring access until exclusive credential recovery exists. Normal idle Start
+may provision the existing profile credential; it never rotates a live key.
 
 Recovery status remains a cached, fixed public object. Its API callback must not
 probe cgroupfs or wait for recovery locks. Checking and retryable cleanup may

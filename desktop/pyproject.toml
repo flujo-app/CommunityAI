@@ -23,11 +23,8 @@ dev = [
 communityai-desktop = "communityai_desktop.app:main"
 communityai-multigpu-test = "communityai_desktop.app:volunteer_main"
 
-[tool.setuptools]
-package-dir = { "" = "src" }
-
-[tool.setuptools.packages.find]
-where = ["src"]
+# setup.py maps the single shared anchor source into wheels and self-contained
+# sdists. The GUI never depends on the heavyweight drift distribution.
 
 [tool.setuptools.package-data]
 communityai_desktop = ["assets/*.ico"]

@@ -7,10 +7,11 @@ import hashlib
 import math
 import re
 import secrets
+import signal
 import sys
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Mapping
@@ -1850,7 +1851,85 @@ def main() -> None:
         raise SystemExit(RESOURCE_DRAIN_EXIT_CODE) from None
 
 
+class _NodeRunCleanup:
+    """Own partially constructed runtimes as well as the successful serve cycle."""
+
+    def __init__(self):
+        self.manager = self.resources = self.workers = self.placement = self.refresh = None
+        self.pause_timeout = 30.0
+        self.server = None
+        self.terminated = False
+
+    def close(self):
+        complete = True
+
+        def stop(action, *, proof=False):
+            nonlocal complete
+            try:
+                result = action()
+                if proof and not result:
+                    complete = False
+            except Exception:
+                complete = False
+
+        for service in (self.refresh, self.placement):
+            if service is not None:
+                stop(service.close)
+        if self.workers is not None:
+            stop(self.workers.shutdown)
+            stop(lambda: self.workers.drain_resource_operations(timeout=self.pause_timeout), proof=True)
+        if self.manager is not None:
+            stop(self.manager.shutdown)
+        if self.resources is not None:
+            stop(self.resources.close, proof=True)
+        if not complete:
+            logger.warning("Node resources remain retained for verified recovery at the next start")
+            raise NodeResourceDrainError()
+
+
+@contextmanager
+def _anchored_node_signals(cleanup, enabled):
+    """Keep Uvicorn's re-raised termination inside the verified cleanup scope.
+
+    Uvicorn restores and invokes the previous signal handler after HTTP shutdown.
+    A default SIGTERM would otherwise kill the process before outer finally blocks.
+    Only admitted anchor-owned nodes replace that default; ordinary CLI unchanged.
+    """
+    if not enabled:
+        yield
+        return
+    if threading.current_thread() is not threading.main_thread():
+        raise NodeResourceDrainError()
+    previous = {}
+
+    def stop(signum, frame):
+        cleanup.terminated = True
+        if cleanup.server is not None:
+            cleanup.server.should_exit = True
+
+    try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous[signum] = signal.signal(signum, stop)
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
 def _serve_once(args, parser) -> bool:
+    from drift.node.linux_anchor_entry import admitted_control_identity
+
+    control_identity = admitted_control_identity()
+    cleanup = _NodeRunCleanup()
+    with _anchored_node_signals(cleanup, control_identity is not None):
+        try:
+            restart = _serve_node_once(args, parser, cleanup, control_identity)
+        finally:
+            cleanup.close()
+    return restart and not cleanup.terminated
+
+
+def _serve_node_once(args, parser, cleanup, control_identity) -> bool:
 
     try:
         from drift.node.linux_anchor_entry import reservation_storage_binding
@@ -1869,6 +1948,8 @@ def _serve_once(args, parser) -> bool:
             peer_cache_scopes=peer_cache_scopes,
             replay_history_dir=args.data_dir / "replay-history",
         )
+        cleanup.manager = manager
+        cleanup.pause_timeout = config.contribution_policy.pause_timeout
         catalog = load_configured_catalog(config)
         if catalog is not None:
             manager.set_catalog_models(model.manifest_digest for model in catalog.models if model.execution != "local")
@@ -1885,6 +1966,7 @@ def _serve_once(args, parser) -> bool:
             worker_cgroup_root=getattr(args, "worker_cgroup_root", None),
             storage_binding=storage_binding,
         )
+        cleanup.resources = resource_manager
         resource_manager.start_recovery()
         resource_claim_cache = {}
         worker_supervisor = _build_worker_supervisor(
@@ -1896,6 +1978,7 @@ def _serve_once(args, parser) -> bool:
             resource_manager=resource_manager,
             resource_claim_cache=resource_claim_cache,
         )
+        cleanup.workers = worker_supervisor
         _apply_startup_pause(args, worker_supervisor)
         policy_store = (
             None
@@ -1932,6 +2015,7 @@ def _serve_once(args, parser) -> bool:
             resource_manager=resource_manager,
             resource_claim_cache=resource_claim_cache,
         )
+        cleanup.placement = placement_service
     except (ContributionPolicyPersistenceError, NodeConfigError, ManifestError, ValueError) as exc:
         parser.error(str(exc))
 
@@ -2011,40 +2095,34 @@ def _serve_once(args, parser) -> bool:
         resource_recovery_status=resource_manager.recovery_snapshot,
         request_restart=restart,
         request_shutdown=shutdown,
+        control_identity=control_identity,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
     logger.info(
         f"Local node knows {len(descriptors)} exact model(s) ({model_names}) at http://{args.host}:{args.port}/v1"
     )
-    discovery.start()
-    worker_supervisor.start_service()
-    if placement_service is not None:
-        placement_service.start()
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="info"))
-    refresh_service = None
-    if config.catalog_path is not None and args.config is not None:
-        refresh_service = CatalogRefreshService(config, args.config, args.data_dir, manager, restart)
-        refresh_service.start()
-    shutdown_acknowledged = False
-    try:
-        server.run()
-    finally:
-        if refresh_service is not None:
-            refresh_service.close()
+    cleanup.server = server
+    if cleanup.terminated:
+        return False
+
+    def start_services():
+        actions = [discovery.start, worker_supervisor.start_service]
         if placement_service is not None:
-            placement_service.close()
-        worker_supervisor.shutdown()
-        drained = worker_supervisor.drain_resource_operations(timeout=config.contribution_policy.pause_timeout)
-        try:
-            manager.shutdown()
-        finally:
-            shutdown_acknowledged = drained and resource_manager.close()
-            if not shutdown_acknowledged:
-                with lifecycle_lock:
-                    restart_requested = False
-                logger.warning("Node resources remain retained for verified recovery at the next start")
-    if not shutdown_acknowledged:
-        raise NodeResourceDrainError()
+            actions.append(placement_service.start)
+        for action in actions:
+            if cleanup.terminated:
+                return
+            action()
+        if not cleanup.terminated and config.catalog_path is not None and args.config is not None:
+            cleanup.refresh = CatalogRefreshService(config, args.config, args.data_dir, manager, restart)
+            cleanup.refresh.start()
+
+    from drift.node.linux_node_channel import run_node_server
+
+    # Bind both listeners before starting contribution/discovery work. The
+    # outer cleanup scope covers every partial construction and startup fault.
+    run_node_server(server, control_identity, before_run=start_services)
     with lifecycle_lock:
         return restart_requested and not shutdown_requested
 

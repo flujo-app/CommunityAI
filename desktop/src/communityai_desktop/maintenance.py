@@ -1,6 +1,7 @@
 """Same-user shutdown handshake used before replacing installed application files."""
 
 import hashlib
+import sys
 import time
 from pathlib import Path
 
@@ -14,11 +15,15 @@ def prepare_update(
     application_name="CommunityAI",
     instance_data_dir=None,
 ):
-    from PySide6.QtCore import QCoreApplication, QLockFile, QStandardPaths
-    from PySide6.QtNetwork import QLocalSocket
+    if sys.platform.startswith("linux") and application_name == "CommunityAI Multi-GPU Test":
+        from communityai_desktop.anchor_lifecycle import MAINTENANCE_ERROR
+        from communityai_desktop.lifecycle import NodeLifecycleError
 
+        raise NodeLifecycleError(MAINTENANCE_ERROR)
     from communityai_desktop.pyside_shell import _instance_data_root, _instance_server_name, _validate_application_name
     from communityai_desktop.startup import SingleInstanceError
+    from PySide6.QtCore import QCoreApplication, QLockFile, QStandardPaths
+    from PySide6.QtNetwork import QLocalSocket
 
     application_name = _validate_application_name(application_name)
     application = QCoreApplication.instance() or QCoreApplication([])

@@ -787,7 +787,7 @@ def _normalize_hardware(value: Any) -> Dict[str, Any]:
 class NodeClient:
     """Synchronous control client; GUI adapters must call it off their event loop."""
 
-    def __init__(self, node_url: str, control_token: str, *, timeout: float = 5.0):
+    def __init__(self, node_url: str, control_token: str, *, timeout: float = 5.0, transport=None):
         self.node_url = normalize_loopback_url(node_url)
         if not isinstance(control_token, str) or not control_token.strip():
             raise ValueError("control credential must be a non-empty string")
@@ -797,6 +797,7 @@ class NodeClient:
             raise ValueError("timeout must be positive")
         self._control_token = control_token.strip()
         self.timeout = float(timeout)
+        self._transport = transport
         # A localhost credential must never be sent through an environment-configured
         # HTTP proxy. Supplying an empty ProxyHandler disables proxy discovery.
         self._opener = build_opener(ProxyHandler({}), _RejectRedirects())
@@ -826,6 +827,13 @@ class NodeClient:
             },
         )
         try:
+            if self._transport is not None:
+                with self._transport.open(request, timeout=self.timeout) as response:
+                    result = self._decode_response(response)
+                    if response.status >= 400:
+                        detail = result.get("detail", "Anchored node request failed")
+                        raise NodeApiError(response.status, str(detail).replace(self._control_token, "<redacted>"))
+                    return result
             with self._opener.open(request, timeout=self.timeout) as response:
                 return self._decode_response(response)
         except HTTPError as exc:

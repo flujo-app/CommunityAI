@@ -81,6 +81,24 @@ On Windows, install the repository's patched Hivemind wheel first as described i
 root README. The desktop source tests need only the desktop package; producing the node
 sidecar requires the full root runtime.
 
+Those two editable installs must refer to the same checkout in a disposable
+development environment: both use its single `src/communityai_anchor` source.
+For **non-editable wheels, use separate environments for the desktop and node**.
+Both distributions currently include that shared top-level package; mixing their
+wheels could overwrite different revisions or remove shared files on uninstall.
+Mixed-wheel upgrades/uninstalls are not supported. The frozen product already
+keeps GUI and node in separate bundles. No standalone beta wheel is published or
+qualified by these source-package tests; co-installable wheel distribution would
+need a separately owned/versioned shared dependency first.
+
+The Linux multi-GPU test profile additionally requires an already provisioned,
+verified anchor service. It never falls back to direct node launch or TCP control.
+Catalog setup/migration, credential repair, and installer maintenance remain
+refused until their exclusive anchor transactions exist. Help/diagnostics cannot
+create/recreate its root or node directories (existing profiles may still have
+auxiliary desktop/cache/tmp directories prepared).
+See [the anchor contract](../docs/LINUX_RESOURCE_RECOVERY.md).
+
 Run the headless protocol and source-boundary tests:
 
 ```shell
