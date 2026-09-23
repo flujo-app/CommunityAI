@@ -15,6 +15,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from test_managed_placement_sizing import managed_candidates
@@ -25,6 +26,29 @@ pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux") or not ROOT,
     reason="requires explicit private Linux cgroup delegation and compiled native backend",
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_worker_root(monkeypatch):
+    """Keep the driver outside the worker subtree required to drain globally.
+
+    The opt-in runner lives in the delegated parent. Treating that populated
+    parent as the worker root makes a correct empty-tree check always refuse.
+    No production check is mocked or weakened by separating these lifetimes.
+    """
+    from drift.node.linux_cgroup_recovery import verify_cgroup_tree_empty
+
+    root = Path(ROOT) / ("supervisor-workers-" + uuid4().hex)
+    root.mkdir(mode=0o700)
+    monkeypatch.setitem(globals(), "ROOT", str(root))
+    assert (root / "cgroup.procs").read_text() == ""
+    yield
+    # Refuse teardown pruning if real subtree death cannot be proved.
+    verify_cgroup_tree_empty(root)
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_dir():
+            path.rmdir()
+    root.rmdir()
 
 
 def resource_snapshot(claims, *, host_limit_bytes, cache_limits, now, **kwargs):

@@ -262,6 +262,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     from communityai_desktop.profiles import VolunteerProfile
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["anchor"]:
+        if arguments != ["anchor"]:
+            raise ValueError("the volunteer anchor accepts no options")
+        from drift.node.linux_anchor import serve_anchor
+
+        return serve_anchor()
     profile = VolunteerProfile.for_current_user()
     diagnostics = (
         ["--self-test"],

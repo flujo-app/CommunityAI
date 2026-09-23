@@ -132,6 +132,19 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         self.assertEqual(ordinary.read_bytes(), b"ordinary identity")
         self.assertEqual(list(ordinary.parent.iterdir()), [ordinary])
 
+    def test_anchor_is_an_exact_no_argument_dispatch_without_node_or_profile_mutation(self):
+        module = types.ModuleType("drift.node.linux_anchor")
+        calls = []
+        module.serve_anchor = lambda: calls.append(True) or 0
+        with patch.dict(sys.modules, {"drift.node.linux_anchor": module}):
+            self.assertEqual(launcher.main(["anchor"]), 0)
+            for extra in (["--profile", "other"], ["--worker-cgroup-root", "/other"], ["--help"], ["shell"]):
+                with self.assertRaises(ValueError):
+                    launcher.main(["anchor", *extra])
+        self.assertEqual(calls, [True])
+        self.assertFalse(self.profile.root.exists())
+        self.assertEqual(self.dispatches, [])
+
     def test_explicit_cgroup_root_is_forwarded_without_widening_the_fixed_node_profile(self):
         root = "/delegated/communityai-volunteer"
         for arguments in (["--worker-cgroup-root", root], ["--worker-cgroup-root=" + root]):

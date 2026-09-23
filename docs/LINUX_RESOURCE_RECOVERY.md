@@ -105,7 +105,68 @@ journal publication retain the claim. Loading readiness releases neither the
 claim nor its full lifetime SUM staging estimate. Recovery retains model cache
 artifacts and the cache-root inventory. New admission resamples resources.
 
-## Proposed installed anchor, not implemented provisioning
+## Anchor identity foundation; installed provisioning still unavailable
+
+`drift.node.linux_anchor` now implements a deliberately read-only foundation.
+The volunteer sidecar accepts exactly `anchor`, with no executable, argument,
+profile, credential or cgroup-path overrides. It does not prepare the node
+profile, access credentials or launch work. The GUI and installer do not enable
+this mode yet; the source entry point is not an installed capability.
+
+The helper must already be the `MainPID` of the fixed ordinary-user unit
+`communityai-multigpu-anchor.service`. It reads the user's manager through the
+fixed private `/run/user/<uid>` bus, with no inherited manager/bus overrides,
+and checks its unit identity, invocation, process start identity, actual
+`ControlGroup`, active state, delegation, service type and stop/restart policy.
+It requires an already lingering user manager and never enables lingering.
+Root/set-ID execution, hybrid hierarchies, sub-root mounts and ambiguous writable
+cgroup-v2 mounts are rejected. This first version deliberately supports only an
+unambiguous full-root mount view; it does not guess namespace translations.
+
+Before any work, it creates fixed `anchor-control`, `nodes` and `workers`
+subgroups, moves only itself into `anchor-control`, and checks that the service
+boundary has no direct processes. Every pre-existing subgroup is refused and
+retained. The root's open descriptor plus exact directory, mount and namespace
+identities are revalidated for each receipt. This is stable topology for the
+current invocation, not durable adoption after anchor replacement. It neither
+enables resource controllers nor claims hard memory/bandwidth enforcement.
+
+Its private Unix socket accepts only a size/time-bounded `inspect` request.
+The client checks kernel peer UID/PID, fresh manager/process observations,
+nonce, fixed profile and the entire layout identity digest, and rechecks the
+service and socket identities after the response. Duplicate/extra fields,
+unknown operations, malformed or deeply nested JSON, stale invocation/nonce,
+changed directories and nonmatching peers fail closed. Both server and client
+check the exact root subgroup set and that only the service occupies its control
+leaf. The singleton lock is bound to its unchanged private directory entry.
+Existing socket names
+are never removed to make a connection succeed; closing removes only the
+channel's own unchanged socket. Same-UID code remains cooperative, not a hostile
+same-user sandbox.
+
+Orderly SIGINT/SIGTERM runs this limited socket cleanup and retains all cgroups.
+It is not a drain acknowledgement. Crash/SIGKILL can retain the socket in the
+lingering runtime directory, and a subsequent start deliberately refuses it.
+Automatic crash restart, stale-socket reconciliation and adoption of durable
+node/journal state are not available yet. Do not manually delete evidence to
+make this engineering helper restart; installed recovery needs a checked
+transaction before this mode is exposed to users.
+
+The receipt explicitly carries `node_generation: null`, `admission: false` and
+`maintenance: false`. It is not a node lease, recovery proof, permission to use
+an external node, or update-safe acknowledgement. There is no node start, stop,
+drain, journal cleanup or cgroup deletion command. On any uncertain state the
+call fails rather than returning a weaker permission.
+
+`tests/test_linux_anchor.py` checks fixture service/property contracts;
+`tests/test_linux_anchor_native.py` uses actual atomic child creation, cgroups,
+Unix sockets and peer credentials in an isolated Linux container. Its systemd
+properties and runtime-directory location are explicitly fixtures. It does not
+qualify a real user manager, desktop keyring, installer, logout, hardware or
+physical power loss. The test wrapper removes only the disposable container's
+duplicate cgroup mount; production never alters a mount.
+
+## Remaining installed anchor integration
 
 The proposed packaging integration is one persistent ordinary-user anchor per
 fixed volunteer profile, outside the GUI/node stop and reload lifecycle. A
@@ -131,7 +192,7 @@ Description=CommunityAI volunteer containment anchor
 
 [Service]
 Type=exec
-ExecStart=@PACKAGED_ANCHOR_EXECUTABLE@ --fixed-volunteer-profile
+ExecStart=@PACKAGED_VOLUNTEER_NODE_EXECUTABLE@ anchor
 Delegate=yes
 KillMode=control-group
 Restart=no

@@ -177,7 +177,11 @@ class UpdateTests(unittest.TestCase):
 
     def test_manager_downloads_without_installing_and_rechecks_cached_hash(self):
         with tempfile.TemporaryDirectory() as directory:
-            manager = updater.UpdateManager(directory, root=Path(directory), system="Windows")
+            # The fixture feed is an update regardless of the repository's later
+            # release version. Production correctly refuses historical feeds.
+            manager = updater.UpdateManager(
+                directory, root=Path(directory), current_version="0.1.0-alpha.20260909.2", system="Windows"
+            )
             self.signed.update(published_at=int(time.time()) - 10, expires_at=int(time.time()) + 1000)
             actual_verify = updater.verify_feed
 
