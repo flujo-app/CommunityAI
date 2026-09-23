@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -54,7 +55,7 @@ def _populated(directory):
     return values["populated"] == "1"
 
 
-def _owner_helper(leaf, evidence, resumed):
+def _owner_helper(leaf, evidence, resumed, private_input=False):
     import fcntl
 
     from drift.node.linux_cgroup_process import spawn
@@ -70,7 +71,19 @@ def _owner_helper(leaf, evidence, resumed):
         "'import os,time;from pathlib import Path;Path(os.environ[\"GRANDCHILD\"]).write_text(str(os.getpid()));time.sleep(60)'],"
         "start_new_session=True);time.sleep(60)"
     )
-    process = spawn(group, [sys.executable, "-c", child_code, str(evidence / "executed")], env=os.environ.copy())
+    read_fd = None
+    options = {}
+    if private_input:
+        read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+        os.close(write_fd)
+        options = dict(input_fd=read_fd, text=False, stderr=subprocess.DEVNULL)
+    try:
+        process = spawn(
+            group, [sys.executable, "-c", child_code, str(evidence / "executed")], env=os.environ.copy(), **options
+        )
+    finally:
+        if read_fd is not None:
+            os.close(read_fd)
     if resumed:
         process.resume()
     (evidence / "owner-ready.json").write_text(json.dumps({"pid": process.pid, "identity": process.cgroup_identity}))
@@ -119,6 +132,34 @@ def _denied_probe_helper(name):
         raise AssertionError("denied native operation passed explicit-profile preflight")
 
 
+def _closed_stdio_helper(leaf):
+    """Exercise collisions without changing the test runner's own standard FDs."""
+    import fcntl
+
+    from drift.node.linux_cgroup_process import spawn
+
+    group = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY)
+    read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+    safe_group = fcntl.fcntl(group, fcntl.F_DUPFD_CLOEXEC, 10)
+    safe_read = fcntl.fcntl(read_fd, fcntl.F_DUPFD_CLOEXEC, 10)
+    os.write(write_fd, b"collision fixture")
+    for descriptor in (group, read_fd, write_fd, 0, 1, 2):
+        os.close(descriptor)
+    process = spawn(
+        safe_group,
+        [sys.executable, "-c", "import os;os.write(1,os.read(0,100));os.write(2,b'discarded')"],
+        env={},
+        input_fd=safe_read,
+        stderr=subprocess.DEVNULL,
+        text=False,
+    )
+    os.fstat(safe_group)
+    os.fstat(safe_read)
+    process.resume()
+    if process.wait(timeout=5) != 0 or process.stdout.read() != b"collision fixture":
+        raise AssertionError("private pipe failed with closed standard descriptors")
+
+
 class LinuxCgroupProcessContractTests(unittest.TestCase):
     def test_unsupported_contract_is_rejected_before_backend_access(self):
         from drift.node import linux_cgroup_process as backend
@@ -137,6 +178,13 @@ class LinuxCgroupProcessContractTests(unittest.TestCase):
             {"env": {"BAD=KEY": "value"}},
             {"env": {"KEY": False}},
             {"cwd": "relative"},
+            {"input_fd": False, "text": False, "stderr": subprocess.DEVNULL},
+            {"input_fd": -1, "text": False, "stderr": subprocess.DEVNULL},
+            {"input_fd": 2, "text": False, "stderr": subprocess.DEVNULL},
+            {"input_fd": 3},
+            {"input_fd": 3, "text": False},
+            {"input_fd": 3, "stderr": subprocess.DEVNULL},
+            {"stderr": subprocess.DEVNULL},
         )
         for change in cases:
             arguments = {"cgroup_fd": 1, "command": [sys.executable], "env": {}}
@@ -147,6 +195,17 @@ class LinuxCgroupProcessContractTests(unittest.TestCase):
                 ):
                     backend.spawn(**arguments)
                 native.assert_not_called()
+
+    def test_older_extension_rejects_private_transport_without_fallback(self):
+        from drift.node import linux_cgroup_process as backend
+
+        with patch.object(backend, "_backend") as native:
+            native.return_value.spawn.side_effect = TypeError("old five-argument ABI")
+            with self.assertRaisesRegex(
+                backend.LinuxCgroupProcessError, "^Linux cgroup process creation is unavailable$"
+            ):
+                backend.spawn(10, [sys.executable], env={}, input_fd=11, stderr=subprocess.DEVNULL, text=False)
+            native.return_value.spawn.assert_called_once_with(10, (sys.executable,), (), None, True, 11)
 
     def test_unavailable_capability_has_fixed_public_error(self):
         from drift.node import linux_cgroup_process as backend
@@ -213,7 +272,7 @@ class LinuxCgroupProcessNativeTests(unittest.TestCase):
         self.children.append(process)
         return process
 
-    def start_owner(self, resumed):
+    def start_owner(self, resumed, private_input=False):
         environment = os.environ.copy()
         environment["GRANDCHILD"] = str(self.evidence / "grandchild")
         owner = subprocess.Popen(
@@ -224,6 +283,7 @@ class LinuxCgroupProcessNativeTests(unittest.TestCase):
                 str(self.leaf),
                 str(self.evidence),
                 str(int(resumed)),
+                str(int(private_input)),
             ],
             env=environment,
             stdin=subprocess.DEVNULL,
@@ -260,6 +320,177 @@ class LinuxCgroupProcessNativeTests(unittest.TestCase):
         self.assertEqual(os.fstat(self.group_fd).st_ino, identity.st_ino)
         with self.assertRaises(self.backend.LinuxCgroupProcessError):
             process.resume()
+
+    def test_private_pipe_delivers_exact_binary_eof_without_command_or_environment_copy(self):
+        payload = b"private-transport-fixture\0\xff\xfe" + bytes(range(256)) * 4
+        read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+        os.write(write_fd, payload)
+        os.close(write_fd)
+        identity = os.fstat(read_fd)
+        try:
+            process = self.spawn(
+                "import os,sys;data=sys.stdin.buffer.read();os.write(1,data)",
+                env={},
+                input_fd=read_fd,
+                stderr=subprocess.DEVNULL,
+                text=False,
+            )
+            self.assertEqual(os.fstat(read_fd), identity)
+            self.assertIsNone(process.poll())
+            self.assertIn(str(process.pid), (self.leaf / "cgroup.procs").read_text().split())
+            self.assertNotIn(b"private-transport-fixture", Path(f"/proc/{process.pid}/cmdline").read_bytes())
+            self.assertNotIn(b"private-transport-fixture", Path(f"/proc/{process.pid}/environ").read_bytes())
+            self.assertEqual(os.readlink(f"/proc/{process.pid}/fd/0"), os.readlink(f"/proc/self/fd/{read_fd}"))
+            self.assertEqual(os.readlink(f"/proc/{process.pid}/fd/2"), "/dev/null")
+        finally:
+            # Closing the caller's borrowed end must not close the child's copy.
+            os.close(read_fd)
+        process.resume()
+        self.assertEqual(process.wait(timeout=5), 0)
+        self.assertEqual(process.stdout.read(), payload)
+        self.assertEqual(process.stdout.read(), b"")
+
+    def test_private_stderr_flood_is_discarded_and_post_exec_authority_fds_are_closed(self):
+        import fcntl
+
+        lease = os.open(self.evidence / "private-lease", os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(lease, fcntl.LOCK_EX)
+        read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+        os.close(write_fd)
+        code = (
+            "import os,json;fds={};"
+            'exec(\'for name in os.listdir("/proc/self/fd"):\\n try: fds[name]=os.readlink("/proc/self/fd/"+name)'
+            "\\n except FileNotFoundError: pass');"
+            "os.write(2,b'fixture-private-backend-error'*65536);"
+            "os.write(1,json.dumps(fds).encode())"
+        )
+        try:
+            process = self.spawn(code, input_fd=read_fd, stderr=subprocess.DEVNULL, text=False)
+        finally:
+            os.close(read_fd)
+            # No LOCK_UN: the gated child must already have closed its copy.
+            os.close(lease)
+        probe = os.open(self.evidence / "private-lease", os.O_RDWR)
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(probe)
+        process.resume()
+        self.assertEqual(process.wait(timeout=5), 0)
+        descriptors = json.loads(process.stdout.read())
+        self.assertEqual(set(descriptors), {"0", "1", "2"})
+        self.assertTrue(descriptors["0"].startswith("pipe:["))
+        self.assertTrue(descriptors["1"].startswith("pipe:["))
+        self.assertEqual(descriptors["2"], "/dev/null")
+
+    def test_private_input_rejections_are_before_birth_and_do_not_leak_descriptors(self):
+        from drift.node import _linux_cgroup_spawn
+
+        regular = os.open(self.evidence / "input", os.O_CREAT | os.O_RDONLY, 0o600)
+        directory = os.open(self.evidence, os.O_RDONLY | os.O_DIRECTORY)
+        read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+        nonblock, nonblock_write = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
+        rdwr = os.open(f"/proc/self/fd/{read_fd}", os.O_RDWR | os.O_CLOEXEC)
+        path_only = os.open(f"/proc/self/fd/{read_fd}", os.O_PATH | os.O_CLOEXEC)
+        left, right = socket.socketpair()
+        closed = os.dup(regular)
+        os.close(closed)
+        cases = (
+            None,
+            True,
+            False,
+            -1,
+            0,
+            1,
+            2,
+            1 << 100,
+            "3",
+            regular,
+            directory,
+            write_fd,
+            nonblock,
+            rdwr,
+            path_only,
+            left.fileno(),
+            closed,
+        )
+        baseline = set(os.listdir("/proc/self/fd"))
+        try:
+            for descriptor in cases:
+                with self.subTest(descriptor=descriptor):
+                    for _ in range(3):
+                        with self.assertRaisesRegex(RuntimeError, "^Linux cgroup process creation is unavailable$"):
+                            _linux_cgroup_spawn.spawn(
+                                self.group_fd, (sys.executable, "-c", "pass"), (), None, True, descriptor
+                            )
+                        self.assertFalse(_populated(self.leaf))
+                        self.assertEqual(set(os.listdir("/proc/self/fd")), baseline)
+            # A valid borrowed pipe is retained even when another preflight fails.
+            with self.assertRaises(RuntimeError):
+                _linux_cgroup_spawn.spawn(regular, (sys.executable,), (), None, True, read_fd)
+            os.fstat(read_fd)
+            self.assertEqual(set(os.listdir("/proc/self/fd")), baseline)
+        finally:
+            for descriptor in (regular, directory, read_fd, write_fd, nonblock, nonblock_write, rdwr, path_only):
+                os.close(descriptor)
+            left.close()
+            right.close()
+
+    def test_private_input_handles_closed_stdio_descriptor_collisions(self):
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--native-closed-stdio", str(self.leaf)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=os.environ.copy(),
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        _wait_for(lambda: not _populated(self.leaf))
+
+    def test_original_five_argument_native_transport_keeps_null_input_and_merged_stderr(self):
+        process = self.spawn("import os;assert os.read(0,1)==b'';os.write(1,b'output');os.write(2,b'error')")
+        process.resume()
+        self.assertEqual(process.wait(timeout=5), 0)
+        self.assertEqual(process.stdout.read(), "outputerror")
+
+    def test_private_transport_failed_exec_retains_caller_pipe_and_reaps(self):
+        read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+        os.close(write_fd)
+        try:
+            process = self.backend.spawn(
+                self.group_fd,
+                [str(self.evidence / "absent-executable")],
+                env={},
+                input_fd=read_fd,
+                stderr=subprocess.DEVNULL,
+                text=False,
+            )
+            self.children.append(process)
+            with self.assertRaises(self.backend.LinuxCgroupProcessError):
+                process.resume()
+            self.assertIsNotNone(process.wait(timeout=5))
+            self.assertEqual(process.stdout.read(), b"")
+            os.fstat(read_fd)
+            _wait_for(lambda: not _populated(self.leaf))
+        finally:
+            os.close(read_fd)
+
+    def test_private_transport_owner_death_before_release_never_executes(self):
+        owner = self.start_owner(False, private_input=True)
+        owner.kill()
+        owner.wait(timeout=5)
+        _wait_for(lambda: not _populated(self.leaf))
+        self.assertFalse((self.evidence / "executed").exists())
+
+    def test_private_transport_owner_death_after_release_retains_complete_tree(self):
+        owner = self.start_owner(True, private_input=True)
+        _wait_for((self.evidence / "grandchild").exists)
+        owner.kill()
+        owner.wait(timeout=5)
+        self.assertGreaterEqual(len((self.leaf / "cgroup.procs").read_text().split()), 2)
+        (self.leaf / "cgroup.kill").write_text("1")
+        _wait_for(lambda: not _populated(self.leaf))
 
     def test_synchronous_gate_write_failure_reaps_without_executing_body(self):
         marker = self.evidence / "executed"
@@ -461,8 +692,12 @@ class LinuxCgroupProcessNativeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--native-owner":
-        _owner_helper(sys.argv[2], sys.argv[3], bool(int(sys.argv[4])))
+        _owner_helper(
+            sys.argv[2], sys.argv[3], bool(int(sys.argv[4])), bool(int(sys.argv[5])) if len(sys.argv) > 5 else False
+        )
     elif len(sys.argv) > 1 and sys.argv[1] == "--native-denied":
         _denied_probe_helper(sys.argv[2])
+    elif len(sys.argv) > 1 and sys.argv[1] == "--native-closed-stdio":
+        _closed_stdio_helper(sys.argv[2])
     else:
         unittest.main()

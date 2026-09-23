@@ -206,8 +206,15 @@ def spawn(
     cwd=None,
     creationflags=0,
     start_new_session=True,
+    input_fd=None,
 ):
-    """Borrow the cgroup FD and return a tracked-ready, still unexecuted child."""
+    """Borrow the cgroup FD and return a tracked-ready, still unexecuted child.
+
+    An explicit input_fd borrows a blocking read-only pipe, with binary stdout
+    and discarded stderr. Callers must supply text=False and stderr=DEVNULL.
+    This is transport only: framing, deadlines, cancellation and whole-tree
+    containment remain the owning controller's responsibility.
+    """
     if (
         type(cgroup_fd) is not int
         or cgroup_fd < 0
@@ -218,14 +225,15 @@ def spawn(
         or not os.path.isabs(command[0])
         or stdin != subprocess.DEVNULL
         or stdout != subprocess.PIPE
-        or stderr != subprocess.STDOUT
-        or text is not True
+        or (input_fd is None and (stderr != subprocess.STDOUT or text is not True))
+        or (input_fd is not None and (stderr != subprocess.DEVNULL or text is not False))
         or encoding != "utf-8"
         or errors != "replace"
         or bufsize != 1
         or type(creationflags) is not int
         or creationflags != 0
         or type(start_new_session) is not bool
+        or (input_fd is not None and (type(input_fd) is not int or input_fd < 3))
         or not isinstance(env, Mapping)
         or (cwd is not None and (not isinstance(cwd, str) or not os.path.isabs(cwd) or "\0" in cwd))
     ):
@@ -242,13 +250,23 @@ def spawn(
             raise LinuxCgroupProcessError()
     process = None
     try:
-        native = _backend().spawn(
-            cgroup_fd, tuple(command), tuple(f"{key}={value}" for key, value in env.items()), cwd, start_new_session
+        arguments = (
+            cgroup_fd,
+            tuple(command),
+            tuple(f"{key}={value}" for key, value in env.items()),
+            cwd,
+            start_new_session,
         )
+        # Preserve the original native ABI for ordinary workers. Credential
+        # helpers require the new explicit read-pipe capability, no fallback.
+        native = _backend().spawn(*arguments, *((input_fd,) if input_fd is not None else ()))
         process = LinuxCgroupProcess(native, command)
         descriptor = native.take_stdout()
         try:
-            process.stdout = io.open(descriptor, "r", buffering=1, encoding=encoding, errors=errors)
+            if input_fd is None:
+                process.stdout = io.open(descriptor, "r", buffering=1, encoding=encoding, errors=errors)
+            else:
+                process.stdout = io.open(descriptor, "rb", buffering=0)
         except BaseException:
             os.close(descriptor)
             raise

@@ -132,11 +132,11 @@ static void child_fail(int status) {
     _exit(127);
 }
 
-static void execute_child(int input, int output, int gate, int status,
+static void execute_child(int input, int output, int error, int gate, int status,
                           char **argv, char **envp, const char *cwd, int session) {
     /* Parent chose gate/status >= 10. Stdio sources are consumed before any
      * fixed control descriptor is overwritten. No authority FD survives. */
-    if (dup2(input, 0) < 0 || dup2(output, 1) < 0 || dup2(output, 2) < 0) child_fail(status);
+    if (dup2(input, 0) < 0 || dup2(output, 1) < 0 || dup2(error, 2) < 0) child_fail(status);
     if (dup2(gate, 3) < 0 || dup2(status, 4) < 0) child_fail(status);
     if (fcntl(3, F_SETFD, FD_CLOEXEC) < 0 || fcntl(4, F_SETFD, FD_CLOEXEC) < 0) child_fail(4);
     if (syscall(SYS_close_range, 5U, UINT_MAX, 0) < 0) child_fail(4);
@@ -199,9 +199,18 @@ static int high_fd(int fd) {
 }
 
 static PyObject *spawn(PyObject *module, PyObject *arguments) {
-    int borrowed, session;
-    PyObject *argv_object, *env_object, *cwd_object;
-    if (!PyArg_ParseTuple(arguments, "iOOOp", &borrowed, &argv_object, &env_object, &cwd_object, &session)) return NULL;
+    int borrowed, session, borrowed_input = -1;
+    PyObject *argv_object, *env_object, *cwd_object, *input_object = NULL;
+    if (!PyArg_ParseTuple(arguments, "iOOOp|O", &borrowed, &argv_object, &env_object, &cwd_object, &session, &input_object)) return NULL;
+    if (input_object != NULL) {
+        if (!PyLong_CheckExact(input_object)) return failure();
+        long value = PyLong_AsLong(input_object);
+        if (PyErr_Occurred() || value < 3 || value > INT_MAX) {
+            PyErr_Clear();
+            return failure();
+        }
+        borrowed_input = (int)value;
+    }
     char **argv = string_vector(argv_object, 0), **envp = NULL;
     if (argv != NULL) envp = string_vector(env_object, 1);
     const char *cwd = NULL;
@@ -216,7 +225,7 @@ static PyObject *spawn(PyObject *module, PyObject *arguments) {
     if (child == NULL) { free(argv); free(envp); return NULL; }
     child->pid = 0;
     child->pidfd = child->output = child->gate = child->status = -1;
-    int cgroup = -1, input = -1, output[2] = {-1, -1}, gate[2] = {-1, -1}, status[2] = {-1, -1};
+    int cgroup = -1, input = -1, error = -1, output[2] = {-1, -1}, gate[2] = {-1, -1}, status[2] = {-1, -1};
     int pidfd = -1;
     struct stat info;
     struct statfs filesystem;
@@ -224,9 +233,24 @@ static PyObject *spawn(PyObject *module, PyObject *arguments) {
     if (cgroup < 0 || fstat(cgroup, &info) < 0 || !S_ISDIR(info.st_mode) || fstatfs(cgroup, &filesystem) < 0 || filesystem.f_type != CGROUP2_SUPER_MAGIC) goto cleanup;
     child->device = info.st_dev;
     child->inode = info.st_ino;
-    input = open("/dev/null", O_RDONLY | O_CLOEXEC);
-    if (input < 0) goto cleanup;
-    input = high_fd(input);
+    if (borrowed_input == -1) {
+        input = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        if (input < 0) goto cleanup;
+        input = high_fd(input);
+    } else {
+        /* Optional bounded protocol input. Borrow only a read-pipe end; never
+         * pass caller authority files or a writable descriptor into the child. */
+        if (borrowed_input < 3) goto cleanup;
+        input = fcntl(borrowed_input, F_DUPFD_CLOEXEC, 10);
+        struct stat input_info;
+        int flags = input < 0 ? -1 : fcntl(input, F_GETFL);
+        if (input < 0 || flags < 0 || (flags & O_ACCMODE) != O_RDONLY || (flags & (O_PATH | O_NONBLOCK)) ||
+            fstat(input, &input_info) < 0 || !S_ISFIFO(input_info.st_mode)) goto cleanup;
+        error = open("/dev/null", O_WRONLY | O_CLOEXEC);
+        if (error < 0) goto cleanup;
+        error = high_fd(error);
+        if (error < 0) goto cleanup;
+    }
     if (input < 0 || pipe2(output, O_CLOEXEC) < 0 || pipe2(gate, O_CLOEXEC) < 0 || pipe2(status, O_CLOEXEC) < 0) goto cleanup;
     output[1] = high_fd(output[1]);
     gate[0] = high_fd(gate[0]);
@@ -239,7 +263,7 @@ static PyObject *spawn(PyObject *module, PyObject *arguments) {
     args.cgroup = (uint64_t)cgroup;
     args.exit_signal = SIGCHLD;
     long pid = syscall(SYS_clone3, &args, sizeof(args));
-    if (pid == 0) execute_child(input, output[1], gate[0], status[1], argv, envp, cwd, session);
+    if (pid == 0) execute_child(input, output[1], error < 0 ? output[1] : error, gate[0], status[1], argv, envp, cwd, session);
     if (pid < 0) goto cleanup;
     child->pid = (pid_t)pid;
     child->pidfd = pidfd; pidfd = -1;
@@ -247,7 +271,7 @@ static PyObject *spawn(PyObject *module, PyObject *arguments) {
     child->gate = gate[1]; gate[1] = -1;
     child->status = status[0]; status[0] = -1;
 cleanup:
-    close_fd(&cgroup); close_fd(&input); close_fd(&pidfd);
+    close_fd(&cgroup); close_fd(&input); close_fd(&error); close_fd(&pidfd);
     for (int i = 0; i < 2; i++) { close_fd(&output[i]); close_fd(&gate[i]); close_fd(&status[i]); }
     free(argv); free(envp);
     if (child->pid <= 0) { Py_DECREF(child); return failure(); }

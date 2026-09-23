@@ -602,3 +602,26 @@ A changing owner may yield an inconclusive snapshot. Preserve the existing
 profile and evidence; do not delete locks or repeat first-use enrollment to
 resolve a reported problem. Checked credential/service recovery, bounded native
 keyring execution, actual installed/frozen Ubuntu and hardware tests remain open.
+
+## Private native helper transport prerequisite
+
+The native cgroup process wrapper has an opt-in `input_fd` mode for a caller-owned
+blocking read-only pipe. This mode requires `stderr=DEVNULL` and `text=False`:
+stdout is an unbuffered binary response pipe and stderr is discarded before exec.
+The C primitive duplicates the borrowed descriptor, rejects non-pipes, writable,
+nonblocking and `O_PATH` descriptors before birth, and preserves the original
+five-argument ABI and ordinary worker stdio behavior. There is no fallback to an
+older extension. The child remains gated, born in the supplied cgroup, and closes
+inherited owner/authority descriptors before reporting ready.
+
+This is a transport primitive, not credential execution or lifecycle admission.
+No production credential call uses it yet; anchor keyring calls remain synchronous
+and potentially unbounded. A future credential controller must bind the exact
+frozen helper/backend/account, use bounded framing and a monotonic supervision
+budget, retain lifecycle locks, and prove whole-subtree cleanup. Pipe output is
+not inherently trusted or bounded: its owner must drain and validate it. Secrets
+must not be copied into argv, environment, logs or public errors. A stopped local
+helper does not prove a remote keyring write stopped; uncertain writes must retain
+durable pending intent, never regenerate or resend, and never acknowledge clean
+completion without independent reconciliation. Installed native Secret Service,
+service replacement and real power-loss acceptance remain unqualified.
