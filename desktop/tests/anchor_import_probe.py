@@ -24,7 +24,9 @@ from communityai_desktop.profiles import VolunteerProfile
 
 from communityai_anchor import linux_anchor as anchor
 from communityai_anchor.linux_anchor_control import control_anchor
+from communityai_anchor.linux_anchor_credentials import CredentialIdentity, credential_helper_main
 from communityai_anchor.linux_node_channel import NodeControlTransport
+from communityai_anchor.linux_secret_service import is_fixed_location
 
 if len(sys.argv) > 2:
     fixture = json.loads(sys.argv[2])

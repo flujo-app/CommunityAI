@@ -11,11 +11,19 @@ import sys
 import time
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, NamedTuple
 
 from communityai_desktop.controller import GpuSelectionDraft
 from communityai_desktop.presentation import memory_text, model_name, model_summary, sharing_reason, sharing_summary
 from communityai_desktop.startup import LoginStartupError, SingleInstanceError, login_startup_enabled, set_login_startup
+
+
+class _TaskFailure(NamedTuple):
+    """Sanitized immutable worker failure; never retain an exception traceback."""
+
+    message: str
+    manual_retry_required: bool
+
 
 APP_STYLESHEET = """
 QLabel { color: #E7EAF0; font-family: "Segoe UI"; font-size: 14px; }
@@ -334,7 +342,7 @@ def run(
 
     class TaskSignals(QObject):
         result = Signal(object)
-        error = Signal(str)
+        error = Signal(object)
 
     class Task(QRunnable):
         def __init__(self, operation: Callable[[], Any]):
@@ -347,7 +355,10 @@ def run(
             try:
                 result = self.operation()
             except Exception as exc:  # GUI boundary: show a friendly state and remain responsive.
-                signal, result = self.signals.error, str(exc)
+                from communityai_desktop.anchor_lifecycle import RetryableAnchorSetupError
+
+                signal = self.signals.error
+                result = _TaskFailure(str(exc), isinstance(exc, RetryableAnchorSetupError))
             else:
                 signal = self.signals.result
             try:
@@ -374,6 +385,7 @@ def run(
             self._mode_pending = False
             self._awaiting_mode_snapshot = False
             self._closing = False
+            self._connection_retry_required = False
             self._update_notice = ""
             self._controller = controller
             self._gpu_draft = GpuSelectionDraft()
@@ -423,7 +435,10 @@ def run(
                 self._update_check_timer.setInterval(6 * 60 * 60 * 1000)
                 self._update_check_timer.timeout.connect(updater.check)
                 self._update_check_timer.start()
-                QTimer.singleShot(10_000, updater.check)
+                self._update_initial_timer = QTimer(self)
+                self._update_initial_timer.setSingleShot(True)
+                self._update_initial_timer.timeout.connect(updater.check)
+                self._update_initial_timer.start(10_000)
 
         def _build_sidebar(self) -> QFrame:
             sidebar = QFrame()
@@ -854,7 +869,7 @@ def run(
                     self._set_busy(-1)
                 on_result(result)
 
-            def fail(message: str) -> None:
+            def fail(failure: _TaskFailure) -> None:
                 self._tasks.discard(task)
                 if self._closing:
                     return
@@ -862,7 +877,10 @@ def run(
                     self._refreshing = False
                 else:
                     self._set_busy(-1)
-                (on_error or self._connection_failed)(message)
+                if on_error is not None:
+                    on_error(failure.message)
+                else:
+                    self._connection_failed(failure.message, manual_retry=failure.manual_retry_required)
 
             task.signals.result.connect(finish)
             task.signals.error.connect(fail)
@@ -872,6 +890,8 @@ def run(
             if self._busy or self._refreshing:
                 return
             if self._controller is None:
+                if self._connection_retry_required:
+                    return
                 self.sidebar_status.setText("Connecting")
                 self._submit(connect, self._connected)
                 return
@@ -894,19 +914,26 @@ def run(
         def _connected(self, connected_controller) -> None:  # noqa: ANN001
             if connected_controller is not self._controller:
                 self._gpu_draft.invalidate()
+            self._connection_retry_required = False
             self._controller = connected_controller
             self.refresh()
 
-        def _connection_failed(self, message: str) -> None:
+        def _connection_failed(self, message: str, *, manual_retry: bool = False) -> None:
             self._gpu_draft.invalidate()
+            self._connection_retry_required = manual_retry
             self._set_connection_state(False)
             self.connection_title.setText(f"Could not connect to {application_name}")
-            self.connection_detail.setText(
-                f"Try again. If this keeps happening, restart {application_name}."
-                if allow_maintenance_ack
-                else "Reconnect only to the verified anchor. If recovery is required, use the checked recovery workflow; "
-                "do not delete profile files."
-            )
+            if manual_retry:
+                self.connection_detail.setText(str(message))
+                self.retry_button.setText("Retry setup")
+            else:
+                self.connection_detail.setText(
+                    f"Try again. If this keeps happening, restart {application_name}."
+                    if allow_maintenance_ack
+                    else "Reconnect only to the verified anchor. If recovery is required, use the checked recovery "
+                    "workflow; do not delete profile files."
+                )
+                self.retry_button.setText("Try again")
             self.connection_detail.setToolTip(str(message)[:300])
             self.hero_title.setText("Model unavailable")
             self.hero_subtitle.setText(f"Waiting for {application_name} to reconnect.")
@@ -924,6 +951,7 @@ def run(
 
         def _reset_connection(self) -> None:
             self._gpu_draft.invalidate()
+            self._connection_retry_required = False
             self._controller = None
             self.refresh()
 
@@ -1629,109 +1657,145 @@ def run(
             raise SingleInstanceError(f"could not establish the per-user {application_name} instance endpoint: {error}")
 
     window = MainWindow()
+    run_timers = []
+
+    def schedule_once(milliseconds: int, callback: Callable[[], None]) -> None:
+        # Static singleShot callbacks can outlive this invocation when a shared
+        # QApplication is reused. Retain cancellable, window-owned timers.
+        timer = QTimer(window)
+        timer.setSingleShot(True)
+        timer.timeout.connect(callback)
+        timer.start(max(0, milliseconds))
+        run_timers.append(timer)
 
     def stop_window_refreshes():
+        was_closing = window._closing
         window._closing = True
         window._timer.stop()
+        for timer in run_timers:
+            timer.stop()
         if updater is not None:
-            updater.close()
+            window._update_timer.stop()
+            window._update_check_timer.stop()
+            window._update_initial_timer.stop()
+            if not was_closing:
+                updater.close()
 
-    application.aboutToQuit.connect(stop_window_refreshes)
-    window._show_page(max(0, min(3, screenshot_page)))
-    if start_minimized:
-        window.showMinimized()
-    else:
-        window.show()
-
-    if qualification_automation is not None:
-        qualification_automation.install(
-            window,
-            application,
-            {
-                "QTimer": QTimer,
-                "QDialog": QDialog,
-                "QDialogButtonBox": QDialogButtonBox,
-                "QCheckBox": QCheckBox,
-                "QPlainTextEdit": QPlainTextEdit,
-                "QLineEdit": QLineEdit,
-            },
-        )
-
-    if instance_server is not None:
-
-        def activate_window() -> None:
-            should_activate = False
-            should_shutdown = False
-            while instance_server.hasPendingConnections():
-                socket = instance_server.nextPendingConnection()
-                socket.setReadBufferSize(64)
-                socket.waitForReadyRead(250)
-                raw_message = bytes(socket.read(64))
-                message = raw_message.strip() if len(raw_message) <= 32 and socket.bytesAvailable() == 0 else b""
-                should_activate = should_activate or message == b"activate"
-                if message == b"shutdown":
-                    if allow_maintenance_ack:
-                        shutdown_sockets.append(socket)
-                        should_shutdown = True
-                    else:
-                        socket.write(b"failed\n")
-                        socket.flush()
-                        socket.waitForBytesWritten(250)
-                        socket.disconnectFromServer()
-                        socket.deleteLater()
-                else:
-                    socket.abort()
-                    socket.deleteLater()
-            if should_shutdown:
-                application.quit()
-                return
-            if should_activate:
-                window.showNormal()
-                window.raise_()
-                window.activateWindow()
-
-        def close_instance_server() -> None:
-            instance_server.close()
-            if instance_server_name is not None:
-                QLocalServer.removeServer(instance_server_name)
-            if instance_lock is not None:
-                instance_lock.unlock()
-
-        instance_server.newConnection.connect(activate_window)
-        if instance_server.hasPendingConnections():
-            QTimer.singleShot(0, activate_window)
-
-    if screenshot_path is not None:
-        destination = Path(screenshot_path)
-
-        def capture() -> None:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if not window.grab().save(str(destination)):
-                raise RuntimeError(f"could not capture desktop screenshot to {destination}")
-
-        QTimer.singleShot(600, capture)
-    if auto_close_seconds is not None:
-        QTimer.singleShot(max(1, int(float(auto_close_seconds) * 1000)), application.quit)
-    restore_termination_handlers = _install_posix_termination_bridge(application, QTimer)
+    cleanup_started = False
+    quit_callback_connected = False
+    server_callback_connected = False
+    restore_termination_handlers = lambda: None
 
     def finish_desktop_cleanup():
+        nonlocal cleanup_started
+        if cleanup_started:
+            return
+        cleanup_started = True
         response = b"failed\n"
         try:
+            # Owner cleanup may itself pump Qt events. Cancel this run's work
+            # before entering it, including when application.exec() raises.
+            stop_window_refreshes()
             if before_termination_restore is not None:
                 before_termination_restore()
             if allow_maintenance_ack:
                 response = b"stopped\n"
         finally:
+            if quit_callback_connected:
+                application.aboutToQuit.disconnect(stop_window_refreshes)
             for socket in shutdown_sockets:
                 socket.write(response)
                 socket.flush()
                 socket.waitForBytesWritten(1000)
                 socket.disconnectFromServer()
             if instance_server is not None:
-                close_instance_server()
+                if server_callback_connected:
+                    instance_server.newConnection.disconnect(activate_window)
+                instance_server.close()
+                if instance_server_name is not None:
+                    QLocalServer.removeServer(instance_server_name)
+                if instance_lock is not None:
+                    instance_lock.unlock()
+                instance_server.deleteLater()
 
-    return _exec_with_termination_cleanup(
-        application,
-        restore_termination_handlers,
-        finish_desktop_cleanup,
-    )
+    try:
+        application.aboutToQuit.connect(stop_window_refreshes)
+        quit_callback_connected = True
+        window._show_page(max(0, min(3, screenshot_page)))
+        if start_minimized:
+            window.showMinimized()
+        else:
+            window.show()
+
+        if qualification_automation is not None:
+            qualification_automation.install(
+                window,
+                application,
+                {
+                    "QTimer": QTimer,
+                    "QDialog": QDialog,
+                    "QDialogButtonBox": QDialogButtonBox,
+                    "QCheckBox": QCheckBox,
+                    "QPlainTextEdit": QPlainTextEdit,
+                    "QLineEdit": QLineEdit,
+                },
+            )
+
+        if instance_server is not None:
+
+            def activate_window() -> None:
+                should_activate = False
+                should_shutdown = False
+                while instance_server.hasPendingConnections():
+                    socket = instance_server.nextPendingConnection()
+                    socket.setReadBufferSize(64)
+                    socket.waitForReadyRead(250)
+                    raw_message = bytes(socket.read(64))
+                    message = raw_message.strip() if len(raw_message) <= 32 and socket.bytesAvailable() == 0 else b""
+                    should_activate = should_activate or message == b"activate"
+                    if message == b"shutdown":
+                        if allow_maintenance_ack:
+                            shutdown_sockets.append(socket)
+                            should_shutdown = True
+                        else:
+                            socket.write(b"failed\n")
+                            socket.flush()
+                            socket.waitForBytesWritten(250)
+                            socket.disconnectFromServer()
+                            socket.deleteLater()
+                    else:
+                        socket.abort()
+                        socket.deleteLater()
+                if should_shutdown:
+                    application.quit()
+                    return
+                if should_activate:
+                    window.showNormal()
+                    window.raise_()
+                    window.activateWindow()
+
+            instance_server.newConnection.connect(activate_window)
+            server_callback_connected = True
+            if instance_server.hasPendingConnections():
+                schedule_once(0, activate_window)
+
+        if screenshot_path is not None:
+            destination = Path(screenshot_path)
+
+            def capture() -> None:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if not window.grab().save(str(destination)):
+                    raise RuntimeError(f"could not capture desktop screenshot to {destination}")
+
+            schedule_once(600, capture)
+        if auto_close_seconds is not None:
+            schedule_once(max(1, int(float(auto_close_seconds) * 1000)), application.quit)
+        restore_termination_handlers = _install_posix_termination_bridge(application, QTimer)
+        return _exec_with_termination_cleanup(application, restore_termination_handlers, finish_desktop_cleanup)
+    finally:
+        # Also cover setup failures before the event-loop cleanup wrapper runs.
+        # Both callbacks are idempotent after a normal event-loop exit.
+        try:
+            finish_desktop_cleanup()
+        finally:
+            restore_termination_handlers()

@@ -5,6 +5,7 @@ import os
 import select
 import signal
 import socket
+import stat
 import sys
 import threading
 import time
@@ -28,6 +29,172 @@ from drift.node import linux_anchor as anchor, linux_anchor_control as control, 
 from drift.node.linux_anchor_entry import NODE_TOKEN_ENV
 from drift.node.linux_anchor_node import AnchorNode
 from drift.node.resource_recovery import RecoverableStateError
+
+
+def _fixture_sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fixture_write_exclusive(path, value):
+    payload = value if isinstance(value, bytes) else value.encode()
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    try:
+        assert os.write(descriptor, payload) == len(payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    _fixture_sync_directory(path.parent)
+
+
+def _fixture_append(path, value):
+    payload = value if isinstance(value, bytes) else value.encode()
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        assert os.write(descriptor, payload) == len(payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    _fixture_sync_directory(path.parent)
+
+
+def credential_helper(profile, directory, mode):
+    """Synthetic file backend around the real admitted helper; never Secret Service."""
+    import ctypes
+    import fcntl
+    import resource
+
+    from communityai_desktop.credentials import CredentialMissingError
+    from communityai_desktop.profiles import VolunteerProfile
+
+    from communityai_anchor import linux_anchor_credentials as credentials
+
+    profile, directory = VolunteerProfile(profile), Path(directory)
+    own_group = Path("/proc/self/cgroup").read_text().strip()[3:]
+    service_group, separator, generation_and_helper = own_group.rpartition("/nodes/node-")
+    generation, child_separator, helper_nonce = generation_and_helper.partition("/credential-")
+    assert separator and child_separator and len(generation) == len(helper_nonce) == 32
+    anchor._query_properties = lambda: properties(os.getppid(), service_group)
+    store_path = directory / "fixture-native-store"
+    events_path = directory / "fixture-credential-events.jsonl"
+    failures_path = directory / "fixture-credential-failures.jsonl"
+    fault = mode.removeprefix("bootstrap_helper_")
+    if fault == "raw_flood":
+        assert os.write(1, b"x" * (credentials.MAX_MESSAGE + 1)) == credentials.MAX_MESSAGE + 1
+        while True:
+            time.sleep(0.05)
+    if fault == "malformed":
+        assert os.write(1, b"not-json\n") == 9
+        return 0
+
+    def record(operation):
+        info = os.fstat(0)
+        flags = fcntl.fcntl(0, fcntl.F_GETFL)
+        parent_limits = Path(f"/proc/{os.getppid()}/limits").read_text()
+        core = next(line.split()[-3:-1] for line in parent_limits.splitlines() if line.startswith("Max core file size"))
+        libc = ctypes.CDLL(None, use_errno=True)
+        event = dict(
+            operation=operation,
+            pid=os.getpid(),
+            ppid=os.getppid(),
+            group=Path("/proc/self/cgroup").read_text().strip()[3:],
+            helper_core=list(resource.getrlimit(resource.RLIMIT_CORE)),
+            helper_dumpable=libc.prctl(3, 0, 0, 0, 0),
+            parent_core_zero=core == ["0", "0"],
+            stdin_fifo=stat.S_ISFIFO(info.st_mode),
+            stdin_access=flags & os.O_ACCMODE,
+            stdin_nonblocking=bool(flags & os.O_NONBLOCK),
+        )
+        _fixture_append(events_path, json.dumps(event, sort_keys=True) + "\n")
+
+    class FixtureNativeStore:
+        def get(self):
+            record("get")
+            if fault == "unknown_child":
+                state = json.loads((profile.root / "anchor" / "state.json").read_text())
+                helper = Path(state["generation"]["cgroup"]["root"]) / ("credential-" + helper_nonce)
+                (helper / "unknown").mkdir(mode=0o700)
+            try:
+                value = store_path.read_text()
+            except FileNotFoundError:
+                if fault == "delayed_remote" and (directory / "fixture-remote-request").exists():
+                    _fixture_write_exclusive(directory / "fixture-reconciliation-missing", b"missing\n")
+                raise CredentialMissingError() from None
+            return value
+
+        def set(self, secret):
+            record("set")
+            _fixture_append(directory / "fixture-keyring-sets", b"1\n")
+            if fault == "delayed_remote":
+                # A fixture thread in the service represents the independent
+                # native keyring service. The admitted helper can die while the
+                # synthetic remote request remains in flight.
+                _fixture_write_exclusive(directory / "fixture-remote-request", secret)
+            else:
+                _fixture_write_exclusive(store_path, secret)
+                _fixture_write_exclusive(directory / "fixture-set-effect", b"persisted\n")
+            if fault == "noise":
+                # credential_helper_main has already redirected backend stdout
+                # and stderr. Even maliciously noisy backend output, including
+                # the synthetic key, must not enter the fixed JSON response.
+                os.write(1, secret.encode())
+                for _ in range(64):
+                    assert os.write(2, b"fixture-backend-noise" * 4096) > 0
+            if fault == "lost_reply":
+                os._exit(23)
+            if fault in {"cancelled_set", "timeout_set", "delayed_remote"}:
+                _fixture_write_exclusive(directory / "fixture-helper-stalled", b"set\n")
+                while True:
+                    time.sleep(0.05)
+            if fault == "descendant":
+                child = os.fork()
+                if child == 0:
+                    # Do not retain the protocol pipe: the parent can answer,
+                    # after which whole-leaf cleanup must still kill this child.
+                    os.closerange(3, 4096)
+                    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                    while True:
+                        time.sleep(0.05)
+                _fixture_write_exclusive(directory / "fixture-helper-descendant", (str(child) + "\n").encode())
+            if fault == "late_path_proof_failure_descendant":
+                child = os.fork()
+                if child == 0:
+                    os.closerange(3, 4096)
+                    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                    while True:
+                        time.sleep(0.05)
+                _fixture_write_exclusive(
+                    directory / "fixture-helper-late-path-proof-descendant", (str(child) + "\n").encode()
+                )
+
+    credentials._native_store = lambda actual_profile: FixtureNativeStore()
+
+    def trace_failure(frame, event, argument):
+        if event == "exception" and frame.f_globals.get("__name__") == credentials.__name__:
+            exception = argument[0]
+            if exception.__name__ not in {"BlockingIOError", "CredentialMissingError"}:
+                _fixture_append(
+                    failures_path,
+                    json.dumps(
+                        dict(function=frame.f_code.co_name, line=frame.f_lineno, type=exception.__name__),
+                        sort_keys=True,
+                    )
+                    + "\n",
+                )
+        return trace_failure
+
+    sys.settrace(trace_failure)
+    try:
+        return credentials.credential_helper_main(profile)
+    finally:
+        sys.settrace(None)
 
 
 def properties(pid, group):
@@ -496,6 +663,22 @@ def service(root, directory, mode):
     AnchorNode.request_shutdown = observed_shutdown
     done = threading.Event()
 
+    if mode == "bootstrap_helper_delayed_remote":
+
+        def delayed_remote_effect():
+            request = directory / "fixture-remote-request"
+            missing = directory / "fixture-reconciliation-missing"
+            while not done.wait(0.02):
+                if request.exists() and missing.exists():
+                    # Ensure the bounded reconciliation has returned its
+                    # authoritative missing result before the late effect.
+                    time.sleep(1)
+                    _fixture_write_exclusive(directory / "fixture-native-store", request.read_bytes())
+                    _fixture_write_exclusive(directory / "fixture-remote-completed", b"late\n")
+                    return
+
+        threading.Thread(target=delayed_remote_effect, daemon=True).start()
+
     def stop_watcher():
         while not done.wait(0.02):
             if (directory / "stop").exists():
@@ -503,7 +686,7 @@ def service(root, directory, mode):
                 return
 
     threading.Thread(target=stop_watcher, daemon=True).start()
-    preparation = None
+    preparation = credential_executor = None
     if mode.startswith("bootstrap_"):
         from communityai_desktop.credentials import CredentialMissingError
         from communityai_desktop.profiles import VolunteerProfile
@@ -518,31 +701,74 @@ def service(root, directory, mode):
 
         fixed_profile = VolunteerProfile(profile)
         plan = build_bootstrap_plan(directory / "bundle", fixed_profile, initialize=True)
+        if mode.startswith("bootstrap_helper_"):
+            from communityai_anchor import linux_anchor_credentials as credential_runtime
+            from communityai_anchor.linux_anchor_credentials import CredentialExecutor, CredentialIdentity
 
-        class KeyringFixture:
-            service, account = fixed_profile.credential_service, fixed_profile.credential_account
-            secret = None
-            sets = 0
+            if mode in {"bootstrap_helper_preexisting", "bootstrap_helper_invalid_preexisting"}:
+                value = "drift_control_" + "P" * 43 if mode == "bootstrap_helper_preexisting" else "invalid-fixture-key"
+                _fixture_write_exclusive(directory / "fixture-native-store", value)
+            preparation = AnchorBootstrap(
+                plan,
+                fixed_profile,
+                CredentialIdentity(fixed_profile.credential_service, fixed_profile.credential_account),
+            )
+            credential_executor = CredentialExecutor(
+                (
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "credential-helper",
+                    str(profile),
+                    str(directory),
+                    mode,
+                ),
+                os.environ.copy(),
+            )
+            if mode == "bootstrap_helper_rmdir_failure":
+                original_rmdir = credential_runtime.os.rmdir
 
-            def get(self):
-                if mode == "bootstrap_locked" and not (directory / "keyring-unlocked").exists():
-                    raise OSError("fixture locked before first set")
-                if mode == "bootstrap_ready_locked" and (directory / "keyring-locked").exists():
-                    raise OSError("fixture locked ready keyring")
-                if self.sets and mode == "bootstrap_unknown":
-                    raise OSError("fixture cannot establish keyring outcome")
-                if self.secret is None:
-                    raise CredentialMissingError()
-                return self.secret
+                def refuse_helper_rmdir(path, *args, **kwargs):
+                    if str(path).startswith("credential-"):
+                        raise OSError("fixture helper rmdir failure")
+                    return original_rmdir(path, *args, **kwargs)
 
-            def set(self, secret):
-                self.secret = secret
-                self.sets += 1
-                (directory / "keyring-sets").write_text(str(self.sets))
-                if mode in {"bootstrap_key_barrier", "bootstrap_unknown"}:
-                    barrier()
+                credential_runtime.os.rmdir = refuse_helper_rmdir
+            if mode == "bootstrap_helper_late_path_proof_failure_descendant":
+                original_observe_root = credential_runtime.anchor.cg._observe_root
 
-        preparation = AnchorBootstrap(plan, fixed_profile, KeyringFixture())
+                def refuse_late_helper_path_proof(path, descriptor):
+                    marker = directory / "fixture-helper-late-path-proof-descendant"
+                    if Path(path).name.startswith("credential-") and marker.exists():
+                        raise OSError("fixture late helper path proof failure")
+                    return original_observe_root(path, descriptor)
+
+                credential_runtime.anchor.cg._observe_root = refuse_late_helper_path_proof
+        else:
+
+            class KeyringFixture:
+                service, account = fixed_profile.credential_service, fixed_profile.credential_account
+                secret = None
+                sets = 0
+
+                def get(self):
+                    if mode == "bootstrap_locked" and not (directory / "keyring-unlocked").exists():
+                        raise OSError("fixture locked before first set")
+                    if mode == "bootstrap_ready_locked" and (directory / "keyring-locked").exists():
+                        raise OSError("fixture locked ready keyring")
+                    if self.sets and mode == "bootstrap_unknown":
+                        raise OSError("fixture cannot establish keyring outcome")
+                    if self.secret is None:
+                        raise CredentialMissingError()
+                    return self.secret
+
+                def set(self, secret):
+                    self.secret = secret
+                    self.sets += 1
+                    (directory / "keyring-sets").write_text(str(self.sets))
+                    if mode in {"bootstrap_key_barrier", "bootstrap_unknown"}:
+                        barrier()
+
+            preparation = AnchorBootstrap(plan, fixed_profile, KeyringFixture())
         if mode == "bootstrap_config_barrier":
             commit = preparation._commit
 
@@ -552,14 +778,67 @@ def service(root, directory, mode):
                     barrier()
 
             preparation._commit = held_commit
+    previous_trace = sys.gettrace()
+    previous_thread_trace = threading.gettrace()
+    if mode.startswith("bootstrap_helper_"):
+        parent_failures = directory / "fixture-credential-parent-failures.jsonl"
+
+        def trace_parent_failure(frame, event, argument):
+            if (
+                event == "exception"
+                and frame.f_globals.get("__name__")
+                in {"communityai_anchor.linux_anchor_credentials", "drift.node.linux_cgroup_process"}
+                and argument[0].__name__ not in {"BlockingIOError", "CredentialMissingError"}
+            ):
+                metadata = dict(function=frame.f_code.co_name, line=frame.f_lineno, type=argument[0].__name__)
+                if frame.f_code.co_name == "_read_handshake":
+                    value, expected = frame.f_locals.get("value"), frame.f_locals.get("expected")
+                    if isinstance(value, bytes) and len(value) <= 1:
+                        metadata["value_hex"] = value.hex()
+                    if isinstance(expected, bytes) and len(expected) <= 1:
+                        metadata["expected_hex"] = expected.hex()
+                _fixture_append(
+                    parent_failures,
+                    json.dumps(metadata, sort_keys=True) + "\n",
+                )
+            return trace_parent_failure
+
+        sys.settrace(trace_parent_failure)
+        threading.settrace(trace_parent_failure)
     try:
-        return anchor.serve_anchor(
-            controller_factory=lambda layout: AnchorNode(
-                layout, profile, launch, initialize=True, bootstrap=preparation
+
+        def controller_factory(layout):
+            controller = AnchorNode(
+                layout,
+                profile,
+                launch,
+                initialize=True,
+                bootstrap=preparation,
+                credential_executor=credential_executor,
             )
-        )
+            if credential_executor is not None:
+                import ctypes
+                import resource
+
+                libc = ctypes.CDLL(None, use_errno=True)
+                _fixture_write_exclusive(
+                    directory / "fixture-parent-protection.json",
+                    json.dumps(
+                        dict(
+                            core=list(resource.getrlimit(resource.RLIMIT_CORE)),
+                            dumpable=libc.prctl(3, 0, 0, 0, 0),
+                        ),
+                        sort_keys=True,
+                    )
+                    + "\n",
+                )
+            return controller
+
+        return anchor.serve_anchor(controller_factory=controller_factory)
     finally:
         done.set()
+        sys.settrace(previous_trace)
+        threading.settrace(previous_thread_trace)
 
 
 if __name__ != "__main__":
@@ -616,13 +895,26 @@ if __name__ != "__main__":
     def observe():
         return control.control_anchor()["node"]
 
+    def credential_failure_diagnostics():
+        try:
+            directory = Path(anchor._runtime_directory())
+            paths = (
+                directory / "fixture-credential-failures.jsonl",
+                directory / "fixture-credential-parent-failures.jsonl",
+            )
+            return "\n".join(path.name + ":\n" + path.read_text() for path in paths if path.exists())
+        except Exception:
+            return "diagnostic-unavailable"
+
     def until(predicate, timeout=8):
         deadline = time.monotonic() + timeout
         while True:
             value = observe()
             if predicate(value):
                 return value
-            assert time.monotonic() < deadline, json.dumps(value, sort_keys=True)
+            assert time.monotonic() < deadline, (
+                json.dumps(value, sort_keys=True) + "\ncredential failures:\n" + credential_failure_diagnostics()
+            )
             time.sleep(0.02)
 
     def condition(value):
@@ -647,8 +939,50 @@ if __name__ != "__main__":
     def wait_file(path, timeout=5):
         deadline = time.monotonic() + timeout
         while not path.exists():
-            assert time.monotonic() < deadline, path
+            assert time.monotonic() < deadline, (
+                str(path) + "\ncredential failures:\n" + credential_failure_diagnostics()
+            )
             time.sleep(0.02)
+
+    def credential_events(directory):
+        path = directory / "fixture-credential-events.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    def assert_private_helper_events(events):
+        assert events
+        assert all(event["stdin_fifo"] for event in events)
+        assert all(event["stdin_access"] == os.O_RDONLY for event in events)
+        assert all(not event["stdin_nonblocking"] for event in events)
+        assert all(event["helper_core"] == [0, 0] for event in events)
+        assert all(event["helper_dumpable"] == 0 for event in events)
+        assert all(event["parent_core_zero"] for event in events)
+
+    def assert_independent_reconciliation(events):
+        position = next(index for index, event in enumerate(events) if event["operation"] == "set")
+        later = [event for event in events[position + 1 :] if event["operation"] == "get"]
+        assert later and later[0]["pid"] != events[position]["pid"]
+
+    def assert_helper_groups(events, generation, expected):
+        groups = {event["group"] for event in events}
+        assert len(groups) == expected
+        prefix = "/nodes/node-" + generation + "/credential-"
+        assert all(prefix in group for group in groups)
+        assert all(
+            len(group.rpartition(prefix)[2]) == 32
+            and all(character in "0123456789abcdef" for character in group.rpartition(prefix)[2])
+            for group in groups
+        )
+
+    def assert_generation_has_no_children(directory, generation):
+        durable = json.loads((directory / "profile" / "anchor" / "state.json").read_text())
+        assert durable["generation"]["id"] == generation
+        leaf = Path(durable["generation"]["cgroup"]["root"])
+        descriptor = anchor.cg._open_root(str(leaf))
+        try:
+            assert not anchor._subgroups(descriptor)
+        finally:
+            os.close(descriptor)
+        return leaf
 
     def test_start_durable_child_duplicate_request_whole_tree_drain_and_restart(running_node):
         root, directory, start = running_node
@@ -710,6 +1044,282 @@ if __name__ != "__main__":
         (directory / "stop").touch()
         assert process.wait(timeout=8) == 0
 
+    @pytest.mark.parametrize("fault", ["normal", "noise"])
+    def test_private_native_credential_helper_first_use_and_restart(running_node, fault):
+        root, directory, start = running_node
+        process = start("bootstrap_helper_" + fault)
+        until(lambda s: s["drain_complete"])
+        started = time.monotonic()
+        _, request = command("start")
+        first = until(lambda s: s["phase"] == "running", timeout=75)
+        assert time.monotonic() - started < 75
+        wait_file(directory / "profile" / "entered.json")
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        secret = (directory / "fixture-native-store").read_text()
+        events = credential_events(directory)
+        parent_protection = json.loads((directory / "fixture-parent-protection.json").read_text())
+        assert marker["ready"] and marker["attempt"] == dict(request_id=request, generation=first["generation"]["id"])
+        assert parent_protection == dict(core=[0, 0], dumpable=0)
+        assert secret.startswith("drift_control_")
+        assert (directory / "fixture-keyring-sets").read_text().splitlines() == ["1"]
+        assert_private_helper_events(events)
+        assert_independent_reconciliation(events)
+        assert_helper_groups(events, first["generation"]["id"], 3)
+        assert_generation_has_no_children(directory, first["generation"]["id"])
+        assert secret not in (directory / "fixture-credential-events.jsonl").read_text()
+        first_event_count = len(events)
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        started = time.monotonic()
+        command("start")
+        second = until(lambda s: s["phase"] == "running", timeout=75)
+        assert time.monotonic() - started < 75
+        assert second["generation"]["id"] != first["generation"]["id"]
+        events = credential_events(directory)
+        assert len(events) > first_event_count
+        assert events[-1]["operation"] == "get"
+        assert_helper_groups(events[first_event_count:], second["generation"]["id"], 1)
+        assert_generation_has_no_children(directory, second["generation"]["id"])
+        assert (directory / "fixture-keyring-sets").read_text().splitlines() == ["1"]
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 0
+        assert secret not in process.stdout.read()
+
+    @pytest.mark.parametrize("fault", ["lost_reply", "timeout_set", "descendant"])
+    def test_private_native_credential_helper_uncertain_set_reconciles_after_leaf_cleanup(running_node, fault):
+        root, directory, start = running_node
+        process = start("bootstrap_helper_" + fault)
+        until(lambda s: s["drain_complete"])
+        command("start")
+        wait_file(directory / "fixture-set-effect", timeout=10)
+        if fault == "timeout_set":
+            wait_file(directory / "fixture-helper-stalled")
+        running = until(lambda s: s["phase"] == "running", timeout=35)
+        events = credential_events(directory)
+        assert_private_helper_events(events)
+        assert_independent_reconciliation(events)
+        assert_helper_groups(events, running["generation"]["id"], 3)
+        assert (directory / "fixture-keyring-sets").read_text().splitlines() == ["1"]
+        assert json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())["ready"]
+        leaf = assert_generation_has_no_children(directory, running["generation"]["id"])
+        assert {int(pid) for pid in (leaf / "cgroup.procs").read_text().splitlines()} == {running["generation"]["pid"]}
+        if fault == "descendant":
+            assert (directory / "fixture-helper-descendant").is_file()
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 0
+
+    def test_timed_out_helper_with_late_remote_effect_poisoned_after_missing_reconciliation(running_node):
+        root, directory, start = running_node
+        process = start("bootstrap_helper_delayed_remote")
+        until(lambda s: s["drain_complete"])
+        command("start")
+        wait_file(directory / "fixture-helper-stalled", timeout=10)
+        blocked = until(lambda s: s["phase"] == "blocked" and s["pending_request_id"] is None, timeout=35)
+        wait_file(directory / "fixture-remote-completed", timeout=5)
+        events = credential_events(directory)
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        assert not blocked["drain_complete"] and not blocked["maintenance"]
+        assert_independent_reconciliation(events)
+        assert_helper_groups(events, blocked["generation"]["id"], 3)
+        assert_generation_has_no_children(directory, blocked["generation"]["id"])
+        assert (directory / "fixture-keyring-sets").read_text().splitlines() == ["1"]
+        assert (directory / "fixture-native-store").read_bytes() == (directory / "fixture-remote-request").read_bytes()
+        assert marker["credential"] == "pending" and not marker["ready"]
+        assert not (directory / "profile" / "node" / "node-config.json").exists()
+        assert not (directory / "profile" / "entered.json").exists()
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 75
+
+    @pytest.mark.parametrize("fault", ["raw_flood", "malformed"])
+    def test_malformed_private_helper_transport_is_bounded_retryable_and_effect_free(running_node, fault):
+        root, directory, start = running_node
+        process = start("bootstrap_helper_" + fault)
+        until(lambda s: s["drain_complete"])
+        _, request = command("start")
+        idle = until(lambda s: s["drain_complete"] and s["request_id"] == request, timeout=15)
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        assert idle["phase"] == "idle" and idle["operation"] == "start"
+        assert marker["credential"] == "absent" and not marker["ready"]
+        assert not (directory / "fixture-credential-events.jsonl").exists()
+        assert not (directory / "fixture-native-store").exists()
+        assert not (directory / "fixture-keyring-sets").exists()
+        assert not (directory / "profile" / "node" / "node-config.json").exists()
+        assert not (directory / "profile" / "entered.json").exists()
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        assert process.poll() is None
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 0
+
+    def test_cancelled_native_credential_set_holds_locks_and_reconciles_before_drain(running_node):
+        import fcntl
+
+        root, directory, start = running_node
+        process = start("bootstrap_helper_cancelled_set")
+        until(lambda s: s["drain_complete"])
+        command("start")
+        wait_file(directory / "fixture-helper-stalled", timeout=10)
+        before = time.monotonic()
+        planned = observe()
+        assert time.monotonic() - before < 2
+        assert planned["phase"] == "starting" and planned["generation"]["pid"] is None
+        assert planned["api_identity"] is None and not planned["drain_complete"]
+        assert not (directory / "profile" / "entered.json").exists()
+        durable = json.loads((directory / "profile" / "anchor" / "state.json").read_text())
+        assert durable["generation"]["id"] == planned["generation"]["id"]
+        leaf = Path(durable["generation"]["cgroup"]["root"])
+        assert "populated 1" in (leaf / "cgroup.events").read_text()
+        for name in (
+            "anchor-state.lock",
+            "node-lifetime.lock",
+            "node/resource-reservations/admission.lock",
+            "node/.catalog-bootstrap.lock",
+            "node/.node-config.json.write.lock",
+        ):
+            descriptor = os.open(directory / "profile" / name, os.O_RDWR)
+            try:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(descriptor)
+        before = time.monotonic()
+        command("drain")
+        assert time.monotonic() - before < 2
+        until(lambda s: s["drain_complete"], timeout=20)
+        events = credential_events(directory)
+        assert_independent_reconciliation(events)
+        assert_helper_groups(events, planned["generation"]["id"], 3)
+        assert_generation_has_no_children(directory, planned["generation"]["id"])
+        assert (directory / "fixture-keyring-sets").read_text().splitlines() == ["1"]
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        assert marker["credential"] == "ready" and not marker["ready"]
+        assert not (directory / "profile" / "node" / "node-config.json").exists()
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        command("start")
+        until(lambda s: s["phase"] == "running", timeout=15)
+        assert json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())["ready"]
+        assert (directory / "fixture-keyring-sets").read_text().splitlines() == ["1"]
+        command("drain")
+        until(lambda s: s["drain_complete"])
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 0
+
+    def test_preexisting_native_credential_is_refused_without_set_or_payload_birth(running_node):
+        root, directory, start = running_node
+        process = start("bootstrap_helper_preexisting")
+        until(lambda s: s["drain_complete"])
+        command("start")
+        blocked = until(lambda s: s["phase"] == "blocked" and s["pending_request_id"] is None, timeout=15)
+        events = credential_events(directory)
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        assert not blocked["drain_complete"] and not blocked["maintenance"]
+        assert events and all(event["operation"] == "get" for event in events)
+        assert_private_helper_events(events)
+        assert_helper_groups(events, blocked["generation"]["id"], 1)
+        assert_generation_has_no_children(directory, blocked["generation"]["id"])
+        assert marker["credential"] == "absent" and not marker["ready"]
+        assert not (directory / "fixture-keyring-sets").exists()
+        assert not (directory / "fixture-set-effect").exists()
+        assert not (directory / "profile" / "node" / "node-config.json").exists()
+        assert not (directory / "profile" / "entered.json").exists()
+        assert (directory / "fixture-native-store").read_text() == "drift_control_" + "P" * 43
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 75
+
+    def test_invalid_preexisting_native_credential_is_refused_and_never_overwritten(running_node):
+        root, directory, start = running_node
+        process = start("bootstrap_helper_invalid_preexisting")
+        until(lambda s: s["drain_complete"])
+        command("start")
+        blocked = until(lambda s: s["phase"] == "blocked" and s["pending_request_id"] is None, timeout=20)
+        events = credential_events(directory)
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        assert not blocked["drain_complete"] and not blocked["maintenance"]
+        assert events and all(event["operation"] == "get" for event in events)
+        assert_private_helper_events(events)
+        assert_helper_groups(events, blocked["generation"]["id"], 1)
+        assert_generation_has_no_children(directory, blocked["generation"]["id"])
+        assert marker["credential"] == "absent" and not marker["ready"]
+        assert (directory / "fixture-native-store").read_text() == "invalid-fixture-key"
+        assert not (directory / "fixture-keyring-sets").exists()
+        assert not (directory / "profile" / "node" / "node-config.json").exists()
+        assert not (directory / "profile" / "entered.json").exists()
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        assert process.poll() is None
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 75
+
+    @pytest.mark.parametrize("fault", ["rmdir_failure", "unknown_child"])
+    def test_private_helper_cleanup_fault_contains_tree_and_blocks_owner(running_node, fault):
+        root, directory, start = running_node
+        process = start("bootstrap_helper_" + fault)
+        until(lambda s: s["drain_complete"])
+        command("start")
+        blocked = until(lambda s: s["phase"] == "blocked" and s["pending_request_id"] is None, timeout=20)
+        events = credential_events(directory)
+        durable = json.loads((directory / "profile" / "anchor" / "state.json").read_text())
+        leaf = Path(durable["generation"]["cgroup"]["root"])
+        descriptor = anchor.cg._open_root(str(leaf))
+        try:
+            children = anchor._subgroups(descriptor)
+        finally:
+            os.close(descriptor)
+        assert not blocked["drain_complete"] and not blocked["maintenance"]
+        assert blocked["generation"]["id"] == durable["generation"]["id"]
+        assert events and all(event["operation"] == "get" for event in events)
+        assert_private_helper_events(events)
+        assert_helper_groups(events, blocked["generation"]["id"], 1)
+        assert len(children) == 1 and next(iter(children)).startswith("credential-")
+        helper = leaf / next(iter(children))
+        helper_fd = anchor.cg._open_root(str(helper))
+        try:
+            assert anchor._subgroups(helper_fd) == ({"unknown"} if fault == "unknown_child" else set())
+        finally:
+            os.close(helper_fd)
+        assert not (directory / "fixture-native-store").exists()
+        assert not (directory / "fixture-keyring-sets").exists()
+        assert not (directory / "profile" / "node" / "node-config.json").exists()
+        assert not (directory / "profile" / "entered.json").exists()
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 75
+
+    def test_injected_late_helper_path_proof_failure_kills_descendant_and_never_repeats_set(running_node):
+        root, directory, start = running_node
+        process = start("bootstrap_helper_late_path_proof_failure_descendant")
+        until(lambda s: s["drain_complete"])
+        command("start")
+        wait_file(directory / "fixture-helper-late-path-proof-descendant", timeout=10)
+        blocked = until(lambda s: s["phase"] == "blocked" and s["pending_request_id"] is None, timeout=20)
+        events = credential_events(directory)
+        durable = json.loads((directory / "profile" / "anchor" / "state.json").read_text())
+        marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
+        leaf = Path(durable["generation"]["cgroup"]["root"])
+        descriptor = anchor.cg._open_root(str(leaf))
+        try:
+            children = anchor._subgroups(descriptor)
+        finally:
+            os.close(descriptor)
+        assert not blocked["drain_complete"] and not blocked["maintenance"]
+        assert blocked["generation"]["id"] == durable["generation"]["id"]
+        assert [event["operation"] for event in events].count("set") == 1
+        assert len({event["group"] for event in events}) == 2
+        assert (directory / "fixture-keyring-sets").read_text().splitlines() == ["1"]
+        assert marker["credential"] == "pending" and not marker["ready"]
+        assert len(children) == 1 and next(iter(children)).startswith("credential-")
+        assert all("populated 0" in (leaf / name / "cgroup.events").read_text() for name in children)
+        assert not (directory / "profile" / "node" / "node-config.json").exists()
+        assert not (directory / "profile" / "entered.json").exists()
+        assert "populated 0" in (root / "nodes" / "cgroup.events").read_text()
+        (directory / "stop").touch()
+        assert process.wait(timeout=8) == 75
+
     @pytest.mark.parametrize("kind", ["catalog", "config"])
     @pytest.mark.parametrize("fault", ["missing", "replaced", "late-missing", "late-replaced"])
     def test_real_admitted_catalog_writer_refuses_lost_pinned_lock(running_node, kind, fault):
@@ -760,7 +1370,11 @@ if __name__ != "__main__":
         assert planned["api_identity"] is None and not planned["drain_complete"]
         marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
         assert marker["attempt"]["request_id"] == request
-        assert not any(path.is_dir() for path in (root / "nodes").iterdir())
+        durable = json.loads((directory / "profile" / "anchor" / "state.json").read_text())
+        assert durable["generation"]["id"] == planned["generation"]["id"]
+        leaf = Path(durable["generation"]["cgroup"]["root"])
+        assert leaf.parent == root / "nodes" and leaf.is_dir()
+        assert "populated 0" in (leaf / "cgroup.events").read_text()
         import fcntl
 
         for lock in (
@@ -1181,5 +1795,7 @@ if __name__ != "__main__":
 if __name__ == "__main__":
     if sys.argv[1] == "node":
         body(Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5])
+    elif sys.argv[1] == "credential-helper":
+        raise SystemExit(credential_helper(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]))
     else:
         raise SystemExit(service(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]))

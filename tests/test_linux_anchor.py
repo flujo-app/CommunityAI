@@ -186,6 +186,8 @@ def test_process_start_identity_parses_parentheses(monkeypatch):
     monkeypatch.setattr(anchor.os, "stat", lambda path: SimpleNamespace(st_uid=1000))
 
     def read(path, maximum):
+        if path.endswith("/status"):
+            return "Uid:\t1000\t1000\t1000\t1000\n"
         return (
             "100 (name with ) parentheses) " + "S " + "0 " * 18 + "555 0\n"
             if path.endswith("stat")
@@ -203,7 +205,11 @@ def test_process_identity_rejects_namespace_or_hybrid_ambiguity(monkeypatch, gro
     monkeypatch.setattr(
         anchor.cg,
         "_read_path",
-        lambda path, maximum: "100 (name) S " + "0 " * 18 + "555 0\n" if path.endswith("stat") else group,
+        lambda path, maximum: "Uid:\t1000\t1000\t1000\t1000\n"
+        if path.endswith("/status")
+        else "100 (name) S " + "0 " * 18 + "555 0\n"
+        if path.endswith("stat")
+        else group,
     )
     with pytest.raises(RecoverableStateError):
         anchor._process(100)

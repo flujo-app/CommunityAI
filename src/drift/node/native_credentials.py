@@ -40,14 +40,21 @@ def load_native_control_key(location: NativeCredentialLocation = NativeCredentia
     try:
         import keyring
         from keyring.errors import KeyringError
+
+        from communityai_anchor.linux_secret_service import fixed_secret_service, is_fixed_location
+
+        fixed = is_fixed_location(location.service, location.account)
+        backend = fixed_secret_service() if fixed else None
     except ImportError as exc:
         raise NativeCredentialError("native credential support is not installed; install drift[api]") from exc
 
-    backend = keyring.get_keyring()
-    if getattr(backend, "priority", 0) <= 0:
-        raise NativeCredentialError("no usable native credential store is available")
+    if not fixed:
+        backend = keyring.get_keyring()
+        if getattr(backend, "priority", 0) <= 0:
+            raise NativeCredentialError("no usable native credential store is available")
+        backend = keyring
     try:
-        secret = keyring.get_password(location.service, location.account)
+        secret = backend.get_password(location.service, location.account)
     except KeyringError as exc:
         raise NativeCredentialError(f"native credential store failed: {exc}") from exc
     if secret is None:

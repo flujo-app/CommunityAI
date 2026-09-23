@@ -216,8 +216,10 @@ def test_safe_pre_effect_rejection_has_one_start_no_drain_and_explicit_retry(fix
     f = fixture
     original = f.anchor.run_generation
     f.anchor.run_generation = lambda _: f.anchor.node.update(phase="idle", drain_complete=True)
-    with pytest.raises(NodeLifecycleError, match="Unlock the native credential store"):
+    with pytest.raises(lifecycle.RetryableAnchorSetupError, match="Unlock the native credential store") as failure:
         f.supervisor.ensure_client()
+    assert failure.value.manual_retry_required
+    assert str(failure.value) == lifecycle.RETRYABLE_SETUP_ERROR
     assert [op for op, _ in f.anchor.calls] == ["start"]
     assert f.store.mock_calls == [] and not f.supervisor._engaged
     f.anchor.run_generation = original

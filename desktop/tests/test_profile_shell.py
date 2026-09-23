@@ -3,7 +3,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -80,6 +82,233 @@ class ProfileShellTests(unittest.TestCase):
             raise errors[0]
         self.assertIn("do not delete profile files", observations["detail"])
         cleanup.assert_called_once()
+
+    def test_retryable_anchor_setup_failure_is_visible_and_requires_button_retry(self):
+        from communityai_desktop.anchor_lifecycle import RETRYABLE_SETUP_ERROR, RetryableAnchorSetupError
+        from PySide6.QtCore import QTimer
+
+        errors, calls, failures = [], [], []
+        release_failure = threading.Event()
+
+        def unavailable():
+            calls.append("connect")
+            if len(calls) == 1:
+                secret_only_in_traceback = "must-not-cross-queued-signal"
+                if not release_failure.wait(2):
+                    raise AssertionError(secret_only_in_traceback)
+                raise RetryableAnchorSetupError(RETRYABLE_SETUP_ERROR)
+            raise RuntimeError("transient connection fixture")
+
+        class Automation:
+            def install(self, window, application, qt):
+                checks = [0, 0, 0]
+                try:
+                    self_case.assertEqual(len(window._tasks), 1)
+                    task = next(iter(window._tasks))
+                    task.signals.error.connect(failures.append)
+                    release_failure.set()
+                except BaseException as exc:
+                    errors.append(exc)
+                    application.exit(0)
+                    return
+
+                def verify():
+                    try:
+                        checks[0] += 1
+                        if len(calls) < 1 or window._busy:
+                            if checks[0] < 30:
+                                QTimer.singleShot(10, verify)
+                                return
+                            raise AssertionError("initial connection failure did not finish")
+                        self_case.assertEqual(calls, ["connect"])
+                        self_case.assertEqual(window.connection_detail.text(), RETRYABLE_SETUP_ERROR)
+                        self_case.assertEqual(window.retry_button.text(), "Retry setup")
+                        self_case.assertTrue(window._connection_retry_required)
+                        self_case.assertEqual(len(failures), 1)
+                        failure = failures[0]
+                        self_case.assertEqual(tuple(failure), (RETRYABLE_SETUP_ERROR, True))
+                        self_case.assertFalse(isinstance(failure, BaseException))
+                        self_case.assertFalse(hasattr(failure, "__traceback__"))
+                        self_case.assertFalse(
+                            any(isinstance(value, (BaseException, types.TracebackType)) for value in tuple(failure))
+                        )
+                        self_case.assertNotIn("must-not-cross-queued-signal", repr(failure))
+                        # Timer/background refreshes remain observation-only while
+                        # the fixed failure waits for an explicit user decision.
+                        window.refresh()
+                        window.refresh()
+                        self_case.assertEqual(calls, ["connect"])
+                        window.retry_button.click()
+                        QTimer.singleShot(10, verify_retry)
+                    except BaseException as exc:
+                        errors.append(exc)
+                        application.exit(0)
+
+                def verify_retry():
+                    try:
+                        checks[1] += 1
+                        if len(calls) < 2 or window._busy:
+                            if checks[1] < 50:
+                                QTimer.singleShot(10, verify_retry)
+                                return
+                            raise AssertionError("explicit retry did not finish")
+                        self_case.assertEqual(calls, ["connect", "connect"])
+                        self_case.assertFalse(window._connection_retry_required)
+                        self_case.assertEqual(window.retry_button.text(), "Try again")
+                        window.refresh()  # Ordinary transient failures still auto-reconnect.
+                        QTimer.singleShot(10, verify_automatic_retry)
+                    except BaseException as exc:
+                        errors.append(exc)
+                        application.exit(0)
+
+                def verify_automatic_retry():
+                    try:
+                        checks[2] += 1
+                        if len(calls) < 3:
+                            if checks[2] < 50:
+                                QTimer.singleShot(10, verify_automatic_retry)
+                                return
+                            raise AssertionError("ordinary periodic retry did not run")
+                        self_case.assertEqual(calls, ["connect", "connect", "connect"])
+                    except BaseException as exc:
+                        errors.append(exc)
+                    finally:
+                        application.exit(0)
+
+                QTimer.singleShot(10, verify)
+
+        self_case = self
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.assertEqual(
+                run(
+                    connect=unavailable,
+                    application_name="CommunityAI Multi-GPU Test",
+                    instance_data_dir=root,
+                    allow_login_startup=False,
+                    allow_instance_directory_creation=True,
+                    allow_maintenance_ack=False,
+                    qualification_automation=Automation(),
+                    auto_close_seconds=3,
+                ),
+                0,
+            )
+        if errors:
+            raise errors[0]
+
+    def test_early_exit_cancels_auto_close_screenshot_and_updater_timers(self):
+        from PySide6.QtCore import QTimer
+
+        observed, windows, timers, errors = [], [], [], []
+        updater = mock.Mock()
+        updater.snapshot.return_value = {"status": "idle", "message": "fixture updater"}
+
+        def offline():
+            raise RuntimeError("offline sequential event-loop fixture")
+
+        class ExitAfter:
+            def __init__(self, delay_ms, marker):
+                self.delay_ms, self.marker = delay_ms, marker
+
+            def install(self, window, application, qt):
+                windows.append(window)
+                if self.marker == "first":
+                    # Shorten only fixture deadlines; every updater timer must
+                    # be inactive before owner cleanup or the next event loop.
+                    window._update_initial_timer.start(100)
+                    window._update_check_timer.start(100)
+                timer = QTimer(window)
+                timer.setSingleShot(True)
+                timers.append(timer)
+
+                def finish():
+                    observed.append(self.marker)
+                    application.exit(0)
+
+                timer.timeout.connect(finish)
+                timer.start(self.delay_ms)
+
+        def owner_cleanup():
+            try:
+                window = windows[0]
+                for name in ("_timer", "_update_timer", "_update_check_timer", "_update_initial_timer"):
+                    self.assertFalse(getattr(window, name).isActive(), name)
+                updater.close.assert_called_once_with()
+                # Reentrant event processing must not resurrect this run's work.
+                self.application.processEvents()
+            except BaseException as exc:
+                errors.append(exc)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "communityai_desktop.pyside_shell.login_startup_enabled", return_value=False
+        ):
+            screenshot = Path(directory) / "stale-screenshot.png"
+            self.assertEqual(
+                run(
+                    connect=offline,
+                    single_instance=False,
+                    allow_login_startup=False,
+                    qualification_automation=ExitAfter(10, "first"),
+                    auto_close_seconds=0.15,
+                    screenshot_path=screenshot,
+                    updater=updater,
+                    before_termination_restore=owner_cleanup,
+                ),
+                0,
+            )
+            # Old static singleShot quits this shared event loop at150ms,
+            # before the second marker. The600ms screenshot must not fire either.
+            self.assertEqual(
+                run(
+                    connect=offline,
+                    single_instance=False,
+                    allow_login_startup=False,
+                    qualification_automation=ExitAfter(750, "second"),
+                    auto_close_seconds=2,
+                ),
+                0,
+            )
+            self.assertFalse(screenshot.exists())
+        if errors:
+            raise errors[0]
+        self.assertEqual(observed, ["first", "second"])
+        updater.check.assert_not_called()
+        updater.snapshot.assert_not_called()
+        updater.close.assert_called_once_with()
+
+    def test_setup_failure_after_timer_scheduling_stops_timers_before_owner_cleanup(self):
+        from PySide6.QtCore import QTimer
+
+        windows = []
+        updater = mock.Mock()
+        updater.snapshot.return_value = {"status": "idle", "message": "fixture updater"}
+        owner_cleanup = mock.Mock()
+
+        class CaptureWindow:
+            def install(self, window, application, qt):
+                windows.append(window)
+
+        def cleanup():
+            owner_cleanup()
+            self.assertTrue(windows[0]._closing)
+            self.assertTrue(all(not timer.isActive() for timer in windows[0].findChildren(QTimer)))
+            updater.close.assert_called_once_with()
+
+        with mock.patch("communityai_desktop.pyside_shell.login_startup_enabled", return_value=False), mock.patch(
+            "communityai_desktop.pyside_shell._install_posix_termination_bridge",
+            side_effect=RuntimeError("fixture bridge setup failure"),
+        ), self.assertRaisesRegex(RuntimeError, "fixture bridge setup failure"):
+            run(
+                connect=lambda: None,
+                single_instance=False,
+                allow_login_startup=False,
+                updater=updater,
+                qualification_automation=CaptureWindow(),
+                auto_close_seconds=0.15,
+                before_termination_restore=cleanup,
+            )
+        owner_cleanup.assert_called_once_with()
+        updater.check.assert_not_called()
 
     def test_profile_window_identity_and_startup_guard_do_not_touch_regular_settings(self):
         errors = []

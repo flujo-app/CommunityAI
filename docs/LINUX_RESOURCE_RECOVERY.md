@@ -210,6 +210,7 @@ Type=exec
 ExecStart=@PACKAGED_VOLUNTEER_NODE_EXECUTABLE@ anchor
 Delegate=yes
 KillMode=control-group
+LimitCORE=0
 Restart=no
 ```
 
@@ -469,7 +470,8 @@ checked migration; deleting them to enable initialization is not supported.
 
 Start writes its planned generation/request intent before any preparation
 effect, retaining lifetime ownership plus the resource-manager drain guard.
-The planned generation has no PID/cgroup/API identity yet. Native credential
+The planned generation first binds an empty native cgroup, with no node PID or
+API identity yet. Contained credential helpers use that same leaf. Native credential
 creation/readback is followed by immutable manifests/catalog/bootstrap, cached
 catalog and rollback state, with node configuration activated last. Each output
 has durable pending intent, private file fsync, Linux no-replace rename, bound
@@ -496,11 +498,11 @@ Drain/SIGTERM remains observable during preparation. Cancellation stops only at
 a reconciled durable boundary and prevents node birth. An uncertain effect
 poisons the owner and withholds clean acknowledgement. Unit storage rebind
 tests demonstrate exact-file reconciliation, not a reachable production recovery
-command for a poisoned owner; that command is still required. Native keyring calls are
-synchronous and have no enforced upper bound: a hung backend retains ownership;
-neither the desktop's 300-second startup allowance nor its shutdown timeout proves
-that backend stopped. A bounded keyring mechanism and installed stop-latency
-qualification remain required before unattended release.
+command for a poisoned owner; that command is still required. Anchor keyring
+calls now execute in the bounded private helper described below. The desktop
+and running node have separate native-keyring paths, whose installed latency
+and cancellation still require qualification. Neither a desktop startup timeout
+nor local helper death establishes remote Secret Service cancellation.
 
 After durable ready, Start preserves user settings and checks intact private
 paths, the exact installed bootstrap trust configuration, signed active catalog,
@@ -511,7 +513,8 @@ package-plan replacement needs checked maintenance, not automatic adoption.
 The exact old sidecar, bundle and renderer must remain available until that
 transaction exists. Ready configuration cannot target the mutable catalog cache.
 Runtime/execution and selector checks are repeated before birth.
-No native node leaf is created before readiness. The node still launches
+No sharing/node payload is started before readiness and checked helper cleanup.
+The node still launches
 sharing-paused and with local inference CPU-only.
 
 This is same-invocation preparation/retry, not replacement-service, logout,
@@ -600,8 +603,8 @@ Even a report with no reasons has `admission`, `maintenance`, `cleanup_complete`
 and `recovery_allowed` false. It is never input to recovery or lifecycle admission.
 A changing owner may yield an inconclusive snapshot. Preserve the existing
 profile and evidence; do not delete locks or repeat first-use enrollment to
-resolve a reported problem. Checked credential/service recovery, bounded native
-keyring execution, actual installed/frozen Ubuntu and hardware tests remain open.
+resolve a reported problem. Checked credential/service recovery, actual
+installed/frozen Ubuntu and hardware tests remain open.
 
 ## Private native helper transport prerequisite
 
@@ -615,13 +618,98 @@ older extension. The child remains gated, born in the supplied cgroup, and close
 inherited owner/authority descriptors before reporting ready.
 
 This is a transport primitive, not credential execution or lifecycle admission.
-No production credential call uses it yet; anchor keyring calls remain synchronous
-and potentially unbounded. A future credential controller must bind the exact
-frozen helper/backend/account, use bounded framing and a monotonic supervision
-budget, retain lifecycle locks, and prove whole-subtree cleanup. Pipe output is
+The anchor credential controller below owns framing, monotonic supervision,
+lifecycle locks and whole-subtree cleanup. Pipe output is
 not inherently trusted or bounded: its owner must drain and validate it. Secrets
 must not be copied into argv, environment, logs or public errors. A stopped local
 helper does not prove a remote keyring write stopped; uncertain writes must retain
 durable pending intent, never regenerate or resend, and never acknowledge clean
 completion without independent reconciliation. Installed native Secret Service,
 service replacement and real power-loss acceptance remain unqualified.
+
+## Bounded anchor credential execution
+
+The production fixed launcher supplies an identity-only credential descriptor:
+the anchor parent cannot synchronously fall back to a native keyring. Exact
+`--anchor-credential-helper` dispatch occurs before profile preparation and is
+restricted to the Linux frozen sidecar. The helper runs through `/proc/self/exe`
+with a fixed local user-bus environment and explicit SecretService backend, not
+environment-selected keyring discovery. The fixed Linux volunteer namespace is
+shared by enrollment, desktop and running node, using the actual UID's local
+user bus and default collection, with backend/collection/query environment
+overrides ignored. Neither argv nor environment carries the secret. Other
+product namespaces retain their existing platform behavior. A prior volunteer
+key in another backend is not silently migrated: checked recovery and installed
+upgrade qualification remain required.
+
+Start persists the planned generation's original cgroup before helper birth,
+under the existing drain guard and lifetime/admission/catalog/config exclusion.
+Each call creates a fresh `credential-<nonce>` child beneath that durable
+generation, binds its device/inode in the private request, and never reuses it.
+This avoids relying on reuse of killed cgroups, which is broken by the kernel's
+[kill-sequence regression](https://kernel.googlesource.com/pub/scm/linux/kernel/git/tip/tip/+/8e359920216689b3b79e0fe8961a77fe312a511f).
+The native transport and whole-tree stop requirements are unchanged.
+The gated child receives one private small canonical ASCII JSON frame. It proves
+the exact live parent/service/executable, machine/boot, original state/bootstrap/
+resource file fingerprints and content, directory identities, held lock inodes,
+and its exact nonce-bound child cgroup. Those proofs are repeated around backend
+access. It retains the anchor-directory descriptor through the call. Parent-death
+SIGKILL, disabled core dumps and dumpability, and discarded ordinary stdout/stderr
+precede request processing. The private response echoes nonce and operation and
+contains only a fixed status and, for GET, a digest. Raw backend exceptions and
+secret material never become public status or diagnostic text. Parent/helper and
+fixed-namespace desktop/node credential operations disable and verify core
+limits and process dumpability before handling the key. This protection is
+process-wide and irreversible for that process; a size limit alone would not
+exclude piped core handlers. It is not Python-memory zeroization or protection
+against a privileged administrator.
+Process UID checks read all four real/effective/saved/filesystem UIDs from procfs,
+not its directory owner (which may change for nondumpable processes), and
+recheck start ticks after cgroup/UID reads to refuse a recycled PID. The
+private request binds the parent's executable inode to the helper's own inode;
+it does not require reading the nondumpable parent's restricted exe symlink.
+
+One 60-second monotonic transaction budget covers the initial GET, optional SET
+and independent reconciliation GET. Each call is at most 20 seconds, including a
+five-second cleanup reserve; initial calls reserve the last call's budget. This
+is a user-space supervision budget, not a hard realtime guarantee for stalled
+kernel/filesystem operations. Output is capped at 2048 bytes and checked through
+EOF and successful exit. Regardless of response validity, the owner attempts
+direct-handle kill/reap and pinned helper-subtree kill, then proves the original
+child empty with no subgroups, removes only that exact child with `rmdir`, and
+rechecks the generation's identity/emptiness. Child-proof failure independently
+attempts containment through the original generation ancestor and blocks further
+dispatch. Interrupted empty generation subtrees may remain for checked recovery;
+they are never reused as a future helper or node generation. Uncertain cleanup
+keeps the handle/evidence and poisons clean acknowledgement. Helpers cannot run
+after main-node birth; they never acquire a public node PID/API identity.
+
+A new key's pending digest is durable before SET. The helper independently
+requires the account to be absent and no legacy key file before writing. Stop
+does not skip dispatch/reconciliation once intent is durable. A lost reply,
+timeout or cancellation is not proof of no remote write: only an independently
+bounded exact-digest GET advances to ready. Missing, mismatched or unavailable
+readback retains pending intent and blocks without generating or resending a
+key. An authoritative malformed stored value reports only a fixed invalid status
+and blocks as a mismatch; it is not retryable backend unavailability. A later
+pending/ready attempt is read-only. No path rotates, overwrites or
+deletes an existing credential to make first-use succeed.
+
+Retryable setup failure is visibly explained in the desktop and requires the
+user's explicit **Retry setup** action; background refresh does not repeatedly
+trigger credential prompts. The UI queues only sanitized error text and retry
+classification, never an exception/traceback containing worker locals.
+
+Desktop auto-close, screenshot, pending activation and update timers are owned
+by their run and cancelled before owner cleanup. Early exit or setup failure
+must not leave callbacks that quit a later shared Qt event loop or restart a
+closed updater. Cleanup disconnects its application/server callbacks; sequential
+offscreen-loop tests are regression evidence, not installed-session qualification.
+
+Same-UID code remains cooperative, not sandboxed. Source/container fixtures do
+not qualify the actual frozen bootloader/runtime closure, ordinary Ubuntu20.04
+Secret Service sessions, unlock prompts, logout/reboot, package replacement or
+physical outage behavior. Keep the exact sidecar and adjacent `_internal` until
+checked maintenance exists. Absent/locked providers must not be treated as
+successful enrollment. Those installed-product gates remain required, together
+with useful all-card limits and the rest of full-beta acceptance.

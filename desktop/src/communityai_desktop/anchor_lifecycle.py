@@ -22,6 +22,16 @@ MAINTENANCE_ERROR = (
     "Linux test-profile update/removal requires checked anchor maintenance, which is not available yet. "
     "Stopping the desktop or node does not authorize replacing application files."
 )
+RETRYABLE_SETUP_ERROR = (
+    "The anchor could not complete setup. Unlock the native credential store and verify "
+    "the installed catalog package before retrying. No node was started."
+)
+
+
+class RetryableAnchorSetupError(NodeLifecycleError):
+    """Safe setup failure that requires a deliberate desktop retry."""
+
+    manual_retry_required = True
 
 
 def _stable_observation(profile, *, expected=None, sleeper=time.sleep):
@@ -175,10 +185,7 @@ class LinuxAnchorLifecycle:
                     self._start_command = None
                     self._target = None
                     self._engaged = False
-                raise NodeLifecycleError(
-                    "The anchor could not complete setup. Unlock the native credential store and verify "
-                    "the installed catalog package before retrying. No node was started."
-                )
+                raise RetryableAnchorSetupError(RETRYABLE_SETUP_ERROR)
             if node["phase"] == "idle" and node["drain_complete"] and start_command is None:
                 self.profile.validate_config()
                 receipt = self._observe()

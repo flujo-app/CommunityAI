@@ -179,6 +179,7 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "real Linux directory fsync")
     def test_partial_bootstrap_is_retained_and_both_start_modes_refuse(self):
+        from communityai_anchor import linux_anchor_credentials
         from drift.node import linux_anchor, linux_anchor_node, linux_anchor_state
 
         executable = self.home / "CommunityAI-Node"
@@ -194,7 +195,14 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
             if path == self.profile.root.parent:
                 raise OSError("fixture interrupted after empty profile creation")
 
-        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)):
+        # Provisioning/fsync fixture: do not consult the real UID home or bus.
+        # Native helper and fixed-environment tests qualify that separate boundary.
+        executor = object()
+        with patch.object(
+            linux_anchor_credentials.CredentialExecutor, "for_profile", return_value=executor
+        ) as make_executor, patch.object(sys, "frozen", True, create=True), patch.object(
+            sys, "executable", str(executable)
+        ):
             with patch.object(linux_anchor_state, "_sync_directory", side_effect=fail_after_root):
                 with self.assertRaises(OSError):
                     launcher._anchor_controller(layout, initialize=True)
@@ -205,21 +213,31 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
             with self.assertRaises(linux_anchor.RecoverableStateError):
                 launcher._anchor_controller(layout)
             self.assertEqual(list(self.profile.root.iterdir()), [])
+        self.assertEqual(make_executor.call_count, 3)
+        self.assertTrue(all(call.args == (self.profile,) for call in make_executor.call_args_list))
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "real Linux directory fsync")
     def test_fixed_frozen_factory_requires_a_new_profile_and_exact_command(self):
+        from communityai_anchor import linux_anchor_credentials
         from drift.node import linux_anchor_node
 
         executable = self.home / "CommunityAI-Node"
         executable.write_bytes(b"fixture, not a qualified frozen artifact")
         self._anchor_bundle(executable)
         layout = types.SimpleNamespace(validate=lambda: None)
-        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)):
+        # This fixture models the fixed launcher, not an installed user bus.
+        executor = object()
+        with patch.object(
+            linux_anchor_credentials.CredentialExecutor, "for_profile", return_value=executor
+        ) as make_executor, patch.object(sys, "frozen", True, create=True), patch.object(
+            sys, "executable", str(executable)
+        ):
             with patch.object(linux_anchor_node, "AnchorNode", return_value="controller") as owner:
                 self.assertEqual(launcher._anchor_controller(layout, initialize=True), "controller")
                 factory = owner.call_args.args[2]
                 self.assertTrue(owner.call_args.kwargs["initialize"])
                 self.assertEqual(owner.call_args.kwargs["bootstrap"].profile, self.profile)
+                self.assertIs(owner.call_args.kwargs["credential_executor"], executor)
                 # The mocked owner has not provisioned its node directory.
                 # A launch must retain this partial profile, not repair it.
                 with self.assertRaisesRegex(ValueError, "provisioned test profile"):
@@ -233,6 +251,8 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
                 self.assertNotIn(launcher.PARENT_PID_ENV, env)
             with self.assertRaises(FileExistsError):
                 launcher._anchor_controller(layout, initialize=True)
+        self.assertEqual(make_executor.call_count, 2)
+        self.assertTrue(all(call.args == (self.profile,) for call in make_executor.call_args_list))
 
     def _anchor_bundle(self, executable):
         from test_catalog_publication import _documents

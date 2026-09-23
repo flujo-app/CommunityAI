@@ -1174,6 +1174,8 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         self.assertIn(f"{bundle_path}{os.pathsep}bootstrap", arguments)
         self.assertEqual(arguments[arguments.index("--contents-directory") + 1], "_internal")
         self.assertIn(build_desktop.cgroup_extension.MODULE_NAME, arguments)
+        hidden_imports = [arguments[index + 1] for index, value in enumerate(arguments) if value == "--hidden-import"]
+        self.assertIn("keyring.backends.SecretService", hidden_imports)
         self.assertIn(
             f"{self.project / 'build' / 'fresh' / '_linux_cgroup_spawn.cpython-test.so'}{os.pathsep}drift/node",
             arguments,

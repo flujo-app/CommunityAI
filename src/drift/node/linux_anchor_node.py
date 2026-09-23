@@ -24,9 +24,19 @@ GRACEFUL_NODE_DRAIN_SECONDS = 3030.0
 
 
 class AnchorNode:
-    def __init__(self, layout, profile_root, launch_factory, *, initialize=False, bootstrap=None):
+    def __init__(
+        self, layout, profile_root, launch_factory, *, initialize=False, bootstrap=None, credential_executor=None
+    ):
         self.layout, self.root, self.launch_factory = layout, Path(profile_root), launch_factory
         self._bootstrap = bootstrap
+        self._credential_executor = credential_executor
+        self._credential_process = None
+        if credential_executor is not None:
+            from communityai_anchor.linux_anchor_credentials import protect_parent_memory
+
+            # The parent generates/serializes the pending key. Protect it
+            # before any owner thread or credential operation starts.
+            protect_parent_memory()
         self._lock = threading.Lock()
         self._close_lock = threading.Lock()
         self._wake, self._cancel, self.finished = threading.Event(), threading.Event(), threading.Event()
@@ -242,31 +252,42 @@ class AnchorNode:
             self._release_leaf()
             generation = dict(id=uuid4().hex, token=uuid4().hex, cgroup=None, pid=None, start_ticks=None)
             self._write(phase="starting", generation=generation, request_id=request_id, operation="start")
+            # The same generation leaf contains credential helpers and, only
+            # after checked empty cleanup/readiness, the actual node payload.
+            parent = anchor.cg._open_root(self.layout.profiles[2].root)
+            try:
+                anchor._require(
+                    anchor.cg._observe_root(self.layout.profiles[2].root, parent) == self.layout.profiles[2]
+                )
+                name = "node-" + generation["id"]
+                os.mkdir(name, mode=0o700, dir_fd=parent)
+                self._leaf_fd = anchor.cg._open_directory(name, parent=parent)
+                self._leaf = anchor.cg.validate_cgroup_profile(self.layout.profiles[2].root + "/" + name)
+            except Exception:
+                self._fatal = True
+                raise
+            finally:
+                os.close(parent)
+            generation["cgroup"] = self._leaf.to_json()
+            self._write(generation=generation)
             if self._bootstrap is not None:
                 try:
-                    self._bootstrap.prepare(self._state.value, cancelled=self._cancel.is_set)
+                    options = {}
+                    if self._credential_executor is not None:
+                        options["credential_call"] = lambda *args, **kwargs: self._credential_executor(
+                            self, *args, **kwargs
+                        )
+                    self._bootstrap.prepare(self._state.value, cancelled=self._cancel.is_set, **options)
                 except Exception:
                     if self._bootstrap.poisoned:
                         self._fatal = True
                     raise
                 self._integrity()
                 anchor.cg.verify_cgroup_tree_empty(self.layout.profiles[2].root)
+            self._validate_leaf()
+            anchor._require(self._credential_process is None and not anchor._subgroups(self._leaf_fd))
             if self._cancel.is_set():
                 raise RecoverableStateError("cleanup_pending")
-        parent = anchor.cg._open_root(self.layout.profiles[2].root)
-        try:
-            anchor._require(anchor.cg._observe_root(self.layout.profiles[2].root, parent) == self.layout.profiles[2])
-            name = "node-" + generation["id"]
-            os.mkdir(name, mode=0o700, dir_fd=parent)
-            self._leaf_fd = anchor.cg._open_directory(name, parent=parent)
-            self._leaf = anchor.cg.validate_cgroup_profile(self.layout.profiles[2].root + "/" + name)
-        except Exception:
-            self._fatal = True
-            raise
-        finally:
-            os.close(parent)
-        generation["cgroup"] = self._leaf.to_json()
-        self._write(generation=generation)
         command, environment, directory = self.launch_factory(self.layout.profiles[3].root)
         environment = dict(environment, **{NODE_TOKEN_ENV: generation["token"]})
         self._validate_leaf()
@@ -307,7 +328,7 @@ class AnchorNode:
             self._leaf_fd = None
         self._leaf = None
 
-    def _kill_profile(self, profile):
+    def _kill_profile(self, profile, *, deadline=None):
         # A damaged journal withholds acknowledgement, not Stop. The exact
         # service-owned subtree and lifetime lease are independent authority.
         self.layout.validate()
@@ -320,7 +341,8 @@ class AnchorNode:
                 anchor._require(os.write(control, b"1\n") == 2)
             finally:
                 os.close(control)
-            deadline = time.monotonic() + 5
+            if deadline is None:
+                deadline = time.monotonic() + 5
             while anchor.cg._events(anchor.cg._read_control(descriptor, "cgroup.events")):
                 anchor._require(time.monotonic() < deadline)
                 time.sleep(0.05)
@@ -348,6 +370,7 @@ class AnchorNode:
                 # exact tree/journal recovery. It only withholds a clean ack.
                 self._fatal = True
         process = self._process
+        credential_process = self._credential_process
 
         def graceful_stop():
             if process.poll() is None:
@@ -362,6 +385,11 @@ class AnchorNode:
         # either whole-root stop attempt; each proves its own live authority.
         for profile in self.layout.profiles[2:]:
             attempt(lambda: self._kill_profile(profile))
+        if credential_process is not None:
+            attempt(credential_process.kill)
+            attempt(lambda: credential_process.wait(timeout=5))
+            if credential_process.stdout is not None:
+                attempt(credential_process.stdout.close)
         if process is not None:
             attempt(lambda: process.wait(timeout=5))
         if self._leaf is not None:
@@ -378,6 +406,7 @@ class AnchorNode:
             if process is not None and process.stdout is not None:
                 process.stdout.close()
             self._process = self._reader = None
+            self._credential_process = None
             self._write(phase=final_phase)
         # Keep the empty journal recovery owner and exact leaf alive. Their
         # lifetime ownership ends only after final checked shutdown.

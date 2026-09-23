@@ -275,9 +275,9 @@ def _packaged_bootstrap_plan(profile, *, initialize=False):
 
 def _anchor_controller(layout, *, initialize=False):
     """Trusted fixed launcher wiring, invoked only after live service proof."""
-    from communityai_desktop.credentials import NativeCredentialStore
     from communityai_desktop.profiles import VolunteerProfile
 
+    from communityai_anchor.linux_anchor_credentials import CredentialExecutor, CredentialIdentity
     from drift.node import linux_anchor as anchor
     from drift.node.linux_anchor_bootstrap import AnchorBootstrap
     from drift.node.linux_anchor_node import AnchorNode
@@ -290,8 +290,9 @@ def _anchor_controller(layout, *, initialize=False):
     profile = VolunteerProfile.for_current_user()
     # Fixed sidecar data only: no environment, GUI or wire-selected bundle.
     plan = _packaged_bootstrap_plan(profile, initialize=initialize)
+    credential_executor = CredentialExecutor.for_profile(profile)
     preparation = AnchorBootstrap(
-        plan, profile, NativeCredentialStore(profile.credential_service, profile.credential_account)
+        plan, profile, CredentialIdentity(profile.credential_service, profile.credential_account)
     )
     if initialize:
         # This exact provisioning mode is explicit first-install authority,
@@ -327,16 +328,29 @@ def _anchor_controller(layout, *, initialize=False):
             str(profile.data_dir),
         )
 
-    return AnchorNode(layout, profile.root, launch, initialize=initialize, bootstrap=preparation)
+    return AnchorNode(
+        layout,
+        profile.root,
+        launch,
+        initialize=initialize,
+        bootstrap=preparation,
+        credential_executor=credential_executor,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     # This must precede profile imports, state validation, and argv inspection:
     # PyInstaller's multiprocessing children have their own dispatch protocol.
     multiprocessing.freeze_support()
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["--anchor-credential-helper"]:
+        if len(arguments) != 1 or not sys.platform.startswith("linux") or getattr(sys, "frozen", False) is not True:
+            return 75
+        from communityai_anchor.linux_anchor_credentials import credential_helper_main
+
+        return credential_helper_main()
     from communityai_desktop.profiles import VolunteerProfile
 
-    arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] == ["--diagnose-anchor"]:
         if len(arguments) != 1:
             raise ValueError("the volunteer anchor diagnostic accepts no options")

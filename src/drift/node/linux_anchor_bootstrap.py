@@ -502,23 +502,46 @@ class AnchorBootstrap:
             self.poisoned = True
             raise RecoverableStateError() from None
 
-    def _credential(self, boundary):
+    def _credential(self, boundary, *, credential_call=None, cancelled=lambda: False):
         from communityai_desktop.credentials import CredentialMissingError
+
+        from communityai_anchor.linux_anchor_credentials import TRANSACTION_SECONDS
+
+        deadline = time.monotonic() + TRANSACTION_SECONDS
+
+        def call(operation, secret=None, *, reconcile=False):
+            if credential_call is not None:
+                return credential_call(
+                    operation,
+                    secret,
+                    self.value,
+                    deadline=deadline,
+                    reconcile=reconcile,
+                    cancelled=(lambda: False) if reconcile else cancelled,
+                )
+            # Internal in-memory fixture seam. Production supplies an identity
+            # without get/set methods, so loss of its executor cannot fall back
+            # to synchronous parent keyring access.
+            if operation == "set":
+                self.store.set(secret)
+                return None
+            try:
+                return _digest(self.store.get().encode())
+            except CredentialMissingError:
+                return None
 
         # This first read has no effect, even when a previous attempt durably
         # recorded a digest. Unavailability never grants a new set; retry only
         # rereads that same digest. Authoritative absence/mismatch stays fatal.
         try:
-            existing = self.store.get()
-        except CredentialMissingError:
-            existing = None
+            existing = call("get")
         except Exception:
             self.retryable = True
             raise RecoverableStateError() from None
         boundary()
         try:
             if self.value["credential"] != "absent":
-                anchor._require(existing is not None and _digest(existing.encode()) == self.value["credential_digest"])
+                anchor._require(existing is not None and existing == self.value["credential_digest"])
                 if self.value["credential"] == "pending":
                     self._write(credential="ready")
                 return
@@ -528,10 +551,10 @@ class AnchorBootstrap:
             # Once creation intent is durable, reconcile even if cancellation
             # or set failure occurs. Never record or expose the secret itself.
             try:
-                self.store.set(secret)
+                call("set", secret)
             except Exception:
                 pass
-            anchor._require(_digest(self.store.get().encode()) == self.value["credential_digest"])
+            anchor._require(call("get", reconcile=True) == self.value["credential_digest"])
             self._write(credential="ready")
         except Exception:
             self.poisoned = True
@@ -599,20 +622,21 @@ class AnchorBootstrap:
             for descriptor in reversed(descriptors):
                 os.close(descriptor)
 
-    def prepare(self, state, *, cancelled):
+    def prepare(self, state, *, cancelled, credential_call=None):
         self.retryable = False
         with self._writers():
-            return self._prepare(state, cancelled=cancelled)
+            return self._prepare(state, cancelled=cancelled, credential_call=credential_call)
 
-    def _prepare(self, state, *, cancelled):
+    def _prepare(self, state, *, cancelled, credential_call=None):
         self.validate()
         generation = state["generation"]
         anchor._require(
             state["phase"] == "starting"
             and state["operation"] == "start"
             and generation is not None
-            and generation["cgroup"] is None
+            and (credential_call is None or generation["cgroup"] is not None)
             and generation["pid"] is None
+            and generation.get("start_ticks") is None
         )
 
         def boundary():
@@ -638,7 +662,7 @@ class AnchorBootstrap:
         boundary()
         self._write(attempt=dict(request_id=state["request_id"], generation=generation["id"]), admitted_at_ms=admitted)
         boundary()
-        self._credential(boundary)
+        self._credential(boundary, credential_call=credential_call, cancelled=cancelled)
         boundary()
         if self.value["ready"]:
             try:

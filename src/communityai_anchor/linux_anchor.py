@@ -132,23 +132,38 @@ def _query_properties():
     )
 
 
-def _process(pid):
-    _require(type(pid) is int and 1 < pid < 2**31)
-    directory = f"/proc/{pid}"
-    info = os.stat(directory)
-    _require(info.st_uid == os.geteuid())
-    value = cg._read_path(directory + "/stat", _LIMIT)
+def _process_uid(status):
+    # Proc directory ownership changes to root for a nondumpable process.
+    entries = [line for line in status.splitlines() if line.startswith("Uid:")]
+    _require(len(entries) == 1)
+    values = entries[0][4:].split()
+    _require(len(values) == 4 and all(re.fullmatch(r"0|[1-9][0-9]{0,9}", n) for n in values))
+    _require(all(int(n) == os.geteuid() for n in values))
+    return int(values[0])
+
+
+def _process_ticks(value, pid):
     # comm may contain spaces and closing parentheses. Fields after its final
     # ')' start at field 3; starttime is field 22.
     head, separator, tail = value.rpartition(") ")
     _require(separator and head.startswith(str(pid) + " (") and len(tail.split()) >= 20)
     ticks = tail.split()[19]
     _require(re.fullmatch("[1-9][0-9]{0,19}", ticks) is not None)
+    return int(ticks)
+
+
+def _process(pid):
+    _require(type(pid) is int and 1 < pid < 2**31)
+    directory = f"/proc/{pid}"
+    uid = _process_uid(cg._read_path(directory + "/status", _LIMIT))
+    ticks = _process_ticks(cg._read_path(directory + "/stat", _LIMIT), pid)
     group = cg._read_path(directory + "/cgroup", _LIMIT)
     _require(group.startswith("0::/") and group.count("\n") == 1 and group.endswith("\n"))
     path = group[3:-1]
     _require(cg._path(path))
-    return int(ticks), path
+    _require(_process_uid(cg._read_path(directory + "/status", _LIMIT)) == uid)
+    _require(_process_ticks(cg._read_path(directory + "/stat", _LIMIT), pid) == ticks)
+    return ticks, path
 
 
 @dataclass(frozen=True)

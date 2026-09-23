@@ -52,11 +52,15 @@ class NativeCredentialStore:
         self.service = service.strip()
         self.account = account.strip()
 
-    @staticmethod
-    def _keyring():
+    def _keyring(self):
         try:
             import keyring
             from keyring.errors import KeyringError
+
+            from communityai_anchor.linux_secret_service import fixed_secret_service, is_fixed_location
+
+            if is_fixed_location(self.service, self.account):
+                return fixed_secret_service(), KeyringError
         except ImportError as exc:
             raise CredentialError("native credential support is not installed") from exc
         backend = keyring.get_keyring()
