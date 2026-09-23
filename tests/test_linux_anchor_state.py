@@ -175,3 +175,16 @@ def test_unknown_duplicate_semantics_and_oversized_intent_are_refused():
         mutate(value)
         with pytest.raises(RecoverableStateError):
             state.validate_state(value)
+
+
+def test_held_lease_rejects_untrusted_type_without_calling_it():
+    class UntrustedLease:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    lease = UntrustedLease()
+    with pytest.raises(RecoverableStateError):
+        state.AnchorState("unused", None, held_lease=lease)
+    assert not lease.closed

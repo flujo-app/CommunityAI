@@ -713,3 +713,57 @@ physical outage behavior. Keep the exact sidecar and adjacent `_internal` until
 checked maintenance exists. Absent/locked providers must not be treated as
 successful enrollment. Those installed-product gates remain required, together
 with useful all-card limits and the rest of full-beta acceptance.
+
+## Replacement-service ownership preparation
+
+Bootstrap schema 2 separates `binding` (the current service/machine/layout/storage
+digest) from `catalog_binding` (the original catalog lock discriminator). New
+enrollment writes both; strict schema-1 records remain readable and derive the
+catalog binding from their original `binding`. Normal bootstrap, node entry and
+diagnostics still require the dynamic binding to match current state. Only the
+catalog lock content uses the immutable catalog binding. No upgrade rewrites or
+replaces either catalog/config lock inode. The pure target-record derivation
+preserves the publication plan, directory/lock identities, attempt, output
+progress, pending intent and credential digest; it does not publish files or
+authorize service recovery.
+
+Compatibility is forward-read only: older schema-1-only binaries, including
+commit `1aa28e5`, refuse newly enrolled schema-2 profiles. This preparation does
+not provide a downgrade/rollback migration. Retain the profile and evidence on
+that refusal; do not delete or reset them to make an older binary start.
+
+The service holds an `AnchorChannelLease` before constructing its layout and
+controller. An internal startup factory can retain that exact lease through
+future recovery and socket creation; an `AnchorChannel` borrowing it does not
+release it. Default standalone channels still own and close their own lease.
+No path removes a stale socket or adopts a retained cgroup. `AnchorState` can
+take ownership of an already-held exact `PrivateLease`, validating the original
+profile/path/inode and the complete current binding without reopening the lock.
+This opens existing state only and does not add an arbitrary rebinding writer.
+Transferred newly created leases are refused even when the journal is missing;
+journal creation requires the explicit first-install initialization path.
+
+These are prerequisites, **not a reachable replacement-service recovery flow**.
+The current fixed launcher still refuses changed service/layout bindings. A
+valid schema-2 record or a free lock is not proof of cleanup or recovery authority.
+Same-boot retirement, hard-crash recovery and earlier partial-enrollment resume
+must be implemented as durable transactions before installed restart is claimed.
+
+The transaction must cover both retained and manager-retired layouts. Pinned
+[systemd v245 cgroup code](https://raw.githubusercontent.com/systemd/systemd/v245/src/core/cgroup.c)
+attempts to trim unit cgroups and clears the realized-cgroup assumption;
+[service teardown](https://raw.githubusercontent.com/systemd/systemd/v245/src/core/service.c)
+also reaches cgroup pruning. Thus an empty old hierarchy cannot be assumed to
+survive an ordinary service stop. This is source evidence, not a measurement of
+the volunteer's installed systemd version or a host qualification result.
+
+Required next integration: acquire channel/state/lifetime/admission/catalog/config
+exclusion in that order; prove the exact old service dead; durably pin source and
+prepared target records before any replacement; contain all old node/worker
+descendants; preserve uncertain credential effects without SET; publish bootstrap
+and resources before state activation; and hand off held authority before opening
+the listener. Replay must recheck actual containment and accept only recorded
+file identities, including a lost rename acknowledgement. A clean retirement
+receipt is needed for a manager-recreated root; unsealed missing/replaced roots
+must not be treated as empty. Earlier enrollment needs an intent recorded before
+its first effects. New-boot recovery and physical outage tests remain required.

@@ -114,6 +114,37 @@ def test_diagnostic_does_not_write_lock_query_credentials_or_start(installed, mo
     assert before == _image(f.profile.root)
 
 
+def test_diagnostic_reads_legacy_v1_with_derived_catalog_binding(installed):
+    f = installed
+    _prepare(f)
+    legacy = dict(f.owner.value)
+    legacy["schema_version"] = 1
+    legacy.pop("catalog_binding")
+    private._replace(f.owner.path, legacy)
+    result = _report(f)
+    assert result["reasons"] == [] and result["package"] == "recorded_match"
+
+
+def test_diagnostic_uses_immutable_catalog_binding_but_checks_dynamic_binding(installed):
+    from drift.node.linux_anchor_entry import catalog_discriminator
+
+    f = installed
+    _prepare(f)
+    value = dict(f.owner.value, catalog_binding="c" * 64)
+    private._replace(f.owner.path, value)
+    catalog_lock = f.profile.root / diagnostics._FILES["catalog_lock"]
+    identity = catalog_lock.stat()
+    catalog_lock.write_bytes(private._encode(catalog_discriminator(f.profile.root, value["catalog_binding"])))
+    assert os.path.samestat(identity, catalog_lock.stat())
+    result = _report(f)
+    assert result["reasons"] == [] and result["package"] == "recorded_match"
+
+    value["binding"] = "d" * 64
+    private._replace(f.owner.path, value)
+    result = _report(f)
+    assert "bootstrap_record_invalid" in result["reasons"]
+
+
 def test_empty_existing_profile_and_absent_profile_are_not_adopted(installed):
     f = installed
     root = f.profile.root / "unrelated-empty"

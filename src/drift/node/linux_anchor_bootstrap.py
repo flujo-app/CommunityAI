@@ -31,7 +31,7 @@ from drift.node import linux_anchor as anchor, worker_loading as private
 from drift.node.catalog_bootstrap import CatalogBootstrapConfig, CatalogBootstrapInstaller
 from drift.node.config import NodeConfig
 from drift.node.config_lock import node_config_lock_path
-from drift.node.linux_anchor_entry import catalog_discriminator
+from drift.node.linux_anchor_entry import bootstrap_catalog_binding, catalog_discriminator
 from drift.node.linux_anchor_state import _sync_directory
 from drift.node.resource_recovery import RecoverableStateError
 
@@ -166,29 +166,7 @@ def _probe_rename(directory):
 
 def validate_bootstrap_record(value, *, plan, binding, service, account, parents, lock_names):
     """Pure strict codec; it neither inspects storage nor grants recovery authority."""
-    anchor._require(
-        type(value) is dict
-        and set(value)
-        == {
-            "schema_version",
-            "binding",
-            "transaction",
-            "bundle",
-            "plan",
-            "directories",
-            "locks",
-            "service",
-            "account",
-            "attempt",
-            "admitted_at_ms",
-            "progress",
-            "pending",
-            "credential",
-            "credential_digest",
-            "ready",
-        }
-    )
-    anchor._require(type(value["schema_version"]) is int and value["schema_version"] == 1)
+    bootstrap_catalog_binding(value)
     anchor._require(
         value["binding"] == binding and value["bundle"] == plan.bundle_digest and value["plan"] == plan.digest
     )
@@ -251,6 +229,44 @@ def validate_bootstrap_record(value, *, plan, binding, service, account, parents
     anchor._require((count == 0 and not value["pending"]) or value["credential"] == "ready")
 
 
+def derive_rebound_bootstrap_record(value, *, plan, binding, new_binding, service, account, parents, lock_names):
+    """Purely derive a validated v2 record for a separately authorized rebind.
+
+    This does not inspect or mutate storage and grants no recovery authority. The
+    caller must publish it inside the recovery transaction while holding the
+    original evidence. Every field except the dynamic binding/schema extension
+    is retained exactly, including the immutable catalog discriminator.
+    """
+    validate_bootstrap_record(
+        value,
+        plan=plan,
+        binding=binding,
+        service=service,
+        account=account,
+        parents=parents,
+        lock_names=lock_names,
+    )
+    anchor._require(
+        type(new_binding) is str
+        and anchor.re.fullmatch("[0-9a-f]{64}", new_binding) is not None
+        and new_binding != binding
+    )
+    proposed = copy.deepcopy(value)
+    proposed["schema_version"] = 2
+    proposed["binding"] = new_binding
+    proposed["catalog_binding"] = bootstrap_catalog_binding(value)
+    validate_bootstrap_record(
+        proposed,
+        plan=plan,
+        binding=new_binding,
+        service=service,
+        account=account,
+        parents=parents,
+        lock_names=lock_names,
+    )
+    return proposed
+
+
 class AnchorBootstrap:
     """Single anchor-owner transaction. Uncertain effects poison this owner.
 
@@ -310,8 +326,9 @@ class AnchorBootstrap:
                 _sync_directory(path.parent, tuple(directories["node"]))
                 locks[name] = list(anchor._lock_identity(path.lstat()))
             value = dict(
-                schema_version=1,
+                schema_version=2,
                 binding=self.binding,
+                catalog_binding=self.binding,
                 transaction=uuid4().hex,
                 bundle=self.plan.bundle_digest,
                 plan=self.plan.digest,
@@ -359,7 +376,10 @@ class AnchorBootstrap:
             anchor._require(list(private._identity(private._stat(self.root / name, directory=True))) == identity)
         for name, identity in value["locks"].items():
             anchor._require(list(anchor._lock_identity((self.root / name).lstat())) == identity)
-        anchor._require(private._read(self.root / self.lock_names[0]) == catalog_discriminator(self.root, self.binding))
+        anchor._require(
+            private._read(self.root / self.lock_names[0])
+            == catalog_discriminator(self.root, bootstrap_catalog_binding(value))
+        )
 
     def _write(self, **changes):
         self.validate()

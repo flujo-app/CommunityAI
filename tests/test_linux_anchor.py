@@ -227,3 +227,139 @@ def test_receipt_explicitly_grants_no_node_or_maintenance_authority(service):
     assert result["profile"] == "multigpu-volunteer"
     changed = anchor._receipt(replace(anchor.inspect_service(), start_ticks=556), (), "a" * 64)
     assert result != changed
+
+
+def _serve_fixtures(monkeypatch, events):
+    callbacks = {}
+
+    class Lease:
+        def __init__(self):
+            self.active = True
+            events.append("lease-open")
+
+        def validate(self):
+            assert self.active
+            events.append("lease-validate")
+
+        def close(self):
+            if self.active:
+                events.append("lease-close")
+                self.active = False
+
+    class Layout:
+        def __init__(self):
+            events.append("layout-open")
+
+        def close(self):
+            events.append("layout-close")
+
+    class Channel:
+        def __init__(self, layout, controller=None, lease=None):
+            assert lease is not None and lease.active
+            events.append(("channel-open", layout, controller, lease))
+
+        def serve_once(self):
+            events.append("serve")
+            callbacks[anchor.signal.SIGTERM](None, None)
+
+        def close(self):
+            events.append("channel-close")
+
+    previous = {anchor.signal.SIGINT: object(), anchor.signal.SIGTERM: object()}
+
+    def install(signum, handler):
+        old = callbacks.get(signum, previous[signum])
+        if callable(handler):
+            callbacks[signum] = handler
+        else:
+            callbacks.pop(signum, None)
+        return old
+
+    monkeypatch.setattr(anchor, "AnchorChannelLease", Lease)
+    monkeypatch.setattr(anchor, "AnchorLayout", Layout)
+    monkeypatch.setattr(anchor, "AnchorChannel", Channel)
+    monkeypatch.setattr(anchor.signal, "signal", install)
+    return Lease, Layout, callbacks
+
+
+def test_serve_anchor_startup_factory_runs_under_outer_channel_lease(monkeypatch):
+    events = []
+    _, Layout, _ = _serve_fixtures(monkeypatch, events)
+
+    def startup(lease, *, cancelled):
+        assert lease.active and not cancelled()
+        events.append("startup")
+        return Layout(), None
+
+    assert anchor.serve_anchor(startup_factory=startup) == 0
+    assert events[:3] == ["lease-open", "startup", "layout-open"]
+    opened = next(item for item in events if isinstance(item, tuple) and item[0] == "channel-open")
+    assert opened[3].active is False  # The outer owner releases it only after every component closes.
+    assert events.index("channel-close") < events.index("layout-close") < events.index("lease-close")
+
+
+def test_serve_anchor_legacy_controller_factory_remains_layout_only(monkeypatch):
+    events = []
+    _, Layout, _ = _serve_fixtures(monkeypatch, events)
+
+    class Controller:
+        finished = SimpleNamespace(is_set=lambda: True)
+
+        def request_shutdown(self):
+            events.append("shutdown")
+
+        def close(self):
+            events.append("controller-close")
+            return True
+
+    def factory(layout):
+        assert isinstance(layout, Layout)
+        events.append("legacy-factory")
+        return Controller()
+
+    assert anchor.serve_anchor(controller_factory=factory) == 0
+    assert events.index("lease-open") < events.index("layout-open") < events.index("legacy-factory")
+    assert events.count("controller-close") == 2  # Completion result, then idempotent final cleanup.
+    assert events.index("channel-close") < events.index("layout-close") < events.index("lease-close")
+
+
+def test_serve_anchor_rejects_competing_factories_before_startup(monkeypatch):
+    events = []
+    _serve_fixtures(monkeypatch, events)
+    with pytest.raises(RecoverableStateError):
+        anchor.serve_anchor(controller_factory=lambda layout: None, startup_factory=lambda lease: (None, None))
+    assert events == []
+
+
+def test_serve_anchor_invalid_startup_tuple_closes_returned_components_and_lease(monkeypatch):
+    events = []
+    _, Layout, _ = _serve_fixtures(monkeypatch, events)
+
+    class Controller:
+        def close(self):
+            events.append("controller-close")
+
+    with pytest.raises(RecoverableStateError):
+        anchor.serve_anchor(startup_factory=lambda lease, *, cancelled: (Layout(), Controller(), "unexpected"))
+    assert "controller-close" in events and "layout-close" in events
+    assert events.index("controller-close") < events.index("layout-close") < events.index("lease-close")
+    assert not any(isinstance(item, tuple) and item[0] == "channel-open" for item in events)
+
+
+def test_serve_anchor_startup_can_observe_signal_and_abort_before_channel(monkeypatch):
+    events = []
+    _, _, callbacks = _serve_fixtures(monkeypatch, events)
+    retained = []
+
+    def startup(lease, *, cancelled):
+        assert lease.active and not cancelled()
+        retained.append(cancelled)
+        callbacks[anchor.signal.SIGTERM](None, None)
+        assert cancelled() and retained[0]()
+        events.append("startup-cancelled")
+        raise RecoverableStateError()
+
+    with pytest.raises(RecoverableStateError):
+        anchor.serve_anchor(startup_factory=startup)
+    assert "startup-cancelled" in events and "lease-close" in events
+    assert not any(isinstance(item, tuple) and item[0] == "channel-open" for item in events)

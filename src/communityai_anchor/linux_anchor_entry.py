@@ -19,9 +19,47 @@ NODE_TOKEN_ENV = "COMMUNITYAI_ANCHOR_NODE_TOKEN"
 _ADMITTED = None
 _ADMITTED_CATALOG = None
 
+_BOOTSTRAP_V1_FIELDS = frozenset(
+    {
+        "schema_version",
+        "binding",
+        "transaction",
+        "bundle",
+        "plan",
+        "directories",
+        "locks",
+        "service",
+        "account",
+        "attempt",
+        "admitted_at_ms",
+        "progress",
+        "pending",
+        "credential",
+        "credential_digest",
+        "ready",
+    }
+)
+_BOOTSTRAP_V2_FIELDS = _BOOTSTRAP_V1_FIELDS | {"catalog_binding"}
+
 
 def catalog_discriminator(root, binding_digest):
     return dict(purpose="communityai-anchor-catalog", profile=str(root), binding=binding_digest)
+
+
+def bootstrap_catalog_binding(value):
+    """Return the immutable catalog discriminator from a strict record shape."""
+    anchor._require(type(value) is dict and type(value.get("schema_version")) is int)
+    version = value["schema_version"]
+    anchor._require(
+        (version == 1 and set(value) == _BOOTSTRAP_V1_FIELDS) or (version == 2 and set(value) == _BOOTSTRAP_V2_FIELDS)
+    )
+    binding = value["binding"]
+    anchor._require(type(binding) is str and anchor.re.fullmatch("[0-9a-f]{64}", binding) is not None)
+    if version == 1:
+        return binding
+    catalog_binding = value["catalog_binding"]
+    anchor._require(type(catalog_binding) is str and anchor.re.fullmatch("[0-9a-f]{64}", catalog_binding) is not None)
+    return catalog_binding
 
 
 def anchored_catalog_paths(data_dir, config_path):
@@ -60,7 +98,8 @@ def _catalog_entry(root, binding, generation):
     fingerprint = private._fingerprint(private._stat(path))
     value = private._read(path)
     anchor._require(private._fingerprint(private._stat(path)) == fingerprint)
-    anchor._require(value["schema_version"] == 1 and value["ready"] is True)
+    bootstrap_catalog_binding(value)
+    anchor._require(value["ready"] is True)
     anchor._require(value["binding"] == hashlib.sha256(private._encode(binding) + b"\n").hexdigest())
     anchor._require(value["attempt"]["generation"] == generation["id"])
     anchor._require(value["credential"] == "ready" and value["pending"] is False)
@@ -86,7 +125,8 @@ def _validate_catalog_entry(proof):
     for name, identity in value["locks"].items():
         anchor._require(list(anchor._lock_identity((root / name).lstat())) == identity)
     anchor._require(
-        private._read(root / "node" / ".catalog-bootstrap.lock") == catalog_discriminator(root, value["binding"])
+        private._read(root / "node" / ".catalog-bootstrap.lock")
+        == catalog_discriminator(root, bootstrap_catalog_binding(value))
     )
 
 

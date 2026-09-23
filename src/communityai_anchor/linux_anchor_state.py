@@ -14,7 +14,6 @@ import os
 import re
 import threading
 from functools import wraps
-from pathlib import Path
 
 from communityai_anchor import linux_anchor as anchor, worker_loading as private
 from communityai_anchor.resource_recovery import RecoverableStateError, RecoveryIdentity, current_recovery_identity
@@ -200,24 +199,39 @@ def _serialized(method):
 
 
 class AnchorState:
-    """Durable intent journal under a separate profile-level initialization marker."""
+    """Durable intent journal under a separate profile-level initialization marker.
 
-    def __init__(self, profile_root, layout, *, initialize=False):
+    ``held_lease`` is an internal ownership transfer for recovery composition.
+    It opens existing state only: after accepting its exact type this instance
+    owns and closes it, including when a later validation step fails.
+    """
+
+    def __init__(self, profile_root, layout, *, initialize=False, held_lease=None):
         self._mutex = threading.RLock()
         self.lease = None
         self.poisoned = False
         self.layout = layout
-        self.path = Path(profile_root) / "anchor" / "state.json"
+        self.path = None
         try:
-            layout.validate()
             anchor._require(type(initialize) is bool)
-            private._directory(profile_root)
+            if held_lease is not None:
+                anchor._require(type(held_lease) is PrivateLease)
+                self.lease = held_lease
+                anchor._require(not initialize and self.lease.created is False)
+            layout.validate()
+            profile_root = private._directory(profile_root)
+            self.path = profile_root / "anchor" / "state.json"
             if initialize:
                 # Explicit first-install transaction only, before any profile
                 # configuration/work exists. Never infer permission from loss.
                 anchor._require(not os.listdir(profile_root))
-            self.lease = PrivateLease(profile_root, "anchor-state.lock", create=initialize)
-            anchor._require(self.lease.created == initialize)
+            if self.lease is None:
+                self.lease = PrivateLease(profile_root, "anchor-state.lock", create=initialize)
+                anchor._require(self.lease.created == initialize)
+            else:
+                self.lease.validate()
+                anchor._require(self.lease.root == profile_root)
+                anchor._require(self.lease.path == profile_root / "anchor-state.lock")
             if initialize:
                 anchor._require(set(os.listdir(profile_root)) == {"anchor-state.lock"})
                 self.path.parent.mkdir(mode=0o700)
@@ -234,7 +248,7 @@ class AnchorState:
                     lease=list(self.lease.identity),
                 ),
             )
-            if self.lease.created:
+            if initialize:
                 value = validate_state(
                     dict(
                         schema_version=1,

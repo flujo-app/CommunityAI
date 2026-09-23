@@ -50,8 +50,8 @@ def child(root, directory, mode):
     if mode == "signals":
         channel_class = anchor.AnchorChannel
 
-        def ready_channel(layout):
-            channel = channel_class(layout)
+        def ready_channel(layout, controller=None, *, lease=None):
+            channel = channel_class(layout, controller, lease=lease)
             print(json.dumps(dict(pid=os.getpid(), group=group)), flush=True)
             return channel
 
@@ -286,6 +286,64 @@ if __name__ != "__main__":
         with pytest.raises(OSError):
             anchor.AnchorChannel(ReadOnlyLayout())
         assert path.stat().st_ino == identity
+
+    def test_native_borrowed_channel_close_keeps_exact_lease_exclusive(tmp_path, monkeypatch):
+        tmp_path.chmod(0o700)
+        monkeypatch.setattr(anchor, "_runtime_directory", lambda: tmp_path)
+
+        class ReadOnlyLayout:
+            def validate(self):
+                pass
+
+        lease = anchor.AnchorChannelLease()
+        channel = anchor.AnchorChannel(ReadOnlyLayout(), lease=lease)
+        path = tmp_path / "communityai-multigpu-anchor" / "control.sock"
+        assert path.exists()
+        channel.close()
+        assert not path.exists()
+        lease.validate()
+        with pytest.raises(OSError):
+            anchor.AnchorChannelLease()
+        lease.close()
+        replacement = anchor.AnchorChannelLease()
+        replacement.close()
+
+    def test_native_borrowed_lease_survives_stale_socket_refusal(tmp_path, monkeypatch):
+        tmp_path.chmod(0o700)
+        monkeypatch.setattr(anchor, "_runtime_directory", lambda: tmp_path)
+
+        class ReadOnlyLayout:
+            def validate(self):
+                pass
+
+        lease = anchor.AnchorChannelLease()
+        path = lease.directory / "control.sock"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stale:
+            stale.bind(str(path))
+        identity = path.stat().st_ino
+        try:
+            with pytest.raises(OSError):
+                anchor.AnchorChannel(ReadOnlyLayout(), lease=lease)
+            assert path.stat().st_ino == identity
+            lease.validate()
+            with pytest.raises(OSError):
+                anchor.AnchorChannelLease()
+        finally:
+            path.unlink()
+            lease.close()
+
+    def test_native_owned_channel_failure_releases_lease_without_removing_unknown_socket(tmp_path, monkeypatch):
+        tmp_path.chmod(0o700)
+        monkeypatch.setattr(anchor, "_runtime_directory", lambda: tmp_path)
+
+        class InvalidLayout:
+            def validate(self):
+                raise RecoverableStateError()
+
+        with pytest.raises(RecoverableStateError):
+            anchor.AnchorChannel(InvalidLayout())
+        replacement = anchor.AnchorChannelLease()
+        replacement.close()
 
     @pytest.mark.parametrize("kind", ["symlink", "hardlink", "public", "directory"])
     def test_native_unsafe_lock_file_is_never_accepted(running, kind):

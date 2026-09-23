@@ -16,7 +16,7 @@ from pathlib import Path
 
 from drift.node import linux_anchor as anchor, worker_loading as private
 from drift.node.linux_anchor_bootstrap import MAX_OUTPUTS, _json, validate_bootstrap_record
-from drift.node.linux_anchor_entry import catalog_discriminator
+from drift.node.linux_anchor_entry import bootstrap_catalog_binding, catalog_discriminator
 from drift.node.linux_anchor_state import validate_state
 from drift.node.resource_recovery import current_recovery_identity
 
@@ -276,7 +276,9 @@ def _bootstrap_inventory(profile, plan, binding, value, values, snapshot, report
     if not value["ready"]:
         reasons.append("bootstrap_incomplete")
     try:
-        anchor._require(values.get("catalog_lock") == catalog_discriminator(profile.root, digest))
+        anchor._require(
+            values.get("catalog_lock") == catalog_discriminator(profile.root, bootstrap_catalog_binding(value))
+        )
         anchor._require(
             all(snapshot.identity(name, directory=True) == identity for name, identity in value["directories"].items())
         )

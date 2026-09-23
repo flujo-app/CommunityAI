@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import threading
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,131 @@ from test_catalog_publication import _documents
 from drift.catalog_release import write_catalog_publication_bundle
 from drift.node import linux_anchor_bootstrap as bootstrap
 from drift.node.resource_recovery import RecoverableStateError
+
+
+def _codec_fixture(version=1, *, binding="a" * 64, catalog_binding="c" * 64, marker="absent"):
+    plan = SimpleNamespace(
+        bundle_digest="b" * 64,
+        digest="d" * 64,
+        outputs=(("node/output", b"payload"),),
+        envelope=SimpleNamespace(signed=SimpleNamespace(issued_at_ms=100, expires_at_ms=200)),
+    )
+    parents = {"anchor"}
+    locks = ("node/.catalog-bootstrap.lock",)
+    value = dict(
+        schema_version=version,
+        binding=binding,
+        transaction="e" * 32,
+        bundle=plan.bundle_digest,
+        plan=plan.digest,
+        directories={"anchor": [1, 2]},
+        locks={locks[0]: [3, 4]},
+        service="service",
+        account="account",
+        attempt=None,
+        admitted_at_ms=None,
+        progress=0,
+        pending=False,
+        credential="absent",
+        credential_digest=None,
+        ready=False,
+    )
+    if version == 2:
+        value["catalog_binding"] = catalog_binding
+    if marker != "absent":
+        value.update(
+            attempt={"request_id": "1" * 32, "generation": "2" * 32},
+            admitted_at_ms=150,
+            credential="pending" if marker == "pending" else "ready",
+            credential_digest="3" * 64,
+        )
+    if marker == "output_pending":
+        value["pending"] = True
+    arguments = dict(
+        plan=plan,
+        binding=binding,
+        service="service",
+        account="account",
+        parents=parents,
+        lock_names=locks,
+    )
+    return value, arguments
+
+
+def test_strict_bootstrap_codec_reads_v1_and_separates_v2_catalog_binding():
+    from drift.node.linux_anchor_entry import bootstrap_catalog_binding
+
+    legacy, arguments = _codec_fixture()
+    bootstrap.validate_bootstrap_record(legacy, **arguments)
+    assert bootstrap_catalog_binding(legacy) == legacy["binding"]
+    current, arguments = _codec_fixture(version=2)
+    bootstrap.validate_bootstrap_record(current, **arguments)
+    assert bootstrap_catalog_binding(current) == current["catalog_binding"] != current["binding"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda value: value.update(schema_version=True),
+        lambda value: value.update(schema_version=3),
+        lambda value: value.update(unexpected=True),
+        lambda value: value.update(catalog_binding="f" * 64),
+    ],
+)
+def test_strict_v1_bootstrap_codec_rejects_schema_extension(change):
+    value, arguments = _codec_fixture()
+    change(value)
+    with pytest.raises(RecoverableStateError):
+        bootstrap.validate_bootstrap_record(value, **arguments)
+
+
+@pytest.mark.parametrize("catalog_binding", [None, True, "f" * 63, "F" * 64])
+def test_strict_v2_bootstrap_codec_rejects_invalid_catalog_binding(catalog_binding):
+    value, arguments = _codec_fixture(version=2, catalog_binding=catalog_binding)
+    with pytest.raises(RecoverableStateError):
+        bootstrap.validate_bootstrap_record(value, **arguments)
+
+
+@pytest.mark.parametrize("marker", ["absent", "pending", "ready", "output_pending"])
+def test_rebind_derivation_is_pure_deterministic_and_preserves_all_transaction_evidence(marker):
+    legacy, arguments = _codec_fixture(marker=marker)
+    original = deepcopy(legacy)
+    rebound = bootstrap.derive_rebound_bootstrap_record(legacy, new_binding="f" * 64, **arguments)
+    assert legacy == original
+    assert rebound == bootstrap.derive_rebound_bootstrap_record(legacy, new_binding="f" * 64, **arguments)
+    assert rebound["schema_version"] == 2
+    assert rebound["binding"] == "f" * 64
+    assert rebound["catalog_binding"] == original["binding"]
+    assert {
+        key: value for key, value in rebound.items() if key not in {"schema_version", "binding", "catalog_binding"}
+    } == {key: value for key, value in original.items() if key not in {"schema_version", "binding"}}
+    for key in (
+        "credential",
+        "credential_digest",
+        "attempt",
+        "admitted_at_ms",
+        "progress",
+        "pending",
+        "locks",
+        "directories",
+    ):
+        assert rebound[key] == original[key]
+
+    second = bootstrap.derive_rebound_bootstrap_record(
+        rebound, new_binding="1" * 64, **dict(arguments, binding="f" * 64)
+    )
+    assert second["catalog_binding"] == original["binding"]
+    assert second["binding"] == "1" * 64
+    assert {
+        key: value for key, value in second.items() if key not in {"schema_version", "binding", "catalog_binding"}
+    } == {key: value for key, value in rebound.items() if key not in {"schema_version", "binding", "catalog_binding"}}
+
+
+@pytest.mark.parametrize("new_binding", ["a" * 64, "f" * 63, "F" * 64, True])
+def test_rebind_derivation_requires_a_distinct_canonical_dynamic_binding(new_binding):
+    value, arguments = _codec_fixture()
+    with pytest.raises(RecoverableStateError):
+        bootstrap.derive_rebound_bootstrap_record(value, new_binding=new_binding, **arguments)
 
 
 @pytest.fixture
@@ -117,6 +243,60 @@ def reopen(f):
     owner = bootstrap.AnchorBootstrap(f.plan, f.profile, f.store)
     owner.bind(f.state, lambda: None)
     f.owner = owner
+
+
+def test_new_enrollment_is_v2_and_legacy_v1_reopens_without_rewriting_catalog_lock(transaction):
+    from drift.node import linux_anchor_entry as entry, worker_loading as private
+
+    f = transaction
+    assert f.owner.value["schema_version"] == 2
+    assert f.owner.value["catalog_binding"] == f.owner.value["binding"] == f.owner.binding
+    lock = f.profile.root / f.owner.lock_names[0]
+    lock_identity, lock_payload = lock.stat(), lock.read_bytes()
+    legacy = dict(f.owner.value)
+    legacy["schema_version"] = 1
+    legacy.pop("catalog_binding")
+    private._replace(f.owner.path, legacy)
+    reopen(f)
+    prepare(f)
+    assert f.owner.value["schema_version"] == 1 and "catalog_binding" not in f.owner.value
+    assert os.path.samestat(lock_identity, lock.stat()) and lock.read_bytes() == lock_payload
+    proof = entry._catalog_entry(f.profile.root, f.state.binding, f.intent["generation"])
+    assert proof[2] == f.owner.value
+
+
+def test_data_only_rebound_v2_reopens_with_dynamic_binding_and_original_catalog_lock(transaction):
+    from drift.node import linux_anchor_entry as entry, worker_loading as private
+
+    f = transaction
+    prepare(f)
+    old = deepcopy(f.owner.value)
+    old_lock = f.profile.root / f.owner.lock_names[0]
+    lock_identity, lock_payload = old_lock.stat(), old_lock.read_bytes()
+    new_state_binding = {"fixture": "replacement service invocation"}
+    new_binding = bootstrap._digest(bootstrap._json(new_state_binding))
+    rebound = bootstrap.derive_rebound_bootstrap_record(
+        old,
+        plan=f.plan,
+        binding=f.owner.binding,
+        new_binding=new_binding,
+        service=f.store.service,
+        account=f.store.account,
+        parents=f.owner.parents,
+        lock_names=f.owner.lock_names,
+    )
+    private._replace(f.owner.path, rebound)
+    replacement = bootstrap.AnchorBootstrap(f.plan, f.profile, f.store)
+    replacement.bind(SimpleNamespace(binding=new_state_binding), lambda: None)
+    before_gets, before_sets = f.store.gets, f.store.sets
+    replacement.prepare(f.intent, cancelled=lambda: False)
+    assert replacement.value["ready"] and f.store.gets > before_gets and f.store.sets == before_sets
+    proof = entry._catalog_entry(f.profile.root, new_state_binding, f.intent["generation"])
+    assert proof[2] == replacement.value == rebound
+    assert rebound["catalog_binding"] == old["catalog_binding"] == f.owner.binding
+    assert os.path.samestat(lock_identity, old_lock.stat()) and old_lock.read_bytes() == lock_payload
+    with pytest.raises(RecoverableStateError):
+        entry._catalog_entry(f.profile.root, f.state.binding, f.intent["generation"])
 
 
 def test_real_private_outputs_and_ready_retry_preserve_user_settings(transaction):

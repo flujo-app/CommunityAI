@@ -398,28 +398,53 @@ def _channel_directory(*, create=False):
     return directory
 
 
-class AnchorChannel:
-    """One fixed private Unix socket. Never removes a stale socket."""
+class AnchorChannelLease:
+    """Exclusive fixed-channel lifetime authority, without socket mutation."""
 
-    def __init__(self, layout, controller=None):
+    def __init__(self):
         import fcntl
 
-        self.layout = layout
-        self.controller = controller
-        self._listener = None
         self._lock = None
         self._lock_identity = None
-        self._identity = None
         self.directory = _channel_directory(create=True)
         self._directory_identity = _private_directory(self.directory)
-        self.path = self.directory / "control.sock"
         try:
             self._lock = os.open(
                 self.directory / "anchor.lock", os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600
             )
             self._lock_identity = _lock_identity(os.fstat(self._lock))
             fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self._validate_lock()
+            self.validate()
+        except BaseException:
+            self.close()
+            raise
+
+    def validate(self):
+        _require(self._lock is not None)
+        _require(_private_directory(self.directory) == self._directory_identity)
+        _require(_lock_identity(os.fstat(self._lock)) == self._lock_identity)
+        _require(_lock_identity((self.directory / "anchor.lock").lstat()) == self._lock_identity)
+
+    def close(self):
+        if self._lock is not None:
+            os.close(self._lock)
+            self._lock = None
+
+
+class AnchorChannel:
+    """One fixed private Unix socket. Never removes a stale socket."""
+
+    def __init__(self, layout, controller=None, *, lease=None):
+        self.layout = layout
+        self.controller = controller
+        self._listener = None
+        self._identity = None
+        self._owns_lease = lease is None
+        self.lease = AnchorChannelLease() if lease is None else lease
+        self.directory = self.lease.directory
+        self.path = self.directory / "control.sock"
+        try:
+            self.lease.validate()
             layout.validate()
             self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             # bind() refuses any previous name. No stale-name recovery is implied.
@@ -435,15 +460,9 @@ class AnchorChannel:
             self.close()
             raise
 
-    def _validate_lock(self):
-        _require(self._lock is not None)
-        _require(_private_directory(self.directory) == self._directory_identity)
-        _require(_lock_identity(os.fstat(self._lock)) == self._lock_identity)
-        _require(_lock_identity((self.directory / "anchor.lock").lstat()) == self._lock_identity)
-
     def serve_once(self):
         _require(self._listener is not None)
-        self._validate_lock()
+        self.lease.validate()
         _require(_socket_identity(self.path) == self._identity)
         try:
             connection, _ = self._listener.accept()
@@ -461,7 +480,7 @@ class AnchorChannel:
                 else:
                     _require(request == _request(request.get("nonce")))
                     response = self.layout.receipt(request["nonce"])
-                self._validate_lock()
+                self.lease.validate()
                 _require(_socket_identity(self.path) == self._identity)
                 connection.settimeout(_IO_TIMEOUT)
                 connection.sendall(_encode(response))
@@ -474,18 +493,18 @@ class AnchorChannel:
             self._listener.close()
             self._listener = None
         try:
+            self.lease.validate()
             if (
                 self._identity is not None
-                and _private_directory(self.directory) == self._directory_identity
+                and _private_directory(self.directory) == self.lease._directory_identity
                 and _socket_identity(self.path) == self._identity
             ):
                 self.path.unlink()
         except (OSError, RecoverableStateError):
             pass
         self._identity = None
-        if self._lock is not None:
-            os.close(self._lock)
-            self._lock = None
+        if self._owns_lease:
+            self.lease.close()
 
 
 def inspect_anchor():
@@ -523,9 +542,10 @@ def inspect_anchor():
         raise RecoverableStateError() from None
 
 
-def serve_anchor(*, controller_factory=None):
-    """Service loop; optional controller factory is trusted internal wiring only."""
-    layout = channel = controller = None
+def serve_anchor(*, controller_factory=None, startup_factory=None):
+    """Service loop; optional factories are trusted internal wiring only."""
+    lease = layout = channel = controller = None
+    startup_result = None
     stopping = False
     handlers = {}
 
@@ -534,14 +554,25 @@ def serve_anchor(*, controller_factory=None):
         stopping = True
 
     try:
+        _require(controller_factory is None or startup_factory is None)
         # Abrupt death retains durable evidence; no restarted invocation may
         # infer recovery permission from service/process or socket absence.
         for signum in (signal.SIGINT, signal.SIGTERM):
             handlers[signum] = signal.signal(signum, stop)
-        layout = AnchorLayout()
-        if controller_factory is not None:
-            controller = controller_factory(layout)
-        channel = AnchorChannel(layout) if controller is None else AnchorChannel(layout, controller)
+        lease = AnchorChannelLease()
+        if startup_factory is None:
+            layout = AnchorLayout()
+            if controller_factory is not None:
+                controller = controller_factory(layout)
+        else:
+            startup_result = startup_factory(lease, cancelled=lambda: stopping)
+            if isinstance(startup_result, (tuple, list)):
+                if startup_result:
+                    layout = startup_result[0]
+                if len(startup_result) > 1:
+                    controller = startup_result[1]
+            _require(type(startup_result) is tuple and len(startup_result) == 2)
+        channel = AnchorChannel(layout, controller, lease=lease)
         while True:
             if stopping:
                 if controller is None:
@@ -553,11 +584,21 @@ def serve_anchor(*, controller_factory=None):
     except Exception:
         raise RecoverableStateError() from None
     finally:
-        if controller is not None:
-            controller.close()
-        if channel is not None:
-            channel.close()
-        if layout is not None:
-            layout.close()
-        for signum, handler in handlers.items():
-            signal.signal(signum, handler)
+        try:
+            if controller is not None:
+                controller.close()
+        finally:
+            try:
+                if channel is not None:
+                    channel.close()
+            finally:
+                try:
+                    if layout is not None:
+                        layout.close()
+                finally:
+                    try:
+                        if lease is not None:
+                            lease.close()
+                    finally:
+                        for signum, handler in handlers.items():
+                            signal.signal(signum, handler)

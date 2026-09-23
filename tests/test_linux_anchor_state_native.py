@@ -72,6 +72,127 @@ def test_other_process_cannot_take_profile_lease(journal):
     )
 
 
+def test_held_state_lease_transfers_without_an_unlock_or_reopen_gap(journal, monkeypatch):
+    import fcntl
+
+    journal.owner.close()
+    lease = state.PrivateLease(journal.profile, "anchor-state.lock", create=False)
+    descriptor = lease.fd
+    identity = lease.identity
+    script = "import fcntl,os,sys; fd=os.open(sys.argv[1],os.O_RDWR); fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)"
+    before = subprocess.run([sys.executable, "-c", script, str(lease.path)], capture_output=True, timeout=5)
+    assert before.returncode != 0 and b"BlockingIOError" in before.stderr
+
+    original_open, original_close = state.os.open, state.os.close
+
+    def guarded_open(path, *args, **kwargs):
+        assert os.fspath(path) != os.fspath(lease.path)
+        return original_open(path, *args, **kwargs)
+
+    def guarded_close(fd):
+        assert fd != descriptor
+        return original_close(fd)
+
+    def forbidden_flock(*_args):
+        raise AssertionError("unexpected flock")
+
+    with monkeypatch.context() as guard:
+        guard.setattr(state.os, "open", guarded_open)
+        guard.setattr(state.os, "close", guarded_close)
+        guard.setattr(fcntl, "flock", forbidden_flock)
+        owner = state.AnchorState(journal.profile, journal.layout, held_lease=lease)
+    try:
+        assert owner.lease is lease and owner.lease.fd == descriptor
+        assert anchor._lock_identity(os.fstat(owner.lease.fd)) == identity
+        during = subprocess.run([sys.executable, "-c", script, str(lease.path)], capture_output=True, timeout=5)
+        assert during.returncode != 0 and b"BlockingIOError" in during.stderr
+        assert owner.value["revision"] == 0
+    finally:
+        owner.close()
+    assert lease.fd is None
+    assert subprocess.run([sys.executable, "-c", script, str(lease.path)], timeout=5).returncode == 0
+
+
+@pytest.mark.parametrize("invalid", ["wrong_root", "wrong_name", "closed", "replaced", "initialize"])
+def test_invalid_held_state_lease_is_closed_without_mutating_state(journal, invalid):
+    owner = journal.owner
+    owner.close()
+    before = owner.path.read_bytes()
+    fingerprint = state.private._fingerprint(state.private._stat(owner.path))
+
+    if invalid == "wrong_root":
+        other = journal.profile / "other-profile"
+        other.mkdir(mode=0o700)
+        lease = state.PrivateLease(other, "anchor-state.lock")
+        lease.close()
+        lease = state.PrivateLease(other, "anchor-state.lock", create=False)
+    elif invalid == "wrong_name":
+        lease = state.node_lease(journal.profile)
+        lease.close()
+        lease = state.node_lease(journal.profile, create=False)
+    else:
+        lease = state.PrivateLease(journal.profile, "anchor-state.lock", create=False)
+        if invalid == "closed":
+            lease.close()
+        elif invalid == "replaced":
+            lease.path.rename(journal.profile / "retained-state-lock")
+            lease.path.write_bytes(b"")
+            lease.path.chmod(0o600)
+
+    with pytest.raises(RecoverableStateError):
+        state.AnchorState(
+            journal.profile,
+            journal.layout,
+            initialize=invalid == "initialize",
+            held_lease=lease,
+        )
+    assert lease.fd is None
+    assert owner.path.read_bytes() == before
+    assert state.private._fingerprint(state.private._stat(owner.path)) == fingerprint
+
+
+def test_new_held_lease_cannot_recreate_missing_state_in_retained_profile(journal):
+    root = journal.profile / "retained-incomplete-profile"
+    root.mkdir(mode=0o700)
+    (root / "anchor").mkdir(mode=0o700)
+    retained = root / "retained-evidence"
+    retained.write_bytes(b"existing profile evidence, never reset")
+    retained.chmod(0o600)
+    lease = state.PrivateLease(root, "anchor-state.lock")
+    assert lease.created is True
+    before = {p.name: p.lstat().st_ino for p in root.iterdir()}
+    owner = None
+    try:
+        with pytest.raises(RecoverableStateError):
+            owner = state.AnchorState(root, journal.layout, initialize=False, held_lease=lease)
+        assert lease.fd is None
+        assert not (root / "anchor" / "state.json").exists()
+        assert {p.name: p.lstat().st_ino for p in root.iterdir()} == before
+        assert retained.read_bytes() == b"existing profile evidence, never reset"
+    finally:
+        if owner is not None:
+            owner.close()
+        lease.close()
+
+
+def test_held_state_lease_rejects_changed_layout_binding_without_mutation(journal):
+    owner = journal.owner
+    owner.close()
+    before = owner.path.read_bytes()
+    fingerprint = state.private._fingerprint(state.private._stat(owner.path))
+    lease = state.PrivateLease(journal.profile, "anchor-state.lock", create=False)
+    changed = SimpleNamespace(
+        service=replace(journal.layout.service, invocation="f" * 32),
+        profiles=journal.layout.profiles,
+        validate=lambda: None,
+    )
+    with pytest.raises(RecoverableStateError):
+        state.AnchorState(journal.profile, changed, held_lease=lease)
+    assert lease.fd is None
+    assert owner.path.read_bytes() == before
+    assert state.private._fingerprint(state.private._stat(owner.path)) == fingerprint
+
+
 def test_node_lease_is_separate_noninherited_and_never_removed(journal):
     first = state.node_lease(journal.profile)
     try:

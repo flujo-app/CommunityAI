@@ -648,8 +648,10 @@ def service(root, directory, mode):
 
     original_channel = anchor.AnchorChannel
 
-    def ready_channel(*args):
-        channel = original_channel(*args)
+    def ready_channel(*args, **kwargs):
+        # Preserve the service's already-held channel lease in this readiness
+        # observer; the fixture must not acquire a second lifetime flock.
+        channel = original_channel(*args, **kwargs)
         print(json.dumps(dict(pid=os.getpid(), group=group)), flush=True)
         return channel
 
@@ -1032,12 +1034,16 @@ if __name__ != "__main__":
         wait_file(directory / "profile" / "entered.json")
         marker = json.loads((directory / "profile" / "anchor" / "bootstrap.json").read_text())
         assert marker["ready"] and marker["attempt"] == dict(request_id=request, generation=first["generation"]["id"])
+        assert marker["schema_version"] == 2 and marker["catalog_binding"] == marker["binding"]
+        catalog_lock = directory / "profile" / "node" / ".catalog-bootstrap.lock"
+        original_lock = (catalog_lock.stat().st_ino, catalog_lock.read_bytes())
         assert (directory / "keyring-sets").read_text() == "1"
         command("drain")
         until(lambda s: s["drain_complete"])
         command("start")
         second = until(lambda s: s["phase"] == "running")
         assert second["generation"]["id"] != first["generation"]["id"]
+        assert (catalog_lock.stat().st_ino, catalog_lock.read_bytes()) == original_lock
         assert (directory / "keyring-sets").read_text() == "1"
         command("drain")
         until(lambda s: s["drain_complete"])
@@ -1059,6 +1065,7 @@ if __name__ != "__main__":
         events = credential_events(directory)
         parent_protection = json.loads((directory / "fixture-parent-protection.json").read_text())
         assert marker["ready"] and marker["attempt"] == dict(request_id=request, generation=first["generation"]["id"])
+        assert marker["schema_version"] == 2 and marker["catalog_binding"] == marker["binding"]
         assert parent_protection == dict(core=[0, 0], dumpable=0)
         assert secret.startswith("drift_control_")
         assert (directory / "fixture-keyring-sets").read_text().splitlines() == ["1"]
