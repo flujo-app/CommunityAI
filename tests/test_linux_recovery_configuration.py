@@ -55,8 +55,17 @@ def test_explicit_selection_is_preserved_across_cli_reload_cycles(root, monkeypa
     assert calls == [(root, True), (root, True)]
 
 
-@pytest.mark.parametrize("root", [None, "/delegated/communityai-volunteer"])
-def test_real_node_builder_passes_selection_to_each_resource_manager(tmp_path, monkeypatch, root):
+@pytest.mark.parametrize(
+    "root,storage_binding",
+    [
+        (None, None),
+        ("/delegated/communityai-volunteer", None),
+        ("/delegated/communityai-volunteer", dict(directory=(1, 2), lease=(1, 3))),
+    ],
+)
+def test_real_node_builder_passes_selection_to_each_resource_manager(tmp_path, monkeypatch, root, storage_binding):
+    from drift.node import linux_anchor_entry
+
     arguments = ["--config", "unused.json", "--data_dir", str(tmp_path)]
     if root is not None:
         arguments.extend(("--worker-cgroup-root", root))
@@ -68,6 +77,13 @@ def test_real_node_builder_passes_selection_to_each_resource_manager(tmp_path, m
     monkeypatch.setattr(run_node, "_build_model_manager", lambda *args, **kwargs: (Mock(), [], Mock()))
     monkeypatch.setattr(run_node, "load_configured_catalog", lambda config: None)
     calls = []
+    bindings = []
+
+    def validated_binding(directory, worker_root):
+        bindings.append((directory, worker_root))
+        return storage_binding
+
+    monkeypatch.setattr(linux_anchor_entry, "reservation_storage_binding", validated_binding)
 
     class StopAfterManager(RuntimeError):
         pass
@@ -81,9 +97,29 @@ def test_real_node_builder_passes_selection_to_each_resource_manager(tmp_path, m
         with pytest.raises(StopAfterManager):
             run_node._serve_once(args, parser)
     assert len(calls) == 2
+    assert bindings == [(tmp_path / "resource-reservations", root)] * 2
     for directory, options in calls:
         assert directory == tmp_path / "resource-reservations"
-        assert options == dict(loading_protocol=True, recovery_protocol=True, worker_cgroup_root=root)
+        assert options == dict(
+            loading_protocol=True, recovery_protocol=True, worker_cgroup_root=root, storage_binding=storage_binding
+        )
+
+
+def test_entry_binding_refusal_precedes_configuration_and_model_side_effects(tmp_path, monkeypatch):
+    from drift.node import linux_anchor_entry
+    from drift.node.resource_recovery import RecoverableStateError
+
+    parser = run_node.build_parser()
+    args = parser.parse_args(["--config", "unused.json", "--data_dir", str(tmp_path)])
+    configuration = Mock()
+    models = Mock()
+    monkeypatch.setattr(run_node, "_load_persisted_and_runtime_config", configuration)
+    monkeypatch.setattr(run_node, "_build_model_manager", models)
+    monkeypatch.setattr(linux_anchor_entry, "reservation_storage_binding", Mock(side_effect=RecoverableStateError()))
+    with pytest.raises(RecoverableStateError):
+        run_node._serve_once(args, parser)
+    configuration.assert_not_called()
+    models.assert_not_called()
 
 
 @pytest.mark.parametrize("reason", ["unsupported_platform", "unverifiable_state"])

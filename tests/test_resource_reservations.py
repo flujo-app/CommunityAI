@@ -69,6 +69,24 @@ def records(fixture):
     return json.loads((fixture.directory / "generations.json").read_text(encoding="utf-8"))["reservations"]
 
 
+@pytest.mark.parametrize("loss", ["lock_and_journal", "directory", "replacement"])
+def test_observed_storage_loss_never_reinitializes_empty_journal(admission, loss):
+    manager = admission.manager
+    manager.prepare(admission.launch())
+    directory = admission.directory
+    if loss == "lock_and_journal":
+        (directory / "admission.lock").unlink()
+        (directory / "generations.json").unlink()
+    else:
+        directory.rename(directory.with_name("retained"))
+        if loss == "replacement":
+            directory.mkdir(mode=0o700)
+    with pytest.raises(ResourceReservationError):
+        manager.acquire(admission.launch())
+    assert not (directory / "admission.lock").exists()
+    assert not (directory / "generations.json").exists()
+
+
 def test_preparation_grants_no_reservation_and_acquire_rechecks_live_free_space(admission):
     manager, launch = admission.manager, admission.launch()
     manager.prepare(launch)

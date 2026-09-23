@@ -1,7 +1,7 @@
-"""Fixed volunteer service identity and a read-only, peer-bound local handshake.
+"""Fixed volunteer service identity and peer-bound local anchor channels.
 
-This is not node-launch or maintenance authority. No request starts work, drains
-reservations, removes cgroups, or acknowledges an update. Same-UID code is
+Version 1 inspection never grants node or maintenance authority. Version 2
+optionally controls the fixed node owner; it never grants installer authority. Same-UID code is
 cooperative, as in linux_cgroup_recovery; this is not a same-user sandbox.
 """
 
@@ -226,7 +226,12 @@ def _delegated_path(service):
 
 
 def _layout_profiles(root):
-    return tuple(cg.validate_cgroup_profile(path) for path in (root, *(root + "/" + n for n in _CHILDREN)))
+    # Identity/topology observations must not let a freezer veto Stop. Start
+    # and successful drain separately require unfrozen empty-tree proofs.
+    return tuple(
+        cg.validate_cgroup_profile(path, require_unfrozen=False)
+        for path in (root, *(root + "/" + n for n in _CHILDREN))
+    )
 
 
 def _layout_digest(profiles):
@@ -380,12 +385,13 @@ def _channel_directory(*, create=False):
 
 
 class AnchorChannel:
-    """One fixed, private, read-only Unix socket. Never removes a stale socket."""
+    """One fixed private Unix socket. Never removes a stale socket."""
 
-    def __init__(self, layout):
+    def __init__(self, layout, controller=None):
         import fcntl
 
         self.layout = layout
+        self.controller = controller
         self._listener = None
         self._lock = None
         self._lock_identity = None
@@ -434,8 +440,13 @@ class AnchorChannel:
                 _peer(connection)
                 request = _receive(connection)
                 _require(type(request) is dict and type(request.get("version")) is int)
-                _require(request == _request(request.get("nonce")))
-                response = self.layout.receipt(request["nonce"])
+                if request["version"] == 2:
+                    from drift.node.linux_anchor_control import respond
+
+                    response = respond(self.layout, self.controller, request)
+                else:
+                    _require(request == _request(request.get("nonce")))
+                    response = self.layout.receipt(request["nonce"])
                 self._validate_lock()
                 _require(_socket_identity(self.path) == self._identity)
                 connection.settimeout(_IO_TIMEOUT)
@@ -498,9 +509,9 @@ def inspect_anchor():
         raise RecoverableStateError() from None
 
 
-def serve_anchor():
-    """Exact sidecar entry point: no paths, executable, argv or profile inputs."""
-    layout = channel = None
+def serve_anchor(*, controller_factory=None):
+    """Service loop; optional controller factory is trusted internal wiring only."""
+    layout = channel = controller = None
     stopping = False
     handlers = {}
 
@@ -509,18 +520,27 @@ def serve_anchor():
         stopping = True
 
     try:
-        # Orderly stop closes only our own socket. It is NOT a node/journal
-        # drain or maintenance acknowledgement. Abrupt death retains the name.
+        # Abrupt death retains durable evidence; no restarted invocation may
+        # infer recovery permission from service/process or socket absence.
         for signum in (signal.SIGINT, signal.SIGTERM):
             handlers[signum] = signal.signal(signum, stop)
         layout = AnchorLayout()
-        channel = AnchorChannel(layout)
-        while not stopping:
+        if controller_factory is not None:
+            controller = controller_factory(layout)
+        channel = AnchorChannel(layout) if controller is None else AnchorChannel(layout, controller)
+        while True:
+            if stopping:
+                if controller is None:
+                    return 0
+                controller.request_shutdown()
+                if controller.finished.is_set():
+                    return 0 if controller.close() else 75
             channel.serve_once()
-        return 0
     except Exception:
         raise RecoverableStateError() from None
     finally:
+        if controller is not None:
+            controller.close()
         if channel is not None:
             channel.close()
         if layout is not None:

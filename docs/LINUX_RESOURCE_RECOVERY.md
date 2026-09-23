@@ -2,8 +2,9 @@
 
 This component adds an explicitly selected Linux containment profile. It does
 not provision a delegated cgroup for the installed volunteer application. The
-existing desktop installer, launcher and sign-in path do not yet supply that
-capability. A source-level flag or passing native fixture is not a completed
+existing desktop installer, GUI and sign-in path do not yet supply that
+capability. The fixed sidecar now has source-level anchored lifecycle support;
+a source-level flag or passing native fixture is not a completed
 installed recovery workflow.
 
 ## Explicit configuration
@@ -28,7 +29,9 @@ required by the proof contract.
 
 The engineering volunteer node sidecar accepts the same explicit option through
 its strict argument allowlist and shared lexical validator. It preserves the
-fixed profile, private state, loopback port and Pause-on-start behavior. The
+fixed profile, private state, loopback port and Pause-on-start behavior. On Linux,
+node mode additionally requires exact durable anchor-child admission; passing a
+root alone is no longer sufficient. The
 option is unavailable in worker, acquisition, bootstrap and diagnostic modes.
 The ordinary GUI does not provision or automatically pass a delegation root.
 Installed GUI lifecycle ownership and admission remain integration requirements.
@@ -46,8 +49,8 @@ node completes a status-0 global drain. The supported contribution cleanup
 timeout is at most 300 seconds; desktop and installer share a 3,030-second node
 shutdown allowance plus a small installer margin. Shutdown is sticky and wins
 over catalog/configuration reload callbacks. This process-bound contract is
-suitable input to the future anchor; it does not itself establish the persistent
-anchor or its node leaf.
+composed by the anchor with exact node-leaf death and its durable intent record;
+it still does not provide an installer maintenance lease.
 
 ## Native and build requirements
 
@@ -107,11 +110,15 @@ artifacts and the cache-root inventory. New admission resamples resources.
 
 ## Anchor identity foundation; installed provisioning still unavailable
 
-`drift.node.linux_anchor` now implements a deliberately read-only foundation.
-The volunteer sidecar accepts exactly `anchor`, with no executable, argument,
-profile, credential or cgroup-path overrides. It does not prepare the node
-profile, access credentials or launch work. The GUI and installer do not enable
-this mode yet; the source entry point is not an installed capability.
+`drift.node.linux_anchor` implements the service and private channel. The packaged
+volunteer sidecar accepts exactly `anchor` or explicit first-provisioning
+`anchor-initialize`, without executable, argument, profile, credential or
+cgroup-path overrides. Its factory uses that same fixed frozen `CommunityAI-Node`
+executable and requires Linux. Initialization requires a previously nonexistent
+private fixed profile, creates it exclusively and never migrates/deletes an
+existing profile. Normal open never infers initialization from missing evidence.
+The GUI and installer do not enable/provision this mode yet; this is not an
+installed capability or a migration recipe.
 
 The helper must already be the `MainPID` of the fixed ordinary-user unit
 `communityai-multigpu-anchor.service`. It reads the user's manager through the
@@ -131,7 +138,10 @@ identities are revalidated for each receipt. This is stable topology for the
 current invocation, not durable adoption after anchor replacement. It neither
 enables resource controllers nor claims hard memory/bandwidth enforcement.
 
-Its private Unix socket accepts only a size/time-bounded `inspect` request.
+Its private Unix socket preserves the size/time-bounded version-1 `inspect`
+request. Version 2 adds only fixed `observe`, `start` and `drain` operations when
+the node controller is present; no command, environment, path or credential
+input is accepted.
 The client checks kernel peer UID/PID, fresh manager/process observations,
 nonce, fixed profile and the entire layout identity digest, and rechecks the
 service and socket identities after the response. Duplicate/extra fields,
@@ -144,19 +154,24 @@ are never removed to make a connection succeed; closing removes only the
 channel's own unchanged socket. Same-UID code remains cooperative, not a hostile
 same-user sandbox.
 
-Orderly SIGINT/SIGTERM runs this limited socket cleanup and retains all cgroups.
-It is not a drain acknowledgement. Crash/SIGKILL can retain the socket in the
+With a node controller, orderly SIGINT/SIGTERM requests its checked drain and
+returns zero only after final global close proof; an incomplete stop returns 75.
+Without a controller, the read-only service still only cleans its own socket.
+Neither result authorizes an installer to replace state. All node leaf cgroups
+are retained. Crash/SIGKILL can retain the socket in the
 lingering runtime directory, and a subsequent start deliberately refuses it.
 Automatic crash restart, stale-socket reconciliation and adoption of durable
 node/journal state are not available yet. Do not manually delete evidence to
 make this engineering helper restart; installed recovery needs a checked
 transaction before this mode is exposed to users.
 
-The receipt explicitly carries `node_generation: null`, `admission: false` and
+The version-1 receipt explicitly carries `node_generation: null`, `admission: false` and
 `maintenance: false`. It is not a node lease, recovery proof, permission to use
-an external node, or update-safe acknowledgement. There is no node start, stop,
-drain, journal cleanup or cgroup deletion command. On any uncertain state the
-call fails rather than returning a weaker permission.
+an external node, or update-safe acknowledgement. Version-2 node status is
+revision-bound and always reports `api_ready: false` and `maintenance: false`.
+Its clean snapshot is not a continuing admission-exclusion/maintenance lease;
+another authorized Start may follow. Unknown requests fail rather than returning
+a weaker permission.
 
 `tests/test_linux_anchor.py` checks fixture service/property contracts;
 `tests/test_linux_anchor_native.py` uses actual atomic child creation, cgroups,
@@ -231,7 +246,7 @@ installed support is claimed.
 
 ## Public status and operator behavior
 
-### Durable anchor intent primitive (not yet connected to node launch)
+### Durable node lifecycle and intent
 
 `linux_anchor_state.py` supplies a serialized single-owner intent store for the
 fixed volunteer profile. A profile-level `anchor-state.lock` is a persistent
@@ -258,12 +273,67 @@ A subsequent reader may inspect an on-disk intent but must reconcile real state:
 even an `idle` record is **not** cleanup, admission, readiness or maintenance
 authority. Partial initialization is retained, never silently reset.
 
-The separate `node_lease` is currently only a tested locking primitive; existing
-launchers do not enforce it. No command launches nodes, receives caller-supplied
-commands/paths, or turns sharing on. The production anchor channel is unchanged
-and read-only. Durable birth-before-exec, node lease handoff, exact generation
-binding, asynchronous cancellation/drain, desktop reconnect, maintenance and
-installer integration remain the next implementation work.
+The anchor retains `node_lease` throughout the node lifetime, including cleanup;
+there is no unlocked transfer to the child. A single background owner handles
+creation and drain. It persists generation intent, creates one exact native
+node cgroup, records the native child PID/start identity while its exec gate is
+closed, and only then permits execution. The Linux volunteer launcher validates
+its token, PID/start identity, native group, live service parent, exact stored
+layout/storage binding and worker root before profile preparation, keyring or
+runtime dispatch. It consumes the token rather than forwarding it to workers.
+Standalone Linux node mode is now refused; Windows entry is unchanged.
+
+Start uses a published-snapshot revision and random request ID; pending/durable
+retries do not repeat execution. Publication, not an in-progress disk write, is
+the control CAS linearization point. An active Start allows exactly one queued
+Drain cancellation; an active Drain excludes competing commands. Active and
+pending work remain visible and suppress `drain_complete` through final commit.
+A drain cancels an in-flight birth without waiting for the owner thread's
+kernel/resource work. Cached status remains available while the owner operates.
+`drain_complete` reports only the last completed point-in-time drain; it is not
+a continuing emptiness proof, node-admission lease or maintenance grant. A fresh
+checked close is required for orderly service exit; no installer authority is
+implemented. Native execution is not API/model readiness, and Pause-on-start
+and CPU-only local inference remain mandatory. Starting the anchor never starts
+sharing or a node without a separate Start request.
+Every Start re-proves the global journal/local-uncertainty/worker condition and
+holds that guard through durable Start intent; cached completion is insufficient.
+
+The immutable private `anchor/resources.json` binds the node lifetime lock,
+node directory, reservation directory and admission-lock identities to the
+anchor's stored service/storage binding. Explicit bootstrap durably establishes
+the directory chain; ordinary reopen never creates a missing lifetime marker.
+The admitted child's manager receives the entry-validated directory and lock
+identities before its first recovery/admission, including configuration reloads.
+Other reservation managers pin their directory and lock after first observation;
+combined loss cannot silently initialize a new empty journal. A partial
+bootstrap is retained, not reset. The fixed launcher requires exclusive creation
+of a nonexistent profile. Even an interrupted empty root is refused by both
+ordinary startup and initialization until a separate checked bootstrap-recovery
+transaction exists; emptiness alone cannot distinguish first use from total loss.
+
+Drain first excludes further node births, terminates the exact node and worker
+trees, then recovers foreign worker generations using the durable reservation
+protocol. Damaged state/journals withhold success, not independently authorized
+whole-tree containment. It records idle only while the global empty-journal/worker proof is
+held, after node-tree death and output-reader completion. Interrupted state
+writes, changed authority or missing journal evidence keep the result blocked.
+Already proved-empty node leaves are retained rather than pruned implicitly.
+Blocked status grants neither recovery nor maintenance permission. Final close
+revalidates state, storage, lease and native identities plus the node/worker and
+global journal proof, extending the guard through lifetime-lease release.
+Layout observation checks exact identities even when a node/worker root is
+frozen, so freezing cannot veto Stop. Admission and a completed-drain proof
+still require unfrozen roots; a frozen root is contained but remains blocked.
+
+The current Linux volunteer GUI still uses its direct node-launch path and has
+not been adapted to this new entry contract. Do not share a new test bundle
+until generation-bound GUI/API reconnect, checked profile bootstrap/migration,
+service provisioning and installer maintenance are integrated. Crash/replaced
+anchor and reboot recovery remain explicit later transactions, not restarts
+with renamed/deleted evidence. The service unit's stop allowance must cover
+the 3,030-second graceful node drain plus bounded cleanup; the placeholder unit
+above is not suitable for installation as written.
 
 `ResourceReservationManager.drain_guard()` now exposes the same global empty
 journal/local-ownership/worker-subtree proof used by checked close, while holding
@@ -275,10 +345,12 @@ failed guard or durable write. Calling another operation on the same manager
 inside the guard is unsupported because its lock is deliberately non-reentrant.
 
 Native tests exercise real Linux file replacement/fsync, process flock exclusion,
-and actual cgroup identities with fixture systemd/machine observations in a
+the actual anchor loop and launcher entry, native node/worker descendants,
+global reservation recovery, cancellation and cgroup identities with fixture systemd/machine observations in a
 private Docker namespace. Injected write failures are not physical power-loss
 tests. No installed user manager, package upgrade, GPU or model is qualified by
-this component.
+this component. Node/model bodies and resource snapshots in these tests are
+controlled fixtures, not model execution or hardware-budget measurements.
 
 Recovery status remains a cached, fixed public object. Its API callback must not
 probe cgroupfs or wait for recovery locks. Checking and retryable cleanup may

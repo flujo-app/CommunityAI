@@ -114,6 +114,7 @@ class ResourceReservationManager:
         loading_protocol=False,
         recovery_protocol=False,
         worker_cgroup_root=None,
+        storage_binding=None,
     ):
         if type(loading_protocol) is not bool or type(recovery_protocol) is not bool:
             raise ValueError("resource protocols must be booleans")
@@ -136,6 +137,7 @@ class ResourceReservationManager:
         self._pending_release = set()
         self._released = {}
         self._seen_journal = False
+        self._storage_binding = storage_binding
         self._uncertain = False
         self._acquisition_uncertain = False
         self._cache_roots = set()
@@ -428,7 +430,10 @@ class ResourceReservationManager:
     def _locked(self, cancelled=None):
         # A stable lock inode is never removed or replaced during journal writes.
         with self._local_lock(cancelled):
-            self._directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if self._storage_binding is None:
+                self._directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            else:
+                self._validate_storage()
             canonical = canonical_cache_root(self._directory)
             if os.path.normcase(str(self._directory)) != canonical:
                 raise ValueError("unsafe resource directory")
@@ -439,20 +444,30 @@ class ResourceReservationManager:
                 _regular(lock_path)
             except FileNotFoundError:
                 pass
-            try:
-                descriptor = os.open(
-                    lock_path, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600
-                )
-                created_lock = True
-            except FileExistsError:
+            if self._storage_binding is not None:
                 descriptor = os.open(lock_path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
                 created_lock = False
+            else:
+                try:
+                    descriptor = os.open(
+                        lock_path, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600
+                    )
+                    created_lock = True
+                except FileExistsError:
+                    descriptor = os.open(lock_path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+                    created_lock = False
             locked = False
             try:
                 opened = os.fstat(descriptor)
                 observed = _regular(lock_path)
                 if (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino):
                     raise ValueError("resource lock identity changed")
+                if self._storage_binding is None:
+                    directory = self._directory.stat()
+                    self._storage_binding = dict(
+                        directory=(directory.st_dev, directory.st_ino), lease=(opened.st_dev, opened.st_ino)
+                    )
+                self._validate_storage()
                 try:
                     if os.name == "nt":
                         import msvcrt
@@ -484,6 +499,7 @@ class ResourceReservationManager:
                 # state in an otherwise brand-new node directory.
                 self._check_cancelled(cancelled)
                 yield
+                self._validate_storage()
             finally:
                 if locked:
                     if os.name == "nt":
@@ -492,6 +508,15 @@ class ResourceReservationManager:
                     else:
                         fcntl.flock(descriptor, fcntl.LOCK_UN)
                 os.close(descriptor)
+
+    def _validate_storage(self):
+        directory = self._directory.lstat()
+        if not stat.S_ISDIR(directory.st_mode) or self._directory.is_symlink():
+            raise ValueError("resource directory changed")
+        lease = _regular(self._directory / "admission.lock")
+        observed = dict(directory=(directory.st_dev, directory.st_ino), lease=(lease.st_dev, lease.st_ino))
+        if observed != self._storage_binding:
+            raise ValueError("resource storage identity changed")
 
     @property
     def _path(self):

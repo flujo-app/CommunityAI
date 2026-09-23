@@ -4,7 +4,7 @@ Single-owner, serialized API. Callers must prove lifecycle transitions themselve
 An uncertain write or changed identity permanently poisons this owner. Reopening
 requires the same live service invocation and exact storage/cgroup identities;
 replacement-anchor, reboot and lost-state recovery are separate transactions.
-Same-UID code is cooperative, not sandboxed. This module is not wired to launch.
+Same-UID code is cooperative, not sandboxed. Lifecycle composition is separate.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ import threading
 from functools import wraps
 from pathlib import Path
 
-from drift.node import linux_anchor as anchor, worker_loading as private
+from drift.node import linux_anchor as anchor
+from drift.node import worker_loading as private
 from drift.node.resource_recovery import RecoverableStateError, RecoveryIdentity, current_recovery_identity
 
 _PHASES = {"checking", "idle", "starting", "running", "draining", "blocked"}
@@ -104,9 +105,9 @@ class PrivateLease:
             os.close(descriptor)
 
 
-def node_lease(profile_root):
-    """Primitive only: launchers do not yet enforce this fixed-profile lease."""
-    return PrivateLease(profile_root, "node-lifetime.lock")
+def node_lease(profile_root, *, create=True):
+    """Lifetime exclusion; an existing lifecycle must pass create=False."""
+    return PrivateLease(profile_root, "node-lifetime.lock", create=create)
 
 
 def validate_state(value):

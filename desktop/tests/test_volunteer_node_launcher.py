@@ -49,13 +49,19 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         module.main = run
         return module
 
-    def _run(self, arguments):
+    def _run(self, arguments, *, entry_validator=None):
+        # These are argument/environment unit fixtures. The actual Linux
+        # service/generation admission path is exercised by native tests.
+        entry = types.ModuleType("drift.node.linux_anchor_entry")
+        entry.NODE_TOKEN_ENV = "COMMUNITYAI_ANCHOR_NODE_TOKEN"
+        entry.validate_node_entry = entry_validator or (lambda *args: None)
         runtime_modules = {
             "launch_node": generic,
             "drift.cli.run_node": self._runtime_module("node"),
             "drift.cli.run_bootstrap": self._runtime_module("bootstrap"),
             "drift.cli.run_server": self._runtime_module("server"),
             "drift.cli.run_edge_acquisition": self._runtime_module("edge_acquisition"),
+            "drift.node.linux_anchor_entry": entry,
         }
         with patch.dict(sys.modules, runtime_modules):
             return launcher.main(arguments)
@@ -135,15 +141,95 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
     def test_anchor_is_an_exact_no_argument_dispatch_without_node_or_profile_mutation(self):
         module = types.ModuleType("drift.node.linux_anchor")
         calls = []
-        module.serve_anchor = lambda: calls.append(True) or 0
+        module.serve_anchor = lambda **kwargs: calls.append(kwargs["controller_factory"]) or 0
         with patch.dict(sys.modules, {"drift.node.linux_anchor": module}):
-            self.assertEqual(launcher.main(["anchor"]), 0)
-            for extra in (["--profile", "other"], ["--worker-cgroup-root", "/other"], ["--help"], ["shell"]):
-                with self.assertRaises(ValueError):
-                    launcher.main(["anchor", *extra])
-        self.assertEqual(calls, [True])
+            for mode in ("anchor", "anchor-initialize"):
+                self.assertEqual(launcher.main([mode]), 0)
+                for extra in (["--profile", "other"], ["--worker-cgroup-root", "/other"], ["--help"], ["shell"]):
+                    with self.assertRaises(ValueError):
+                        launcher.main([mode, *extra])
+        with patch.object(launcher, "_anchor_controller", return_value="owner") as factory:
+            self.assertEqual(calls[0]("layout"), "owner")
+            self.assertEqual(calls[1]("layout"), "owner")
+        self.assertEqual(factory.call_args_list[0].kwargs, {"initialize": False})
+        self.assertEqual(factory.call_args_list[1].kwargs, {"initialize": True})
         self.assertFalse(self.profile.root.exists())
         self.assertEqual(self.dispatches, [])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "real Linux directory fsync")
+    def test_partial_bootstrap_is_retained_and_both_start_modes_refuse(self):
+        from drift.node import linux_anchor, linux_anchor_node, linux_anchor_state
+
+        executable = self.home / "CommunityAI-Node"
+        executable.write_bytes(b"fixture, not a qualified frozen artifact")
+        layout = types.SimpleNamespace(validate=lambda: None, service=types.SimpleNamespace(pid=os.getpid()))
+        sync = linux_anchor_state._sync_directory
+        synced = []
+
+        def fail_after_root(path, identity):
+            sync(path, identity)
+            synced.append(path)
+            if path == self.profile.root.parent:
+                raise OSError("fixture interrupted after empty profile creation")
+
+        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)):
+            with patch.object(linux_anchor_state, "_sync_directory", side_effect=fail_after_root):
+                with self.assertRaises(OSError):
+                    launcher._anchor_controller(layout, initialize=True)
+            self.assertEqual(list(self.profile.root.iterdir()), [])
+            self.assertIn(self.home, synced)
+            with self.assertRaises(FileExistsError):
+                launcher._anchor_controller(layout, initialize=True)
+            with self.assertRaises(linux_anchor.RecoverableStateError):
+                launcher._anchor_controller(layout)
+            self.assertEqual(list(self.profile.root.iterdir()), [])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "real Linux directory fsync")
+    def test_fixed_frozen_factory_requires_a_new_profile_and_exact_command(self):
+        from drift.node import linux_anchor_node
+
+        executable = self.home / "CommunityAI-Node"
+        executable.write_bytes(b"fixture, not a qualified frozen artifact")
+        layout = types.SimpleNamespace(validate=lambda: None)
+        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)):
+            with patch.object(linux_anchor_node, "AnchorNode", return_value="controller") as owner:
+                self.assertEqual(launcher._anchor_controller(layout, initialize=True), "controller")
+                factory = owner.call_args.args[2]
+                self.assertTrue(owner.call_args.kwargs["initialize"])
+                command, env, cwd = factory("/fixture/workers")
+                self.assertEqual(command[0], str(executable))
+                self.assertEqual(command[-2:], ["--worker-cgroup-root", "/fixture/workers"])
+                self.assertEqual(cwd, str(self.profile.data_dir))
+                self.assertNotIn(launcher.PARENT_PID_ENV, env)
+            with self.assertRaises(FileExistsError):
+                launcher._anchor_controller(layout, initialize=True)
+
+    def test_linux_node_rejects_missing_anchor_before_profile_or_runtime_mutation(self):
+        seen = []
+
+        def rejected(*args):
+            seen.append(args)
+            raise RuntimeError("unqualified anchor")
+
+        with patch.object(sys, "platform", "linux"), self.assertRaisesRegex(RuntimeError, "unqualified anchor"):
+            self._run([], entry_validator=rejected)
+        self.assertEqual(seen, [(self.profile.root, None, None)])
+        self.assertFalse(self.profile.root.exists())
+        self.assertEqual(self.dispatches, [])
+
+    def test_linux_node_consumes_exact_birth_token_before_dispatch(self):
+        seen = []
+        os.environ["COMMUNITYAI_ANCHOR_NODE_TOKEN"] = "a" * 32
+        with patch.object(sys, "platform", "linux"):
+            self.assertEqual(
+                self._run(
+                    ["--worker-cgroup-root", "/fixture/workers"], entry_validator=lambda *args: seen.append(args)
+                ),
+                0,
+            )
+        self.assertEqual(seen, [(self.profile.root, "a" * 32, "/fixture/workers")])
+        self.assertNotIn("COMMUNITYAI_ANCHOR_NODE_TOKEN", self.dispatches[0][2])
+        self.assertIn("--pause_sharing_on_start", self.dispatches[0][0])
 
     def test_explicit_cgroup_root_is_forwarded_without_widening_the_fixed_node_profile(self):
         root = "/delegated/communityai-volunteer"
@@ -576,6 +662,11 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
             "    return 0\n"
             "runtime.main = dispatch\n"
             "sys.modules['launch_node'] = runtime\n"
+            "# This fixture isolates parent-marker inheritance, not Linux anchor authority.\n"
+            "entry = types.ModuleType('drift.node.linux_anchor_entry')\n"
+            "entry.NODE_TOKEN_ENV = 'COMMUNITYAI_ANCHOR_NODE_TOKEN'\n"
+            "entry.validate_node_entry = lambda *args: None\n"
+            "sys.modules['drift.node.linux_anchor_entry'] = entry\n"
             "raise SystemExit(wrapper.main(worker if sys.argv[1:] == ['child'] else []))\n",
             encoding="utf-8",
         )

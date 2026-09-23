@@ -1853,6 +1853,11 @@ def main() -> None:
 def _serve_once(args, parser) -> bool:
 
     try:
+        from drift.node.linux_anchor_entry import reservation_storage_binding
+
+        storage_binding = reservation_storage_binding(
+            args.data_dir / "resource-reservations", getattr(args, "worker_cgroup_root", None)
+        )
         persisted_config, configured = _load_persisted_and_runtime_config(args)
         peer_cache = PeerCache(args.data_dir / "discovery-peers.json")
         peer_cache_scopes = {model.manifest_path: model.initial_peers for model in configured.models}
@@ -1878,6 +1883,7 @@ def _serve_once(args, parser) -> bool:
             loading_protocol=True,
             recovery_protocol=True,
             worker_cgroup_root=getattr(args, "worker_cgroup_root", None),
+            storage_binding=storage_binding,
         )
         resource_manager.start_recovery()
         resource_claim_cache = {}

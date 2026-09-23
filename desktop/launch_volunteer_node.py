@@ -255,6 +255,55 @@ def _worker_arguments(mode: str, arguments: Sequence[str], profile) -> list[str]
     return result
 
 
+def _anchor_controller(layout, *, initialize=False):
+    """Trusted fixed launcher wiring, invoked only after live service proof."""
+    from communityai_desktop.profiles import VolunteerProfile
+    from drift.node import linux_anchor as anchor
+    from drift.node.linux_anchor_node import AnchorNode
+    from drift.node.linux_anchor_state import _sync_directory
+
+    anchor._require(sys.platform.startswith("linux") and getattr(sys, "frozen", False) is True)
+    executable = _safe_path(sys.executable, base=Path.cwd(), required=True)
+    anchor._require(executable.name == "CommunityAI-Node")
+    layout.validate()
+    profile = VolunteerProfile.for_current_user()
+    if initialize:
+        # This exact provisioning mode is explicit first-install authority,
+        # never selected automatically from missing marker/state. Existing
+        # profiles need a separate checked migration, not deletion or adoption.
+        _safe_path(str(profile.root), base=Path.cwd(), directory=True)
+        # The only missing ancestor allowed here is the fixed .communityai
+        # directory. Persist its entry in the already existing user home.
+        _safe_path(str(profile.root.parent.parent), base=Path.cwd(), directory=True)
+        anchor._require(profile.root.parent.parent.is_dir())
+        home_info = profile.root.parent.parent.stat()
+        profile.root.parent.mkdir(mode=0o700, exist_ok=True)
+        _sync_directory(profile.root.parent.parent, (home_info.st_dev, home_info.st_ino))
+        parent_identity = anchor._private_directory(profile.root.parent)
+        profile.root.mkdir(mode=0o700)
+        anchor._private_directory(profile.root)
+        anchor._require(not os.listdir(profile.root))
+        _sync_directory(profile.root.parent, parent_identity)
+
+    def launch(worker_root):
+        profile.prepare()
+        environment = os.environ.copy()
+        for name, value in profile.child_environment().items():
+            if value is None:
+                environment.pop(name, None)
+            else:
+                environment[name] = value
+        for name in (PARENT_PID_ENV, PROFILE_ROOT_ENV, "HUGGINGFACEHUB_API_TOKEN", "DRIFT_DOWNLOAD_PROGRESS"):
+            environment.pop(name, None)
+        return (
+            [str(executable), *_node_arguments(["--worker-cgroup-root", worker_root], profile)],
+            environment,
+            str(profile.data_dir),
+        )
+
+    return AnchorNode(layout, profile.root, launch, initialize=initialize)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     # This must precede profile imports, state validation, and argv inspection:
     # PyInstaller's multiprocessing children have their own dispatch protocol.
@@ -262,12 +311,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     from communityai_desktop.profiles import VolunteerProfile
 
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments[:1] == ["anchor"]:
-        if arguments != ["anchor"]:
+    if arguments[:1] in (["anchor"], ["anchor-initialize"]):
+        if len(arguments) != 1:
             raise ValueError("the volunteer anchor accepts no options")
         from drift.node.linux_anchor import serve_anchor
 
-        return serve_anchor()
+        return serve_anchor(
+            controller_factory=lambda layout: _anchor_controller(layout, initialize=arguments[0] == "anchor-initialize")
+        )
     profile = VolunteerProfile.for_current_user()
     diagnostics = (
         ["--self-test"],
@@ -292,6 +343,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         mode = "node"
         forwarded = _node_arguments(arguments, profile)
+    if mode == "node" and sys.platform.startswith("linux"):
+        from drift.node.linux_anchor_entry import NODE_TOKEN_ENV, validate_node_entry
+
+        token = os.environ.pop(NODE_TOKEN_ENV, None)
+        worker_root = (
+            forwarded[forwarded.index("--worker-cgroup-root") + 1] if "--worker-cgroup-root" in forwarded else None
+        )
+        validate_node_entry(profile.root, token, worker_root)
     profile.prepare()
     for name, value in profile.child_environment().items():
         if value is None:
