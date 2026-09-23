@@ -337,6 +337,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     from communityai_desktop.profiles import VolunteerProfile
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["--diagnose-anchor"]:
+        if len(arguments) != 1:
+            raise ValueError("the volunteer anchor diagnostic accepts no options")
+        from drift.node.linux_anchor_diagnostics import diagnose_profile
+
+        profile = VolunteerProfile.for_current_user()
+        try:
+            plan = _packaged_bootstrap_plan(profile)
+        except Exception:
+            plan = None  # Fixed report only, never print raw package exceptions.
+        print(json.dumps(diagnose_profile(profile, plan), sort_keys=True))
+        return 0  # Report produced, NOT a readiness/health/recovery exit status.
     if arguments == ["--bootstrap-plan-self-test"]:
         plan = _packaged_bootstrap_plan(VolunteerProfile.for_current_user(), initialize=True)
         print(

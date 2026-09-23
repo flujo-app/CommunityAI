@@ -575,3 +575,30 @@ These checks do not establish a hard host-memory or bandwidth ceiling, measured
 model peak memory, accelerator execution or full-beta acceptance. The
 one-automatic-worker guard remains. Actual all-card operation, required hardware
 and installed-platform evidence remain separate release requirements.
+# Read-only incomplete-setup inventory
+
+The fixed volunteer node accepts `CommunityAI-Node --diagnose-anchor` without
+starting the anchor or preparing the profile. It accepts no path, reset, repair
+or other option. It reads only fixed private marker/lock paths and metadata for
+the current verified package's bounded output list, refusing symlinks, hardlinks,
+nonregular files, unsafe permissions and oversized/duplicate-key marker JSON.
+Open directory identities and file fingerprints are rechecked before return.
+
+JSON contains only fixed labels: missing/unsafe evidence, mismatched original
+lock/storage identities, incomplete bootstrap, retained credential/output intent,
+different package, changed boot/machine/service or unavailable observations.
+It emits no paths, raw exceptions, process/transaction IDs, tokens or digests.
+Saved phase and credential intent are history, not a live readiness claim.
+The command takes no locks and never creates, deletes, adopts or repairs state.
+It does not query the keyring or verify output contents; these limits appear in
+every report. Live service inspection uses the existing read-only, timeout-bound
+system-manager queries; no service start/stop, lingering or delegation change.
+Byte/path/count limits bound work, not latency of a stalled kernel/filesystem.
+
+Exit zero means a diagnostic report was produced, **not** that setup is valid.
+Even a report with no reasons has `admission`, `maintenance`, `cleanup_complete`
+and `recovery_allowed` false. It is never input to recovery or lifecycle admission.
+A changing owner may yield an inconclusive snapshot. Preserve the existing
+profile and evidence; do not delete locks or repeat first-use enrollment to
+resolve a reported problem. Checked credential/service recovery, bounded native
+keyring execution, actual installed/frozen Ubuntu and hardware tests remain open.

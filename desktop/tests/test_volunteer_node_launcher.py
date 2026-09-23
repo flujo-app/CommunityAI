@@ -30,6 +30,24 @@ generic = _load("generic_node_launcher_test", DESKTOP / "launch_node.py")
 
 
 class VolunteerNodeLauncherTests(unittest.TestCase):
+    def test_read_only_anchor_diagnostic_precedes_profile_and_environment_mutation(self):
+        diagnostic = types.ModuleType("drift.node.linux_anchor_diagnostics")
+        calls = []
+        diagnostic.diagnose_profile = lambda profile, plan: calls.append((profile, plan)) or {"admission": False}
+        before = os.environ.copy()
+        with patch.dict(sys.modules, {diagnostic.__name__: diagnostic}), patch.object(
+            launcher, "_packaged_bootstrap_plan", side_effect=ValueError("synthetic-package-secret")
+        ), patch.object(VolunteerProfile, "prepare", side_effect=AssertionError("must not prepare")), patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as output:
+            self.assertEqual(launcher.main(["--diagnose-anchor"]), 0)
+        self.assertEqual(json.loads(output.getvalue()), {"admission": False})
+        self.assertIsNone(calls[0][1])
+        self.assertFalse(self.profile.root.exists())
+        self.assertEqual(before, dict(os.environ))
+        with self.assertRaisesRegex(ValueError, "accepts no options"):
+            launcher.main(["--diagnose-anchor", "--reset"])
+
     def setUp(self):
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

@@ -164,6 +164,93 @@ def _probe_rename(directory):
         os.close(parent)
 
 
+def validate_bootstrap_record(value, *, plan, binding, service, account, parents, lock_names):
+    """Pure strict codec; it neither inspects storage nor grants recovery authority."""
+    anchor._require(
+        type(value) is dict
+        and set(value)
+        == {
+            "schema_version",
+            "binding",
+            "transaction",
+            "bundle",
+            "plan",
+            "directories",
+            "locks",
+            "service",
+            "account",
+            "attempt",
+            "admitted_at_ms",
+            "progress",
+            "pending",
+            "credential",
+            "credential_digest",
+            "ready",
+        }
+    )
+    anchor._require(type(value["schema_version"]) is int and value["schema_version"] == 1)
+    anchor._require(
+        value["binding"] == binding and value["bundle"] == plan.bundle_digest and value["plan"] == plan.digest
+    )
+    anchor._require(
+        type(value["transaction"]) is str and anchor.re.fullmatch("[0-9a-f]{32}", value["transaction"]) is not None
+    )
+    anchor._require(value["service"] == service and value["account"] == account)
+    anchor._require(type(value["directories"]) is dict and set(value["directories"]) == parents)
+    for name, identity in value["directories"].items():
+        anchor._require(
+            type(identity) is list
+            and len(identity) == 2
+            and all(type(item) is int and 0 <= item < 2**64 for item in identity)
+            and identity[1] > 0
+        )
+    anchor._require(type(value["locks"]) is dict and set(value["locks"]) == set(lock_names))
+    for name, identity in value["locks"].items():
+        anchor._require(
+            type(identity) is list
+            and len(identity) == 2
+            and all(type(item) is int and 0 <= item < 2**64 for item in identity)
+        )
+    count = value["progress"]
+    anchor._require(type(count) is int and 0 <= count <= len(plan.outputs))
+    anchor._require(type(value["pending"]) is bool and (not value["pending"] or count < len(plan.outputs)))
+    anchor._require(
+        type(value["ready"]) is bool
+        and (
+            not value["ready"]
+            or (count == len(plan.outputs) and not value["pending"] and value["credential"] == "ready")
+        )
+    )
+    anchor._require(value["credential"] in {"absent", "pending", "ready"})
+    digest = value["credential_digest"]
+    anchor._require((digest is None) == (value["credential"] == "absent"))
+    anchor._require(digest is None or (type(digest) is str and anchor.re.fullmatch("[0-9a-f]{64}", digest) is not None))
+    attempt = value["attempt"]
+    admitted = value["admitted_at_ms"]
+    anchor._require((admitted is None) == (attempt is None))
+    anchor._require(
+        admitted is None
+        or (
+            type(admitted) is int and plan.envelope.signed.issued_at_ms <= admitted < plan.envelope.signed.expires_at_ms
+        )
+    )
+    anchor._require(
+        attempt is None
+        or (
+            type(attempt) is dict
+            and set(attempt) == {"request_id", "generation"}
+            and all(
+                type(item) is str and anchor.re.fullmatch("[0-9a-f]{32}", item) is not None for item in attempt.values()
+            )
+        )
+    )
+    anchor._require(
+        attempt is not None
+        or (count == 0 and not value["pending"] and value["credential"] == "absent" and not value["ready"])
+    )
+    anchor._require((count == 0 and not value["pending"]) or value["credential"] == "ready")
+
+
 class AnchorBootstrap:
     """Single anchor-owner transaction. Uncertain effects poison this owner.
 
@@ -258,98 +345,21 @@ class AnchorBootstrap:
             raise RecoverableStateError() from None
 
     def _validate_value(self, value):
-        anchor._require(
-            set(value)
-            == {
-                "schema_version",
-                "binding",
-                "transaction",
-                "bundle",
-                "plan",
-                "directories",
-                "locks",
-                "service",
-                "account",
-                "attempt",
-                "admitted_at_ms",
-                "progress",
-                "pending",
-                "credential",
-                "credential_digest",
-                "ready",
-            }
+        validate_bootstrap_record(
+            value,
+            plan=self.plan,
+            binding=self.binding,
+            service=self.store.service,
+            account=self.store.account,
+            parents=self.parents,
+            lock_names=self.lock_names,
         )
-        anchor._require(type(value["schema_version"]) is int and value["schema_version"] == 1)
-        anchor._require(
-            value["binding"] == self.binding
-            and value["bundle"] == self.plan.bundle_digest
-            and value["plan"] == self.plan.digest
-        )
-        anchor._require(
-            type(value["transaction"]) is str and anchor.re.fullmatch("[0-9a-f]{32}", value["transaction"]) is not None
-        )
-        anchor._require(value["service"] == self.store.service and value["account"] == self.store.account)
-        anchor._require(type(value["directories"]) is dict and set(value["directories"]) == self.parents)
         for name, identity in value["directories"].items():
-            anchor._require(
-                type(identity) is list
-                and len(identity) == 2
-                and all(type(item) is int and 0 <= item < 2**64 for item in identity)
-                and identity[1] > 0
-            )
             private._directory(self.root / name)
             anchor._require(list(private._identity(private._stat(self.root / name, directory=True))) == identity)
-        anchor._require(type(value["locks"]) is dict and set(value["locks"]) == set(self.lock_names))
         for name, identity in value["locks"].items():
-            anchor._require(
-                type(identity) is list
-                and len(identity) == 2
-                and all(type(item) is int and 0 <= item < 2**64 for item in identity)
-            )
             anchor._require(list(anchor._lock_identity((self.root / name).lstat())) == identity)
         anchor._require(private._read(self.root / self.lock_names[0]) == catalog_discriminator(self.root, self.binding))
-        count = value["progress"]
-        anchor._require(type(count) is int and 0 <= count <= len(self.plan.outputs))
-        anchor._require(type(value["pending"]) is bool and (not value["pending"] or count < len(self.plan.outputs)))
-        anchor._require(
-            type(value["ready"]) is bool
-            and (
-                not value["ready"]
-                or (count == len(self.plan.outputs) and not value["pending"] and value["credential"] == "ready")
-            )
-        )
-        anchor._require(value["credential"] in {"absent", "pending", "ready"})
-        digest = value["credential_digest"]
-        anchor._require((digest is None) == (value["credential"] == "absent"))
-        anchor._require(
-            digest is None or (type(digest) is str and anchor.re.fullmatch("[0-9a-f]{64}", digest) is not None)
-        )
-        attempt = value["attempt"]
-        admitted = value["admitted_at_ms"]
-        anchor._require((admitted is None) == (attempt is None))
-        anchor._require(
-            admitted is None
-            or (
-                type(admitted) is int
-                and self.plan.envelope.signed.issued_at_ms <= admitted < self.plan.envelope.signed.expires_at_ms
-            )
-        )
-        anchor._require(
-            attempt is None
-            or (
-                type(attempt) is dict
-                and set(attempt) == {"request_id", "generation"}
-                and all(
-                    type(item) is str and anchor.re.fullmatch("[0-9a-f]{32}", item) is not None
-                    for item in attempt.values()
-                )
-            )
-        )
-        anchor._require(
-            attempt is not None
-            or (count == 0 and not value["pending"] and value["credential"] == "absent" and not value["ready"])
-        )
-        anchor._require((count == 0 and not value["pending"]) or value["credential"] == "ready")
 
     def _write(self, **changes):
         self.validate()
