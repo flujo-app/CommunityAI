@@ -112,6 +112,7 @@ _RELEASE_SOURCE_PATHS = (
     "pyproject.toml",
     "scripts/build_hivemind_windows.py",
     "scripts/hivemind-win32.patch",
+    "setup.py",
     "src",
 )
 _EXPECTED_UNSET = object()

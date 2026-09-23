@@ -30,11 +30,31 @@ members to exit. A still-populated job remains `cleanup_pending` and is retried
 in the background. Access errors and invalid state never count as absence.
 
 Linux records the exact kernel boot UUID and native host identity. A different
-boot on the same verified host proves prior processes are gone. Same-boot Linux
-worker recovery remains blocked pending a delegated cgroup implementation with
-creation-time membership and whole-subtree proof. A process group or dead parent
-alone cannot establish that every descendant is gone. Synchronous metadata has a
-separate no-child contract: verified owner exclusion proves its body has stopped.
+boot on the same verified host proves prior processes are gone. Without an
+explicit containment profile, existing `linux_boot_v1` generations still cannot
+be recovered during the same boot. A process group or dead parent alone cannot
+establish that every descendant is gone. Synchronous metadata has a separate
+no-child contract: verified owner exclusion proves its body has stopped.
+
+For resource-managed desktop automatic workers, the optional
+`--worker-cgroup-root` profile requires a stable, explicitly
+delegated cgroup-v2 anchor and the compiled native launcher. Admission prepares
+and durably binds the exact root, generation, mount and namespace identities.
+The native child is created directly in that generation with `CLONE_INTO_CGROUP`.
+Before acknowledging its startup gate, it closes inherited owner-lock and other
+control descriptors without unlocking the parent's lease. Parent gate closure
+prevents an unresumed child from executing later. There is no Python child path
+between clone and exec, and direct-child control uses its pidfd.
+
+For these new `linux_cgroup_v1` generations, recovery excludes the old owner,
+revalidates the exact hierarchy, uses `cgroup.kill`, and requires whole-subtree
+`populated=0` before granting proof. Missing or replaced cgroups do not supply
+proof. Closing handles retains the generation directory for an uncertain journal
+commit; separately verified post-commit garbage collection remains required.
+The same-UID profile assumes cooperative workers that do not migrate out of their
+generation. It is not a hostile-worker security boundary. Explicitly selecting an
+unavailable profile blocks metadata and worker admission even with an empty
+journal; it never silently falls back to process groups.
 
 After death proof, recovery cleans only that generation's loading files,
 revalidates the guard and commits removal of the exact journal entry while both
@@ -62,9 +82,10 @@ around spawn/resume, descendants that outlive the root, owner exclusion and
 journal cleanup/readmission. A real managed CLI with a replaced model body checks
 the node builder, private loading gate, readiness and Pause using the new launcher.
 These tests do not execute a model, qualify a GPU or prove physical power-loss
-durability. Linux boot cases use controlled identity observations; installed Linux,
-same-boot cgroups, frozen packaging, legacy migration and storage rollback remain
-unqualified. The one-automatic-worker guard remains. Hard shared bandwidth,
+durability. Linux native tests require an explicitly supplied private delegation;
+boot-change cases still use controlled identity observations. Ordinary installed
+Linux provisioning of a persistent anchor, frozen packaging, legacy migration
+and storage rollback remain unqualified. The one-automatic-worker guard remains. Hard shared bandwidth,
 measured peak memory, actual all-card operation and full-beta acceptance remain
 required work.
 
@@ -72,3 +93,5 @@ See [recovery authority](RESOURCE_RECOVERY_AUTHORITY.md) for strict proof APIs,
 native references and trust limits, and [desktop status](RESOURCE_RECOVERY_STATUS.md)
 for the public state and control behavior. Native host/private storage trust does
 not cover malicious same-user writers, remote/copied journals or administrators.
+The [Linux profile](LINUX_RESOURCE_RECOVERY.md) separates native component evidence
+from the persistent service and installation work still needed for volunteers.

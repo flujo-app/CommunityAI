@@ -65,7 +65,12 @@ def test_blocked_recovery_remains_visible_while_off_without_workers(reason):
     assert not any(word in detail.casefold() for word in ("delete", "increase", "choose pause", "restart to"))
     if reason == "unsupported_platform":
         assert "current system session" in detail
+        assert "start or recover sharing" in detail
+        assert "earlier sharing" not in detail
         assert "not supported on this system" not in detail
+    if reason == "unverifiable_state":
+        assert "cannot verify that sharing can start or recover safely" in detail
+        assert "current system session" in detail and "earlier sharing" not in detail
 
 
 def test_checking_and_ready_do_not_change_saved_pause_or_create_start_intent():

@@ -116,10 +116,17 @@ def _node_arguments(arguments: Sequence[str], profile) -> list[str]:
         "--credential_account": profile.credential_account,
     }
     flags = ("--pause_sharing_on_start", "--local_inference_cpu_only")
-    positional, parsed = _options(arguments, {**dict.fromkeys(fixed, 1), **dict.fromkeys(flags, 0)})
+    positional, parsed = _options(
+        arguments, {**dict.fromkeys(fixed, 1), **dict.fromkeys(flags, 0), "--worker-cgroup-root": 1}
+    )
     if positional:
         raise ValueError("the volunteer node accepts only its fixed configuration")
-    return [*_fixed_options(parsed, fixed, profile), *flags]
+    cgroup_arguments = []
+    if "--worker-cgroup-root" in parsed:
+        from drift.node.resource_recovery_config import normalize_worker_cgroup_root
+
+        cgroup_arguments = ["--worker-cgroup-root", normalize_worker_cgroup_root(parsed["--worker-cgroup-root"][0])]
+    return [*_fixed_options(parsed, fixed, profile), *flags, *cgroup_arguments]
 
 
 def _bootstrap_arguments(arguments: Sequence[str], profile) -> list[str]:

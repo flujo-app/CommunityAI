@@ -186,18 +186,19 @@ class GenerationRecoveryBinding:
     contract: str
     containment_name: str | None = field(repr=False)
     claim_digest: str = field(repr=False)
+    linux_cgroup: object | None = field(default=None, repr=False)
 
     def __post_init__(self):
         _require(type(self.owner) is OwnerBinding and _hex(self.reservation_id, 32) and _digest(self.claim_digest))
         self.owner.__post_init__()
         _require(self.kind in ("worker", "metadata"))
-        contract, name = _contract(self.owner, self.reservation_id, self.kind)
+        contract, name = _contract(self.owner, self.reservation_id, self.kind, self.linux_cgroup)
         _require(self.contract == contract and self.containment_name == name)
 
     def to_json(self):
         self.__post_init__()
-        return dict(
-            schema_version=1,
+        result = dict(
+            schema_version=2 if self.linux_cgroup is not None else 1,
             owner=self.owner.to_json(),
             reservation_id=self.reservation_id,
             kind=self.kind,
@@ -205,15 +206,24 @@ class GenerationRecoveryBinding:
             containment_name=self.containment_name,
             claim_digest=self.claim_digest,
         )
+        if self.linux_cgroup is not None:
+            result["linux_cgroup"] = self.linux_cgroup.to_json()
+        return result
 
     @classmethod
     def from_json(cls, value):
         if value is None:
             raise RecoverableStateError("legacy_state")
-        _mapping(
-            value, ("schema_version", "owner", "reservation_id", "kind", "contract", "containment_name", "claim_digest")
-        )
-        _version(value["schema_version"])
+        _require(type(value) is dict and type(value.get("schema_version")) is int)
+        version = value["schema_version"]
+        _require(version in (1, 2))
+        keys = {"schema_version", "owner", "reservation_id", "kind", "contract", "containment_name", "claim_digest"}
+        _mapping(value, keys | ({"linux_cgroup"} if version == 2 else set()))
+        linux_cgroup = None
+        if version == 2:
+            from drift.node.linux_cgroup_recovery import LinuxCgroupIdentity
+
+            linux_cgroup = LinuxCgroupIdentity.from_json(value["linux_cgroup"])
         return cls(
             OwnerBinding.from_json(value["owner"]),
             value["reservation_id"],
@@ -221,10 +231,18 @@ class GenerationRecoveryBinding:
             value["contract"],
             value["containment_name"],
             value["claim_digest"],
+            linux_cgroup,
         )
 
 
-def _contract(owner, reservation_id, kind):
+def _contract(owner, reservation_id, kind, linux_cgroup=None):
+    if linux_cgroup is not None:
+        from drift.node.linux_cgroup_recovery import LinuxCgroupIdentity, generation_name
+
+        _require(type(linux_cgroup) is LinuxCgroupIdentity and kind == "worker" and owner.identity.platform == "linux")
+        linux_cgroup.__post_init__()
+        _require(linux_cgroup.name == generation_name(owner.owner_id, reservation_id))
+        return "linux_cgroup_v1", linux_cgroup.name
     if kind == "metadata":
         return "synchronous_metadata_v1", None
     if owner.identity.platform == "windows":
@@ -232,11 +250,11 @@ def _contract(owner, reservation_id, kind):
     return "linux_boot_v1", None
 
 
-def make_generation_binding(owner_binding, reservation_id, *, kind, claim_digest):
+def make_generation_binding(owner_binding, reservation_id, *, kind, claim_digest, linux_cgroup=None):
     _require(type(owner_binding) is OwnerBinding and kind in ("worker", "metadata") and _hex(reservation_id, 32))
     owner_binding.__post_init__()
-    contract, name = _contract(owner_binding, reservation_id, kind)
-    return GenerationRecoveryBinding(owner_binding, reservation_id, kind, contract, name, claim_digest)
+    contract, name = _contract(owner_binding, reservation_id, kind, linux_cgroup)
+    return GenerationRecoveryBinding(owner_binding, reservation_id, kind, contract, name, claim_digest, linux_cgroup)
 
 
 def _lock(descriptor):
@@ -421,15 +439,21 @@ class OwnerRecoveryGuard:
         except Exception:
             raise RecoverableStateError() from None
 
-    def prove_empty(self, *, windows_probe=None):
+    def prove_empty(self, *, windows_probe=None, linux_probe=None):
         try:
             self.require_binding(self.binding)
             owner_identity = self.binding.owner.identity
             if self.binding.kind == "metadata":
                 reason = "metadata_owner_excluded"
             elif owner_identity.platform == "linux":
-                _require(self._identity.boot_id != owner_identity.boot_id, "unsupported_platform")
-                reason = "linux_previous_boot"
+                if self._identity.boot_id != owner_identity.boot_id:
+                    reason = "linux_previous_boot"
+                else:
+                    _require(
+                        self.binding.contract == "linux_cgroup_v1" and callable(linux_probe), "unsupported_platform"
+                    )
+                    _require(linux_probe(self.binding, self) is True, "cleanup_pending")
+                    reason = "linux_cgroup_empty"
             else:
                 _require(callable(windows_probe), "unsupported_platform")
                 _require(windows_probe(self.binding, self) is True, "cleanup_pending")

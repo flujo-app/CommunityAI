@@ -117,7 +117,9 @@ global gate and generation-bound child readiness without releasing staging claim
 [Recovery](RESOURCE_RECOVERY.md) now binds new generations to owner exclusion and
 native death proof, with bounded shutdown draining and cached public status.
 Hard shared bandwidth enforcement, measured model peak-memory qualification,
-same-boot Linux/legacy recovery and general all-card configuration remain unfinished.
+ordinary installed Linux anchor provisioning, legacy recovery and general all-card
+configuration remain unfinished. The optional delegated cgroup profile adds
+native same-boot recovery without changing asynchronous admission ownership.
 Native GPU inference, eight-H100 operation, installed Ubuntu behavior and hostile
 storage/under-load recovery still require their own evidence. Resource admission
 remains conservative estimated accounting, not an OS-enforced RAM cap.

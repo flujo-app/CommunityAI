@@ -167,7 +167,11 @@ def test_background_recovery_runs_without_start_and_refreshes_owner_release(reco
     other.start_recovery()
     assert other._recovery_thread is runner
     wait_for(lambda: other.recovery_snapshot()["reason"] == "active_owner")
-    f.manager.release(token)
+    # Status is published while the recovery attempt still owns its journal
+    # lock. Exclude that attempt before the separate owner's nonblocking
+    # release; observing the status alone is not an unlock notification.
+    with other._local_lock(None):
+        f.manager.release(token)
     wait_for(lambda: other.recovery_snapshot()["state"] == "ready")
     assert other.close()
 
@@ -181,7 +185,8 @@ def test_ready_background_owner_wakes_after_later_block_without_start(recovery_a
     with pytest.raises(ResourceReservationError):
         f.manager.prepare(f.launch("gpu-1"))
     wait_for(lambda: f.manager.recovery_snapshot()["reason"] == "active_owner")
-    other.release(token)
+    with f.manager._local_lock(None):
+        other.release(token)
     assert other.close()
     wait_for(lambda: f.manager.recovery_snapshot()["state"] == "ready")
     assert f.manager.close()

@@ -113,11 +113,19 @@ class ResourceReservationManager:
         clock=time.time,
         loading_protocol=False,
         recovery_protocol=False,
+        worker_cgroup_root=None,
     ):
         if type(loading_protocol) is not bool or type(recovery_protocol) is not bool:
             raise ValueError("resource protocols must be booleans")
         if recovery_protocol and not loading_protocol:
             raise ValueError("resource recovery requires the managed loading protocol")
+        if worker_cgroup_root is not None:
+            from drift.node.resource_recovery_config import normalize_worker_cgroup_root
+
+            if not recovery_protocol:
+                raise ValueError("worker cgroup containment requires resource recovery")
+            worker_cgroup_root = normalize_worker_cgroup_root(worker_cgroup_root)
+        self._worker_cgroup_root = worker_cgroup_root
         self._directory = Path(directory).absolute()
         self._snapshot_provider = snapshot_provider
         self._clock = clock
@@ -287,10 +295,16 @@ class ResourceReservationManager:
     def _recover_locked(self, entries, cancelled=None):
         if not self._recovery_protocol:
             return entries
+        from drift.node.linux_cgroup_recovery import recover_linux_cgroup, validate_cgroup_profile
         from drift.node.resource_recovery import GenerationRecoveryBinding, acquire_recovery_guard
         from drift.node.worker_recovery_containment import recover_windows_containment
 
         try:
+            # Explicit profile selection is binding even with an empty journal:
+            # metadata and workers cannot fall back after a capability failure.
+            if self._worker_cgroup_root is not None:
+                self._check_cancelled(cancelled)
+                validate_cgroup_profile(self._worker_cgroup_root, require_unfrozen=False)
             self._ensure_recovery_owner()
             for entry in tuple(entries):
                 self._check_cancelled(cancelled)
@@ -304,7 +318,9 @@ class ResourceReservationManager:
                 with acquire_recovery_guard(
                     self._directory / "owners", binding, expected_claim_digest=digest, cancelled=cancelled
                 ) as guard:
-                    proof = guard.prove_empty(windows_probe=recover_windows_containment)
+                    proof = guard.prove_empty(
+                        windows_probe=recover_windows_containment, linux_probe=recover_linux_cgroup
+                    )
                     self._check_cancelled(cancelled)
                     loading = self._loading_from_entry(entry)
                     if loading is not None:
@@ -313,6 +329,12 @@ class ResourceReservationManager:
                     retained = [e for e in entries if e["claim"].reservation_id != entry["claim"].reservation_id]
                     self._write(retained)
                     entries = retained
+            # Freezing must never prevent orphan cleanup. After that cleanup,
+            # admission remains unavailable until the explicit root can run
+            # the native child's inherited-lease closure handshake.
+            if self._worker_cgroup_root is not None:
+                self._check_cancelled(cancelled)
+                validate_cgroup_profile(self._worker_cgroup_root)
             self._recovery_state("none")
             return entries
         except ResourceScanCancelled:
@@ -866,19 +888,32 @@ class ResourceReservationManager:
                         {"nonce": binding.nonce, "binding_digest": binding.binding_digest} if prepare_loading else None
                     )
                     try:
+                        prepared = None
+                        if prepare_loading and self._worker_cgroup_root is not None:
+                            from drift.node.linux_cgroup_recovery import prepare_generation
+
+                            prepared = prepare_generation(
+                                self._worker_cgroup_root, self._owner_lease.owner_binding, token
+                            )
+                            self._recovery_containments[token] = prepared
                         recovery = make_generation_binding(
                             self._owner_lease.owner_binding,
                             token,
                             kind=kind,
                             claim_digest=self._recovery_digest(entry, kind),
+                            **({"linux_cgroup": prepared.identity} if prepared is not None else {}),
                         )
                         entry["recovery"] = recovery.to_json()
-                        if prepare_loading:
+                        if prepared is not None:
+                            prepared.bind(recovery)
+                        elif prepare_loading:
                             self._recovery_containments[token] = create_recovery_containment(recovery)
                         self._check_cancelled(cancelled)
-                    except BaseException:
+                    except BaseException as exc:
                         # No journal publication or child creation has occurred.
                         self._discard_unpublished(token)
+                        if not isinstance(exc, ResourceScanCancelled):
+                            self._recovery_state(getattr(exc, "reason", "unverifiable_state"))
                         raise
                 try:
                     self._write([*entries, entry])

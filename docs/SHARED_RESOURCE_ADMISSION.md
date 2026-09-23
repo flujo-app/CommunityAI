@@ -100,8 +100,11 @@ release another manager's claim.
 Uncertain acquisition writes quarantine new admission. A restarted manager retains
 old entries and cannot release them based on PID disappearance. New schema-v2
 generations support [proof-based recovery](RESOURCE_RECOVERY.md) under owner
-exclusion and native containment/boot evidence. Legacy entries and same-boot
-Linux worker recovery remain blocked without the required proof.
+exclusion and native containment/boot evidence. Legacy entries and old Linux
+boot-only bindings remain blocked without the required proof. An explicitly
+selected stable delegated Linux cgroup profile now binds native identity before
+spawn and supports same-boot whole-subtree recovery; installed anchor provisioning
+and legacy migration remain required (see LINUX_RESOURCE_RECOVERY.md).
 
 ## Responsiveness and remaining release work
 

@@ -1394,10 +1394,9 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
                 self.assertEqual(ordinary.read_bytes(), b"ordinary application state must survive unchanged")
         self.assertEqual(list((home / ".drift").rglob("*")), [ordinary.parent, ordinary])
 
-    def test_source_identity_covers_added_modified_and_missing_volunteer_launcher(self):
+    def test_source_identity_covers_added_modified_and_missing_launcher_and_native_recipe(self):
         repository = self.tmp_path / "source"
-        launcher = repository / "desktop" / "launch_volunteer.py"
-        launcher.parent.mkdir(parents=True)
+        repository.mkdir(parents=True)
         (repository / ".gitattributes").write_text("* text eol=lf\n", encoding="utf-8")
 
         def git(*arguments: str) -> str:
@@ -1413,19 +1412,24 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
         git("config", "user.name", "Release Test")
         git("add", ".gitattributes")
         git("commit", "-m", "baseline")
-        launcher.write_text("print('fixed volunteer entry')\n", encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
-            build_desktop._source_identity(repository, git("rev-parse", "HEAD"))
-        git("add", "desktop/launch_volunteer.py")
-        git("commit", "-m", "volunteer launcher")
-        head, tree = git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
-        self.assertEqual(build_desktop._source_identity(repository, head), (head, tree))
-        launcher.write_text("print('different entry')\n", encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
-            build_desktop._source_identity(repository, head)
-        launcher.unlink()
-        with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
-            build_desktop._source_identity(repository, head)
+        for relative_path in ("desktop/launch_volunteer.py", "setup.py"):
+            with self.subTest(source=relative_path):
+                source = repository / relative_path
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("print('fixed release input')\n", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
+                    build_desktop._source_identity(repository, git("rev-parse", "HEAD"))
+                git("add", relative_path)
+                git("commit", "-m", "release input")
+                head, tree = git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
+                self.assertEqual(build_desktop._source_identity(repository, head), (head, tree))
+                source.write_text("print('different release input')\n", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
+                    build_desktop._source_identity(repository, head)
+                source.unlink()
+                with self.assertRaisesRegex(RuntimeError, "source inputs differ"):
+                    build_desktop._source_identity(repository, head)
+                git("checkout", "--", relative_path)
 
 
 if __name__ == "__main__":

@@ -103,10 +103,10 @@ def recovery_reason(recovery: dict[str, Any] | None) -> str:
         "active_owner": "Earlier sharing work is still running. New sharing will wait until it has stopped.",
         "cleanup_pending": "Cleanup of earlier sharing work is still pending. New sharing is unavailable until it finishes.",
         "legacy_state": "CommunityAI cannot safely recover sharing state saved by an older version. New sharing is unavailable.",
-        "unsupported_platform": "CommunityAI cannot safely recover this earlier sharing work in the current system session. New sharing is unavailable.",
+        "unsupported_platform": "CommunityAI cannot safely start or recover sharing in the current system session. New sharing is unavailable.",
     }.get(
         recovery.get("reason"),
-        "CommunityAI cannot verify that earlier sharing work has stopped. New sharing is unavailable.",
+        "CommunityAI cannot verify that sharing can start or recover safely in the current system session. New sharing is unavailable.",
     )
 
 

@@ -96,6 +96,8 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from drift.node.resource_recovery_config import normalize_worker_cgroup_root
+
     parser = argparse.ArgumentParser(
         prog="drift node",
         description="Run a persistent local OpenAI gateway for manifested DRIFT swarms",
@@ -126,6 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bearer key accepted by the OpenAI API (repeatable; otherwise a persistent client key is generated)",
     )
     parser.add_argument("--data_dir", type=Path, default=DEFAULT_NODE_DATA_DIR)
+    parser.add_argument(
+        "--worker-cgroup-root",
+        type=normalize_worker_cgroup_root,
+        default=None,
+        help="Explicit stable delegated Linux cgroup-v2 root for resource-managed desktop automatic workers",
+    )
     parser.add_argument(
         "--control_key_path",
         type=Path,
@@ -1856,7 +1864,10 @@ def _serve_once(args, parser) -> bool:
         placement_guards = {}
         route_outcomes = RouteOutcomeTracker()
         resource_manager = ResourceReservationManager(
-            args.data_dir / "resource-reservations", loading_protocol=True, recovery_protocol=True
+            args.data_dir / "resource-reservations",
+            loading_protocol=True,
+            recovery_protocol=True,
+            worker_cgroup_root=getattr(args, "worker_cgroup_root", None),
         )
         resource_manager.start_recovery()
         resource_claim_cache = {}

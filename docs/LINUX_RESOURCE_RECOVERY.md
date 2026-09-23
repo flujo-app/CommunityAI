@@ -1,0 +1,182 @@
+# Optional Linux same-boot recovery
+
+This component adds an explicitly selected Linux containment profile. It does
+not provision a delegated cgroup for the installed volunteer application. The
+existing desktop installer, launcher and sign-in path do not yet supply that
+capability. A source-level flag or passing native fixture is not a completed
+installed recovery workflow.
+
+## Explicit configuration
+
+`--worker-cgroup-root` selects one operator-provided absolute delegated root for
+the node's resource-managed desktop automatic generations. Manual and legacy
+workers without resource claims retain their existing process-group lifecycle;
+this option does not add durable cgroup recovery to those workers.
+An omitted option keeps the existing `linux_boot_v1` contract: managed worker
+recovery requires a verified different boot on the same host. Selecting the
+option is an explicit request for the stricter same-boot profile; unavailable
+native support, invalid delegation or changed identity must not silently select
+the boot-only implementation.
+
+The path is a capability input, not permission to claim arbitrary directories.
+Do not infer it from a UID, a familiar `/sys/fs/cgroup` layout, an environment
+variable or the first writable directory. The runtime must verify its physical
+cgroup-v2 mount, domain type, delegation, required access and exact identities.
+Neither `mkdir` in the host cgroup root nor recursive `chown` is a setup method.
+The root and retained generation directories must already have the lifetime
+required by the proof contract.
+
+The engineering volunteer node sidecar accepts the same explicit option through
+its strict argument allowlist and shared lexical validator. It preserves the
+fixed profile, private state, loopback port and Pause-on-start behavior. The
+option is unavailable in worker, acquisition, bootstrap and diagnostic modes.
+The ordinary GUI does not provision or automatically pass a delegation root.
+Installed GUI lifecycle ownership and admission remain integration requirements.
+
+## Native and build requirements
+
+The supported profile requires cgroup v2, a writable delegated domain subtree,
+atomic child creation into its generation cgroup, whole-subtree termination and
+population observation. The native provider uses `clone3(CLONE_INTO_CGROUP)` and
+pidfds. The required kernel operations and permissions must be probed; a kernel
+version string alone is insufficient. Seccomp or container policy may deny an
+operation that the kernel implements. A legacy or hybrid hierarchy, read-only
+mount, invalid domain, unavailable native extension or denied operation must
+remain unavailable rather than using spawn-then-migrate containment.
+
+The compiled native extension must be built for and included in the exact Linux
+runtime artifact. Frozen bundle collection, ABI compatibility and execution under
+the installed user's actual security policy need their own checks. Importing a
+module or running an uncontained Python fallback is not qualification of atomic
+creation. No package installation, kernel change or service provisioning follows
+from this document.
+
+The kernel's subtree `populated` state includes descendants; a parent PID exit
+or a list of currently observed PIDs does not replace that state. Existing
+descendants also do not move when their parent is migrated. These are reasons
+for requiring creation-time containment and whole-subtree proof, not reasons to
+accept an after-the-fact process move. See the [kernel cgroup-v2 interface](https://docs.kernel.org/admin-guide/cgroup-v2.html).
+
+## Recovery lifetime
+
+The configured delegation anchor must outlive node-owner and desktop restarts
+within the boot. Each reservation records the exact root and generation identity
+alongside the existing owner lease, boot/host identity, claim and loading binding.
+The previous owner must be excluded before terminating or proving any retained
+generation. An empty generation directory stays present through loading cleanup
+and durable journal removal; subsequent directory cleanup needs its own checked
+ownership and emptiness rules.
+
+Missing, renamed, replaced or remounted roots and generation directories are
+not same-boot absence proof. A new directory at the old pathname must not be
+adopted. A fresh transient scope per GUI or node start therefore does not meet
+this profile's lifetime contract. Verified native reboot evidence can establish
+that prior processes are gone; it does not authorize inventing boot identity for
+older records that never contained it.
+
+Cancellation, failed termination, unreadable population state and uncertain
+journal publication retain the claim. Loading readiness releases neither the
+claim nor its full lifetime SUM staging estimate. Recovery retains model cache
+artifacts and the cache-root inventory. New admission resamples resources.
+
+## Proposed installed anchor, not implemented provisioning
+
+The proposed packaging integration is one persistent ordinary-user anchor per
+fixed volunteer profile, outside the GUI/node stop and reload lifecycle. A
+packaged helper would own the delegated root, retain it while recovery evidence
+exists and launch the node in a separate control subgroup. Worker generations
+would occupy sibling subgroups. The GUI would keep its normal desktop-session
+environment and communicate with the helper through a checked per-user channel;
+the helper must not accept arbitrary executable paths, arguments or profile roots.
+
+Systemd delegates subtrees through service or scope units, not slices. Its
+`ControlGroup` property supplies the actual unit path; applications must not
+construct that path from naming conventions. The delegated boundary and any
+enabled controllers also need runtime verification. The `user.delegate` marker
+and `DelegateSubgroup=` are newer conveniences, not portable prerequisites for
+older supported distributions. See [systemd delegation](https://systemd.io/CGROUP_DELEGATION/).
+
+This sketch deliberately contains an unresolved executable placeholder. It is a
+design input for packaging, not an installable unit:
+
+```ini
+[Unit]
+Description=CommunityAI volunteer containment anchor
+
+[Service]
+Type=exec
+ExecStart=@PACKAGED_ANCHOR_EXECUTABLE@ --fixed-volunteer-profile
+Delegate=yes
+KillMode=control-group
+Restart=no
+```
+
+The real helper must establish its control subgroup before starting node or
+worker work, and discover its own verified mount/delegation. The node needs a
+checked reference to that exact root. An arbitrary environment string is not an
+authenticated grant, and writable cgroup files alone do not establish ownership.
+The helper must preserve the profile's native credential namespace, private
+cache/state separation and explicit Pause-on-start behavior. No sharing starts
+merely because the anchor exists.
+
+The anchor would start on demand without enabling login startup or background
+sharing as a side effect. It must not be stopped when a GUI closes or a node
+reloads. User-manager shutdown/logout is a separate lifetime boundary: a user
+service cannot promise preservation after its manager has exited. A deployment
+would need an explicitly approved persistent-user-manager arrangement, or a
+separately designed system-managed per-user anchor. The app must not silently
+enable lingering, edit `user@.service`, grant broad privileges or change the host's
+cgroup mount configuration. If the required lifetime is unavailable, the profile
+must say so and decline the affected admission.
+
+Stopping or replacing the anchor requires draining node work and durably
+committing all reservation cleanup first. If this cannot be proved, retain the
+evidence and refuse the operation. Killing an anchor and recreating its pathname
+does not repair recovery. Current installer process scans can stop observed
+application processes; they do not provide this new anchor/journal transaction.
+Upgrade, removal and reinstall need explicit integration and native tests before
+installed support is claimed.
+
+## Public status and operator behavior
+
+Recovery status remains a cached, fixed public object. Its API callback must not
+probe cgroupfs or wait for recovery locks. Checking and retryable cleanup may
+progress in the background while sharing is off; neither creates Start intent.
+The desktop keeps off/paused truth, settings and the applicable Pause action.
+
+An unprovable existing record keeps the existing legacy/unverifiable or
+unsupported-session explanation. It must not suggest deleting reservations,
+changing RAM limits or pressing Pause to repair a foreign owner. A genuinely
+unavailable explicit delegation profile needs a fixed admission explanation,
+distinct from insufficient capacity and ordinary loading. With no prior work,
+the explanation must not falsely claim that earlier sharing is still running.
+No private cgroup path, owner token or raw OS error belongs in public messages.
+
+## Acceptance still required
+
+Source-level manager/native tests do not qualify the connected Linux
+WorkerSupervisor and child CLI loading-ready, Pause and reload workflow. That
+end-to-end source workflow and the installed workflow both remain required.
+
+- Verify explicit selection, no-selection boot-only compatibility and absence
+  of fallback after any explicit-profile failure, through the real node builder
+  and public API. Check argument/profile forwarding and unchanged reload intent.
+- Exercise native creation, owner hard exit, descendants surviving their parent,
+  fresh-owner recovery and journal commit under the actual delegated hierarchy.
+  Test cancellation, permissions, namespace/mount changes, missing or replaced
+  roots/leaves, and crash points before and after durable cleanup.
+- Run installed GUI start/Pause/retry, node crash/restart, logout/login, upgrade,
+  removal/reinstall and real reboot/power-loss cases with the packaged native
+  extension, user manager, keyring and filesystem. Keep unrelated processes and
+  the ordinary CommunityAI profile unaffected.
+- Validate unavailable systemd/user bus, absent delegation, older kernels,
+  seccomp denial and containerized sessions. Existing Xvfb/container installer
+  evidence does not qualify a delegated host or physical Ubuntu desktop.
+- Confirm no status/Pause lock regression and no automatic sharing or silent
+  settings changes. Keep legacy reservations blocked without their own proven
+  migration mechanism.
+
+These checks do not establish a hard host-memory or bandwidth ceiling, measured
+model peak memory, accelerator execution or full-beta acceptance. The
+one-automatic-worker guard remains. Actual all-card operation, required hardware
+and installed-platform evidence remain separate release requirements.

@@ -57,7 +57,7 @@ with its model body replaced exercise the connected path without GPU/network
 execution. These checks are not evidence of real peak memory, model performance,
 multi-card inference or installed Linux behavior. The one-automatic-worker guard
 remains. [Durable recovery](RESOURCE_RECOVERY.md) now binds new generations to
-owner exclusion and native death proof; legacy and same-boot Linux recovery
+owner exclusion and native death proof; legacy and Linux boot-only recovery
 remain limited. Next work includes safe memory-accounting refinement,
 hard shared bandwidth, actual all-card operation and the complete beta acceptance
 requirements.

@@ -132,6 +132,55 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         self.assertEqual(ordinary.read_bytes(), b"ordinary identity")
         self.assertEqual(list(ordinary.parent.iterdir()), [ordinary])
 
+    def test_explicit_cgroup_root_is_forwarded_without_widening_the_fixed_node_profile(self):
+        root = "/delegated/communityai-volunteer"
+        for arguments in (["--worker-cgroup-root", root], ["--worker-cgroup-root=" + root]):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(self._run(arguments), 0)
+                forwarded, directory, environment = self.dispatches.pop()
+                self.assertEqual(forwarded[-2:], ["--worker-cgroup-root", root])
+                self.assertEqual(forwarded.count("--worker-cgroup-root"), 1)
+                self.assertIn("--pause_sharing_on_start", forwarded)
+                self.assertIn("--local_inference_cpu_only", forwarded)
+                self.assertEqual(forwarded[forwarded.index("--port") + 1], "18081")
+                self.assertEqual(directory, self.profile.data_dir)
+                self.assertEqual(environment[launcher.PROFILE_ROOT_ENV], str(self.profile.root))
+
+    def test_invalid_or_ambiguous_cgroup_root_is_rejected_before_profile_creation_or_dispatch(self):
+        values = (
+            "",
+            "relative/root",
+            "/delegated/../other",
+            "//delegated/root",
+            "/delegated//root",
+            "C:\\root",
+            "/root\\child",
+            "/root\x00child",
+        )
+        cases = [["--worker-cgroup-root", value] for value in values]
+        cases.extend(
+            (
+                ["--worker-cgroup-root"],
+                ["--worker-cgroup-root", "/one", "--worker-cgroup-root=/two"],
+                ["--worker-cgroup", "/one"],
+                ["--worker-cgroup-root=--config"],
+            )
+        )
+        for arguments in cases:
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                self._run(arguments)
+            self.assertEqual(self.dispatches, [])
+            self.assertFalse(self.profile.root.exists())
+
+    def test_cgroup_root_is_not_a_worker_bootstrap_or_diagnostic_option(self):
+        arguments = self._worker()
+        bootstrap = self.home / "catalog-bootstrap.json"
+        bootstrap.write_text("{}", encoding="utf-8")
+        for command in (arguments, ["bootstrap", str(bootstrap)], ["--self-test"]):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                self._run([*command, "--worker-cgroup-root", "/delegated/volunteer"])
+        self.assertEqual(self.dispatches, [])
+
     def test_identical_gui_arguments_are_accepted_and_duplicates_or_overrides_rejected(self):
         self._run([])
         canonical = self.dispatches.pop()[0][1:]
