@@ -15,7 +15,8 @@ from uuid import uuid4
 
 import pytest
 
-from drift.node import linux_cgroup_recovery as cgroups, resource_recovery as recovery
+from drift.node import linux_cgroup_recovery as cgroups
+from drift.node import resource_recovery as recovery
 
 DIGEST = "sha256:" + "a" * 64
 HOST = "sha256:" + "b" * 64
@@ -173,6 +174,41 @@ def test_malformed_population_never_means_empty(text):
 def test_subtree_population_is_exact_and_independent_of_freeze():
     assert cgroups._events("populated 1\nfrozen 1\n")
     assert not cgroups._events("populated 0\nfrozen 0\n")
+
+
+@pytest.mark.parametrize("populated", [False, True])
+def test_checked_shutdown_requires_the_complete_worker_tree_to_be_empty(monkeypatch, populated):
+    closed = []
+    monkeypatch.setattr(cgroups, "validate_cgroup_profile", lambda root: profile())
+    monkeypatch.setattr(cgroups, "_open_root", lambda root: 44)
+    monkeypatch.setattr(cgroups, "_observe_root", lambda root, descriptor: profile())
+    monkeypatch.setattr(cgroups, "_require_unfrozen", lambda descriptor: None)
+    monkeypatch.setattr(
+        cgroups,
+        "_read_control",
+        lambda descriptor, name: f"populated {int(populated)}\nfrozen 0\n",
+    )
+    monkeypatch.setattr(os, "close", closed.append)
+    if populated:
+        with pytest.raises(recovery.RecoverableStateError) as error:
+            cgroups.verify_cgroup_tree_empty(profile().root)
+        assert error.value.reason == "cleanup_pending"
+    else:
+        assert cgroups.verify_cgroup_tree_empty(profile().root) == profile()
+    assert closed == [44]
+
+
+def test_checked_shutdown_rejects_repopulation_during_final_revalidation(monkeypatch):
+    events = iter(("populated 0\nfrozen 0\n", "populated 1\nfrozen 0\n"))
+    monkeypatch.setattr(cgroups, "validate_cgroup_profile", lambda root: profile())
+    monkeypatch.setattr(cgroups, "_open_root", lambda root: 44)
+    monkeypatch.setattr(cgroups, "_observe_root", lambda root, descriptor: profile())
+    monkeypatch.setattr(cgroups, "_require_unfrozen", lambda descriptor: None)
+    monkeypatch.setattr(cgroups, "_read_control", lambda descriptor, name: next(events))
+    monkeypatch.setattr(os, "close", lambda descriptor: None)
+    with pytest.raises(recovery.RecoverableStateError) as error:
+        cgroups.verify_cgroup_tree_empty(profile().root)
+    assert error.value.reason == "cleanup_pending"
 
 
 @pytest.mark.parametrize("requested,frozen", [("1", "0"), ("0", "1"), ("1", "1"), ("0", None)])

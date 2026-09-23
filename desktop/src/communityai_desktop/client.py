@@ -868,6 +868,13 @@ class NodeClient:
         result["hardware"] = _normalize_hardware(result.get("hardware"))
         return result
 
+    def shutdown(self) -> Dict[str, Any]:
+        """Ask the authenticated local node to drain and exit gracefully."""
+        result = self._request("POST", "/control/v1/shutdown")
+        if result != {"status": "stopping"}:
+            raise NodeClientError("Local node returned an invalid shutdown acknowledgement")
+        return result
+
     def get_contribution_policy(self) -> Dict[str, Any]:
         return _normalize_policy_snapshot(
             self._request("GET", "/control/v1/contribution-policy"),

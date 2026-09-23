@@ -182,7 +182,7 @@ class LinuxCgroupProcessNativeTests(unittest.TestCase):
 
     def setUp(self):
         self.leaf = self.root / ("native-" + uuid4().hex)
-        self.leaf.mkdir()
+        self.leaf.mkdir(mode=0o700)
         self.group_fd = os.open(self.leaf, os.O_RDONLY | os.O_DIRECTORY)
         self.temporary = tempfile.TemporaryDirectory(prefix="communityai-native-")
         self.evidence = Path(self.temporary.name)
@@ -329,6 +329,21 @@ class LinuxCgroupProcessNativeTests(unittest.TestCase):
         self.assertEqual(process.wait(timeout=5), -signal.SIGTERM)
         self.assertEqual(process.poll(), -signal.SIGTERM)
         process.kill()  # Already-reaped identity is never replaced by a PID lookup.
+
+    def test_checked_shutdown_observes_the_complete_native_subtree(self):
+        from drift.node import linux_cgroup_recovery
+        from drift.node.resource_recovery import RecoverableStateError
+
+        self.assertEqual(linux_cgroup_recovery.verify_cgroup_tree_empty(str(self.leaf)).root, str(self.leaf))
+        process = self.spawn("import time;time.sleep(60)")
+        process.resume()
+        with self.assertRaises(RecoverableStateError) as error:
+            linux_cgroup_recovery.verify_cgroup_tree_empty(str(self.leaf))
+        self.assertEqual(error.exception.reason, "cleanup_pending")
+        process.terminate()
+        self.assertEqual(process.wait(timeout=5), -signal.SIGTERM)
+        _wait_for(lambda: not _populated(self.leaf))
+        self.assertEqual(linux_cgroup_recovery.verify_cgroup_tree_empty(str(self.leaf)).root, str(self.leaf))
 
     def test_failed_exec_is_observable_and_contained(self):
         process = self.backend.spawn(self.group_fd, [str(self.evidence / "absent-executable")], env=os.environ.copy())

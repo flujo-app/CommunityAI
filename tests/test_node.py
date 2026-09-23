@@ -151,6 +151,37 @@ def test_node_status_requires_auth_and_reports_lazy_model():
     assert manager.closed
 
 
+def test_node_shutdown_requires_control_auth_and_signals_the_server():
+    manager = ModelManager()
+    requested = []
+    app = create_node_app(
+        manager,
+        api_keys=["client-secret"],
+        control_keys=["control-secret"],
+        request_shutdown=lambda: requested.append(True),
+    )
+    control = {"Authorization": "Bearer control-secret"}
+    client_key = {"Authorization": "Bearer client-secret"}
+
+    with TestClient(app) as client:
+        assert client.post("/control/v1/shutdown").status_code == 401
+        assert client.post("/control/v1/shutdown", headers=client_key).status_code == 401
+        response = client.post("/control/v1/shutdown", headers=control)
+        assert response.status_code == 202
+        assert response.json() == {"status": "stopping"}
+        assert requested == [True]
+
+
+def test_node_shutdown_reports_when_no_graceful_transport_is_configured():
+    manager = ModelManager()
+    app = create_node_app(manager, api_keys=["client-secret"], control_keys=["control-secret"])
+    control = {"Authorization": "Bearer control-secret"}
+    with TestClient(app) as client:
+        response = client.post("/control/v1/shutdown", headers=control)
+        assert response.status_code == 501
+        assert response.json() == {"detail": "graceful node shutdown is not configured"}
+
+
 def test_contribution_policy_endpoint_requires_control_auth_and_strict_versioned_json():
     revision = "sha256:" + "a" * 64
     policy = {

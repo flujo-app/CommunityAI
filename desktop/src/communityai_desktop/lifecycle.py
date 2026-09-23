@@ -22,6 +22,11 @@ PACKAGED_NODE_DIRECTORY = "node"
 PACKAGED_NODE_NAME = "CommunityAI-Node"
 PACKAGED_BOOTSTRAP_DIRECTORY = "bootstrap"
 PACKAGED_BOOTSTRAP_NAME = "catalog-bootstrap.json"
+RESOURCE_DRAIN_EXIT_CODE = 75
+# Node policy accepts at most a 300-second cleanup period. Shutdown can spend
+# four periods on a launch transition, four on concurrent contained cleanup,
+# one on the final operation drain, plus bounded manager/resource teardown.
+GRACEFUL_NODE_SHUTDOWN_TIMEOUT = 3030.0
 
 
 class NodeLifecycleError(RuntimeError):
@@ -143,6 +148,8 @@ class NodeLifecycleSupervisor:
         self._clock = clock
         self._sleeper = sleeper
         self._process = None
+        self._control_secret: Optional[str] = None
+        self._unverified_shutdown: Optional[str] = None
         self._closed = False
         self._closing = threading.Event()
         self._failures = 0
@@ -301,23 +308,74 @@ class NodeLifecycleSupervisor:
 
     def _stop_owned_process(self) -> None:
         process = self._process
-        if process is None or process.poll() is not None:
-            self._process = None
+        if process is None:
+            if self._unverified_shutdown is not None:
+                raise NodeLifecycleError(self._unverified_shutdown)
             return
+        exit_code = process.poll()
+        if exit_code is not None:
+            self._process = None
+            self._require_clean_shutdown(exit_code)
+            return
+        graceful_requested = False
+        if self._control_secret is not None:
+            try:
+                self._make_client(self._control_secret).shutdown()
+                graceful_requested = True
+            except NodeClientError:
+                # A lost reply can still mean the authenticated request arrived.
+                # Poll once before falling back to a process-level stop.
+                exit_code = process.poll()
+        forced = False
         try:
-            process.terminate()
-            process.wait(timeout=10)
+            if exit_code is None and graceful_requested:
+                exit_code = process.wait(timeout=GRACEFUL_NODE_SHUTDOWN_TIMEOUT)
+            if exit_code is None:
+                process.terminate()
+                exit_code = process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             try:
+                forced = True
                 process.kill()
-                process.wait(timeout=5)
+                exit_code = process.wait(timeout=5)
             except (OSError, subprocess.TimeoutExpired):
-                pass
+                exit_code = None
         except OSError:
-            pass
+            exit_code = process.poll()
         if process.poll() is None:
             raise NodeLifecycleError("The owned node did not stop; application files must not be replaced")
         self._process = None
+        if forced:
+            self._require_clean_shutdown(exit_code, forced=True)
+        self._require_clean_shutdown(process.poll() if exit_code is None else exit_code)
+
+    def _require_clean_shutdown(self, exit_code: object, *, forced: bool = False) -> None:
+        if forced:
+            message = (
+                "The owned node was forcibly stopped without a verified cleanup acknowledgement; "
+                "application files must not be replaced"
+            )
+            self._unverified_shutdown = message
+            raise NodeLifecycleError(message)
+        if exit_code == 0:
+            self._unverified_shutdown = None
+            return
+        if exit_code == RESOURCE_DRAIN_EXIT_CODE:
+            message = "The owned node retained worker resources; application files must not be replaced"
+        else:
+            message = (
+                "The owned node exited without a verified cleanup acknowledgement; "
+                "application files must not be replaced"
+            )
+        self._unverified_shutdown = message
+        raise NodeLifecycleError(message)
+
+    def _observe_owned_exit(self, exit_code: object) -> None:
+        """Retain a non-clean result until a later exact node proves a clean drain."""
+        try:
+            self._require_clean_shutdown(exit_code)
+        except NodeLifecycleError:
+            pass
 
     def _wait_until_ready(self, client: NodeClient) -> None:
         deadline = self._clock() + self.startup_timeout
@@ -332,6 +390,7 @@ class NodeLifecycleSupervisor:
             exit_code = process.poll()
             if exit_code is not None:
                 self._process = None
+                self._observe_owned_exit(exit_code)
                 self._record_failure()
                 raise NodeLifecycleError(f"The local node stopped during startup (exit code {exit_code})")
             if self._port_probe(self.node_url, min(self.client_timeout, 0.25)):
@@ -361,10 +420,13 @@ class NodeLifecycleSupervisor:
             if self._closed or self._closing.is_set():
                 raise NodeLifecycleError("The local node supervisor is closed")
             provision = self.credential_store.provision(self.data_dir / "control-api.key")
+            self._control_secret = provision.secret
             client = self._make_client(provision.secret)
 
             port_open = self._port_probe(self.node_url, min(self.client_timeout, 0.25))
             if port_open:
+                if self._process is None and self._unverified_shutdown is not None:
+                    raise NodeLifecycleError(self._unverified_shutdown)
                 if not self._allow_external_node and self.owned_pid is None:
                     raise NodeLifecycleError(
                         "The test profile port is already in use. Close its previous node before restarting the test app."
@@ -385,6 +447,7 @@ class NodeLifecycleSupervisor:
                     self._wait_until_ready(client)
                     return client
                 self._process = None
+                self._observe_owned_exit(exit_code)
                 self._record_failure()
 
             self._start()

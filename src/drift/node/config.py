@@ -17,6 +17,7 @@ from drift.node.contribution_planner import MAX_AUTOMATIC_PLACEMENT_BLOCKS, MAX_
 
 NODE_CONFIG_SCHEMA_VERSION = 1
 MAX_ROUTE_DEMAND_AUTHORITY_ROOTS = 32
+MAX_CONTRIBUTION_PAUSE_TIMEOUT_SECONDS = 300.0
 _ROUTE_DEMAND_KEY_ID_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -411,6 +412,11 @@ class ContributionPolicyConfig:
             raise NodeConfigError(f"{field}.processing_scope must be node or per_device")
         if sharing_enabled and max_disk_bytes is None:
             raise NodeConfigError(f"{field}.max_disk_space is required when sharing_enabled is true")
+        pause_timeout = _require_positive_number(source.get("pause_timeout", 10), f"{field}.pause_timeout")
+        if pause_timeout > MAX_CONTRIBUTION_PAUSE_TIMEOUT_SECONDS:
+            raise NodeConfigError(
+                f"{field}.pause_timeout must be at most {MAX_CONTRIBUTION_PAUSE_TIMEOUT_SECONDS:g} seconds"
+            )
         return cls(
             sharing_enabled=sharing_enabled,
             allowed_models=allowed,
@@ -435,7 +441,7 @@ class ContributionPolicyConfig:
                 if source.get("max_power_watts") is None
                 else _require_positive_number(source["max_power_watts"], f"{field}.max_power_watts")
             ),
-            pause_timeout=_require_positive_number(source.get("pause_timeout", 10), f"{field}.pause_timeout"),
+            pause_timeout=pause_timeout,
             schedule=(
                 None if source.get("schedule") is None else ContributionScheduleConfig.from_dict(source["schedule"])
             ),

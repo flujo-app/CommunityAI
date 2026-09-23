@@ -153,6 +153,36 @@ def test_restarted_or_competing_manager_honors_existing_journal_and_cannot_relea
     assert records(admission) == []
 
 
+def test_checked_close_refuses_a_foreign_durable_reservation(admission):
+    token = admission.manager.acquire(admission.launch())
+    restarted = ResourceReservationManager(admission.directory, snapshot_provider=admission.snapshot, clock=lambda: 100)
+    assert not restarted.close()
+    admission.manager.release(token)
+    assert restarted.close()
+
+
+def test_checked_close_zero_timeout_still_attempts_an_uncontended_journal(admission):
+    assert admission.manager.close(timeout=0)
+
+
+def test_checked_close_verifies_an_explicit_worker_subtree_after_empty_journal(admission, monkeypatch):
+    from drift.node import linux_cgroup_recovery
+
+    root = "/sys/fs/cgroup/communityai/workers"
+    manager = ResourceReservationManager(
+        admission.directory,
+        snapshot_provider=admission.snapshot,
+        clock=lambda: 100,
+        loading_protocol=True,
+        recovery_protocol=True,
+        worker_cgroup_root=root,
+    )
+    checked = []
+    monkeypatch.setattr(linux_cgroup_recovery, "verify_cgroup_tree_empty", checked.append)
+    assert manager.close()
+    assert checked == [root]
+
+
 def test_successful_release_does_not_claim_cache_files_were_deleted(admission):
     token = admission.manager.acquire(admission.launch(disk_limit=11))
     admission.manager.release(token)

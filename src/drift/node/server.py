@@ -293,6 +293,7 @@ def create_node_app(
     route_outcome_observer: Optional[Callable[..., None]] = None,
     hardware_status: Optional[Callable[[dict], dict]] = None,
     request_restart: Optional[Callable[[], None]] = None,
+    request_shutdown: Optional[Callable[[], None]] = None,
     resource_recovery_status: Optional[Callable[[], dict]] = None,
 ):
     """Compose the OpenAI API and authenticated local control surface."""
@@ -376,6 +377,16 @@ def create_node_app(
             ],
             "contribution": contribution,
         }
+
+    @app.post("/control/v1/shutdown", status_code=202)
+    async def shutdown_node(request: Request):
+        check_control_auth(request)
+        if request_shutdown is None:
+            raise HTTPException(status_code=501, detail="graceful node shutdown is not configured")
+        request_shutdown()
+        # Uvicorn drains this authenticated request before leaving server.run().
+        # Process status 0 is emitted only after the outer resource drain.
+        return JSONResponse({"status": "stopping"}, status_code=202)
 
     def require_policy_store() -> ContributionPolicyStore:
         if contribution_policy_store is None:

@@ -105,10 +105,13 @@ def test_standard_startup_retains_existing_auto_start_intent():
         supervisor.shutdown()
 
 
-@pytest.mark.parametrize("reload_requested", [False, True])
+@pytest.mark.parametrize(
+    "exit_request",
+    [None, "restart", "shutdown", "restart_then_shutdown", "shutdown_then_restart"],
+)
 @pytest.mark.parametrize("drain_complete", [False, True])
 def test_node_applies_profile_guards_before_services_and_registering_local_loaders(
-    tmp_path, monkeypatch, reload_requested, drain_complete
+    tmp_path, monkeypatch, exit_request, drain_complete
 ):
     path = tmp_path / "config.json"
     path.write_text(
@@ -158,18 +161,42 @@ def test_node_applies_profile_guards_before_services_and_registering_local_loade
     monkeypatch.setattr("drift.node.hardware_status.HardwareStatus", Mock())
     create_app = Mock()
     server = Mock(should_exit=False)
-    if reload_requested:
-        server.run.side_effect = lambda: create_app.call_args.kwargs["request_restart"]()
+    if exit_request is not None:
+
+        def request_exit():
+            if exit_request in ("restart", "restart_then_shutdown"):
+                create_app.call_args.kwargs["request_restart"]()
+            if exit_request in ("shutdown", "restart_then_shutdown", "shutdown_then_restart"):
+                create_app.call_args.kwargs["request_shutdown"]()
+            if exit_request == "shutdown_then_restart":
+                create_app.call_args.kwargs["request_restart"]()
+
+        server.run.side_effect = request_exit
     monkeypatch.setattr("drift.node.server.create_node_app", create_app)
     monkeypatch.setattr("uvicorn.Server", Mock(return_value=server))
-    assert run_node._serve_once(args, parser) is (reload_requested and drain_complete)
+    if drain_complete:
+        assert run_node._serve_once(args, parser) is (exit_request == "restart")
+    else:
+        with pytest.raises(run_node.NodeResourceDrainError):
+            run_node._serve_once(args, parser)
     resource_manager = create_app.call_args.kwargs["resource_recovery_status"].__self__
     assert resource_manager._closed is drain_complete
     # The mocked incomplete-drain path has no actual work; retire its fixture
     # owner explicitly instead of leaving the intentionally retained runner.
     assert resource_manager.close()
-    assert server.should_exit is reload_requested
+    assert server.should_exit is (exit_request is not None)
     manager.shutdown.assert_called_once_with()
     assert observations == ["cpu-loader-config", "paused-before-placement"]
     forbidden_spawn.assert_not_called()
     assert NodeConfig.load(path).models[0].local_device == "cuda:0"
+
+
+def test_main_maps_incomplete_drain_to_a_stable_nonzero_acknowledgement(monkeypatch):
+    parser = Mock()
+    parser.parse_args.return_value = Mock()
+    monkeypatch.setattr(run_node, "build_parser", lambda: parser)
+    monkeypatch.setattr(run_node, "_validate_args", lambda *args: None)
+    monkeypatch.setattr(run_node, "_serve_once", Mock(side_effect=run_node.NodeResourceDrainError()))
+    with pytest.raises(SystemExit) as error:
+        run_node.main()
+    assert error.value.code == run_node.RESOURCE_DRAIN_EXIT_CODE

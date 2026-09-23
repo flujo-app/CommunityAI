@@ -4,8 +4,16 @@ import hashlib
 import time
 from pathlib import Path
 
+from communityai_desktop.lifecycle import GRACEFUL_NODE_SHUTDOWN_TIMEOUT
 
-def prepare_update(*, timeout=45.0, instance_name=None, application_name="CommunityAI", instance_data_dir=None):
+
+def prepare_update(
+    *,
+    timeout=GRACEFUL_NODE_SHUTDOWN_TIMEOUT + 20.0,
+    instance_name=None,
+    application_name="CommunityAI",
+    instance_data_dir=None,
+):
     from PySide6.QtCore import QCoreApplication, QLockFile, QStandardPaths
     from PySide6.QtNetwork import QLocalSocket
 

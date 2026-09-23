@@ -210,31 +210,53 @@ class ResourceReservationManager:
             self._recovery_state("unverifiable_state")
 
     def close(self, timeout=2.0):
-        """Stop recovery; release owner exclusion only after all work is drained.
+        """Stop recovery and acknowledge only a globally empty durable state.
 
-        False retains the lease and OS handles. The caller must not reload a new
-        manager in this process while callbacks still own uncertain generations.
+        The journal is read while holding its native OS lock, after new work has
+        been excluded. An explicit Linux profile also proves the complete
+        worker subtree empty. False retains the lease and OS handles; callers
+        must treat a lost reply or process exit as pending, never as success.
         """
         self._closed = True
         self._recovery_stop.set()
         self._recovery_wake.set()
-        deadline = time.monotonic() + max(0.0, timeout)
+        # Even timeout=0 retains one bounded nonblocking-style lock attempt.
+        deadline = time.monotonic() + max(0.05, timeout)
         runner = self._recovery_thread
         if runner is not None and runner is not threading.current_thread():
             runner.join(max(0.0, deadline - time.monotonic()))
             if runner.is_alive():
                 return False
-        if not self._mutex.acquire(timeout=max(0.0, deadline - time.monotonic())):
-            return False
-        try:
-            if self._owned or self._pending_release or self._uncertain or self._recovery_containments:
+
+        def deadline_reached():
+            return time.monotonic() >= deadline
+
+        while True:
+            try:
+                with self._locked(deadline_reached):
+                    if (
+                        self._read()
+                        or self._owned
+                        or self._pending_release
+                        or self._uncertain
+                        or self._recovery_containments
+                    ):
+                        return False
+                    if self._worker_cgroup_root is not None:
+                        from drift.node.linux_cgroup_recovery import verify_cgroup_tree_empty
+
+                        verify_cgroup_tree_empty(self._worker_cgroup_root)
+                    if self._owner_lease is not None:
+                        self._owner_lease.close()
+                        self._owner_lease = None
+                    return True
+            except _JournalBusy:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                time.sleep(min(0.05, remaining))
+            except Exception:
                 return False
-            if self._owner_lease is not None:
-                self._owner_lease.close()
-                self._owner_lease = None
-            return True
-        finally:
-            self._mutex.release()
 
     @staticmethod
     def _recovery_digest(entry, kind):

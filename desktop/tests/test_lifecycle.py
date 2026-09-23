@@ -44,6 +44,9 @@ class FakeClient:
             raise self.error
         return {"api_version": 1}
 
+    def shutdown(self):
+        raise lifecycle.NodeClientError("graceful shutdown is unavailable in this test double")
+
 
 class FakeProcess:
     next_pid = 100
@@ -54,6 +57,7 @@ class FakeProcess:
         self.returncode = None
         self.terminated = False
         self.killed = False
+        self.wait_timeouts = []
         self.pid = FakeProcess.next_pid
         FakeProcess.next_pid += 1
 
@@ -65,6 +69,7 @@ class FakeProcess:
         self.returncode = 0
 
     def wait(self, timeout):
+        self.wait_timeouts.append(timeout)
         return self.returncode
 
     def kill(self):
@@ -94,6 +99,80 @@ class PortSequence:
 
 
 class NodeLifecycleTests(unittest.TestCase):
+    def test_resource_drain_exit_is_not_a_clean_shutdown_acknowledgement(self):
+        with TemporaryDirectory() as directory:
+            supervisor = self._supervisor(directory, FakeStore())
+            process = FakeProcess(("node",))
+            process.returncode = lifecycle.RESOURCE_DRAIN_EXIT_CODE
+            supervisor._process = process
+            with self.assertRaisesRegex(NodeLifecycleError, "retained worker resources"):
+                supervisor.close()
+            self.assertIsNone(supervisor._process)
+            with self.assertRaisesRegex(NodeLifecycleError, "retained worker resources"):
+                supervisor.close()
+
+    def test_forced_kill_is_not_a_clean_shutdown_acknowledgement(self):
+        with TemporaryDirectory() as directory:
+            supervisor = self._supervisor(directory, FakeStore())
+            process = mock.Mock()
+            process.poll.side_effect = [None, 0]
+            process.wait.side_effect = [lifecycle.subprocess.TimeoutExpired("owned node", 10), 0]
+            supervisor._process = process
+            with self.assertRaisesRegex(NodeLifecycleError, "forcibly stopped without a verified cleanup"):
+                supervisor.close()
+            process.kill.assert_called_once()
+            self.assertIsNone(supervisor._process)
+            with self.assertRaisesRegex(NodeLifecycleError, "forcibly stopped without a verified cleanup"):
+                supervisor.close()
+
+    def test_observed_resource_drain_failure_remains_sticky_until_close(self):
+        with TemporaryDirectory() as directory:
+            clock = FakeClock()
+            supervisor = self._supervisor(
+                directory,
+                FakeStore(),
+                port_probe=PortSequence(False),
+                clock=clock,
+                sleeper=clock.sleep,
+            )
+            process = FakeProcess(("node",))
+            process.returncode = lifecycle.RESOURCE_DRAIN_EXIT_CODE
+            supervisor._process = process
+            with self.assertRaisesRegex(NodeLifecycleError, "retry shortly"):
+                supervisor.ensure_client()
+            with self.assertRaisesRegex(NodeLifecycleError, "retained worker resources"):
+                supervisor.close()
+
+    def test_authenticated_shutdown_allows_windows_safe_status_zero_acknowledgement(self):
+        processes = []
+        shutdowns = []
+
+        class GracefulClient(FakeClient):
+            def shutdown(self):
+                shutdowns.append(True)
+                processes[-1].returncode = 0
+                return {"status": "stopping"}
+
+        def process_factory(command, **kwargs):
+            process = FakeProcess(command, **kwargs)
+            processes.append(process)
+            return process
+
+        with TemporaryDirectory() as directory:
+            supervisor = self._supervisor(
+                directory,
+                FakeStore(),
+                process_factory=process_factory,
+                client_factory=GracefulClient,
+                port_probe=PortSequence(False, True),
+            )
+            supervisor.ensure_client()
+            supervisor.close()
+
+        self.assertEqual(shutdowns, [True])
+        self.assertFalse(processes[0].terminated)
+        self.assertEqual(processes[0].wait_timeouts, [lifecycle.GRACEFUL_NODE_SHUTDOWN_TIMEOUT])
+
     def test_failed_owned_shutdown_prevents_installation_acknowledgement(self):
         with TemporaryDirectory() as directory:
             supervisor = self._supervisor(directory, FakeStore())

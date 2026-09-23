@@ -33,6 +33,22 @@ option is unavailable in worker, acquisition, bootstrap and diagnostic modes.
 The ordinary GUI does not provision or automatically pass a delegation root.
 Installed GUI lifecycle ownership and admission remain integration requirements.
 
+Node shutdown now has a fail-closed acknowledgement boundary. The node returns
+status 0 only after the supervisor resource operations drain, the durable
+reservation journal is observed globally empty under its OS lock and, when this
+profile is selected, the complete worker cgroup subtree reports unpopulated.
+Retained cleanup exits with status 75. The desktop treats that status, any other
+nonzero exit and a forced kill as an unverified stop and refuses an update-safe
+acknowledgement. It first requests graceful shutdown over the authenticated
+loopback control API so Windows can run the drain instead of relying on
+`Popen.terminate()`. A rejected result remains sticky until a later exact owned
+node completes a status-0 global drain. The supported contribution cleanup
+timeout is at most 300 seconds; desktop and installer share a 3,030-second node
+shutdown allowance plus a small installer margin. Shutdown is sticky and wins
+over catalog/configuration reload callbacks. This process-bound contract is
+suitable input to the future anchor; it does not itself establish the persistent
+anchor or its node leaf.
+
 ## Native and build requirements
 
 The supported profile requires cgroup v2, a writable delegated domain subtree,

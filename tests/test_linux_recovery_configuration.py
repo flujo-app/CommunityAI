@@ -9,13 +9,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from communityai_desktop.client import _normalize_contribution_status
-from communityai_desktop.controller import DesktopController
-from communityai_desktop.presentation import sharing_summary
 from fastapi.testclient import TestClient
 from test_loading_resource_reservations import loading_admission
 from test_resource_reservations import admission, metadata_manifest, records
 
+from communityai_desktop.client import _normalize_contribution_status
+from communityai_desktop.controller import DesktopController
+from communityai_desktop.presentation import sharing_summary
 from drift.cli import run_node
 from drift.node import linux_cgroup_recovery, resource_recovery, worker_recovery_containment
 from drift.node.model_manager import ModelManager
@@ -158,7 +158,13 @@ def test_explicit_unavailable_profile_blocks_empty_journal_metadata_and_workers_
             assert "token-must-not-appear" not in json.dumps(document) + detail
     finally:
         model_manager.shutdown()
-        assert resources.close()
+        # Checked shutdown cannot acknowledge an explicitly selected cgroup
+        # root whose whole subtree cannot be verified. No worker was admitted,
+        # but a retained process from an earlier invocation is still unsafe to
+        # rule out from the empty journal alone.
+        monkeypatch.setattr(linux_cgroup_recovery, "validate_cgroup_profile", unavailable)
+        assert not resources.close()
+        assert checks == [root] * 5
 
 
 def test_unset_profile_keeps_recorded_linux_boot_contract(loading_admission, monkeypatch):

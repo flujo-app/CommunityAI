@@ -1302,6 +1302,13 @@ def test_contribution_schedule_rejects_ambiguous_or_invalid_values(schedule, mes
         )
 
 
+def test_contribution_policy_bounds_the_end_to_end_shutdown_timeout():
+    accepted = ContributionPolicyConfig.from_dict({"sharing_enabled": False, "pause_timeout": 300})
+    assert accepted.pause_timeout == 300
+    with pytest.raises(NodeConfigError, match="at most 300 seconds"):
+        ContributionPolicyConfig.from_dict({"sharing_enabled": False, "pause_timeout": 300.1})
+
+
 def test_worker_supervisor_enforces_resolved_model_policy_and_disk_ceiling(monkeypatch, tmp_path):
     manifest = ModelManifest.load("tests/data/model_manifest_v1_vector.json")
     manifest_path = tmp_path / "manifest.json"

@@ -20,6 +20,17 @@ from communityai_desktop.controller import DesktopController
 
 
 class NodeClientTests(unittest.TestCase):
+    def test_shutdown_requires_the_exact_stopping_acknowledgement(self):
+        client = NodeClient("http://127.0.0.1:8080", "control-secret")
+        calls = []
+        client._request = lambda method, path: calls.append((method, path)) or {"status": "stopping"}
+        self.assertEqual(client.shutdown(), {"status": "stopping"})
+        self.assertEqual(calls, [("POST", "/control/v1/shutdown")])
+
+        client._request = lambda method, path: {"status": "running"}
+        with self.assertRaisesRegex(NodeClientError, "invalid shutdown acknowledgement"):
+            client.shutdown()
+
     def test_normalizes_loopback_openai_url(self):
         self.assertEqual(normalize_loopback_url("http://127.0.0.1:8080/v1/"), "http://127.0.0.1:8080")
         self.assertEqual(normalize_loopback_url("https://[::1]:9443/v1"), "https://[::1]:9443")

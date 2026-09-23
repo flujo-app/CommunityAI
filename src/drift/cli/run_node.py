@@ -8,6 +8,7 @@ import math
 import re
 import secrets
 import sys
+import threading
 import time
 from contextlib import nullcontext
 from dataclasses import replace
@@ -93,6 +94,11 @@ logger = get_logger(__name__)
 
 DEFAULT_NODE_DATA_DIR = Path.home() / ".drift" / "node"
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+RESOURCE_DRAIN_EXIT_CODE = 75
+
+
+class NodeResourceDrainError(RuntimeError):
+    """The node stopped serving but retained resource-cleanup authority."""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1836,8 +1842,12 @@ def main() -> None:
     args = parser.parse_args()
     _validate_args(parser, args)
 
-    while _serve_once(args, parser):
-        logger.info("Activating a saved node configuration after all active generations finished")
+    try:
+        while _serve_once(args, parser):
+            logger.info("Activating a saved node configuration after all active generations finished")
+    except NodeResourceDrainError:
+        logger.error("Node shutdown is pending verified worker-resource cleanup")
+        raise SystemExit(RESOURCE_DRAIN_EXIT_CODE) from None
 
 
 def _serve_once(args, parser) -> bool:
@@ -1962,10 +1972,21 @@ def _serve_once(args, parser) -> bool:
 
     hardware_status = HardwareStatus(config)
     restart_requested = False
+    shutdown_requested = False
+    lifecycle_lock = threading.Lock()
 
     def restart():
         nonlocal restart_requested
-        restart_requested = True
+        with lifecycle_lock:
+            if not shutdown_requested:
+                restart_requested = True
+        server.should_exit = True
+
+    def shutdown():
+        nonlocal restart_requested, shutdown_requested
+        with lifecycle_lock:
+            shutdown_requested = True
+            restart_requested = False
         server.should_exit = True
 
     app = create_node_app(
@@ -1983,6 +2004,7 @@ def _serve_once(args, parser) -> bool:
         hardware_status=hardware_status.snapshot,
         resource_recovery_status=resource_manager.recovery_snapshot,
         request_restart=restart,
+        request_shutdown=shutdown,
     )
     model_names = ", ".join(repr(descriptor.model_id) for descriptor in descriptors)
     logger.info(
@@ -1997,6 +2019,7 @@ def _serve_once(args, parser) -> bool:
     if config.catalog_path is not None and args.config is not None:
         refresh_service = CatalogRefreshService(config, args.config, args.data_dir, manager, restart)
         refresh_service.start()
+    shutdown_acknowledged = False
     try:
         server.run()
     finally:
@@ -2009,10 +2032,15 @@ def _serve_once(args, parser) -> bool:
         try:
             manager.shutdown()
         finally:
-            if not drained or not resource_manager.close():
-                restart_requested = False
+            shutdown_acknowledged = drained and resource_manager.close()
+            if not shutdown_acknowledged:
+                with lifecycle_lock:
+                    restart_requested = False
                 logger.warning("Node resources remain retained for verified recovery at the next start")
-    return restart_requested
+    if not shutdown_acknowledged:
+        raise NodeResourceDrainError()
+    with lifecycle_lock:
+        return restart_requested and not shutdown_requested
 
 
 if __name__ == "__main__":

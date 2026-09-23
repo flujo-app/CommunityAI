@@ -342,6 +342,33 @@ def validate_cgroup_profile(rootpath, *, require_unfrozen=True):
         _close_descriptors(descriptor)
 
 
+def verify_cgroup_tree_empty(rootpath):
+    """Prove that an exact configured worker root has no live descendants.
+
+    The root ``cgroup.events`` population bit covers the complete descendant
+    tree. This is deliberately a checked shutdown primitive, not pruning
+    authority: empty generation directories and their recorded identities stay
+    untouched until a separate durable cleanup contract exists.
+    """
+    descriptor = None
+    try:
+        profile = validate_cgroup_profile(rootpath)
+        descriptor = _open_root(profile.root)
+        _require(_observe_root(profile.root, descriptor) == profile)
+        _require_unfrozen(descriptor)
+        _require(not _events(_read_control(descriptor, "cgroup.events")), "cleanup_pending")
+        _require(_observe_root(profile.root, descriptor) == profile)
+        _require_unfrozen(descriptor)
+        _require(not _events(_read_control(descriptor, "cgroup.events")), "cleanup_pending")
+        return profile
+    except RecoverableStateError:
+        raise
+    except Exception:
+        raise RecoverableStateError() from None
+    finally:
+        _close_descriptors(descriptor)
+
+
 class LinuxCgroupContainment:
     def __init__(self, identity, owner, reservation_id, root_fd, directory_fd, key):
         _require(key is _KEY)
