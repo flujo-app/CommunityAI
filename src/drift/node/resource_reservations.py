@@ -94,6 +94,53 @@ def _unique_object(pairs):
     return result
 
 
+class _HeldRecoveryGuard:
+    """One checked admission-lock ownership interval for replacement wiring."""
+
+    def __init__(self, manager, token, cancelled):
+        self._manager = manager
+        self._token = token
+        self._cancelled = cancelled
+
+    def _validate(self, manager=None):
+        owner = self._manager
+        if manager is not None and manager is not owner:
+            raise ResourceReservationError(_ERROR)
+        if self._token is None or owner._recovery_guard_token is not self._token:
+            raise ResourceReservationError(_ERROR)
+        owner._check_cancelled(self._cancelled)
+        if owner._closed or owner._uncertain:
+            raise ResourceReservationError(_ERROR)
+        owner._validate_storage()
+
+    def validate(self, manager):
+        """Prove this unexpired guard belongs to the supplied exact manager."""
+        self._validate(manager)
+
+    def recover(self):
+        """Recover under the already-held admission flock; never reacquire it."""
+        self._validate()
+        owner = self._manager
+        owner._recover_locked(owner._read(), self._cancelled)
+        self._validate()
+        return True
+
+    def require_empty(self):
+        """Re-prove the durable journal and worker tree empty without relocking."""
+        self._validate()
+        self._manager._require_empty_locked()
+        self._validate()
+
+    def require_empty_journal(self):
+        """Prove only durable/in-memory reservation state empty, never containment."""
+        self._validate()
+        self._manager._require_empty_journal_locked()
+        self._validate()
+
+    def _expire(self):
+        self._token = None
+
+
 class ResourceReservationManager:
     """One journal/OS lock for every managed worker in one node data directory.
 
@@ -151,6 +198,7 @@ class ResourceReservationManager:
         self._recovery_stop = threading.Event()
         self._recovery_wake = threading.Event()
         self._recovery_thread = None
+        self._recovery_guard_token = None
         self._closed = False
 
     @property
@@ -256,13 +304,47 @@ class ResourceReservationManager:
         node admission and complete node-tree death for the whole transaction.
         """
         with self._locked(cancelled):
-            if self._read() or self._owned or self._pending_release or self._uncertain or self._recovery_containments:
-                raise ResourceReservationError(_ERROR)
-            if self._worker_cgroup_root is not None:
-                from drift.node.linux_cgroup_recovery import verify_cgroup_tree_empty
-
-                verify_cgroup_tree_empty(self._worker_cgroup_root)
+            self._require_empty_locked()
             yield
+
+    @contextmanager
+    def recovery_guard(self, *, cancelled=None):
+        """Hold one admission flock for checked recovery and empty proof.
+
+        The yielded guard expires at context exit. Manager APIs that would enter
+        ``_locked`` again are rejected while it is active, so a same-process
+        caller cannot accidentally open and flock the same inode a second time.
+        """
+        if not self._recovery_protocol:
+            raise ResourceReservationError(_ERROR)
+        with self._locked(cancelled):
+            if self._closed or self._uncertain or self._recovery_guard_token is not None:
+                raise ResourceReservationError(_ERROR)
+            token = object()
+            guard = _HeldRecoveryGuard(self, token, cancelled)
+            self._recovery_guard_token = token
+            try:
+                guard.validate(self)
+                yield guard
+                guard.validate(self)
+            finally:
+                try:
+                    if self._recovery_guard_token is token:
+                        self._validate_storage()
+                finally:
+                    self._recovery_guard_token = None
+                    guard._expire()
+
+    def _require_empty_locked(self):
+        self._require_empty_journal_locked()
+        if self._worker_cgroup_root is not None:
+            from drift.node.linux_cgroup_recovery import verify_cgroup_tree_empty
+
+            verify_cgroup_tree_empty(self._worker_cgroup_root)
+
+    def _require_empty_journal_locked(self):
+        if self._read() or self._owned or self._pending_release or self._uncertain or self._recovery_containments:
+            raise ResourceReservationError(_ERROR)
 
     @staticmethod
     def _recovery_digest(entry, kind):
@@ -430,6 +512,8 @@ class ResourceReservationManager:
     def _locked(self, cancelled=None):
         # A stable lock inode is never removed or replaced during journal writes.
         with self._local_lock(cancelled):
+            if self._recovery_guard_token is not None:
+                raise ResourceReservationError(_ERROR)
             if self._storage_binding is None:
                 self._directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             else:

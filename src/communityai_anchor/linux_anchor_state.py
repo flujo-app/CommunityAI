@@ -10,8 +10,10 @@ Same-UID code is cooperative, not sandboxed. Lifecycle composition is separate.
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import re
+import stat
 import threading
 from functools import wraps
 
@@ -20,6 +22,8 @@ from communityai_anchor.resource_recovery import RecoverableStateError, Recovery
 
 _PHASES = {"checking", "idle", "starting", "running", "draining", "blocked"}
 _NAMES = {"anchor-state.lock", "node-lifetime.lock"}
+_QUIESCENCE_RECORDS = {"bootstrap.json", "resources.json", "endpoint.json"}
+_MAX_STATE_V2_BYTES = 8 * 1024
 
 
 def _hex(value):
@@ -28,6 +32,16 @@ def _hex(value):
 
 def _integer(value, minimum=0):
     return type(value) is int and minimum <= value < 2**63
+
+
+def _sha256(value):
+    # Catalog record digests cover the persisted canonical JSON payload,
+    # including its terminating newline.
+    return hashlib.sha256(private._encode(value) + b"\n").hexdigest()
+
+
+def _digest(value):
+    return type(value) is str and re.fullmatch("[0-9a-f]{64}", value) is not None
 
 
 def _identity(value):
@@ -111,21 +125,20 @@ def node_lease(profile_root, *, create=True):
 def validate_state(value):
     """Strict bounded codec. A valid intent is never evidence of cleanup."""
     try:
-        anchor._require(
-            type(value) is dict
-            and set(value)
-            == {
-                "schema_version",
-                "profile",
-                "binding",
-                "revision",
-                "phase",
-                "generation",
-                "request_id",
-                "operation",
-            }
-        )
-        anchor._require(type(value["schema_version"]) is int and value["schema_version"] == 1)
+        common = {
+            "schema_version",
+            "profile",
+            "binding",
+            "revision",
+            "phase",
+            "generation",
+            "request_id",
+            "operation",
+        }
+        anchor._require(type(value) is dict and type(value.get("schema_version")) is int)
+        schema_version = value["schema_version"]
+        anchor._require(schema_version in {1, 2})
+        anchor._require(set(value) == (common if schema_version == 1 else common | {"quiescence"}))
         anchor._require(value["profile"] == anchor.PROFILE and _integer(value["revision"]))
         anchor._require(type(value["phase"]) is str and value["phase"] in _PHASES)
         anchor._require(
@@ -183,7 +196,36 @@ def validate_state(value):
         anchor._require(value["phase"] not in {"starting", "running"} or generation is not None)
         anchor._require(value["phase"] != "running" or generation["pid"] is not None)
         anchor._require(value["phase"] != "checking" or (generation is None and value["request_id"] is None))
-        private._encode(value)  # Includes the same on-disk size and JSON bounds.
+        if schema_version == 2:
+            quiescence = value["quiescence"]
+            if quiescence is not None:
+                anchor._require(value["phase"] == "idle")
+                anchor._require(
+                    type(quiescence) is dict
+                    and set(quiescence) == {"epoch", "binding", "generation", "records"}
+                    and _hex(quiescence["epoch"])
+                    and _digest(quiescence["binding"])
+                    and _digest(quiescence["generation"])
+                    and type(quiescence["records"]) is dict
+                    and set(quiescence["records"]) == _QUIESCENCE_RECORDS
+                )
+                anchor._require(quiescence["binding"] == _sha256(binding))
+                anchor._require(quiescence["generation"] == _sha256(generation))
+                for record in quiescence["records"].values():
+                    anchor._require(type(record) is dict and set(record) == {"fingerprint", "digest"})
+                    fingerprint = record["fingerprint"]
+                    anchor._require(
+                        type(fingerprint) is list
+                        and len(fingerprint) == 7
+                        and all(type(item) is int and 0 <= item < 2**64 for item in fingerprint)
+                        and fingerprint[1] > 0
+                        and stat.S_ISREG(fingerprint[2])
+                        and fingerprint[6] == 1
+                        and _digest(record["digest"])
+                    )
+            anchor._require(len(private._encode(value)) + 1 <= _MAX_STATE_V2_BYTES)
+        else:
+            private._encode(value)  # Preserve the original v1 on-disk bound.
         return value
     except Exception:
         raise RecoverableStateError() from None
@@ -321,7 +363,43 @@ class AnchorState:
         # Invalid/stale requests have no effects and do not poison the journal.
         anchor._require(_integer(expected_revision) and expected_revision == self._value["revision"])
         anchor._require(set(changes) <= {"phase", "generation", "request_id", "operation"})
-        value = validate_state({**self._value, **copy.deepcopy(changes), "revision": expected_revision + 1})
+        value = {**self._value, **copy.deepcopy(changes), "revision": expected_revision + 1}
+        if value["schema_version"] == 2:
+            # Ordinary lifecycle intent can never carry a stale cleanup proof.
+            # In particular Start clears it durably before any cgroup mkdir.
+            value["quiescence"] = None
+        return self._commit(validate_state(value))
+
+    @_serialized
+    def write_quiescent(self, expected_revision, proof, *, request_id=None, operation=None):
+        """Publish one caller-proved idle seal without exposing a generic proof write."""
+        self.validate()
+        anchor._require(_integer(expected_revision) and expected_revision == self._value["revision"])
+        anchor._require(
+            (request_id is None and operation is None)
+            or (_hex(request_id) and type(operation) is str and operation == "drain")
+        )
+        if request_id is None:
+            request_id = self._value["request_id"]
+            operation = self._value["operation"]
+        proposed = validate_state(
+            {
+                **self._value,
+                "schema_version": 2,
+                "revision": expected_revision + 1,
+                "phase": "idle",
+                "request_id": request_id,
+                "operation": operation,
+                "quiescence": copy.deepcopy(proof),
+            }
+        )
+        # The dedicated transition changes only revision, idle/metadata and the
+        # proof. Binding and the complete generation remain byte-canonical.
+        anchor._require(proposed["binding"] == self._value["binding"])
+        anchor._require(proposed["generation"] == self._value["generation"])
+        return self._commit(proposed)
+
+    def _commit(self, value):
         try:
             private._replace(self.path, value)
             _sync_directory(self.path.parent, self.directory_identity)

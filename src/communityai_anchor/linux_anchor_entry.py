@@ -111,6 +111,7 @@ def _catalog_entry(root, binding, generation):
 
 def _validate_catalog_entry(proof):
     root, fingerprint, value = proof
+    anchor._require(not os.path.lexists(root / "anchor" / "recovery.json"))
     path = root / "anchor" / "bootstrap.json"
     anchor._require(private._fingerprint(private._stat(path)) == fingerprint)
     anchor._require(private._read(path) == value)
@@ -131,9 +132,12 @@ def _validate_catalog_entry(proof):
 
 
 def _read(path):
+    anchor._require(not os.path.lexists(path.parent / "recovery.json"))
     for attempt in range(4):
         try:
-            return state.validate_state(private._read(path))
+            value = state.validate_state(private._read(path))
+            anchor._require(not os.path.lexists(path.parent / "recovery.json"))
+            return value
         except private._FileReplaced:
             if attempt == 3:
                 raise RecoverableStateError() from None
@@ -209,6 +213,7 @@ def reservation_storage_binding(directory, worker_root):
         return None
     try:
         pid, root, workers, binding, observed, _generation = _ADMITTED
+        anchor._require(not os.path.lexists(root / "anchor" / "recovery.json"))
         anchor._require(os.getpid() == pid and worker_root == workers)
         anchor._require(Path(directory).absolute() == root / "node" / "resource-reservations")
         anchor._require(read_resources(root, binding) == observed)

@@ -273,28 +273,24 @@ def _packaged_bootstrap_plan(profile, *, initialize=False):
     return build_bootstrap_plan(bundle, profile, initialize=initialize)
 
 
-def _anchor_controller(layout, *, initialize=False):
-    """Trusted fixed launcher wiring, invoked only after live service proof."""
+def _anchor_components(*, initialize=False):
+    """Resolve fixed read-only inputs; provisioning stays behind live service proof."""
     from communityai_desktop.profiles import VolunteerProfile
 
-    from communityai_anchor.linux_anchor_credentials import CredentialExecutor, CredentialIdentity
+    from communityai_anchor.linux_anchor_credentials import CredentialExecutor
     from drift.node import linux_anchor as anchor
-    from drift.node.linux_anchor_bootstrap import AnchorBootstrap
-    from drift.node.linux_anchor_node import AnchorNode
     from drift.node.linux_anchor_state import _sync_directory
 
     anchor._require(sys.platform.startswith("linux") and getattr(sys, "frozen", False) is True)
     executable = _safe_path(sys.executable, base=Path.cwd(), required=True)
     anchor._require(executable.name == "CommunityAI-Node")
-    layout.validate()
     profile = VolunteerProfile.for_current_user()
     # Fixed sidecar data only: no environment, GUI or wire-selected bundle.
     plan = _packaged_bootstrap_plan(profile, initialize=initialize)
     credential_executor = CredentialExecutor.for_profile(profile)
-    preparation = AnchorBootstrap(
-        plan, profile, CredentialIdentity(profile.credential_service, profile.credential_account)
-    )
-    if initialize:
+
+    def initialize_profile():
+        anchor._require(initialize is True)
         # This exact provisioning mode is explicit first-install authority,
         # never selected automatically from missing marker/state. Existing
         # profiles need a separate checked migration, not deletion or adoption.
@@ -328,6 +324,22 @@ def _anchor_controller(layout, *, initialize=False):
             str(profile.data_dir),
         )
 
+    return profile, plan, launch, credential_executor, initialize_profile
+
+
+def _anchor_controller(layout, *, initialize=False):
+    """Compatibility factory for already-proven initial-layout callers."""
+    from communityai_anchor.linux_anchor_credentials import CredentialIdentity
+    from drift.node.linux_anchor_bootstrap import AnchorBootstrap
+    from drift.node.linux_anchor_node import AnchorNode
+
+    layout.validate()
+    profile, plan, launch, credential_executor, initialize_profile = _anchor_components(initialize=initialize)
+    if initialize:
+        initialize_profile()
+    preparation = AnchorBootstrap(
+        plan, profile, CredentialIdentity(profile.credential_service, profile.credential_account)
+    )
     return AnchorNode(
         layout,
         profile.root,
@@ -380,10 +392,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments[:1] in (["anchor"], ["anchor-initialize"]):
         if len(arguments) != 1:
             raise ValueError("the volunteer anchor accepts no options")
-        from drift.node.linux_anchor import serve_anchor
+        from drift.node.linux_anchor_replacement import serve_fixed_anchor
 
-        return serve_anchor(
-            controller_factory=lambda layout: _anchor_controller(layout, initialize=arguments[0] == "anchor-initialize")
+        initialize = arguments[0] == "anchor-initialize"
+        profile, plan, launch, executor, initialize_profile = _anchor_components(initialize=initialize)
+        return serve_fixed_anchor(
+            profile,
+            plan,
+            launch,
+            executor,
+            initialize=initialize,
+            initialize_profile=initialize_profile,
         )
     profile = VolunteerProfile.for_current_user()
     diagnostics = (

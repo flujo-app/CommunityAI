@@ -160,20 +160,24 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         self.assertEqual(list(ordinary.parent.iterdir()), [ordinary])
 
     def test_anchor_is_an_exact_no_argument_dispatch_without_node_or_profile_mutation(self):
-        module = types.ModuleType("drift.node.linux_anchor")
+        module = types.ModuleType("drift.node.linux_anchor_replacement")
         calls = []
-        module.serve_anchor = lambda **kwargs: calls.append(kwargs["controller_factory"]) or 0
-        with patch.dict(sys.modules, {"drift.node.linux_anchor": module}):
+        components = (self.profile, object(), object(), object(), object())
+        module.serve_fixed_anchor = lambda *args, **kwargs: calls.append((args, kwargs)) or 0
+        with patch.dict(sys.modules, {"drift.node.linux_anchor_replacement": module}), patch.object(
+            launcher, "_anchor_components", return_value=components
+        ) as factory:
             for mode in ("anchor", "anchor-initialize"):
                 self.assertEqual(launcher.main([mode]), 0)
                 for extra in (["--profile", "other"], ["--worker-cgroup-root", "/other"], ["--help"], ["shell"]):
                     with self.assertRaises(ValueError):
                         launcher.main([mode, *extra])
-        with patch.object(launcher, "_anchor_controller", return_value="owner") as factory:
-            self.assertEqual(calls[0]("layout"), "owner")
-            self.assertEqual(calls[1]("layout"), "owner")
         self.assertEqual(factory.call_args_list[0].kwargs, {"initialize": False})
         self.assertEqual(factory.call_args_list[1].kwargs, {"initialize": True})
+        self.assertEqual(factory.call_count, 2)
+        for index, (args, kwargs) in enumerate(calls):
+            self.assertEqual(args, components[:4])
+            self.assertEqual(kwargs, {"initialize": bool(index), "initialize_profile": components[4]})
         self.assertFalse(self.profile.root.exists())
         self.assertEqual(self.dispatches, [])
 

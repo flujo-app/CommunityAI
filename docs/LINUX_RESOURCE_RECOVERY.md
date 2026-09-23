@@ -736,15 +736,15 @@ The service holds an `AnchorChannelLease` before constructing its layout and
 controller. An internal startup factory can retain that exact lease through
 future recovery and socket creation; an `AnchorChannel` borrowing it does not
 release it. Default standalone channels still own and close their own lease.
-No path removes a stale socket or adopts a retained cgroup. `AnchorState` can
+The preparation APIs alone remove no stale socket or adopt a retained cgroup. `AnchorState` can
 take ownership of an already-held exact `PrivateLease`, validating the original
 profile/path/inode and the complete current binding without reopening the lock.
 This opens existing state only and does not add an arbitrary rebinding writer.
 Transferred newly created leases are refused even when the journal is missing;
 journal creation requires the explicit first-install initialization path.
 
-These are prerequisites, **not a reachable replacement-service recovery flow**.
-The current fixed launcher still refuses changed service/layout bindings. A
+These ownership APIs were prerequisites, **not themselves a recovery flow**.
+The checked launcher transaction described below now uses them. A
 valid schema-2 record or a free lock is not proof of cleanup or recovery authority.
 Same-boot retirement, hard-crash recovery and earlier partial-enrollment resume
 must be implemented as durable transactions before installed restart is claimed.
@@ -757,7 +757,7 @@ also reaches cgroup pruning. Thus an empty old hierarchy cannot be assumed to
 survive an ordinary service stop. This is source evidence, not a measurement of
 the volunteer's installed systemd version or a host qualification result.
 
-Required next integration: acquire channel/state/lifetime/admission/catalog/config
+The replacement integration must acquire channel/state/lifetime/admission/catalog/config
 exclusion in that order; prove the exact old service dead; durably pin source and
 prepared target records before any replacement; contain all old node/worker
 descendants; preserve uncertain credential effects without SET; publish bootstrap
@@ -767,3 +767,103 @@ file identities, including a lost rename acknowledgement. A clean retirement
 receipt is needed for a manager-recreated root; unsealed missing/replaced roots
 must not be treated as empty. Earlier enrollment needs an intent recorded before
 its first effects. New-boot recovery and physical outage tests remain required.
+
+## Checked same-boot fixed-service replacement
+
+The exact frozen `anchor` dispatch now enters `serve_fixed_anchor`. Explicit
+`anchor-initialize` still creates only a new fixed profile; normal startup never
+selects initialization because an object is missing. Existing profiles without
+the new durable endpoint provenance remain refused, not silently migrated.
+First-enrollment interruption before that provenance exists, a new boot, ordinary
+installed systemd/Secret Service behavior and physical power loss remain required
+implementation/qualification work. This source change is not a release-ready beta.
+
+Recovery continuously holds channel, state and node-lifetime leases, then one
+reservation admission guard and the original catalog/config writer locks. It
+proves the recorded service identity dead and the current service/unit/root
+identity live. An unreadable process is not a dead process. A new PID or free
+lock alone does not permit adoption. No credential GET, SET, rotation or key
+generation is part of this transaction. Bootstrap rebinding preserves the
+immutable catalog discriminator, complete plan/output progress, pending
+credential digest and attempt evidence.
+
+`recovery.json` is a private, separately bounded 128KiB transaction. Each of the
+three product records and the semantic context remain bounded to 8KiB. The
+ledger pins exact source bytes, hashes, owners and full file fingerprints, then
+records prepared bytes and temporary inodes before replacing any product file.
+Publication is bootstrap, resources, then state last. Replay accepts only the
+recorded source or target inode/bytes. The one rename acknowledgement boundary
+allows the kernel's ctime change, records the resulting full fingerprint and
+thereafter requires it exactly. Successor attempts snapshot the exact visible
+mixed publication state, not a rollback; bounded retired temporaries are removed
+only by their recorded evidence. An uncertain/third value is retained and blocks.
+The active ledger denies node, helper, catalog and reservation admission.
+
+For retained layouts, all four original cgroup profiles must match. The new
+MainPID starts alone at the root, the control group is empty, and unknown sibling
+names are refused. Both exact node and worker trees receive independent stop
+attempts; reservation recovery and fresh empty proofs remain necessary. Only the
+new service moves to the pinned control group, after durable migration intent.
+Recovery also arms an independent, read-only containment guard from exact state
+before interpreting endpoint or recovery metadata. If a later stage fails, that
+guard attempts both state-bound trees without depending on the damaged journal,
+endpoint, resource record or cancellation. Every attempt rechecks original state,
+leases, boot/service/storage and retained-root identity. A missing/replaced state
+or hierarchy grants no pathname kill. This failure path never repairs files,
+adopts a new root, consumes evidence or reports a clean acknowledgement.
+
+For a manager-recreated root, exact clean-retirement or idle-quiescence evidence
+is required. The retirement seal is created under final empty-tree/journal proof and all lifecycle/writer
+locks, **before** the endpoint is removed. It records exact product-file evidence,
+the bound endpoint source and its deterministic retired target. Recovery accepts
+only that source, the exact clearing transition, or the retired endpoint. Start
+refuses a retained seal; only checked recovery may consume it. Each fixed child
+name is reserved in the ledger before mkdir, and its exact profile is recorded
+before the next effect. Only that pending fixed name under the exact excluded
+root can be reconciled after a lost creation acknowledgement. Unknown topology,
+population, identities, missing seals or unsealed disappeared roots are not
+treated as clean.
+
+State schema2 embeds a bounded quiescence proof only in idle state: a fresh epoch,
+the exact binding and full generation digest, and full fingerprints/digests of
+bootstrap, resources and the bound endpoint. Recovery publishes the first two
+records, binds the non-listening endpoint, then publishes state last with that
+proof. A durable, exact-source no-spawn marker in the active recovery ledger
+bridges partial publication and dead-attempt retargeting; the ledger is consumed
+before any controller activation. A disappeared attempt root is recreated only
+after its prior service is proved dead and the new root has no unknown children.
+No journal remains after activation; subsequent manager-pruned recovery needs
+the actual current idle proof or the final retirement receipt.
+
+An adopted clean controller revalidates its proof without a redundant state
+rewrite. Repeated idle Drain records the request ID durably in one sealed idle
+write; idle shutdown revalidates without an unsealed intermediate state. Start
+atomically clears the proof with its new generation intent before any mkdir,
+credential helper or node birth. Normal cleanup publishes idle plus a fresh
+proof atomically under all empty-tree and writer guards. Generic state writes
+cannot preserve or assign a proof. Schema1 states remain readable but never
+gain manager-prune authority merely from an idle phase; older schema1-only
+binaries refuse schema2 rather than silently resetting or downgrading state.
+
+`endpoint.json` supplies durable fixed-socket provenance. The service records a
+pending bind before binding, persists the observed socket inode without listening,
+and binds the record to the immutable service/layout/storage digest. Clearing
+intent precedes unlink; only that intent permits a later absent socket to count
+as a completed effect. A changed socket inode or missing bound socket without
+clearing intent blocks. No wire request supplies a path or cleanup capability.
+After state publication the controller adopts the exact held state/lifetime/
+manager bundle while inactive. Verified endpoint binding precedes ledger
+consumption, short-lock release, one-shot owner activation and listening.
+
+A failed controller close retains all authority and the socket pathname until
+this fixed service process exits; it must not be reused in-process. Successful
+inactive cleanup abandons only the listening FD, preserving the pathname for
+the next checked owner. Normal retirement clears through the durable endpoint
+transition. Cancellation after an effect leaves durable recovery evidence,
+never a false clean acknowledgement or an inferred absence of a credential SET.
+
+Real-filesystem and private-cgroup process fixtures exercise these contracts;
+their systemd properties and credential backend are isolated test fixtures.
+They do not replace ordinary-user installation, real Secret Service, Ubuntu20.04,
+logout/reboot, actual all-card hard-budget/model execution, confidential hardware,
+independent review or commercial acceptance evidence. All remain full-beta gates.

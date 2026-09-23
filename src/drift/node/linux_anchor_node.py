@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from drift.node import linux_anchor as anchor, linux_anchor_resources as resources, linux_cgroup_process as native
 from drift.node.linux_anchor_entry import NODE_TOKEN_ENV
-from drift.node.linux_anchor_state import AnchorState, node_lease
+from drift.node.linux_anchor_state import AnchorState, PrivateLease, node_lease
 from drift.node.linux_node_identity import make_identity
 from drift.node.resource_recovery import RecoverableStateError
 from drift.node.resource_reservations import ResourceReservationManager
@@ -25,40 +25,27 @@ GRACEFUL_NODE_DRAIN_SECONDS = 3030.0
 
 class AnchorNode:
     def __init__(
-        self, layout, profile_root, launch_factory, *, initialize=False, bootstrap=None, credential_executor=None
+        self,
+        layout,
+        profile_root,
+        launch_factory,
+        *,
+        initialize=False,
+        bootstrap=None,
+        credential_executor=None,
+        retirement_hook=None,
+        quiescence_hook=None,
+        activate=True,
     ):
-        self.layout, self.root, self.launch_factory = layout, Path(profile_root), launch_factory
-        self._bootstrap = bootstrap
-        self._credential_executor = credential_executor
-        self._credential_process = None
-        if credential_executor is not None:
-            from communityai_anchor.linux_anchor_credentials import protect_parent_memory
-
-            # The parent generates/serializes the pending key. Protect it
-            # before any owner thread or credential operation starts.
-            protect_parent_memory()
-        self._lock = threading.Lock()
-        self._close_lock = threading.Lock()
-        self._wake, self._cancel, self.finished = threading.Event(), threading.Event(), threading.Event()
-        self._stop = self._closed = self._fatal = False
-        self._adopted = False
-        self._cleanup_attempted = False
-        self._pending = self._accepted = None
-        self._active = ("checking", 0, None)
-        self._resources = None
-        self._process = self._reader = self._manager = self._lease = self._state = None
-        self._leaf_fd = self._leaf = None
-        self._cached = dict(
-            revision=0,
-            phase="checking",
-            generation=None,
-            request_id=None,
-            operation=None,
-            drain_complete=False,
-            api_ready=False,
-            api_identity=None,
-            maintenance=False,
-            pending_request_id=None,
+        anchor._require(type(initialize) is bool and type(activate) is bool)
+        self._initialize_fields(
+            layout,
+            profile_root,
+            launch_factory,
+            bootstrap=bootstrap,
+            credential_executor=credential_executor,
+            retirement_hook=retirement_hook,
+            quiescence_hook=quiescence_hook,
         )
         try:
             layout.validate()
@@ -89,14 +76,162 @@ class AnchorNode:
             elif self._bootstrap is not None:
                 self._bootstrap.bind(self._state, self._ownership)
             self._publish(blocked=True)
-            self._runner = threading.Thread(target=self._run, name="anchor-node-owner", daemon=True)
-            self._runner.start()
+            if activate:
+                self.activate_owner()
         except BaseException:
             if self._state is not None:
                 self._state.close()
             if self._lease is not None:
                 self._lease.close()
             raise
+
+    def _initialize_fields(
+        self,
+        layout,
+        profile_root,
+        launch_factory,
+        *,
+        bootstrap,
+        credential_executor,
+        retirement_hook,
+        quiescence_hook,
+    ):
+        anchor._require(
+            (retirement_hook is None or callable(retirement_hook))
+            and (quiescence_hook is None or callable(quiescence_hook))
+        )
+        self.layout, self.root, self.launch_factory = layout, Path(profile_root), launch_factory
+        self._bootstrap = bootstrap
+        self._credential_executor = credential_executor
+        self._retirement_hook = retirement_hook
+        self._quiescence_hook = quiescence_hook
+        self._credential_process = None
+        if credential_executor is not None:
+            from communityai_anchor.linux_anchor_credentials import protect_parent_memory
+
+            # The parent generates/serializes the pending key. Protect it
+            # before any owner thread or credential operation starts.
+            protect_parent_memory()
+        self._lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._wake, self._cancel, self.finished = threading.Event(), threading.Event(), threading.Event()
+        self._stop = self._closed = self._fatal = False
+        self._adopted = False
+        self._cleanup_attempted = False
+        self._pending = self._accepted = None
+        self._active = ("checking", 0, None)
+        self._resources = None
+        self._process = self._reader = self._manager = self._lease = self._state = None
+        self._leaf_fd = self._leaf = None
+        self._runner = None
+        self._activation_attempted = False
+        self._clean_adopt = False
+        self._cached = dict(
+            revision=0,
+            phase="checking",
+            generation=None,
+            request_id=None,
+            operation=None,
+            drain_complete=False,
+            api_ready=False,
+            api_identity=None,
+            maintenance=False,
+            pending_request_id=None,
+        )
+
+    @classmethod
+    def adopt_inactive(
+        cls,
+        layout,
+        profile_root,
+        launch_factory,
+        *,
+        state,
+        node_lifetime_lease,
+        reservation_manager,
+        reservation_guard,
+        resources_record,
+        bootstrap=None,
+        credential_executor=None,
+        retirement_hook=None,
+        quiescence_hook=None,
+    ):
+        """Adopt one complete existing-profile authority bundle without starting work.
+
+        Ownership transfers only when this method returns successfully. The caller
+        must keep the admission guard active for the complete call and release its
+        short-lived locks before invoking :meth:`activate_owner`.
+        """
+        anchor._require(type(state) is AnchorState)
+        anchor._require(type(node_lifetime_lease) is PrivateLease and node_lifetime_lease.created is False)
+        anchor._require(type(reservation_manager) is ResourceReservationManager)
+        anchor._require(type(resources_record) is tuple and len(resources_record) == 2)
+        reservation_guard.validate(reservation_manager)
+        reservation_guard.require_empty()
+        layout.validate()
+        anchor._require(layout.service.pid == os.getpid() and state.layout is layout)
+        state.validate()
+        anchor._require(type(state.lease) is PrivateLease and state.lease.created is False)
+        node_lifetime_lease.validate()
+        root = Path(profile_root)
+        anchor._require(state.lease.root == root and node_lifetime_lease.root == root)
+        anchor._require(state.lease.path == root / "anchor-state.lock")
+        anchor._require(node_lifetime_lease.path == root / "node-lifetime.lock")
+        anchor._require(resources.read_resources(root, state.binding) == resources_record)
+        identities = resources_record[0]["identities"]
+        expected_storage = dict(directory=tuple(identities["journal"]), lease=tuple(identities["admission"]))
+        anchor._require(reservation_manager._directory == root / "node" / "resource-reservations")
+        anchor._require(reservation_manager._storage_binding == expected_storage)
+        anchor._require(reservation_manager._loading_protocol and reservation_manager._recovery_protocol)
+        anchor._require(reservation_manager._worker_cgroup_root == layout.profiles[3].root)
+
+        owner = cls.__new__(cls)
+        owner._initialize_fields(
+            layout,
+            root,
+            launch_factory,
+            bootstrap=bootstrap,
+            credential_executor=credential_executor,
+            retirement_hook=retirement_hook,
+            quiescence_hook=quiescence_hook,
+        )
+        owner._state = state
+        owner._lease = node_lifetime_lease
+        owner._manager = reservation_manager
+        owner._resources = resources_record
+        owner._ownership()
+        if bootstrap is not None:
+            bootstrap.bind(state, owner._ownership)
+        if quiescence_hook is not None:
+            value = state.value
+            anchor._require(
+                value["schema_version"] == 2 and value["phase"] == "idle" and value["quiescence"] is not None
+            )
+            owner._adopt_empty_record()
+            observed = quiescence_hook(owner, validate_only=True)
+            anchor._require(observed == state.value)
+            owner._clean_adopt = True
+        owner._publish(blocked=True)
+        reservation_guard.require_empty()
+        reservation_guard.validate(reservation_manager)
+        return owner
+
+    def activate_owner(self):
+        """Start the asynchronous owner exactly once after short guards are released."""
+        with self._close_lock:
+            anchor._require(
+                not self._closed and not self._stop and not self._activation_attempted and self._runner is None
+            )
+            self._activation_attempted = True
+            self._integrity()
+            runner = threading.Thread(target=self._run, name="anchor-node-owner", daemon=True)
+            self._runner = runner
+            try:
+                runner.start()
+            except BaseException:
+                self._fatal = True
+                self._runner = None
+                raise
 
     def snapshot(self):
         # Point-in-time completion of the last drain, never a continuing proof
@@ -111,13 +246,18 @@ class AnchorNode:
     def _publish(self, *, blocked=False):
         value = self._state.value
         generation = value["generation"]
+        sealed = self._quiescence_hook is None or (value["schema_version"] == 2 and value["quiescence"] is not None)
         result = dict(
             revision=value["revision"],
             phase="blocked" if blocked else value["phase"],
             generation=None if generation is None else {key: generation[key] for key in ("id", "pid", "start_ticks")},
             request_id=value["request_id"],
             operation=value["operation"],
-            drain_complete=value["phase"] == "idle" and not blocked and not self._fatal and not self._state.poisoned,
+            drain_complete=value["phase"] == "idle"
+            and sealed
+            and not blocked
+            and not self._fatal
+            and not self._state.poisoned,
             api_ready=False,
             api_identity=make_identity(value["binding"], generation),
             maintenance=False,
@@ -195,6 +335,34 @@ class AnchorNode:
             self._validate_leaf()
         anchor.cg.verify_cgroup_tree_empty(self.layout.profiles[2].root)
 
+    def _has_quiescent_idle(self):
+        if self._quiescence_hook is None:
+            return False
+        value = self._state.value
+        return (
+            value["schema_version"] == 2
+            and value["phase"] == "idle"
+            and value["quiescence"] is not None
+            and self._process is None
+            and self._reader is None
+            and self._credential_process is None
+        )
+
+    def _quiescent_idle(self, *, validate_only=False, request_id=None):
+        """Revalidate or atomically refresh idle under a fresh empty guard."""
+        anchor._require(self._quiescence_hook is not None and type(validate_only) is bool)
+        deadline = time.monotonic() + 10
+        with self._manager.drain_guard(cancelled=lambda: time.monotonic() >= deadline):
+            self._clean_proof()
+            if validate_only:
+                anchor._require(self._has_quiescent_idle() and request_id is None)
+                observed = self._quiescence_hook(self, validate_only=True)
+            else:
+                observed = self._quiescence_hook(self, request_id=request_id)
+            anchor._require(observed == self._state.value and self._has_quiescent_idle())
+            self._clean_proof()
+            self._publish()
+
     def _validate_leaf(self):
         try:
             self.layout.validate()
@@ -247,6 +415,10 @@ class AnchorNode:
             with self._lock:
                 if self._stop or (self._pending is not None and self._pending[0] == "drain"):
                     return
+            # A clean-retirement seal belongs to a completed prior lifecycle.
+            # Only checked replacement recovery may consume it; Start never
+            # deletes or resets that authority to make new work possible.
+            anchor._require(not os.path.lexists(self.root / "anchor" / "retirement.json"))
             # Retain proved-empty directories. The fresh journal proof remains
             # locked through durable Start intent, never inferred from cache.
             self._release_leaf()
@@ -351,7 +523,7 @@ class AnchorNode:
         finally:
             os.close(descriptor)
 
-    def _cleanup(self, *, graceful=False, final_phase="idle"):
+    def _cleanup(self, *, graceful=False, final_phase="idle", request_id=None):
         self._cleanup_attempted = True
 
         def attempt(action):
@@ -407,16 +579,36 @@ class AnchorNode:
                 process.stdout.close()
             self._process = self._reader = None
             self._credential_process = None
-            self._write(phase=final_phase)
+            if final_phase == "idle" and self._quiescence_hook is not None:
+                observed = self._quiescence_hook(self, request_id=request_id)
+                anchor._require(observed == self._state.value and self._has_quiescent_idle())
+                self._clean_proof()
+                self._publish()
+            else:
+                self._write(phase=final_phase)
         # Keep the empty journal recovery owner and exact leaf alive. Their
         # lifetime ownership ends only after final checked shutdown.
 
     def _run(self):
         try:
             try:
-                self._cleanup()
-            except Exception:
-                self._publish(blocked=True)
+                if self._clean_adopt:
+                    try:
+                        self._quiescent_idle(validate_only=True)
+                    except Exception:
+                        # A damaged/stale seal never skips independent containment
+                        # cleanup merely because adoption began from recorded idle.
+                        try:
+                            self._cleanup()
+                        except Exception:
+                            self._publish(blocked=True)
+                    finally:
+                        self._clean_adopt = False
+                else:
+                    try:
+                        self._cleanup()
+                    except Exception:
+                        self._publish(blocked=True)
             finally:
                 with self._lock:
                     self._active = None
@@ -441,15 +633,23 @@ class AnchorNode:
                         self._active = ("checking", 0, None)
                 try:
                     if stopping:
-                        self._cleanup(graceful=True)
+                        if self._has_quiescent_idle():
+                            self._quiescent_idle(validate_only=True)
+                        else:
+                            self._cleanup(graceful=True)
                         return
                     if command is not None:
                         operation, _revision, request_id = command
                         if operation == "start":
                             self._start(request_id)
+                        elif self._has_quiescent_idle():
+                            # Repeated idle Drain is one fresh proof plus one
+                            # atomic metadata+seal write, never an unsealed
+                            # draining transition.
+                            self._quiescent_idle(request_id=request_id)
                         else:
                             self._write(request_id=request_id, operation="drain")
-                            self._cleanup(graceful=True)
+                            self._cleanup(graceful=True, request_id=request_id)
                     else:
                         self._cleanup()
                 except Exception:
@@ -457,7 +657,11 @@ class AnchorNode:
                         failed_start = command is not None and command[0] == "start" and not self._cancel.is_set()
                         if self._bootstrap is not None and self._bootstrap.retryable and not self._bootstrap.poisoned:
                             failed_start = False
-                        self._cleanup(final_phase="blocked" if failed_start else "idle")
+                        drain_request = command[2] if command is not None and command[0] == "drain" else None
+                        self._cleanup(
+                            final_phase="blocked" if failed_start else "idle",
+                            request_id=drain_request,
+                        )
                     except Exception:
                         self._publish(blocked=True)
                     if stopping:
@@ -476,6 +680,28 @@ class AnchorNode:
             self._cancel.set()
             self._wake.set()
 
+    def abort_inactive(self, timeout=2.0):
+        """Release an owner that never started; no retirement receipt is created."""
+        with self._close_lock:
+            return self._abort_inactive(timeout)
+
+    def _abort_inactive(self, timeout):
+        if self._closed:
+            return True
+        anchor._require(self._runner is None)
+        self.request_shutdown()
+        try:
+            anchor._require(self._manager.close(timeout))
+            self._release_leaf()
+            self._state.close()
+            self._lease.close()
+            self._closed = True
+            self.finished.set()
+            return True
+        except Exception:
+            self._publish(blocked=True)
+            return False
+
     def close(self, timeout=0):
         with self._close_lock:
             return self._close(timeout)
@@ -483,6 +709,8 @@ class AnchorNode:
     def _close(self, timeout):
         if self._closed:
             return True
+        if self._runner is None:
+            return self._abort_inactive(timeout)
         self.request_shutdown()
         self._runner.join(timeout)
         if self._runner.is_alive():
@@ -495,6 +723,9 @@ class AnchorNode:
             # release, not merely through the earlier cached idle publication.
             with self._manager.drain_guard():
                 self._clean_proof()
+                if self._retirement_hook is not None:
+                    self._retirement_hook(self)
+                    self._clean_proof()
                 self._release_leaf()
                 self._state.close()
                 self._lease.close()

@@ -253,9 +253,32 @@ def _layout_digest(profiles):
 
 
 def _subgroups(descriptor):
-    names = os.listdir(descriptor)
-    _require(len(names) <= 1024)
-    return {name for name in names if stat.S_ISDIR(os.stat(name, dir_fd=descriptor, follow_symlinks=False).st_mode)}
+    pinned_identity = cg._identity(descriptor)
+    scan_descriptor = os.open(
+        ".",
+        os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        dir_fd=descriptor,
+    )
+    try:
+        _require(cg._identity(scan_descriptor) == pinned_identity)
+        names = os.listdir(scan_descriptor)
+        _require(len(names) <= 1024)
+        subgroups = {
+            name
+            for name in names
+            if stat.S_ISDIR(
+                os.stat(
+                    name,
+                    dir_fd=scan_descriptor,
+                    follow_symlinks=False,
+                ).st_mode
+            )
+        }
+        _require(cg._identity(scan_descriptor) == pinned_identity)
+        _require(cg._identity(descriptor) == pinned_identity)
+        return subgroups
+    finally:
+        os.close(scan_descriptor)
 
 
 def _observe_layout(service):
@@ -435,10 +458,29 @@ class AnchorChannel:
     """One fixed private Unix socket. Never removes a stale socket."""
 
     def __init__(self, layout, controller=None, *, lease=None):
+        self._initialize(layout, controller, lease=lease, start_listening=True)
+
+    @classmethod
+    def bind_only(cls, layout, controller=None, *, lease):
+        """Bind the fixed socket without making it reachable.
+
+        Trusted startup recovery uses the interval after this returns to record
+        the exact inode and publish its independently validated endpoint fence.
+        No alternate path or stale-name cleanup is accepted here.
+        """
+        _require(type(lease) is AnchorChannelLease)
+        instance = cls.__new__(cls)
+        instance._initialize(layout, controller, lease=lease, start_listening=False)
+        return instance
+
+    def _initialize(self, layout, controller, *, lease, start_listening):
         self.layout = layout
         self.controller = controller
         self._listener = None
         self._identity = None
+        self._serving = False
+        self._listen_started = False
+        self._abandoned = False
         self._owns_lease = lease is None
         self.lease = AnchorChannelLease() if lease is None else lease
         self.directory = self.lease.directory
@@ -454,14 +496,44 @@ class AnchorChannel:
             finally:
                 os.umask(previous)
             self._identity = _socket_identity(self.path)
-            self._listener.listen(4)
-            self._listener.settimeout(1.0)
+            if start_listening:
+                self.begin_serving()
         except BaseException:
             self.close()
             raise
 
+    def _validate_bound(self):
+        _require(self._listener is not None and self._identity is not None)
+        self.lease.validate()
+        self.layout.validate()
+        _require(_private_directory(self.directory) == self.lease._directory_identity)
+        _require(_socket_identity(self.path) == self._identity)
+
+    def bound_identity(self):
+        """Return fixed secret-free facts for the caller's endpoint fence."""
+        self._validate_bound()
+        return dict(
+            version=1,
+            profile=PROFILE,
+            service=self.layout.service.to_json(),
+            layout_digest=_layout_digest(self.layout.profiles),
+            directory_identity=list(self.lease._directory_identity),
+            lock_identity=list(self.lease._lock_identity),
+            socket_identity=list(self._identity),
+        )
+
+    def begin_serving(self):
+        """One-shot transition from a recorded bind to a listening socket."""
+        _require(self._listener is not None and not self._listen_started)
+        self._validate_bound()
+        self._listen_started = True
+        self._listener.listen(4)
+        self._listener.settimeout(1.0)
+        self._validate_bound()
+        self._serving = True
+
     def serve_once(self):
-        _require(self._listener is not None)
+        _require(self._listener is not None and self._serving)
         self.lease.validate()
         _require(_socket_identity(self.path) == self._identity)
         try:
@@ -488,10 +560,30 @@ class AnchorChannel:
                 # No reflection of paths, credentials, or raw exceptions.
                 return
 
-    def close(self):
+    def abandon(self):
+        """Close a recovery listener while retaining its fenced socket name.
+
+        Only a channel using the caller's already-held lease can be abandoned.
+        The caller remains responsible for that lease and for a later checked
+        endpoint recovery; neither the pathname nor its recorded identity is
+        changed here.
+        """
+        _require(not self._owns_lease)
+        if self._abandoned:
+            return
         if self._listener is not None:
             self._listener.close()
             self._listener = None
+        self._serving = False
+        self._abandoned = True
+
+    def close(self):
+        if self._abandoned:
+            return
+        if self._listener is not None:
+            self._listener.close()
+            self._listener = None
+        self._serving = False
         try:
             self.lease.validate()
             if (

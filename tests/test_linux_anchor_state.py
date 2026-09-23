@@ -1,6 +1,7 @@
 """Codec fixtures only; native persistence and lock tests live separately."""
 
 import copy
+import threading
 from dataclasses import replace
 
 import pytest
@@ -45,6 +46,16 @@ def generation(value):
     )
 
 
+def quiescence(value):
+    record = dict(fingerprint=[1, 2, 33152, 50, 1000, 1000, 1], digest="e" * 64)
+    return dict(
+        epoch="f" * 32,
+        binding=state._sha256(value["binding"]),
+        generation=state._sha256(value["generation"]),
+        records={name: copy.deepcopy(record) for name in state._QUIESCENCE_RECORDS},
+    )
+
+
 def test_codec_preserves_intent_but_is_not_cleanup_authority():
     value = valid_state()
     assert state.validate_state(value) == value
@@ -57,6 +68,102 @@ def test_codec_preserves_intent_but_is_not_cleanup_authority():
     value["phase"] = "idle"
     assert state.validate_state(value) == value
     assert not {"clean", "admission", "maintenance", "api_ready"} & value.keys()
+
+
+def test_v2_codec_binds_idle_quiescence_to_full_binding_generation_and_records():
+    value = valid_state()
+    value.update(schema_version=2, phase="idle", quiescence=quiescence(value))
+    assert state.validate_state(value) == value
+    for mutate in (
+        lambda item: item.update(phase="draining"),
+        lambda item: item["quiescence"].update(binding="0" * 64),
+        lambda item: item["quiescence"].update(generation="0" * 64),
+        lambda item: item["quiescence"]["records"].pop("endpoint.json"),
+        lambda item: item["quiescence"]["records"]["endpoint.json"].update(fingerprint=[1, 2, 3]),
+    ):
+        malformed = copy.deepcopy(value)
+        mutate(malformed)
+        with pytest.raises(RecoverableStateError):
+            state.validate_state(malformed)
+
+
+@pytest.mark.parametrize("index,bad", [(0, True), (0, 2**64), (2, 16832), (2, 41471), (6, 2)])
+def test_quiescence_rejects_non_native_or_non_regular_file_fingerprints(index, bad):
+    value = valid_state()
+    value.update(schema_version=2, phase="idle", quiescence=quiescence(value))
+    value["quiescence"]["records"]["endpoint.json"]["fingerprint"][index] = bad
+    with pytest.raises(RecoverableStateError):
+        state.validate_state(value)
+
+
+def _owner(value):
+    owner = object.__new__(state.AnchorState)
+    owner._mutex = threading.RLock()
+    owner._value = copy.deepcopy(value)
+    owner.validate = lambda: None
+    owner._commit = lambda proposed: copy.deepcopy(proposed)
+    return owner
+
+
+def test_generic_write_cannot_set_and_always_clears_v2_quiescence():
+    value = valid_state()
+    value.update(schema_version=2, phase="idle", quiescence=quiescence(value))
+    owner = _owner(value)
+    updated = owner.write(0, request_id="a" * 32, operation="drain")
+    assert updated["schema_version"] == 2 and updated["quiescence"] is None
+    with pytest.raises(RecoverableStateError):
+        owner.write(0, quiescence=quiescence(value))
+
+
+def test_dedicated_quiescent_write_upgrades_v1_and_only_accepts_drain_metadata():
+    value = valid_state()
+    value["phase"] = "draining"
+    owner = _owner(value)
+    proof = quiescence(value)
+    updated = owner.write_quiescent(0, proof, request_id="a" * 32, operation="drain")
+    assert updated == {
+        **value,
+        "schema_version": 2,
+        "revision": 1,
+        "phase": "idle",
+        "request_id": "a" * 32,
+        "operation": "drain",
+        "quiescence": proof,
+    }
+    assert updated["binding"] == value["binding"] and updated["generation"] == value["generation"]
+    with pytest.raises(RecoverableStateError):
+        owner.write_quiescent(0, proof, request_id="b" * 32, operation="start")
+
+
+def test_quiescence_digest_is_canonical_persisted_json_including_newline():
+    assert state._sha256({"x": 1}) == "bb157861a164e35cdde9d726b0af9ce2765a8f530c35d9e45732b94ee65e9557"
+
+
+def test_v2_payload_bound_counts_the_persisted_trailing_newline(monkeypatch):
+    value = valid_state()
+    value.update(schema_version=2, phase="idle", quiescence=quiescence(value))
+    persisted_size = len(state.private._encode(value)) + 1
+    monkeypatch.setattr(state, "_MAX_STATE_V2_BYTES", persisted_size)
+    assert state.validate_state(value) == value
+    monkeypatch.setattr(state, "_MAX_STATE_V2_BYTES", persisted_size - 1)
+    with pytest.raises(RecoverableStateError):
+        state.validate_state(value)
+
+
+@pytest.mark.parametrize("operation", ["start", "drain"])
+def test_dedicated_quiescent_write_preserves_existing_metadata_when_unspecified(operation):
+    value = valid_state()
+    value.update(
+        phase="draining",
+        request_id="c" * 32,
+        operation=operation,
+    )
+    owner = _owner(value)
+
+    updated = owner.write_quiescent(0, quiescence(value))
+
+    assert updated["request_id"] == value["request_id"]
+    assert updated["operation"] == operation
 
 
 @pytest.mark.parametrize("native_id", [[2**63, 2**63 + 1], [2**64 - 1, 2**64 - 1]])
@@ -78,7 +185,7 @@ def test_storage_identity_rejects_overflow_negative_and_boolean(native_id):
     "key,bad",
     [
         ("schema_version", True),
-        ("schema_version", 2),
+        ("schema_version", 3),
         ("profile", []),
         ("profile", "ordinary"),
         ("revision", True),
