@@ -35,12 +35,25 @@ and confirm `vllm serve --help` accepts every flag.
 The builder accepts a **reported** free-host-RAM value of at least 183 GiB; it
 does not measure available or pinnable memory. Its directory existence check
 does not verify the model revision, contents, rights or storage capacity. The
-next bounded host diagnostic should record per-device identity and available
-VRAM, free host RAM, disk, driver/CUDA/container versions and approved sharing
-limits before any download. A supervised, time-limited eight-H100 start can
-follow only after those checks and an image pin. Correctness, cancellation,
-actual GPU ownership, stop/resource release and performance must then pass
-before changing the DeepSeek profile from unavailable.
+standalone, read-only `scripts/probe_deepseek_h100_host.py` records GPU identity,
+total/free VRAM and driver, Linux version, estimated available host RAM and free
+space on the chosen model volume. It has a fixture-only self-test and a
+10-second `nvidia-smi` timeout:
+
+```bash
+python3 scripts/probe_deepseek_h100_host.py --self-test
+python3 scripts/probe_deepseek_h100_host.py --storage-path /existing/model/volume
+```
+
+The output omits hostnames, GPU UUIDs, processes and the local storage path.
+Its three Boolean checks are **necessary only**: Linux `MemAvailable` does not
+prove 183 GiB can be pinned, current free VRAM can change, and one copy of the
+weight bytes is only a lower bound for download space. The host's CUDA,
+container and actual vLLM build compatibility, plus the contributor's sharing
+limits, still need verification before any download. A supervised, time-limited
+eight-H100 start can follow only after those checks and an image pin.
+Correctness, cancellation, actual GPU ownership, stop/resource release and
+performance must then pass before changing the DeepSeek profile from unavailable.
 
 This candidate does not apply to GLM-5.3. Its pinned FP8 files exceed the
 reported eight 80 GB GPU allowances by 115,632,050,320 bytes before runtime
