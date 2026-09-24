@@ -1,15 +1,23 @@
 """Synthetic-profile bridge from the current OpenAI API to managed vLLM.
 
 Registration remains an explicit local operation.  This bridge has no DHT
-advertisement, model qualification authority, chat encoder, or billing role.
+advertisement, model qualification authority, or billing role. A reviewed
+chat encoder may be supplied for a synthetic profile.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
-from drift.inference_provider import MAX_REQUEST_BYTES, EventKind, InferenceLimits, InferenceRequest, ProviderIdentity
+from drift.inference_provider import (
+    MAX_REQUEST_BYTES,
+    Availability,
+    EventKind,
+    InferenceLimits,
+    InferenceRequest,
+    ProviderIdentity,
+)
 from drift.managed_vllm import ManagedGenerationOptions, ManagedVllmAdapter, ManagedVllmError
 from drift.text_request import RequestContext
 
@@ -23,7 +31,14 @@ class ManagedVllmTextClient:
 
     supports_request_context = True
 
-    def __init__(self, adapter: ManagedVllmAdapter, identity: ProviderIdentity, manifest_digest: str) -> None:
+    def __init__(
+        self,
+        adapter: ManagedVllmAdapter,
+        identity: ProviderIdentity,
+        manifest_digest: str,
+        *,
+        chat_encoder: Callable[[list[dict]], str] | None = None,
+    ) -> None:
         if type(adapter) is not ManagedVllmAdapter or type(identity) is not ProviderIdentity:
             raise ValueError("invalid managed provider identity")
         if type(manifest_digest) is not str or not manifest_digest.startswith("sha256:") or len(manifest_digest) != 71:
@@ -35,15 +50,25 @@ class ManagedVllmTextClient:
         self.adapter = adapter
         self.identity = identity
         self.manifest_digest = manifest_digest
+        if chat_encoder is not None and not callable(chat_encoder):
+            raise ValueError("invalid managed chat encoder")
+        self.chat_encoder = chat_encoder
 
     async def stream(self, body: dict, *, chat: bool, context: RequestContext) -> AsyncIterator[dict]:
         if type(context) is not RequestContext or type(body) is not dict:
             raise ValueError("invalid managed request context")
-        if chat:
-            raise ValueError("managed chat requires a qualified prompt encoder")
         if body.get("model") != self.manifest_digest:
             raise ValueError("managed manifest identity mismatch")
-        prompt = body.get("prompt")
+        if self.adapter.binding.profile.availability is not Availability.AVAILABLE:
+            raise ManagedProviderUnavailable("managed profile unavailable")
+        if chat:
+            if self.chat_encoder is None:
+                raise ValueError("managed chat requires a qualified prompt encoder")
+            if body.get("enable_thinking") is not False:
+                raise ValueError("managed chat requires explicit non-thinking mode")
+            prompt = self.chat_encoder(body.get("messages"))
+        else:
+            prompt = body.get("prompt")
         if type(prompt) is not str or not prompt:
             raise ValueError("managed completions require one text prompt")
         try:
@@ -53,6 +78,11 @@ class ManagedVllmTextClient:
         if len(prompt_bytes) > MAX_REQUEST_BYTES:
             raise ValueError("managed prompt exceeds request limit")
         maximum = body.get("max_tokens")
+        if chat:
+            alternate = body.get("max_completion_tokens")
+            if maximum is not None and alternate is not None and maximum != alternate:
+                raise ValueError("conflicting managed output limits")
+            maximum = alternate if maximum is None else maximum
         maximum = 512 if maximum is None else maximum
         if type(maximum) is not int or not 1 <= maximum <= 512:
             raise ValueError("managed output limit must be 1..512")

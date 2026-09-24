@@ -1,7 +1,8 @@
 # Exact-model prompt source pins
 
-Status: **source metadata verified**, not a prompt encoder, model load, or
-CommunityAI model qualification. No model weights or runtime image were fetched.
+Status: **source metadata verified, bounded DeepSeek text encoder implemented**,
+not a model load or CommunityAI model qualification. No model weights or
+runtime image were fetched.
 
 The immutable candidate revisions are DeepSeek-V4.1-Flash
 `dba1be0a40aa45a94ad051997016db3960a90277` and GLM-5.3
@@ -24,17 +25,29 @@ The pinned GLM tree contains a standalone `chat_template.jinja`; the earlier
 research only found no embedded template in `tokenizer_config.json`. That
 distinction is now recorded. DeepSeek's official repository provides an
 encoding reference and explicitly does not rely on a generic Jinja template.
-The source files are metadata evidence only. `prompt_encoder_revision`,
-runtime/artifact digests, rights approval and hardware qualification remain
-unset, so both candidate profiles stay unavailable.
+The source files are metadata evidence. A reviewed local encoder implements only
+DeepSeek's `thinking_mode="chat"` for text-only alternating turns. It matches
+the pinned reference's single-turn and leading-system test vectors; its
+multi-turn vector follows the pinned renderer and prior-turn assertion. It
+rejects tools, images, reasoning mode, reserved prompt tokens,
+oversized prompts, and other unsupported shapes. It is wired to the managed
+FastAPI chat route only when explicitly registered for a synthetic `test/*`
+profile. Real `prompt_encoder_revision`, runtime/artifact digests, rights
+approval, and hardware qualification remain unset, so both exact model
+profiles stay unavailable.
 
 Tests verify exact paths and hashes, reject substituted prompt paths, and
 prove that a changed source hash changes the profile digest. The focused
 candidate suite passed **30 tests in 5.15 seconds** after formatting. No broad
 CI or inference run was used.
 
+The standalone prototype and reviewed encoder checks passed in under a second
+each. A local FastAPI-to-fake-vLLM check passed for synthetic text/chat and
+confirmed exact-model refusal; the focused provider suite passed 46 tests in
+5.58 seconds. No broad CI or inference run was used.
+
 Next: bind an approved backend's actual prompt encoding and tokenizer to these
-pins, verify reference parity for text inputs on the exact model, then qualify
-chat/reasoning separately. GLM's template alone does not establish the chosen
+pins, verify wider reference parity for text inputs on the exact model, then
+qualify reasoning separately. GLM's template alone does not establish the chosen
 vLLM build's parser behavior or commercial eligibility; DeepSeek's Python
 reference must not be executed as unreviewed downloaded code.

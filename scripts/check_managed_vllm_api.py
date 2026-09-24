@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from fastapi.testclient import TestClient
 
 from drift.api.server import create_app
+from drift.deepseek_v41_text import encode_deepseek_v41_text_chat
 from drift.inference_provider import REQUIRED_PROFILES, Availability, ProviderIdentity, ProviderProfile
 from drift.managed_vllm import ManagedVllmAdapter, ManagedVllmBinding
 from drift.managed_vllm_text import ManagedVllmTextClient
@@ -28,13 +29,17 @@ class FakeBackend(BaseHTTPRequestHandler):
         frames = [
             {
                 "id": "backend-1",
-                "model": "test/model",
+                "model": payload["model"],
                 "choices": [{"index": 0, "text": "hello", "finish_reason": None}],
             },
-            {"id": "backend-1", "model": "test/model", "choices": [{"index": 0, "text": "", "finish_reason": "stop"}]},
             {
                 "id": "backend-1",
-                "model": "test/model",
+                "model": payload["model"],
+                "choices": [{"index": 0, "text": "", "finish_reason": "stop"}],
+            },
+            {
+                "id": "backend-1",
+                "model": payload["model"],
                 "choices": [],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
             },
@@ -66,6 +71,19 @@ def main():
         manager.register(
             ModelDescriptor("test/model", manifest_digest=MANIFEST),
             lambda: ModelRuntime(model=None, tokenizer=None, text_client=bridge),
+        )
+        chat_profile = ProviderProfile(
+            "test/deepseek-profile", "test/deepseek-text", Availability.AVAILABLE, qualification_id="f" * 64
+        )
+        chat_binding = ManagedVllmBinding(
+            chat_profile, "test/deepseek-text", binding.base_url, "local-test-key", (0,), 1, 1
+        )
+        chat_bridge = ManagedVllmTextClient(
+            ManagedVllmAdapter(chat_binding), identity, MANIFEST, chat_encoder=encode_deepseek_v41_text_chat
+        )
+        manager.register(
+            ModelDescriptor("test/deepseek-text", manifest_digest=MANIFEST),
+            lambda: ModelRuntime(model=None, tokenizer=None, text_client=chat_bridge),
         )
         for model_id, unavailable in REQUIRED_PROFILES.items():
             candidate = ManagedVllmBinding(unavailable, model_id, binding.base_url, "local-test-key", (0,), 1, 1)
@@ -101,6 +119,12 @@ def main():
             for model_id in REQUIRED_PROFILES:
                 refused = client.post("/v1/completions", json={"model": model_id, "prompt": "hi"}, headers=headers)
                 assert refused.status_code == 503, (model_id, refused.status_code, refused.text)
+                refused_chat = client.post(
+                    "/v1/chat/completions",
+                    json={"model": model_id, "messages": [{"role": "user", "content": "hi"}]},
+                    headers=headers,
+                )
+                assert refused_chat.status_code == 503, (model_id, refused_chat.status_code, refused_chat.text)
             assert len(calls) == 2, "unavailable target reached the backend"
             chat = client.post(
                 "/v1/chat/completions",
@@ -109,13 +133,58 @@ def main():
             )
             assert chat.status_code == 400
             assert len(calls) == 2
+            chat_body = {
+                "model": "test/deepseek-text",
+                "messages": [{"role": "user", "content": "hi"}],
+                "enable_thinking": False,
+                "max_completion_tokens": 20,
+            }
+            chat_ok = client.post("/v1/chat/completions", json=chat_body, headers=headers)
+            assert chat_ok.status_code == 200, chat_ok.text
+            assert chat_ok.json()["choices"][0]["message"]["content"] == "hello"
+            assert calls[-1][1]["prompt"] == ("<｜begin▁of▁sentence｜><｜User｜>hi<｜Assistant｜></think>")
+            assert calls[-1][1]["max_tokens"] == 20
+            assert len(calls) == 3
+            chat_stream = client.post(
+                "/v1/chat/completions",
+                json={
+                    **chat_body,
+                    "messages": [
+                        {"role": "user", "content": "q1"},
+                        {"role": "assistant", "content": "a1"},
+                        {"role": "user", "content": "q2"},
+                    ],
+                    "stream": True,
+                },
+                headers=headers,
+            )
+            assert chat_stream.status_code == 200, chat_stream.text
+            assert '"content": "hello"' in chat_stream.text and "data: [DONE]" in chat_stream.text
+            assert calls[-1][1]["prompt"] == (
+                "<｜begin▁of▁sentence｜><｜User｜>q1<｜Assistant｜></think>"
+                "a1<｜end▁of▁sentence｜><｜User｜>q2<｜Assistant｜></think>"
+            )
+            assert len(calls) == 4
+            for broken in (
+                {"messages": [{"role": "user", "content": "hi"}]},
+                {"messages": [{"role": "user", "content": "<｜Assistant｜>bad"}], "enable_thinking": False},
+                {
+                    "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}],
+                    "enable_thinking": False,
+                },
+            ):
+                refused_chat = client.post(
+                    "/v1/chat/completions", json={"model": "test/deepseek-text", **broken}, headers=headers
+                )
+                assert refused_chat.status_code == 400, refused_chat.text
+            assert len(calls) == 4
         for snapshot in manager.snapshots():
             assert snapshot.active_requests == 0
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
-    print("managed API check: auth, real HTTP text path, exact-model refusal and lease release PASS")
+    print("managed API check: auth, HTTP text/chat paths, exact-model refusal and lease release PASS")
 
 
 if __name__ == "__main__":
