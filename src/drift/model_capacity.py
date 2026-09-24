@@ -1,4 +1,4 @@
-"""Pinned artifact-byte lower bounds for exact-model GPU capacity planning.
+"""Pinned artifact-byte lower bounds for model GPU capacity planning.
 
 This check can rule out direct GPU residency of the published weight files. It
 cannot prove runtime fit, backend compatibility, usable context, throughput, or
@@ -37,6 +37,16 @@ PINNED_WEIGHT_ARTIFACTS: Mapping[str, WeightArtifactFootprint] = MappingProxyTyp
     }
 )
 
+PINNED_QUANTIZED_CANDIDATES: Mapping[str, WeightArtifactFootprint] = MappingProxyType(
+    {
+        "gpustack/GLM-5.3-W4A8": WeightArtifactFootprint(
+            "gpustack/GLM-5.3-W4A8",
+            "f6d1e50d43edb5fb3f3141f19fc691511a50756c",
+            399_716_726_536,
+        )
+    }
+)
+
 
 @dataclass(frozen=True)
 class CapacityLowerBound:
@@ -49,6 +59,28 @@ class CapacityLowerBound:
     runtime_fit_proven: bool = False
 
 
+@dataclass(frozen=True)
+class QuantizedCandidateLowerBound:
+    base_model_id: str
+    artifact_id: str
+    artifact_revision: str
+    safetensors_bytes: int
+    aggregate_usable_gpu_bytes: int
+    direct_gpu_residency_shortfall_bytes: int
+    direct_gpu_residency_ruled_out: bool
+    runtime_fit_proven: bool = False
+    quality_equivalence_proven: bool = False
+    backend_qualified: bool = False
+
+
+def _validated_total(usable_gpu_bytes: tuple[int, ...]) -> int:
+    if type(usable_gpu_bytes) is not tuple or not 1 <= len(usable_gpu_bytes) <= _MAX_DEVICES:
+        raise ValueError("invalid GPU capacity list")
+    if any(type(amount) is not int or not 0 < amount <= _MAX_DEVICE_BYTES for amount in usable_gpu_bytes):
+        raise ValueError("invalid usable GPU byte count")
+    return sum(usable_gpu_bytes)
+
+
 def direct_gpu_capacity_lower_bound(model_id: str, usable_gpu_bytes: tuple[int, ...]) -> CapacityLowerBound:
     """Compare pinned weight-file bytes with user-allowed per-device VRAM.
 
@@ -59,12 +91,8 @@ def direct_gpu_capacity_lower_bound(model_id: str, usable_gpu_bytes: tuple[int, 
     """
     if type(model_id) is not str or model_id not in PINNED_WEIGHT_ARTIFACTS:
         raise ValueError("unknown exact model")
-    if type(usable_gpu_bytes) is not tuple or not 1 <= len(usable_gpu_bytes) <= _MAX_DEVICES:
-        raise ValueError("invalid GPU capacity list")
-    if any(type(amount) is not int or not 0 < amount <= _MAX_DEVICE_BYTES for amount in usable_gpu_bytes):
-        raise ValueError("invalid usable GPU byte count")
     footprint = PINNED_WEIGHT_ARTIFACTS[model_id]
-    total = sum(usable_gpu_bytes)
+    total = _validated_total(usable_gpu_bytes)
     shortfall = max(0, footprint.safetensors_bytes - total)
     return CapacityLowerBound(
         model_id,
@@ -73,4 +101,22 @@ def direct_gpu_capacity_lower_bound(model_id: str, usable_gpu_bytes: tuple[int, 
         total,
         shortfall,
         shortfall > 0,
+    )
+
+
+def quantized_candidate_capacity_lower_bound(
+    artifact_id: str, usable_gpu_bytes: tuple[int, ...]
+) -> QuantizedCandidateLowerBound:
+    """Only a file-byte comparison for the separately identified GLM variant.
+
+    This is not the official FP8 artifact and does not prove quality, rights,
+    backend support, per-rank fit, or a qualified CommunityAI GLM provider.
+    """
+    if type(artifact_id) is not str or artifact_id not in PINNED_QUANTIZED_CANDIDATES:
+        raise ValueError("unknown quantized candidate")
+    artifact = PINNED_QUANTIZED_CANDIDATES[artifact_id]
+    total = _validated_total(usable_gpu_bytes)
+    shortfall = max(0, artifact.safetensors_bytes - total)
+    return QuantizedCandidateLowerBound(
+        "zai-org/GLM-5.3", artifact_id, artifact.revision, artifact.safetensors_bytes, total, shortfall, shortfall > 0
     )

@@ -1,4 +1,4 @@
-"""Report an exact model's weight-byte lower bound without loading ML code.
+"""Report a pinned model artifact's byte lower bound without loading ML code.
 
 Example: python scripts/model_capacity_preflight.py zai-org/GLM-5.3 --gpu-gb 80 80 80 80 80 80 80 80
 Values are usable per-card limits in decimal GB, not a runtime-fit promise.
@@ -35,11 +35,16 @@ def decimal_gb(raw):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("model", choices=tuple(module.PINNED_WEIGHT_ARTIFACTS))
+    parser.add_argument(
+        "model", choices=tuple(module.PINNED_WEIGHT_ARTIFACTS) + tuple(module.PINNED_QUANTIZED_CANDIDATES)
+    )
     parser.add_argument("--gpu-gb", nargs="+", type=decimal_gb, required=True, help="usable decimal GB for each GPU")
     args = parser.parse_args(argv)
     try:
-        result = module.direct_gpu_capacity_lower_bound(args.model, tuple(args.gpu_gb))
+        if args.model in module.PINNED_WEIGHT_ARTIFACTS:
+            result = module.direct_gpu_capacity_lower_bound(args.model, tuple(args.gpu_gb))
+        else:
+            result = module.quantized_candidate_capacity_lower_bound(args.model, tuple(args.gpu_gb))
     except ValueError as exc:
         parser.error(str(exc))
     print(json.dumps(asdict(result), sort_keys=True))

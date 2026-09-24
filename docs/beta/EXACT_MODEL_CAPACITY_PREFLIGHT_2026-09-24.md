@@ -38,15 +38,48 @@ volunteer's host. [vLLM v0.30.0 release notes](https://github.com/vllm-project/v
 list DeepSeek-V4.1-Flash architecture support; a release note is not a
 CommunityAI result on Ubuntu 20.04/H100. Our current generic launch specification
 does not encode the recipe's H100 options and must not be used as a DeepSeek
-qualification command.
+qualification command. A separate guarded
+[H100 candidate](DEEPSEEK_H100_LAUNCH_CANDIDATE_2026-09-24.md) now records
+those options without changing exact-profile availability.
 
 The prototype and production preflight each ran in under a second with no ML
 imports. The checks confirm the GLM shortfall and reject unknown models and
 invalid GPU limits. No CI, weight transfer, GPU run or paid service was used.
 
-Next for the reported host: obtain actual usable per-card VRAM, free host DRAM,
-disk and driver/container compatibility through a bounded installed diagnostic;
-then prepare one pinned, reviewed DeepSeek H100 launch with the required offload
-and short context envelope. GLM needs a separately supported offload or
-quantization plan and real qualification. Neither can be added to the public
-catalog merely because the arithmetic passes.
+Next for the reported host: use the bounded installed diagnostic to obtain
+actual per-card VRAM, available host RAM, disk and driver facts, then verify
+container compatibility and the pinned runtime before any large transfer.
+Neither exact model can be added to the public catalog merely because the
+arithmetic passes.
+
+## Separately identified GLM W4A8 candidate
+
+The pinned [GPUStack GLM-5.3-W4A8
+artifact](https://huggingface.co/gpustack/GLM-5.3-W4A8/tree/f6d1e50d43edb5fb3f3141f19fc691511a50756c)
+contains 141 `.safetensors` files totaling **399,716,726,536 bytes** according
+to its [revision metadata](https://huggingface.co/api/models/gpustack/GLM-5.3-W4A8/revision/f6d1e50d43edb5fb3f3141f19fc691511a50756c?blobs=true).
+The pinned [vLLM GLM-5.3
+recipe](https://github.com/vllm-project/recipes/blob/127f287593a04d23f9600603785f4cc5530112db/models/zai-org/GLM-5.3.yaml)
+lists this as a Hopper W4A8 variant supporting H100. Its
+[model card](https://huggingface.co/gpustack/GLM-5.3-W4A8) says its direct
+performance/accuracy verification was on eight H20-3e cards, not the offered
+H100s. The third-party quantization is a distinct artifact and profile; it
+cannot inherit official FP8 quality or backend qualification.
+
+The standalone prototype and capacity check now compare that artifact with
+the same eight nominal 80 GB allowances:
+
+```powershell
+python scripts/model_capacity_preflight.py gpustack/GLM-5.3-W4A8 --gpu-gb 80 80 80 80 80 80 80 80
+```
+
+Its raw file bytes are **240,283,273,464 bytes below** the aggregate allowance.
+The CLI explicitly reports `quality_equivalence_proven=false`,
+`backend_qualified=false` and `runtime_fit_proven=false`. Per-rank memory,
+workspace/KV allocation, precision behavior and latency still need H100
+testing. The recipe requires `--trust-remote-code`; the pinned repository also
+includes `sitecustomize.py`. Review exactly which code executes and bind an
+approved runtime image before a managed trial. Rights for this derivative and
+the official [GLM-5.3 license](https://huggingface.co/zai-org/GLM-5.3/blob/main/LICENSE)
+need explicit release review. No quantized GLM profile is enabled by this
+capacity calculation.
