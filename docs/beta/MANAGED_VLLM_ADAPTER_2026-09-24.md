@@ -98,3 +98,23 @@ including the new completion-reason negative regression. The standalone bridge
 and adapter scripts passed, and the real FastAPI/fake-backend script passed
 again after the total-token envelope repair. No broad CI, model download or
 GPU run occurred.
+
+## Local runtime admission probe
+
+`src/drift/managed_vllm_probe.py` adds one bounded pre-registration probe for
+an already supervised loopback vLLM instance. It checks `/health`, the exact
+v0.30.0 `/version` response, and a single `/v1/models` card with the bound
+served name and expected context limit. One absolute deadline covers all three
+requests; each response is capped at 8 KiB. Redirects and proxy environment
+are disabled. The API key is sent as a bearer header and is not returned in
+the result. The caller must still bind the process, image/artifact, actual
+GPU geometry, and lifetime to this response; a lookalike local HTTP server can
+produce the same JSON. The probe does not change profile availability.
+
+The stand-alone `scripts/prototype_vllm_runtime_probe.py` passed before source
+implementation. `scripts/check_managed_vllm_probe.py` then passed with a fake
+server, covering success and wrong health, version, model, context, duplicate
+model, redirect, oversized body, timeout, and unavailable profile. The
+existing focused adapter script passed. No vLLM process, model weights or GPU
+were used. The endpoint choices follow the [vLLM v0.30.0 server
+documentation](https://docs.vllm.ai/en/v0.30.0/serving/online_serving/openai_compatible_server/).

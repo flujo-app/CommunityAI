@@ -32,7 +32,8 @@ from drift.inference_provider import (
 )
 
 _MAX_SSE_FRAME = MAX_EVENT_BYTES + 8192
-_BACKEND_ID = "vllm-v0.30.0"
+BACKEND_VERSION = "0.30.0"
+_BACKEND_ID = f"vllm-v{BACKEND_VERSION}"
 
 
 class ManagedVllmError(RuntimeError):
