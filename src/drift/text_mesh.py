@@ -5,24 +5,35 @@ Text peers own the input/output weights and route generation through block peers
 """
 
 import asyncio
-import contextlib
 import json
 import logging
 import time
 import uuid
-from typing import AsyncIterator
+from typing import AsyncIterator, Awaitable, Callable, TypeVar
 
 from hivemind.p2p import P2PContext, PeerID, ServicerBase
 from hivemind.proto import runtime_pb2
 
+from drift.inference_provider import ProviderContractError, Usage
 from drift.protocol_identity import TRANSPORT_SECURITY, ProtocolSecurityError, SignedRecord, _validate_lifetime
+from drift.text_request import RequestContext, RequestDeadlineExceeded, retain_request_task
 from drift.utils.client_dht import create_client_dht
 
 MAX_REQUEST_BYTES = 128 * 1024
 MAX_FRAME_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_OUTPUT_BYTES = 1024 * 1024
+MAX_RESPONSE_FRAMES = 4096
+CLEANUP_SECONDS = 3.0
+SHUTDOWN_SECONDS = 3.0
 ANNOUNCEMENT_TTL = 40
 logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
+_MISSING = object()
+
+
+def _preserve_cleanup(_result) -> None:
+    """Mark a resource release as owed even after observation stops."""
 
 
 def encode(value, limit=MAX_FRAME_BYTES):
@@ -160,8 +171,107 @@ class TextPeerUnavailable(RuntimeError):
     pass
 
 
+class TextPeerMalformedResponse(TextPeerUnavailable):
+    """A peer response failed the authenticated legacy protocol checks."""
+
+
+class _TextPeerRejectedRequest(ValueError):
+    pass
+
+
+class _RequestWork:
+    """Keep one client's external work fenced until every owned task settles."""
+
+    def __init__(self, gate):
+        self._gate = gate
+        self._loop = asyncio.get_running_loop()
+        self._tasks = {}
+        self._active = False
+        self._sealed = False
+        self._poisoned = False
+        self._release_scheduled = False
+        self._released = False
+
+    def activate(self) -> None:
+        if self._active:
+            raise RuntimeError("Request work already activated")
+        self._active = True
+
+    def own(self, operation):
+        task = asyncio.ensure_future(operation)
+        if task in self._tasks:
+            return task
+        if self._released:
+            raise RuntimeError("Request work already released")
+        retain_request_task(task)
+        self._tasks[task] = ["pending", None, False]
+        task.add_done_callback(self._completed)
+        return task
+
+    def claim(self, task) -> None:
+        self._dispose(task, "claimed", None)
+
+    def abandon(self, task, handler=None, *, poison_on_failure=False) -> None:
+        self._dispose(task, "abandoned", handler, poison_on_failure)
+
+    def _dispose(self, task, state, handler, poison_on_failure=False) -> None:
+        entry = self._tasks.get(task)
+        if entry is None or entry[0] != "pending":
+            raise RuntimeError("Invalid request task disposition")
+        entry[:] = [state, handler, poison_on_failure]
+        self._settle(task)
+
+    def _completed(self, task) -> None:
+        self._settle(task)
+
+    def _settle(self, task) -> None:
+        entry = self._tasks.get(task)
+        if entry is None or entry[0] == "pending" or not task.done():
+            return
+        state, handler, poison_on_failure = entry
+        if state == "abandoned":
+            try:
+                value = task.result()
+            except BaseException:
+                if poison_on_failure:
+                    self.poison()
+            else:
+                if handler is not None:
+                    try:
+                        # The handler must synchronously own any descendant before
+                        # this parent is removed, preventing a transient zero count.
+                        handler(value)
+                    except BaseException:
+                        self.poison()
+        del self._tasks[task]
+        self._defer_release()
+
+    def poison(self) -> None:
+        self._poisoned = True
+
+    def seal(self) -> None:
+        if not self._active or self._sealed:
+            raise RuntimeError("Invalid request work seal")
+        self._sealed = True
+        self._defer_release()
+
+    def _defer_release(self) -> None:
+        if self._release_scheduled:
+            return
+        self._release_scheduled = True
+        self._loop.call_soon(self._maybe_release)
+
+    def _maybe_release(self) -> None:
+        self._release_scheduled = False
+        if self._active and self._sealed and not self._tasks and not self._poisoned and not self._released:
+            self._released = True
+            self._gate.release()
+
+
 class TextPeerClient:
     """One lightweight consumer. Retry another peer only before receiving answer text."""
+
+    supports_request_context = True
 
     def __init__(self, manifest, *, initial_peers, revocations=None, request_timeout=30, total_timeout=900, dht=None):
         self.manifest = manifest
@@ -174,98 +284,438 @@ class TextPeerClient:
             else create_client_dht(initial_peers=initial_peers, client_mode=True, tls=True, startup_timeout=30)
         )
         self._owns_dht = dht is None
+        # This bounds local request-owned producers per client. Recreating a
+        # client creates a new gate; this is not process-global stop evidence.
+        self._request_gate = asyncio.Semaphore(1)
 
-    async def stream(self, body, *, chat):
-        request_id = uuid.uuid4().hex
-        payload = encode({"request_id": request_id, "chat": chat, "body": body}, MAX_REQUEST_BYTES)
-        peers = await asyncio.to_thread(discover_text_peers, self.dht, self.manifest, revocations=self.revocations)
-        if not peers:
-            raise TextPeerUnavailable("No community peer is ready to answer yet. Please try again shortly.")
-        p2p = await self.dht.replicate_p2p()
-        deadline = time.monotonic() + self.total_timeout
-        last_peer_error = None
+    def _track_cleanup(self, task, work=None):
+        return retain_request_task(task) if work is None else work.own(task)
+
+    async def _run_owned(
+        self,
+        context,
+        work,
+        operation,
+        *,
+        cap,
+        preserve=False,
+        on_abandoned=None,
+    ):
+        task = work.own(operation)
         try:
+            result = await context.run(
+                task,
+                cap=cap,
+                on_abandoned=_preserve_cleanup if preserve else None,
+            )
+        except BaseException:
+            work.abandon(task, on_abandoned)
+            raise
+        work.claim(task)
+        return result
+
+    async def _bounded_cleanup(
+        self,
+        operation: Awaitable[_T],
+        deadline: float,
+        *,
+        on_abandoned: Callable[[_T], None] | None = None,
+        work=None,
+        poison_on_failure=False,
+    ):
+        """Observe one cleanup operation without losing a cancellation-resistant task."""
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            if asyncio.isfuture(operation):
+                task = self._track_cleanup(asyncio.ensure_future(operation), work)
+                if work is not None:
+                    if on_abandoned is None:
+                        task.cancel()
+                    work.abandon(task, on_abandoned, poison_on_failure=poison_on_failure)
+                elif on_abandoned is not None:
+
+                    def release_late(completed):
+                        try:
+                            on_abandoned(completed.result())
+                        except BaseException:
+                            pass
+
+                    task.add_done_callback(release_late)
+                else:
+                    task.cancel()
+            elif asyncio.iscoroutine(operation):
+                operation.close()
+            return _MISSING
+        task = self._track_cleanup(asyncio.ensure_future(operation), work)
+
+        def abandon() -> None:
+            if work is not None:
+                if on_abandoned is None:
+                    task.cancel()
+                work.abandon(task, on_abandoned, poison_on_failure=poison_on_failure)
+            elif on_abandoned is not None:
+
+                def release_late(completed):
+                    try:
+                        on_abandoned(completed.result())
+                    except BaseException:
+                        pass
+
+                task.add_done_callback(release_late)
+            else:
+                task.cancel()
+
+        try:
+            done, _pending = await asyncio.wait({task}, timeout=remaining)
+        except BaseException:
+            abandon()
+            raise
+        if done:
+            if work is not None:
+                work.claim(task)
+            return task.result()
+        abandon()
+        return _MISSING
+
+    def _schedule_bounded_cleanup(self, operation: Awaitable, seconds: float, work=None) -> None:
+        async def cleanup():
+            try:
+                # Own the effect before calculating its observation deadline.
+                owned = self._track_cleanup(asyncio.ensure_future(operation), work)
+                deadline = asyncio.get_running_loop().time() + seconds
+                await self._bounded_cleanup(
+                    owned,
+                    deadline,
+                    on_abandoned=_preserve_cleanup,
+                    work=work,
+                    poison_on_failure=True,
+                )
+            except BaseException:
+                if work is not None:
+                    work.poison()
+
+        try:
+            task = self._track_cleanup(asyncio.create_task(cleanup()), work)
+            if work is not None:
+                work.abandon(task, poison_on_failure=True)
+        except RuntimeError:
+            if work is not None:
+                work.poison()
+            if asyncio.iscoroutine(operation):
+                operation.close()
+
+    def _abandon_stream(self, stream, work=None) -> None:
+        try:
+            operation = stream.aclose()
+        except BaseException:
+            if work is not None:
+                work.poison()
+            return
+        self._schedule_bounded_cleanup(operation, CLEANUP_SECONDS, work)
+
+    def _abandon_p2p(self, p2p, work=None) -> None:
+        try:
+            operation = p2p.shutdown()
+        except BaseException:
+            if work is not None:
+                work.poison()
+            return
+        self._schedule_bounded_cleanup(operation, SHUTDOWN_SECONDS, work)
+
+    def _schedule_close_after_task(self, stream, pending, work=None) -> None:
+        async def close_when_idle():
+            try:
+                await pending
+            except BaseException:
+                pass
+            await self._close_stream(
+                stream,
+                asyncio.get_running_loop().time() + CLEANUP_SECONDS,
+                work,
+            )
+
+        task = self._track_cleanup(asyncio.create_task(close_when_idle()), work)
+        if work is not None:
+            work.abandon(task, poison_on_failure=True)
+
+    async def _close_stream(self, stream, deadline: float, work=None) -> None:
+        if stream is None:
+            return
+        try:
+            # The close itself is owed. Only observation is bounded: timeout,
+            # an expired budget, or caller cancellation must not cancel it.
+            operation = asyncio.ensure_future(stream.aclose())
+            await self._bounded_cleanup(
+                operation,
+                deadline,
+                on_abandoned=_preserve_cleanup,
+                work=work,
+                poison_on_failure=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if work is not None:
+                work.poison()
+            logger.warning("Could not close community stream (%s)", type(exc).__name__)
+
+    async def _close_after_pending(self, stream, pending, deadline: float, work=None) -> None:
+        if stream is None:
+            return
+        if pending is not None and not pending.done():
+            # RequestContext.run or _bounded_cleanup may already have delivered
+            # cancellation. A second cancel can defeat a producer that is still
+            # unwinding its first one and make resource release unobservable.
+            remaining = deadline - asyncio.get_running_loop().time()
+            try:
+                done, _pending = await asyncio.wait({pending}, timeout=max(0, remaining))
+            except BaseException:
+                self._schedule_close_after_task(stream, pending, work)
+                raise
+            if not done:
+                self._schedule_close_after_task(stream, pending, work)
+                return
+        if pending is not None:
+            try:
+                pending.result()
+            except BaseException:
+                pass
+        await self._close_stream(stream, deadline, work)
+
+    async def _cancel_attempt(self, stub, request_id: str, deadline: float, work=None) -> None:
+        cancelled = None
+        receipt_task = None
+        try:
+            cancelled = await self._bounded_cleanup(
+                stub.rpc_cancel(
+                    runtime_pb2.ExpertRequest(
+                        uid=self.manifest.digest_id,
+                        metadata=encode({"request_id": request_id}),
+                    )
+                ),
+                deadline,
+                on_abandoned=lambda stream: self._abandon_stream(stream, work),
+                work=work,
+            )
+            if cancelled is _MISSING:
+                return
+            # A cancel response is only a transport receipt. It is deliberately
+            # ignored and never presented as proof that execution stopped.
+            receipt_task = self._track_cleanup(asyncio.ensure_future(anext(cancelled)), work)
+            await self._bounded_cleanup(receipt_task, deadline, work=work)
+        except (StopAsyncIteration, GeneratorExit):
+            pass
+        except Exception as exc:
+            logger.warning("Could not cancel community generation (%s)", type(exc).__name__)
+        finally:
+            if cancelled not in (None, _MISSING):
+                await self._close_after_pending(cancelled, receipt_task, deadline, work)
+
+    async def _cleanup_attempt(self, stub, request_id: str, responses, response_task, work=None) -> None:
+        deadline = asyncio.get_running_loop().time() + CLEANUP_SECONDS
+        await asyncio.gather(
+            self._cancel_attempt(stub, request_id, deadline, work),
+            self._close_after_pending(responses, response_task, deadline, work),
+            return_exceptions=True,
+        )
+
+    async def _shutdown(self, p2p, work=None) -> None:
+        deadline = asyncio.get_running_loop().time() + SHUTDOWN_SECONDS
+        try:
+            operation = self._track_cleanup(asyncio.ensure_future(p2p.shutdown()), work)
+            await self._bounded_cleanup(
+                operation,
+                deadline,
+                on_abandoned=_preserve_cleanup,
+                work=work,
+                poison_on_failure=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if work is not None:
+                work.poison()
+            logger.warning("Could not close community transport (%s)", type(exc).__name__)
+
+    @staticmethod
+    def _requested_output_limit(body, chat):
+        if type(body) is not dict:
+            return None
+        result = body.get("max_tokens")
+        if chat and result is None:
+            result = body.get("max_completion_tokens")
+        return result if type(result) is int and result >= 0 else None
+
+    def _validate_usage(self, frame, candidate, request_limit):
+        usage = frame.get("usage")
+        if frame.get("finish_reason") not in ("stop", "length") or type(usage) is not dict:
+            raise TextPeerMalformedResponse("The community peer sent an invalid response.")
+        try:
+            checked = Usage(
+                input_units=usage.get("prompt_tokens"),
+                output_units=usage.get("completion_tokens"),
+                total_units=usage.get("total_tokens"),
+            )
+        except (ProviderContractError, TypeError):
+            raise TextPeerMalformedResponse("The community peer sent an invalid response.") from None
+        if (
+            checked.output_units > candidate["max_output_tokens"]
+            or checked.total_units > candidate["max_context_tokens"]
+            or (request_limit is not None and checked.output_units > request_limit)
+        ):
+            raise TextPeerMalformedResponse("The community peer sent an invalid response.")
+
+    async def stream(self, body, *, chat, context=None):
+        if context is None:
+            context = RequestContext.start(self.total_timeout)
+        elif type(context) is not RequestContext:
+            raise ValueError("Invalid request context")
+        context.require_live()
+        # Encoding before discovery is part of the same caller-owned deadline.
+        encode({"request_id": "0" * 32, "chat": chat, "body": body}, MAX_REQUEST_BYTES)
+        work = _RequestWork(self._request_gate)
+        await context.acquire(self._request_gate)
+        work.activate()
+        p2p = None
+        try:
+            try:
+                peers = await self._run_owned(
+                    context,
+                    work,
+                    asyncio.to_thread(
+                        discover_text_peers,
+                        self.dht,
+                        self.manifest,
+                        revocations=self.revocations,
+                    ),
+                    cap=self.request_timeout,
+                    preserve=True,
+                    on_abandoned=_preserve_cleanup,
+                )
+            except (RequestDeadlineExceeded, asyncio.CancelledError, GeneratorExit):
+                raise
+            except Exception as exc:
+                logger.warning("Community peer discovery failed (%s)", type(exc).__name__)
+                raise TextPeerUnavailable("Could not discover a community peer. Please try again shortly.") from None
+            if not peers:
+                raise TextPeerUnavailable("No community peer is ready to answer yet. Please try again shortly.")
+            try:
+                p2p = await self._run_owned(
+                    context,
+                    work,
+                    self.dht.replicate_p2p(),
+                    cap=self.request_timeout,
+                    preserve=True,
+                    on_abandoned=lambda value: self._abandon_p2p(value, work),
+                )
+            except (RequestDeadlineExceeded, asyncio.CancelledError, GeneratorExit):
+                raise
+            except Exception as exc:
+                logger.warning("Community peer transport failed (%s)", type(exc).__name__)
+                raise TextPeerUnavailable("Could not connect to a community peer. Please try again shortly.") from None
+            last_peer_error = None
+            request_limit = self._requested_output_limit(body, chat)
             for candidate in peers[:3]:
-                emitted, complete, received = False, False, 0
+                context.require_live()
+                request_id = uuid.uuid4().hex
+                payload = encode({"request_id": request_id, "chat": chat, "body": body}, MAX_REQUEST_BYTES)
+                emitted, complete = False, False
+                received = output_bytes = frame_count = 0
                 stub = TextPeerProtocol.get_stub(p2p, PeerID.from_base58(candidate["peer_id"]))
                 responses = None
+                response_task = None
                 try:
-                    responses = await asyncio.wait_for(
+                    responses = await self._run_owned(
+                        context,
+                        work,
                         stub.rpc_generate(runtime_pb2.ExpertRequest(uid=self.manifest.digest_id, metadata=payload)),
-                        self.request_timeout,
+                        cap=self.request_timeout,
+                        preserve=True,
+                        on_abandoned=lambda value: self._abandon_stream(value, work),
                     )
                     while True:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise TimeoutError("Community answer exceeded its time limit")
-                        response = await asyncio.wait_for(anext(responses), min(self.request_timeout, remaining))
+                        response_task = work.own(anext(responses))
+                        response = await self._run_owned(
+                            context,
+                            work,
+                            response_task,
+                            cap=self.request_timeout,
+                        )
+                        response_task = None
+                        if type(response.metadata) is not bytes:
+                            raise TextPeerMalformedResponse("The community peer sent an invalid response.")
                         received += len(response.metadata)
-                        if response.tensors or received > MAX_RESPONSE_BYTES:
-                            raise ValueError("Invalid community response")
-                        frame = decode(response.metadata)
+                        frame_count += 1
+                        if response.tensors or received > MAX_RESPONSE_BYTES or frame_count > MAX_RESPONSE_FRAMES:
+                            raise TextPeerMalformedResponse("The community peer sent an invalid response.")
+                        try:
+                            frame = decode(response.metadata)
+                        except (TypeError, ValueError, UnicodeError):
+                            raise TextPeerMalformedResponse("The community peer sent an invalid response.") from None
                         if frame.get("manifest_digest") != self.manifest.digest_id:
-                            raise ProtocolSecurityError("Community response model mismatch")
-                        if frame.get("type") == "error":
+                            raise TextPeerMalformedResponse("The community peer sent an invalid response.")
+                        kind = frame.get("type")
+                        if kind == "error":
+                            if type(frame.get("message")) is not str:
+                                raise TextPeerMalformedResponse("The community peer sent an invalid response.")
                             if frame.get("code") == "invalid_request":
-                                raise ValueError(str(frame.get("message", "Invalid request"))[:256])
-                            raise TextPeerUnavailable(str(frame.get("message", "Community peer unavailable"))[:256])
-                        if frame.get("type") == "delta":
-                            if not isinstance(frame.get("text"), str):
-                                raise ValueError("Invalid community text")
+                                raise _TextPeerRejectedRequest("The community peer rejected this request.")
+                            if frame.get("code") == "busy":
+                                raise TextPeerUnavailable("This community peer is busy")
+                            raise TextPeerMalformedResponse("The community peer sent an invalid response.")
+                        if kind == "delta":
+                            if type(frame.get("text")) is not str:
+                                raise TextPeerMalformedResponse("The community peer sent an invalid response.")
+                            try:
+                                output_bytes += len(frame["text"].encode("utf-8"))
+                            except UnicodeEncodeError:
+                                raise TextPeerMalformedResponse(
+                                    "The community peer sent an invalid response."
+                                ) from None
+                            if output_bytes > MAX_OUTPUT_BYTES:
+                                raise TextPeerMalformedResponse("The community peer sent an invalid response.")
                             emitted = emitted or bool(frame["text"])
-                        elif frame.get("type") == "done":
-                            usage = frame.get("usage", {})
-                            if (
-                                frame.get("finish_reason") not in ("stop", "length")
-                                or not isinstance(usage, dict)
-                                or any(
-                                    type(usage.get(k)) is not int or not 0 <= usage[k] <= 1048576
-                                    for k in ("prompt_tokens", "completion_tokens", "total_tokens")
-                                )
-                            ):
-                                raise ValueError("Invalid community usage")
+                        elif kind == "done":
+                            self._validate_usage(frame, candidate, request_limit)
                             complete = True
-                        elif frame.get("type") != "heartbeat":
-                            raise ValueError("Invalid community response type")
+                        elif kind != "heartbeat":
+                            raise TextPeerMalformedResponse("The community peer sent an invalid response.")
                         yield frame
                         if complete:
                             return
-                except (ValueError, ProtocolSecurityError):
+                except (RequestDeadlineExceeded, asyncio.CancelledError, GeneratorExit):
+                    raise
+                except TextPeerMalformedResponse:
+                    raise
+                except _TextPeerRejectedRequest:
                     raise
                 except Exception as exc:
                     if emitted:
                         raise TextPeerUnavailable(
                             "The community connection stopped during the answer. Please retry."
-                        ) from exc
+                        ) from None
                     if isinstance(exc, TextPeerUnavailable):
                         last_peer_error = exc
                     else:
                         logger.warning("Community peer request failed (%s)", type(exc).__name__)
                 finally:
                     if not complete:
-                        try:
-                            # Use the same stream transport as generation, including
-                            # on desktop daemons that do not support unary handlers.
-                            async with asyncio.timeout(3):
-                                cancelled = await stub.rpc_cancel(
-                                    runtime_pb2.ExpertRequest(
-                                        uid=self.manifest.digest_id, metadata=encode({"request_id": request_id})
-                                    )
-                                )
-                                try:
-                                    await anext(cancelled)
-                                finally:
-                                    await cancelled.aclose()
-                        except Exception as exc:
-                            logger.warning("Could not cancel community generation: %s", exc)
-                    if responses is not None:
-                        with contextlib.suppress(Exception):
-                            await responses.aclose()
+                        await self._cleanup_attempt(stub, request_id, responses, response_task, work)
+                    elif responses is not None:
+                        await self._close_stream(
+                            responses,
+                            asyncio.get_running_loop().time() + CLEANUP_SECONDS,
+                            work,
+                        )
             if last_peer_error is not None:
                 raise last_peer_error
             raise TextPeerUnavailable("Could not connect to a community peer. Please try again shortly.")
         finally:
-            await p2p.shutdown()
+            try:
+                if p2p is not None:
+                    await self._shutdown(p2p, work)
+            finally:
+                work.seal()
 
     def close(self):
         if self._owns_dht and self.dht.is_alive():

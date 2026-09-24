@@ -15,8 +15,8 @@ from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime
 from drift.protocol_identity import NodeIdentity, ProtocolSecurityError, RevocationStore
 from drift.text_mesh import (
     TextPeerClient,
-    TextPeerUnavailable,
     TextPeerProtocol,
+    TextPeerUnavailable,
     announcement_key,
     create_text_announcement,
     decode,
@@ -136,8 +136,9 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
     async def test_node_status_reaches_desktop_with_no_download_and_live_block_grid(self):
         from dataclasses import replace
 
-        from communityai_desktop.client import NodeClient
+        from communityai_desktop.client import NodeApiError, NodeClient
         from communityai_desktop.controller import DesktopController
+
         from drift.node.server import create_node_app
 
         manifest = ModelManifest.load(MANIFEST)
@@ -153,11 +154,25 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as api:
                 response = await api.get("/control/v1/status", headers={"Authorization": "Bearer control-test"})
                 self.assertEqual(response.status_code, 200)
+                selection = await api.get(
+                    "/control/v1/contribution-gpu-selection", headers={"Authorization": "Bearer control-test"}
+                )
+                self.assertEqual(selection.status_code, 501)
+
+                def control_response(method, path, **kwargs):
+                    self.assertEqual(method, "GET")
+                    if path == "/control/v1/status":
+                        return response.json()
+                    if path == "/control/v1/contribution-gpu-selection":
+                        raise NodeApiError(selection.status_code, selection.json()["detail"])
+                    raise AssertionError(f"Unexpected control request: {path}")
+
                 control = NodeClient("http://127.0.0.1:8080", "control-test")
-                with patch.object(control, "_request", return_value=response.json()), patch.object(
+                with patch.object(control, "_request", side_effect=control_response), patch.object(
                     control, "list_keys", return_value=[]
                 ):
                     view = DesktopController(control).snapshot()
+            self.assertIsNone(view["gpu_selection"])
             model = view["models"][0]
             self.assertTrue(model["route_complete"])
             self.assertTrue(model["auto_selected"])

@@ -38,6 +38,7 @@ from drift.node.model_manager import (
     ModelManagerClosedError,
     ModelNotFoundError,
 )
+from drift.text_request import RequestContext, RequestDeadlineExceeded, retain_request_task
 
 
 class _RequestCancelled(StoppingCriteria):
@@ -159,6 +160,7 @@ def create_app(
     max_concurrent: int = 1,
     default_max_tokens: int = DEFAULT_MAX_TOKENS,
     route_outcome_observer: Optional[Callable[..., None]] = None,
+    request_timeout: float = 900.0,
 ) -> FastAPI:
     """Create the OpenAI-compatible application.
 
@@ -170,6 +172,9 @@ def create_app(
         raise ValueError("max_concurrent must be at least 1")
     if default_max_tokens < 1:
         raise ValueError("default_max_tokens must be at least 1")
+    # All lazy-load admission and the remote text path share this local budget.
+    # The existing tensor/local generation path keeps its own cancellation rules.
+    RequestContext.start(request_timeout)
     if model_manager is None:
         if model is None or tokenizer is None or model_name is None:
             raise ValueError("model, tokenizer, and model_name are required without model_manager")
@@ -182,6 +187,9 @@ def create_app(
 
     app = FastAPI(title="DRIFT-LLM OpenAI-compatible API")
     semaphore = asyncio.Semaphore(max_concurrent)
+    # Bound executor submissions, including timed-out loads still running in a
+    # thread. Inference admission alone cannot bound these detached producers.
+    load_admission = asyncio.BoundedSemaphore(max_concurrent)
     served_since = int(time.time())
 
     def check_auth(request: Request) -> None:
@@ -225,6 +233,33 @@ def create_app(
         except Exception as exc:
             logger.exception("Model %r failed to load", identifier)
             raise HTTPException(status_code=503, detail="Model is unavailable") from exc
+
+    async def load_with_budget(identifier: Optional[str], context: RequestContext) -> LoadedModel:
+        dispatched = False
+
+        async def admitted_load():
+            nonlocal dispatched
+            await context.acquire(load_admission)
+            try:
+                context.require_live()
+                dispatched = True
+                return await load_model(identifier)
+            finally:
+                load_admission.release()
+
+        producer = retain_request_task(asyncio.create_task(admitted_load()))
+        try:
+            try:
+                return await context.run(producer, on_abandoned=lambda loaded: loaded.release())
+            except BaseException:
+                # A queued acquisition can be cancelled safely. Once submitted,
+                # keep both producer and permit until the actual load finishes.
+                # No suspension occurs between the flag and executor submission.
+                if not dispatched:
+                    producer.cancel()
+                raise
+        except RequestDeadlineExceeded:
+            raise HTTPException(status_code=504, detail="Request deadline exceeded") from None
 
     def record_route_outcome(
         loaded: LoadedModel,
@@ -393,11 +428,12 @@ def create_app(
         check_auth(request)
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
-        loaded = await load_model(body.model)
+        context = RequestContext.start(request_timeout)
+        loaded = await load_with_budget(body.model, context)
         if loaded.runtime.text_client is not None:
             from drift.api.text_response import text_peer_response
 
-            return await text_peer_response(loaded, body, chat=True, semaphore=semaphore)
+            return await text_peer_response(loaded, body, chat=True, semaphore=semaphore, context=context)
         selected_model = loaded.descriptor.model_id
         selected_tokenizer = loaded.runtime.tokenizer
         try:
@@ -462,11 +498,12 @@ def create_app(
         check_auth(request)
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
-        loaded = await load_model(body.model)
+        context = RequestContext.start(request_timeout)
+        loaded = await load_with_budget(body.model, context)
         if loaded.runtime.text_client is not None:
             from drift.api.text_response import text_peer_response
 
-            return await text_peer_response(loaded, body, chat=False, semaphore=semaphore)
+            return await text_peer_response(loaded, body, chat=False, semaphore=semaphore, context=context)
         selected_model = loaded.descriptor.model_id
         selected_tokenizer = loaded.runtime.tokenizer
         try:
