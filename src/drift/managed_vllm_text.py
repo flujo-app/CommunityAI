@@ -38,6 +38,7 @@ class ManagedVllmTextClient:
         manifest_digest: str,
         *,
         chat_encoder: Callable[[list[dict]], str] | None = None,
+        chat_thinking: bool = False,
     ) -> None:
         if type(adapter) is not ManagedVllmAdapter or type(identity) is not ProviderIdentity:
             raise ValueError("invalid managed provider identity")
@@ -50,9 +51,12 @@ class ManagedVllmTextClient:
         self.adapter = adapter
         self.identity = identity
         self.manifest_digest = manifest_digest
-        if chat_encoder is not None and not callable(chat_encoder):
+        if (chat_encoder is not None and not callable(chat_encoder)) or type(chat_thinking) is not bool:
             raise ValueError("invalid managed chat encoder")
+        if chat_encoder is None and chat_thinking:
+            raise ValueError("thinking mode requires a managed chat encoder")
         self.chat_encoder = chat_encoder
+        self.chat_thinking = chat_thinking
 
     async def stream(self, body: dict, *, chat: bool, context: RequestContext) -> AsyncIterator[dict]:
         if type(context) is not RequestContext or type(body) is not dict:
@@ -64,8 +68,8 @@ class ManagedVllmTextClient:
         if chat:
             if self.chat_encoder is None:
                 raise ValueError("managed chat requires a qualified prompt encoder")
-            if body.get("enable_thinking") is not False:
-                raise ValueError("managed chat requires explicit non-thinking mode")
+            if body.get("enable_thinking") is not self.chat_thinking:
+                raise ValueError("managed chat requires an explicit qualified thinking mode")
             prompt = self.chat_encoder(body.get("messages"))
         else:
             prompt = body.get("prompt")

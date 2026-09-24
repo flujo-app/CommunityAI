@@ -1,6 +1,6 @@
 # Exact-model prompt source pins
 
-Status: **source metadata verified, bounded DeepSeek text encoder implemented**,
+Status: **source metadata verified, bounded text encoders implemented**,
 not a model load or CommunityAI model qualification. No model weights or
 runtime image were fetched.
 
@@ -25,23 +25,31 @@ The pinned GLM tree contains a standalone `chat_template.jinja`; the earlier
 research only found no embedded template in `tokenizer_config.json`. That
 distinction is now recorded. DeepSeek's official repository provides an
 encoding reference and explicitly does not rely on a generic Jinja template.
-The source files are metadata evidence. A reviewed local encoder implements only
+The pinned sources supply format evidence. A reviewed local encoder implements only
 DeepSeek's `thinking_mode="chat"` for text-only alternating turns. It matches
 the pinned reference's single-turn and leading-system test vectors; its
 multi-turn vector follows the pinned renderer and prior-turn assertion. It
 rejects tools, images, reasoning mode, reserved prompt tokens,
 oversized prompts, and other unsupported shapes. It is wired to the managed
 FastAPI chat route only when explicitly registered for a synthetic `test/*`
-profile. Real `prompt_encoder_revision`, runtime/artifact digests, rights
-approval, and hardware qualification remain unset, so both exact model
-profiles stay unavailable.
+profile.
+
+A separate GLM text encoder matches three sandboxed renders of the pinned
+10,734-byte Jinja template: single-turn, leading-system, and multi-turn. It
+uses the template's default Max reasoning effort and opens `<think>` for
+generation; the managed synthetic profile requires the caller to explicitly
+set `enable_thinking=true`. Unsupported tools, media, reserved tokens and
+message shapes are refused. Neither encoder establishes tokenizer parity or
+model quality on the exact weights. Real `prompt_encoder_revision`,
+runtime/artifact digests, rights approval, and hardware qualification remain
+unset, so both exact model profiles stay unavailable.
 
 Tests verify exact paths and hashes, reject substituted prompt paths, and
 prove that a changed source hash changes the profile digest. The focused
 candidate suite passed **30 tests in 5.15 seconds** after formatting. No broad
 CI or inference run was used.
 
-The standalone prototype and reviewed encoder checks passed in under a second
+The standalone prototypes and reviewed encoder checks passed in under a second
 each. A local FastAPI-to-fake-vLLM check passed for synthetic text/chat and
 confirmed exact-model refusal; the focused provider suite passed 46 tests in
 5.58 seconds. No broad CI or inference run was used.

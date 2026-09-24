@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from drift.api.server import create_app
 from drift.deepseek_v41_text import encode_deepseek_v41_text_chat
+from drift.glm53_text import encode_glm53_text_chat
 from drift.inference_provider import REQUIRED_PROFILES, Availability, ProviderIdentity, ProviderProfile
 from drift.managed_vllm import ManagedVllmAdapter, ManagedVllmBinding
 from drift.managed_vllm_text import ManagedVllmTextClient
@@ -84,6 +85,21 @@ def main():
         manager.register(
             ModelDescriptor("test/deepseek-text", manifest_digest=MANIFEST),
             lambda: ModelRuntime(model=None, tokenizer=None, text_client=chat_bridge),
+        )
+        glm_profile = ProviderProfile(
+            "test/glm-profile", "test/glm-text", Availability.AVAILABLE, qualification_id="a" * 64
+        )
+        glm_binding = ManagedVllmBinding(glm_profile, "test/glm-text", binding.base_url, "local-test-key", (0,), 1, 1)
+        glm_bridge = ManagedVllmTextClient(
+            ManagedVllmAdapter(glm_binding),
+            identity,
+            MANIFEST,
+            chat_encoder=encode_glm53_text_chat,
+            chat_thinking=True,
+        )
+        manager.register(
+            ModelDescriptor("test/glm-text", manifest_digest=MANIFEST),
+            lambda: ModelRuntime(model=None, tokenizer=None, text_client=glm_bridge),
         )
         for model_id, unavailable in REQUIRED_PROFILES.items():
             candidate = ManagedVllmBinding(unavailable, model_id, binding.base_url, "local-test-key", (0,), 1, 1)
@@ -178,6 +194,23 @@ def main():
                 )
                 assert refused_chat.status_code == 400, refused_chat.text
             assert len(calls) == 4
+            glm_body = {
+                "model": "test/glm-text",
+                "messages": [{"role": "user", "content": "hi"}],
+                "enable_thinking": True,
+                "max_tokens": 16,
+            }
+            glm_ok = client.post("/v1/chat/completions", json=glm_body, headers=headers)
+            assert glm_ok.status_code == 200, glm_ok.text
+            assert glm_ok.json()["choices"][0]["message"]["content"] == "hello"
+            assert calls[-1][1]["prompt"] == (
+                "[gMASK]<sop><|system|>Reasoning Effort: Max<|user|>hi<|assistant|><think>"
+            )
+            assert len(calls) == 5
+            glm_wrong_mode = client.post(
+                "/v1/chat/completions", json={**glm_body, "enable_thinking": False}, headers=headers
+            )
+            assert glm_wrong_mode.status_code == 400 and len(calls) == 5
         for snapshot in manager.snapshots():
             assert snapshot.active_requests == 0
     finally:
