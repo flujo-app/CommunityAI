@@ -12,6 +12,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import AsyncIterator, Callable
 from urllib.parse import urlsplit
 
@@ -90,6 +91,37 @@ class ManagedVllmBinding:
             raise ValueError("invalid parallel geometry")
         if self.tensor_parallel_size * self.pipeline_parallel_size != len(self.device_ids):
             raise ValueError("parallel geometry does not match selected GPUs")
+
+    def launch_spec(self, model_directory: str | Path, *, max_model_len: int) -> tuple[tuple[str, ...], dict[str, str]]:
+        """Build a single-host command for an already qualified test profile.
+
+        The caller still owns artifact verification, process supervision, device
+        identity checks, and admission.  No shell interpolation is involved.
+        """
+        if self.profile.availability is not Availability.AVAILABLE:
+            raise ValueError("unavailable profile cannot be launched")
+        path = Path(model_directory)
+        if not path.is_absolute() or not path.is_dir():
+            raise ValueError("model directory must exist locally")
+        if type(max_model_len) is not int or not 1 <= max_model_len <= 2048:
+            raise ValueError("unqualified context envelope")
+        parsed = urlsplit(self.base_url)
+        command = (
+            "vllm", "serve", str(path.resolve(strict=True)),
+            "--served-model-name", self.served_model,
+            "--host", parsed.hostname,
+            "--port", str(parsed.port),
+            "--tensor-parallel-size", str(self.tensor_parallel_size),
+            "--pipeline-parallel-size", str(self.pipeline_parallel_size),
+            "--distributed-executor-backend", "mp",
+            "--max-model-len", str(max_model_len),
+            "--no-enable-log-requests",
+        )
+        environment = {
+            "CUDA_VISIBLE_DEVICES": ",".join(str(device) for device in self.device_ids),
+            "VLLM_API_KEY": self.api_key,
+        }
+        return command, environment
 
 
 def _sse_data(frame: bytes) -> bytes | None:

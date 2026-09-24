@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+import tempfile
 import time
 import types
 from dataclasses import replace
@@ -81,6 +82,12 @@ async def check():
         contract.EventKind.STARTED, contract.EventKind.OUTPUT, contract.EventKind.COMPLETED,
     ]
     assert events[-1].usage == contract.Usage(1, 1, 2) and len(calls) == 1
+    with tempfile.TemporaryDirectory() as model_directory:
+        command, environment = binding.launch_spec(Path(model_directory), max_model_len=2048)
+        assert ("--tensor-parallel-size", "2") == command[command.index("--tensor-parallel-size") :][:2]
+        assert ("--pipeline-parallel-size", "1") == command[command.index("--pipeline-parallel-size") :][:2]
+        assert environment == {"CUDA_VISIBLE_DEVICES": "0,1", "VLLM_API_KEY": "secret"}
+        assert "secret" not in command and "--no-enable-log-requests" in command
 
     wrong_model = httpx.MockTransport(lambda _: httpx.Response(200, content=sse("wrong")))
     async with httpx.AsyncClient(transport=wrong_model) as client:
@@ -131,6 +138,12 @@ async def check():
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: 1 / 0)) as client:
             events = [event async for event in ManagedVllmAdapter(candidate, client=client).stream(exact_request)]
         assert [event.kind for event in events] == [contract.EventKind.REFUSED]
+        with tempfile.TemporaryDirectory() as model_directory:
+            try:
+                candidate.launch_spec(Path(model_directory), max_model_len=2048)
+                raise AssertionError("unavailable exact model launch accepted")
+            except ValueError:
+                pass
 
     try:
         ManagedVllmBinding(binding.profile, "test/model", "http://example.com:8000", "secret", (0, 1), 2, 1)

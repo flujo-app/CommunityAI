@@ -10,6 +10,13 @@ loopback endpoint and selected device geometry (`tensor_parallel_size ×
 pipeline_parallel_size == selected GPU count`). It does not launch the backend,
 inspect actual devices or prove that its running configuration matches the
 binding. A deployment admission check must establish those facts before use.
+For a synthetic qualified test profile, `launch_spec` builds an argv tuple for
+one managed host with selected `CUDA_VISIBLE_DEVICES`, matching TP/PP flags,
+an explicit 2,048-token-or-smaller context envelope and disabled request
+logging. It keeps the API key in an environment override instead of argv.
+Artifact verification and process supervision remain with the caller; no
+command is executed by this method. Unavailable exact models cannot obtain a
+launch spec.
 
 The adapter sends one prompt with `stream_options.include_usage=true`, accepts
 one choice, bounds SSE frames and cumulative output, checks a stable response ID
@@ -36,7 +43,8 @@ CommunityAI multi-GPU PASS.
 experiment. `scripts/check_managed_vllm.py` then used `httpx.MockTransport`
 and chunked SSE to verify accepted output/usage, wrong model, missing terminator,
 extra data, wrong usage, unavailable real models, endpoint restriction and
-device-geometry rejection. The focused script completed in under one second on
+device-geometry rejection, plus launch arguments and key placement. The
+focused script completed in under one second on
 this checkout; no broad suite or vLLM/model/GPU operation ran.
 
 ## Required next work
