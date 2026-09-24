@@ -118,6 +118,7 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
     )
     anchored = profile is not None and sys.platform.startswith("linux")
     anchor_prepared = None
+    offline_diagnostic = args.self_test or args.check_runtime or args.ui_self_test or args.onboarding_ui_self_test
     if anchored:
         shell_profile_options.update(allow_instance_directory_creation=False, allow_maintenance_ack=False)
     if args.gate13_ui_playthrough is None:
@@ -136,9 +137,13 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
             raise NodeLifecycleError("Linux test-profile probe-only is unavailable without desktop instance ownership")
         if profile is not None and not args.prepare_update:
             if anchored:
-                from communityai_desktop.anchor_lifecycle import LinuxAnchorLifecycle, prepare_anchored_profile
+                from communityai_desktop.anchor_lifecycle import LinuxAnchorLifecycle
 
-                anchor_prepared = prepare_anchored_profile(profile)
+                if not offline_diagnostic:
+                    # Packaged diagnostics use a disposable profile and never start the node.
+                    from communityai_desktop.anchor_lifecycle import prepare_anchored_profile
+
+                    anchor_prepared = prepare_anchored_profile(profile)
             else:
                 profile.prepare()
         if args.prepare_update:
@@ -287,8 +292,9 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
 
         updater = None
         if qualification_automation is None and profile is None:
-            from communityai_desktop.updater import UpdateManager, installed_root
             from PySide6.QtCore import QStandardPaths
+
+            from communityai_desktop.updater import UpdateManager, installed_root
 
             root = installed_root()
             if root is not None:

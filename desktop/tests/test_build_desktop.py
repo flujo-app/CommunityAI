@@ -1422,9 +1422,20 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
             check=False,
             timeout=60,
         )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["api_version"], 1)
+        runtime = subprocess.run(
+            [*command[:-1], "--check-runtime"],
+            capture_output=True,
+            text=True,
+            cwd=REPOSITORY,
+            env=environment,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(runtime.returncode, 0, runtime.stderr)
+        self.assertIsInstance(json.loads(runtime.stdout), dict)
         if sys.platform.startswith("linux"):
-            self.assertEqual(result.returncode, 2, result.stderr)
-            self.assertIn("verified running anchor", result.stderr)
             self.assertEqual(
                 {
                     str(path.relative_to(profile_root)): path.read_bytes() if path.is_file() else None
@@ -1433,8 +1444,6 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
                 before_profile,
             )
         else:
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout)["api_version"], 1)
             self.assertTrue((home / ".communityai" / "multigpu-volunteer" / "node").is_dir())
         for overrides in (
             ["--profile", "standard"],
