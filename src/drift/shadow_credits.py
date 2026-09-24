@@ -13,12 +13,16 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+LEDGER_SCHEMA_VERSION = 2
+QUOTE_VERSION = 1
 MAX_CREDITS = 2**62 - 1
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,109}\Z")
+_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,191}\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -42,8 +46,59 @@ def _amount(value: object, *, positive: bool = False) -> int:
 
 
 def _digest(value: object) -> str:
-    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+
+
+@dataclass(frozen=True)
+class ShadowQuote:
+    """Immutable noncash service terms; neither funding nor authorization."""
+
+    request_id: str
+    buyer_id: str
+    model_id: str
+    profile_id: str
+    artifact_sha256: str
+    service_policy_sha256: str
+    price_schedule_sha256: str
+    service_class: str
+    settlement_domain: str
+    input_unit_price: int
+    output_unit_price: int
+    max_input_units: int
+    max_output_units: int
+    fee_bps: int
+    spend_cap: int
+    expires_at_unix: int
+    version: int = QUOTE_VERSION
+
+    def __post_init__(self) -> None:
+        for value in (self.request_id, self.buyer_id, self.service_class, self.settlement_domain):
+            _id(value)
+        for value in (self.model_id, self.profile_id):
+            _require(type(value) is str and _MODEL_ID.fullmatch(value) is not None, "invalid model/profile")
+        for value in (self.artifact_sha256, self.service_policy_sha256, self.price_schedule_sha256):
+            _require(type(value) is str and _HASH.fullmatch(value) is not None, "invalid quote digest field")
+        for value in (self.input_unit_price, self.output_unit_price, self.max_input_units, self.max_output_units):
+            _amount(value)
+        _amount(self.spend_cap, positive=True)
+        _require(self.max_input_units + self.max_output_units > 0, "quote has no work allowance")
+        _require(
+            0
+            < self.input_unit_price * self.max_input_units + self.output_unit_price * self.max_output_units
+            <= self.spend_cap,
+            "quote cap does not cover maximum priced work",
+        )
+        _require(type(self.fee_bps) is int and 0 <= self.fee_bps <= 10_000, "invalid quoted fee")
+        _require(type(self.expires_at_unix) is int and 0 < self.expires_at_unix < 2**53, "invalid quote expiry")
+        _require(type(self.version) is int and self.version == QUOTE_VERSION, "unsupported quote version")
+
+    @property
+    def digest(self) -> str:
+        return _digest(asdict(self))
 
 
 @dataclass(frozen=True)
@@ -138,10 +193,18 @@ class ShadowLedger:
                 request_id TEXT PRIMARY KEY, buyer_id TEXT NOT NULL, cap INTEGER NOT NULL,
                 status TEXT NOT NULL CHECK(status IN ('held', 'settled'))
             );
+            CREATE TABLE IF NOT EXISTS quotes (
+                request_id TEXT PRIMARY KEY REFERENCES reservations(request_id),
+                terms_json TEXT NOT NULL, terms_digest TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS legacy_unquoted (
+                request_id TEXT PRIMARY KEY REFERENCES reservations(request_id)
+            );
             CREATE TABLE IF NOT EXISTS receipts (
                 receipt_id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES reservations(request_id),
                 provider_id TEXT NOT NULL, stage_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
                 claim_digest TEXT NOT NULL, proposed_charge INTEGER NOT NULL,
+                input_units INTEGER, output_units INTEGER,
                 status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
                 approved_charge INTEGER, fee_units INTEGER, decision_id TEXT UNIQUE,
                 decision_digest TEXT, rejection_reason TEXT,
@@ -153,11 +216,21 @@ class ShadowLedger:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]
-                _require(version in (0, SCHEMA_VERSION), "unsupported ledger schema")
+                _require(version in (0, 1, LEDGER_SCHEMA_VERSION), "unsupported ledger schema")
+                receipt_columns = {row[1] for row in self._db.execute("PRAGMA table_info(receipts)")}
+                for column in ("input_units", "output_units"):
+                    if column not in receipt_columns:
+                        self._db.execute(f"ALTER TABLE receipts ADD COLUMN {column} INTEGER")
                 if version == 0:
                     count = self._db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
                     _require(count == 0, "unversioned ledger")
-                    self._db.execute("PRAGMA user_version=1")
+                elif version == 1:
+                    self._db.execute(
+                        "INSERT OR IGNORE INTO legacy_unquoted "
+                        "SELECT request_id FROM reservations WHERE request_id NOT IN (SELECT request_id FROM quotes)"
+                    )
+                if version != LEDGER_SCHEMA_VERSION:
+                    self._db.execute(f"PRAGMA user_version={LEDGER_SCHEMA_VERSION}")
                 self._account("test_issuance", "issuance")
                 self._account("fees", "fees")
                 self._db.execute("COMMIT")
@@ -184,6 +257,34 @@ class ShadowLedger:
 
     def _begin(self) -> None:
         self._db.execute("BEGIN IMMEDIATE")
+
+    def _load_quote(self, request_id: str) -> ShadowQuote:
+        row = self._db.execute(
+            "SELECT terms_json, terms_digest FROM quotes WHERE request_id=?", (request_id,)
+        ).fetchone()
+        _require(row is not None, "request has no bound quote")
+        try:
+            terms = json.loads(row[0])
+            _require(type(terms) is dict and _canonical_json(terms) == row[0], "noncanonical quote terms")
+            quote = ShadowQuote(**terms)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ShadowCreditError("invalid stored quote") from exc
+        _require(quote.request_id == request_id and quote.digest == row[1], "quote binding mismatch")
+        reservation = self._db.execute(
+            "SELECT buyer_id, cap FROM reservations WHERE request_id=?", (request_id,)
+        ).fetchone()
+        _require(
+            reservation == (quote.buyer_id, quote.spend_cap),
+            "quote reservation mismatch",
+        )
+        event = self._db.execute(
+            "SELECT payload_digest FROM events WHERE event_id=?", ("reserve:" + request_id,)
+        ).fetchone()
+        _require(
+            event is not None and event[0] == _digest([quote.buyer_id, quote.spend_cap, quote.digest]),
+            "reserve event quote mismatch",
+        )
+        return quote
 
     def _post(self, event_id: str, kind: str, postings: list[tuple[str, int]], payload: object) -> bool:
         """Write a balanced event while the caller holds a write transaction."""
@@ -232,30 +333,37 @@ class ShadowLedger:
                 self._db.execute("ROLLBACK")
                 raise
 
-    def reserve(self, request_id: str, buyer_id: str, cap: int) -> bool:
-        """Atomically hold a request's maximum test spend."""
-        _id(request_id)
-        _id(buyer_id)
-        _amount(cap, positive=True)
+    def reserve(self, quote: ShadowQuote) -> bool:
+        """Atomically hold a bound request's maximum noncash test spend."""
+        _require(type(quote) is ShadowQuote, "bound quote required")
+        request_id, buyer_id, cap = quote.request_id, quote.buyer_id, quote.spend_cap
         with self._lock:
             self._begin()
             try:
                 old = self._db.execute(
-                    "SELECT buyer_id, cap FROM reservations WHERE request_id=?", (request_id,)
+                    "SELECT v.buyer_id, v.cap, q.terms_digest FROM reservations v "
+                    "LEFT JOIN quotes q USING(request_id) WHERE v.request_id=?",
+                    (request_id,),
                 ).fetchone()
                 if old is not None:
-                    _require(old == (buyer_id, cap), "conflicting reservation replay")
+                    self._load_quote(request_id)
+                    _require(old == (buyer_id, cap, quote.digest), "conflicting reservation replay")
                     self._db.execute("COMMIT")
                     return False
+                _require(quote.expires_at_unix > time.time(), "quote expired")
                 hold = "hold:" + request_id
                 self._account(hold, "hold")
                 self._post(
                     "reserve:" + request_id,
                     "reserve",
                     [("buyer:" + buyer_id, -cap), (hold, cap)],
-                    [buyer_id, cap],
+                    [buyer_id, cap, quote.digest],
                 )
                 self._db.execute("INSERT INTO reservations VALUES (?, ?, ?, 'held')", (request_id, buyer_id, cap))
+                self._db.execute(
+                    "INSERT INTO quotes VALUES (?, ?, ?)",
+                    (request_id, _canonical_json(asdict(quote)), quote.digest),
+                )
                 self._db.execute("COMMIT")
                 return True
             except BaseException:
@@ -285,10 +393,32 @@ class ShadowLedger:
                 ).fetchone()
                 _require(reservation is not None and reservation[1] == "held", "request not held")
                 _require(receipt.proposed_charge <= reservation[0], "receipt exceeds cap")
+                quote = self._load_quote(receipt.request_id)
+                _require(
+                    receipt.input_units <= quote.max_input_units and receipt.output_units <= quote.max_output_units,
+                    "receipt exceeds quoted units",
+                )
+                _require(
+                    receipt.proposed_charge
+                    <= receipt.input_units * quote.input_unit_price + receipt.output_units * quote.output_unit_price,
+                    "receipt exceeds quoted rates",
+                )
+                active_units = self._db.execute(
+                    "SELECT input_units, output_units FROM receipts WHERE request_id=? AND status!='rejected'",
+                    (receipt.request_id,),
+                ).fetchall()
+                _require(all(None not in pair for pair in active_units), "missing quoted receipt units")
+                used_input = sum(pair[0] for pair in active_units)
+                used_output = sum(pair[1] for pair in active_units)
+                _require(
+                    used_input + receipt.input_units <= quote.max_input_units
+                    and used_output + receipt.output_units <= quote.max_output_units,
+                    "receipt exceeds aggregate quoted units",
+                )
                 self._db.execute(
                     "INSERT INTO receipts (receipt_id, request_id, provider_id, stage_id, attempt_id, "
-                    "claim_digest, proposed_charge, status) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
+                    "claim_digest, proposed_charge, input_units, output_units, status) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
                     (
                         receipt.receipt_id,
                         receipt.request_id,
@@ -297,6 +427,8 @@ class ShadowLedger:
                         receipt.attempt_id,
                         receipt.digest,
                         receipt.proposed_charge,
+                        receipt.input_units,
+                        receipt.output_units,
                     ),
                 )
                 self._db.execute("COMMIT")
@@ -324,8 +456,13 @@ class ShadowLedger:
                     self._db.execute("COMMIT")
                     return False
                 _require(status == "pending" and reservation_status == "held", "receipt not pending")
+                quote = self._load_quote(request_id)
                 _require(decision.verifier_id != provider_id, "provider cannot verify own work")
                 _require(decision.approved_charge <= proposed, "approval exceeds claim")
+                _require(
+                    decision.fee_units <= decision.approved_charge * quote.fee_bps // 10_000,
+                    "approval exceeds quoted fee",
+                )
                 prior_decision = self._db.execute(
                     "SELECT receipt_id FROM receipts WHERE decision_id=?", (decision.decision_id,)
                 ).fetchone()
@@ -532,31 +669,58 @@ class ShadowLedger:
     def audit(self) -> dict[str, int]:
         """Check materialized balances, conservation, and held reservations."""
         with self._lock:
-            accounts = self._db.execute("SELECT account_id, kind, balance FROM accounts").fetchall()
-            _require(sum(row[2] for row in accounts) == 0, "ledger imbalance")
-            for account_id, kind, balance in accounts:
-                posted = self._db.execute(
-                    "SELECT COALESCE(SUM(delta), 0) FROM postings WHERE account_id=?", (account_id,)
-                ).fetchone()[0]
-                _require(balance == posted and (kind == "issuance" or balance >= 0), "account imbalance")
-            for (event_id,) in self._db.execute("SELECT event_id FROM events"):
-                total = self._db.execute(
-                    "SELECT COALESCE(SUM(delta), 0) FROM postings WHERE event_id=?", (event_id,)
-                ).fetchone()[0]
-                _require(total == 0, "event imbalance")
-            for request_id, cap, status in self._db.execute("SELECT request_id, cap, status FROM reservations"):
-                held = self.balance("hold:" + request_id)
-                _require(held == (cap if status == "held" else 0), "reservation imbalance")
-                approved, pending = self._db.execute(
-                    "SELECT COALESCE(SUM(CASE WHEN status='approved' THEN approved_charge ELSE 0 END), 0), "
-                    "COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) "
-                    "FROM receipts WHERE request_id=?",
-                    (request_id,),
-                ).fetchone()
-                _require(approved <= cap and (status == "held" or pending == 0), "receipt imbalance")
-            return {
-                "accounts": len(accounts),
-                "events": self._db.execute("SELECT COUNT(*) FROM events").fetchone()[0],
-                "reservations": self._db.execute("SELECT COUNT(*) FROM reservations").fetchone()[0],
-                "receipts": self._db.execute("SELECT COUNT(*) FROM receipts").fetchone()[0],
-            }
+            self._db.execute("BEGIN")
+            try:
+                accounts = self._db.execute("SELECT account_id, kind, balance FROM accounts").fetchall()
+                _require(sum(row[2] for row in accounts) == 0, "ledger imbalance")
+                for account_id, kind, balance in accounts:
+                    posted = self._db.execute(
+                        "SELECT COALESCE(SUM(delta), 0) FROM postings WHERE account_id=?", (account_id,)
+                    ).fetchone()[0]
+                    _require(balance == posted and (kind == "issuance" or balance >= 0), "account imbalance")
+                for (event_id,) in self._db.execute("SELECT event_id FROM events"):
+                    total = self._db.execute(
+                        "SELECT COALESCE(SUM(delta), 0) FROM postings WHERE event_id=?", (event_id,)
+                    ).fetchone()[0]
+                    _require(total == 0, "event imbalance")
+                for request_id, cap, status in self._db.execute("SELECT request_id, cap, status FROM reservations"):
+                    held = self.balance("hold:" + request_id)
+                    _require(held == (cap if status == "held" else 0), "reservation imbalance")
+                    quoted = self._db.execute("SELECT 1 FROM quotes WHERE request_id=?", (request_id,)).fetchone()
+                    legacy = self._db.execute(
+                        "SELECT 1 FROM legacy_unquoted WHERE request_id=?", (request_id,)
+                    ).fetchone()
+                    _require((quoted is not None) != (legacy is not None), "reservation quote state is invalid")
+                    if quoted is not None:
+                        quote = self._load_quote(request_id)
+                        units = self._db.execute(
+                            "SELECT input_units, output_units FROM receipts "
+                            "WHERE request_id=? AND status!='rejected'",
+                            (request_id,),
+                        ).fetchall()
+                        _require(
+                            all(None not in pair for pair in units)
+                            and sum(pair[0] for pair in units) <= quote.max_input_units
+                            and sum(pair[1] for pair in units) <= quote.max_output_units,
+                            "receipt units exceed quote",
+                        )
+                    approved, pending = self._db.execute(
+                        "SELECT COALESCE(SUM(CASE WHEN status='approved' THEN approved_charge ELSE 0 END), 0), "
+                        "COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) "
+                        "FROM receipts WHERE request_id=?",
+                        (request_id,),
+                    ).fetchone()
+                    _require(approved <= cap and (status == "held" or pending == 0), "receipt imbalance")
+                result = {
+                    "accounts": len(accounts),
+                    "events": self._db.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+                    "reservations": self._db.execute("SELECT COUNT(*) FROM reservations").fetchone()[0],
+                    "receipts": self._db.execute("SELECT COUNT(*) FROM receipts").fetchone()[0],
+                    "quotes": self._db.execute("SELECT COUNT(*) FROM quotes").fetchone()[0],
+                    "legacy_unquoted": self._db.execute("SELECT COUNT(*) FROM legacy_unquoted").fetchone()[0],
+                }
+                self._db.execute("COMMIT")
+                return result
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise

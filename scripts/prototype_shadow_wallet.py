@@ -12,16 +12,37 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 
+def quote(request_id, cap, input_price, output_price, max_input, max_output):
+    return module.ShadowQuote(
+        request_id,
+        "alice",
+        "test/model",
+        "test/profile",
+        "a" * 64,
+        "b" * 64,
+        "c" * 64,
+        "standard",
+        "test",
+        input_price,
+        output_price,
+        max_input,
+        max_output,
+        1000,
+        cap,
+        4_102_444_800,
+    )
+
+
 def main():
     with tempfile.TemporaryDirectory() as directory:
         with module.ShadowLedger(Path(directory) / "wallet.sqlite3") as ledger:
             ledger.grant_test_credits("g1", "alice", 100)
-            ledger.reserve("q1", "alice", 70)
+            ledger.reserve(quote("q1", 70, 4, 4, 5, 5))
             receipt = module.WorkReceipt("r1", "q1", "worker", "whole", "a1", 5, 5, 40, "a" * 64)
             ledger.submit_receipt(receipt)
             ledger.approve_receipt(module.ValidationDecision("d1", "r1", receipt.digest, "verifier", 30, 3))
             ledger.finalize("q1")
-            ledger.reserve("q2", "alice", 20)
+            ledger.reserve(quote("q2", 20, 2, 3, 5, 3))
             receipt2 = module.WorkReceipt("r2", "q2", "worker", "whole", "a2", 1, 1, 5, "b" * 64)
             ledger.submit_receipt(receipt2)
             db = ledger._db

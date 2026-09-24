@@ -16,24 +16,39 @@ model download, network call, processor action, or GPU run was used.
 
 - All balances are integer **test units**. A test grant debits the explicit
   `test_issuance` account; it is the only minting operation. No account can
-  withdraw or buy service through this module.
-- A reservation atomically moves a capped amount from `buyer:<id>` to
+  withdraw or admit a live paid service through this module.
+- A versioned `ShadowQuote` binds buyer/request, exact model and profile,
+  artifact and service-policy digests, price-schedule digest, service class,
+  settlement domain, input/output rates and limits, maximum fee percentage, expiry and
+  spend cap. It is a local data contract, not a signed offer or authorization.
+  The stand-alone `prototype_shadow_quote.py` ran first and passed in 0.18 s.
+- A new reservation requires that quote and atomically moves its capped amount
+  from `buyer:<id>` to
   `hold:<request>`. Concurrent reservations serialize through SQLite's write
-  transaction. An exact request replay is idempotent; a changed cap or buyer is
-  rejected.
+  transaction. An exact request/quote replay is idempotent, even after quote
+  expiry; changed terms or an expired new quote are rejected. The canonical
+  quote and its digest are stored durably and bound to the reserve event.
 - A versioned, content-free work receipt is an untrusted claim. It records
   request, provider, stage, attempt, measured units, proposed test charge and
   an evidence digest. It does not contain prompts or outputs. Duplicate receipt
   IDs and repeated provider/stage/attempt claims cannot create another charge.
+  New claims must stay within the bound quote's input/output rates and both
+  per-claim and aggregate request unit limits. Rejected claims release their
+  unit allowance; active pending and approved claims consume it.
 - A separate validation decision binds the receipt digest and supplies an
-  approved amount and fee. The claimed provider cannot name itself as verifier.
+  approved amount and fee. The fee cannot exceed the quoted percentage of the
+  approved charge. The claimed provider cannot name itself as verifier.
   This is a **data contract**, not authentication: the caller is responsible for
   an independent, authorized verifier and useful-work reconciliation.
 - `finalize` requires all claims resolved. It atomically moves the approved
   amount from the hold to provider-pending and fee accounts, and releases the
   remainder to the buyer. Provider-pending units have no cash-out path.
 - Every movement has equal debit and credit postings. `audit` checks event
-  balance, materialized balances, held requests and receipt caps. SQLite WAL
+  balance, materialized balances, held requests, quote binding and receipt caps.
+  Its read transaction makes that check one SQLite snapshot across writers.
+  Schema-v1 files retain their existing unquoted holds as `legacy_unquoted`:
+  new claims/approvals on those holds fail, while rejected or already-approved
+  claims can be finalized and unused units returned. SQLite WAL
   with FULL synchronous mode supplies local process-crash persistence; separate
   backups, disk-loss recovery, fencing and replication are not proven.
 - `buyer_wallet` provides one consistent read snapshot of noncash available
@@ -53,9 +68,10 @@ model download, network call, processor action, or GPU run was used.
 
 ## Next integration boundary
 
-1. Bind buyer/request identity, immutable model/profile, quoted pricing, spend
-   ceiling and service policy at the authenticated API entry. Shadow accounting
-   must observe the request without changing access until B5 evidence passes.
+1. Issue and authenticate the bound quote at API entry, link it to immutable
+   request/attempt and route authority, and refuse unquoted admission. Shadow
+   accounting must observe the request without changing access until B5
+   evidence passes.
 2. Implement versioned receipt producers for both whole-model and partial-stage
    work, with prefill/decode/cache/retry/failure/cancellation attribution and
    content-free evidence. Provider-reported token counts alone cannot approve a
