@@ -1,5 +1,7 @@
 """Fast local vLLM adapter checks using httpx MockTransport, no vLLM/GPU."""
 
+# isort: skip_file
+
 import asyncio
 import json
 import sys
@@ -17,7 +19,14 @@ PACKAGE.__path__ = [str(Path(__file__).resolve().parents[1] / "src" / "drift")]
 sys.modules["drift"] = PACKAGE
 
 from drift import inference_provider as contract  # noqa: E402
-from drift.managed_vllm import ManagedVllmAdapter, ManagedVllmBinding, ManagedVllmStopUnconfirmed  # noqa: E402
+from drift.managed_vllm import (  # noqa: E402
+    ManagedGenerationOptions,
+    ManagedVllmAdapter,
+    ManagedVllmBinding,
+    ManagedVllmStopUnconfirmed,
+)
+from drift.managed_vllm_text import ManagedProviderUnavailable, ManagedVllmTextClient  # noqa: E402
+from drift.text_request import RequestContext  # noqa: E402
 
 
 class Chunked(httpx.AsyncByteStream):
@@ -44,8 +53,14 @@ def fixture(*, available=True):
     now = time.monotonic()
     request = contract.InferenceRequest(
         contract.ProviderIdentity("test/provider", "test/instance"),
-        profile.profile_id, profile.model_id, "a" * 32, "b" * 32,
-        now, now + 5.0, "hello", contract.InferenceLimits(100, 20, 8, 100),
+        profile.profile_id,
+        profile.model_id,
+        "a" * 32,
+        "b" * 32,
+        now,
+        now + 5.0,
+        "hello",
+        contract.InferenceLimits(100, 20, 8, 100),
     )
     return binding, request
 
@@ -55,7 +70,9 @@ def sse(model="test/model", *, done=True):
         {"id": "req1", "model": model, "choices": [{"index": 0, "text": "hi", "finish_reason": None}]},
         {"id": "req1", "model": model, "choices": [{"index": 0, "text": "", "finish_reason": "stop"}]},
         {
-            "id": "req1", "model": model, "choices": [],
+            "id": "req1",
+            "model": model,
+            "choices": [],
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         },
     ]
@@ -74,14 +91,36 @@ async def check():
         payload = json.loads(http_request.content)
         assert payload["model"] == "test/model" and payload["prompt"] == "hello"
         assert payload["stream_options"] == {"include_usage": True}
+        assert payload["temperature"] == 0.25 and payload["top_p"] == 0.8 and payload["stop"] == ["END"]
         return httpx.Response(200, stream=Chunked(), headers={"content-type": "text/event-stream"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-        events = [event async for event in ManagedVllmAdapter(binding, client=client).stream(request)]
+        options = ManagedGenerationOptions(0.25, 0.8, ("END",))
+        events = [event async for event in ManagedVllmAdapter(binding, client=client).stream(request, options=options)]
     assert [event.kind for event in events] == [
-        contract.EventKind.STARTED, contract.EventKind.OUTPUT, contract.EventKind.COMPLETED,
+        contract.EventKind.STARTED,
+        contract.EventKind.OUTPUT,
+        contract.EventKind.COMPLETED,
     ]
-    assert events[-1].usage == contract.Usage(1, 1, 2) and len(calls) == 1
+    assert events[-1].usage == contract.Usage(1, 1, 2) and events[-1].finish_reason == "stop" and len(calls) == 1
+
+    digest = "sha256:" + "c" * 64
+    context = RequestContext.start(5.0)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, content=sse()))) as client:
+        bridge = ManagedVllmTextClient(ManagedVllmAdapter(binding, client=client), request.identity, digest)
+        frames = [
+            frame
+            async for frame in bridge.stream(
+                {"model": digest, "prompt": "hello", "max_tokens": 20}, chat=False, context=context
+            )
+        ]
+    assert [frame["type"] for frame in frames] == ["heartbeat", "delta", "done"]
+    assert frames[-1]["finish_reason"] == "stop" and frames[-1]["usage"]["total_tokens"] == 2
+    try:
+        [frame async for frame in bridge.stream({"model": digest, "prompt": "hello"}, chat=True, context=context)]
+        raise AssertionError("unqualified managed chat accepted")
+    except ValueError:
+        pass
     with tempfile.TemporaryDirectory() as model_directory:
         command, environment = binding.launch_spec(Path(model_directory), max_model_len=2048)
         assert ("--tensor-parallel-size", "2") == command[command.index("--tensor-parallel-size") :][:2]
@@ -138,12 +177,30 @@ async def check():
         candidate = ManagedVllmBinding(required, exact, binding.base_url, "secret", (0, 1), 2, 1)
         now = time.monotonic()
         exact_request = contract.InferenceRequest(
-            request.identity, required.profile_id, exact, request.request_id, request.attempt_id,
-            now, now + 5.0, "test prompt", request.limits,
+            request.identity,
+            required.profile_id,
+            exact,
+            request.request_id,
+            request.attempt_id,
+            now,
+            now + 5.0,
+            "test prompt",
+            request.limits,
         )
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: 1 / 0)) as client:
             events = [event async for event in ManagedVllmAdapter(candidate, client=client).stream(exact_request)]
         assert [event.kind for event in events] == [contract.EventKind.REFUSED]
+        exact_bridge = ManagedVllmTextClient(ManagedVllmAdapter(candidate), request.identity, digest)
+        try:
+            [
+                frame
+                async for frame in exact_bridge.stream(
+                    {"model": digest, "prompt": "hello"}, chat=False, context=RequestContext.start(5.0)
+                )
+            ]
+            raise AssertionError("unavailable exact model accepted through API bridge")
+        except ManagedProviderUnavailable:
+            pass
         with tempfile.TemporaryDirectory() as model_directory:
             try:
                 candidate.launch_spec(Path(model_directory), max_model_len=2048)

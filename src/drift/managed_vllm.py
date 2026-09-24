@@ -44,6 +44,30 @@ class ManagedVllmStopUnconfirmed(ManagedVllmError):
 
 
 @dataclass(frozen=True)
+class ManagedGenerationOptions:
+    temperature: float = 1.0
+    top_p: float = 1.0
+    stop: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.temperature) not in (int, float) or not 0 <= self.temperature <= 2:
+            raise ValueError("invalid managed temperature")
+        if type(self.top_p) not in (int, float) or not 0 < self.top_p <= 1:
+            raise ValueError("invalid managed top_p")
+        if type(self.stop) is not tuple or len(self.stop) > 4:
+            raise ValueError("invalid managed stop set")
+        for item in self.stop:
+            if type(item) is not str or not item:
+                raise ValueError("invalid managed stop string")
+            try:
+                size = len(item.encode("utf-8"))
+            except UnicodeEncodeError as exc:
+                raise ValueError("invalid managed stop string") from exc
+            if size > 256:
+                raise ValueError("invalid managed stop string")
+
+
+@dataclass(frozen=True)
 class ManagedVllmBinding:
     """Local deployment input, never derived from DHT or a response frame."""
 
@@ -107,14 +131,23 @@ class ManagedVllmBinding:
             raise ValueError("unqualified context envelope")
         parsed = urlsplit(self.base_url)
         command = (
-            "vllm", "serve", str(path.resolve(strict=True)),
-            "--served-model-name", self.served_model,
-            "--host", parsed.hostname,
-            "--port", str(parsed.port),
-            "--tensor-parallel-size", str(self.tensor_parallel_size),
-            "--pipeline-parallel-size", str(self.pipeline_parallel_size),
-            "--distributed-executor-backend", "mp",
-            "--max-model-len", str(max_model_len),
+            "vllm",
+            "serve",
+            str(path.resolve(strict=True)),
+            "--served-model-name",
+            self.served_model,
+            "--host",
+            parsed.hostname,
+            "--port",
+            str(parsed.port),
+            "--tensor-parallel-size",
+            str(self.tensor_parallel_size),
+            "--pipeline-parallel-size",
+            str(self.pipeline_parallel_size),
+            "--distributed-executor-backend",
+            "mp",
+            "--max-model-len",
+            str(max_model_len),
             "--no-enable-log-requests",
         )
         environment = {
@@ -141,9 +174,7 @@ def _sse_data(frame: bytes) -> bytes | None:
     return data[0]
 
 
-async def _bounded_sse(
-    response: httpx.Response, deadline: float, clock: Callable[[], float]
-) -> AsyncIterator[bytes]:
+async def _bounded_sse(response: httpx.Response, deadline: float, clock: Callable[[], float]) -> AsyncIterator[bytes]:
     buffer = bytearray()
     frame_count = 0
     chunks = response.aiter_bytes(chunk_size=64 * 1024)
@@ -194,9 +225,15 @@ class ManagedVllmAdapter:
         self._client = client
         self._clock = clock
 
-    async def stream(self, request: InferenceRequest) -> AsyncIterator[ProviderEvent]:
+    async def stream(
+        self, request: InferenceRequest, *, options: ManagedGenerationOptions | None = None
+    ) -> AsyncIterator[ProviderEvent]:
         if type(request) is not InferenceRequest:
             raise ValueError("invalid request")
+        if options is None:
+            options = ManagedGenerationOptions()
+        if type(options) is not ManagedGenerationOptions:
+            raise ValueError("invalid generation options")
         profile = self.binding.profile
         validator = ProviderStreamValidator(profile, request, clock=self._clock)
         sequence = 0
@@ -236,70 +273,79 @@ class ManagedVllmAdapter:
             "stream_options": {"include_usage": True},
             "max_tokens": request.limits.max_output_units,
             "n": 1,
+            "temperature": options.temperature,
+            "top_p": options.top_p,
         }
+        if options.stop:
+            payload["stop"] = list(options.stop)
         headers = {"Authorization": "Bearer " + self.binding.api_key, "Accept": "text/event-stream"}
         response_id = None
         saw_finish = False
+        finish_reason = None
         usage = None
         saw_done = False
         try:
             stream_context = client.stream(
-                "POST", self.binding.base_url + "/v1/completions", json=payload,
-                headers=headers, timeout=remaining,
+                "POST",
+                self.binding.base_url + "/v1/completions",
+                json=payload,
+                headers=headers,
+                timeout=remaining,
             )
             response = await asyncio.wait_for(stream_context.__aenter__(), remaining)
             try:
-                    if response.status_code != 200:
-                        yield event(EventKind.FAILED, failure_code="backend_http_error")
-                        return
-                    yield event(EventKind.STARTED)
-                    async for raw in _bounded_sse(response, request.deadline, self._clock):
-                        if saw_done:
-                            raise ManagedVllmError("data after backend terminator")
-                        if raw == b"[DONE]":
-                            saw_done = True
-                            continue
-                        try:
-                            frame = json.loads(raw)
-                        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                            raise ManagedVllmError("malformed backend JSON") from exc
-                        if type(frame) is not dict or frame.get("model") != self.binding.served_model:
-                            raise ManagedVllmError("backend model identity mismatch")
-                        frame_id = frame.get("id")
-                        if type(frame_id) is not str or not frame_id or len(frame_id) > 192:
-                            raise ManagedVllmError("invalid backend response ID")
-                        if response_id is None:
-                            response_id = frame_id
-                        elif response_id != frame_id:
-                            raise ManagedVllmError("backend response ID changed")
-                        choices = frame.get("choices")
-                        if type(choices) is not list or len(choices) > 1:
-                            raise ManagedVllmError("invalid backend choices")
-                        if choices:
-                            choice = choices[0]
-                            if type(choice) is not dict or choice.get("index") != 0:
-                                raise ManagedVllmError("invalid backend choice")
-                            output = choice.get("text")
-                            finish = choice.get("finish_reason")
-                            if type(output) is not str or (finish is not None and finish not in {"stop", "length"}):
-                                raise ManagedVllmError("unsupported backend output")
-                            if usage is not None or (saw_finish and finish is not None):
-                                raise ManagedVllmError("backend continued after final chunk")
-                            if saw_finish and output:
-                                raise ManagedVllmError("output after finish")
-                            if output:
-                                yield event(EventKind.OUTPUT, text=output)
-                            if finish is not None:
-                                saw_finish = True
-                        reported = frame.get("usage")
-                        if reported is not None:
-                            if type(reported) is not dict or usage is not None or not saw_finish:
-                                raise ManagedVllmError("invalid backend usage")
-                            usage = Usage(
-                                reported.get("prompt_tokens"),
-                                reported.get("completion_tokens"),
-                                reported.get("total_tokens"),
-                            )
+                if response.status_code != 200:
+                    yield event(EventKind.FAILED, failure_code="backend_http_error")
+                    return
+                yield event(EventKind.STARTED)
+                async for raw in _bounded_sse(response, request.deadline, self._clock):
+                    if saw_done:
+                        raise ManagedVllmError("data after backend terminator")
+                    if raw == b"[DONE]":
+                        saw_done = True
+                        continue
+                    try:
+                        frame = json.loads(raw)
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise ManagedVllmError("malformed backend JSON") from exc
+                    if type(frame) is not dict or frame.get("model") != self.binding.served_model:
+                        raise ManagedVllmError("backend model identity mismatch")
+                    frame_id = frame.get("id")
+                    if type(frame_id) is not str or not frame_id or len(frame_id) > 192:
+                        raise ManagedVllmError("invalid backend response ID")
+                    if response_id is None:
+                        response_id = frame_id
+                    elif response_id != frame_id:
+                        raise ManagedVllmError("backend response ID changed")
+                    choices = frame.get("choices")
+                    if type(choices) is not list or len(choices) > 1:
+                        raise ManagedVllmError("invalid backend choices")
+                    if choices:
+                        choice = choices[0]
+                        if type(choice) is not dict or choice.get("index") != 0:
+                            raise ManagedVllmError("invalid backend choice")
+                        output = choice.get("text")
+                        finish = choice.get("finish_reason")
+                        if type(output) is not str or (finish is not None and finish not in {"stop", "length"}):
+                            raise ManagedVllmError("unsupported backend output")
+                        if usage is not None or (saw_finish and finish is not None):
+                            raise ManagedVllmError("backend continued after final chunk")
+                        if saw_finish and output:
+                            raise ManagedVllmError("output after finish")
+                        if output:
+                            yield event(EventKind.OUTPUT, text=output)
+                        if finish is not None:
+                            saw_finish = True
+                            finish_reason = finish
+                    reported = frame.get("usage")
+                    if reported is not None:
+                        if type(reported) is not dict or usage is not None or not saw_finish:
+                            raise ManagedVllmError("invalid backend usage")
+                        usage = Usage(
+                            reported.get("prompt_tokens"),
+                            reported.get("completion_tokens"),
+                            reported.get("total_tokens"),
+                        )
             finally:
                 try:
                     await asyncio.wait_for(stream_context.__aexit__(None, None, None), 3.0)
@@ -307,7 +353,7 @@ class ManagedVllmAdapter:
                     raise ManagedVllmStopUnconfirmed("backend close timed out; stop unconfirmed") from exc
             if not saw_done or not saw_finish or usage is None:
                 raise ManagedVllmError("backend stream ended without completion and usage")
-            yield event(EventKind.COMPLETED, usage=usage)
+            yield event(EventKind.COMPLETED, usage=usage, finish_reason=finish_reason)
         except ManagedVllmStopUnconfirmed:
             raise
         except TimeoutError as exc:

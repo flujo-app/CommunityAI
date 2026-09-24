@@ -72,3 +72,27 @@ this checkout; no broad suite or vLLM/model/GPU operation ran.
 
 The package's `api` extra includes `httpx` for this adapter. The main legacy
 community text path remains separate; no production route is switched here.
+
+## 2026-09-24 API seam extension
+
+`src/drift/managed_vllm_text.py` now connects an explicitly registered managed
+test profile to the existing `ModelRuntime.text_client` and OpenAI completions
+path. It inherits the authenticated API request ID and monotonic deadline,
+generates a distinct attempt ID, binds a local manifest digest, bounds the
+initial 2,048-total/512-output-token envelope, forwards validated sampling
+settings, and maps accepted provider output/usage/finish reason to the current
+API response. Chat is refused until a verified model-specific prompt encoder
+exists. This is a test-profile path, not a production model registration or
+automatic backend selection.
+
+The standalone bridge experiment (`scripts/prototype_managed_api_bridge.py`)
+passed before the source bridge was added. The focused adapter script passed,
+then `scripts/check_managed_vllm_api.py` exercised the **actual FastAPI route**
+against a short-lived loopback fake server: auth denial, nonstreaming and SSE
+success, DeepSeek/GLM refusal before backend contact, chat refusal and lease
+release. The API script took about 10 seconds including ML-stack imports.
+The final focused provider-contract suites passed 73 tests in 5.53 seconds,
+including the new completion-reason negative regression. The standalone bridge
+and adapter scripts passed, and the real FastAPI/fake-backend script passed
+again after the total-token envelope repair. No broad CI, model download or
+GPU run occurred.

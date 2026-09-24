@@ -217,6 +217,7 @@ class ProviderEvent:
     refusal: Refusal | None = None
     failure_code: str | None = None
     stop_reason: StopReason | None = None
+    finish_reason: str | None = None
 
     def __post_init__(self) -> None:
         _require(type(self.identity) is ProviderIdentity)
@@ -255,6 +256,12 @@ class ProviderEvent:
             _require(type(self.failure_code) is str and _CODE.fullmatch(self.failure_code) is not None)
         if self.stop_reason is not None:
             _require(type(self.stop_reason) is StopReason)
+        if self.finish_reason is not None:
+            _require(
+                self.kind is EventKind.COMPLETED
+                and type(self.finish_reason) is str
+                and self.finish_reason in {"stop", "length"}
+            )
 
 
 @dataclass(frozen=True)

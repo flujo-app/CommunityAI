@@ -132,6 +132,20 @@ def test_happy_stream_is_exact_bounded_monotonic_and_single_terminal():
     )
 
 
+def test_completion_reason_is_bounded_and_cannot_label_output_or_failure():
+    req = request()
+    completed = event(req, 0, provider.EventKind.COMPLETED, usage=provider.Usage(1, 1, 2), finish_reason="length")
+    assert completed.finish_reason == "length"
+    error_code(
+        provider.ContractCode.MALFORMED,
+        lambda: event(req, 0, provider.EventKind.COMPLETED, usage=provider.Usage(1, 1, 2), finish_reason="error"),
+    )
+    error_code(
+        provider.ContractCode.MALFORMED,
+        lambda: event(req, 0, provider.EventKind.OUTPUT, text="hello", finish_reason="stop"),
+    )
+
+
 @pytest.mark.parametrize("field", ["identity", "profile_id", "model_id", "request_id", "attempt_id"])
 def test_every_event_identity_dimension_must_match(field):
     req = request()
