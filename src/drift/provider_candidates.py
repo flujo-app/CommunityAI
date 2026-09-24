@@ -116,6 +116,7 @@ class UnavailableProviderCandidate:
     quantization: str
     config: FilePin
     tokenizer_config: FilePin
+    prompt_source_files: tuple[FilePin, ...]
     generation_config: FilePin | None
     license_identifier: str
     license_file: FilePin
@@ -128,13 +129,22 @@ class UnavailableProviderCandidate:
     unresolved_gates: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        _require(type(self.schema_version) is int and self.schema_version == 1)
+        _require(type(self.schema_version) is int and self.schema_version == 2)
         _require(type(self.model_id) is str and self.model_id in REQUIRED_MODEL_IDS)
         _require(type(self.model_revision) is str and _HEX40.fullmatch(self.model_revision) is not None)
         _require(_text(self.architecture) and _text(self.model_type) and _text(self.quantization))
         _require(type(self.declared_max_positions) is int and 0 < self.declared_max_positions < 2**63)
         _require(type(self.config) is FilePin and self.config.path == "config.json")
         _require(type(self.tokenizer_config) is FilePin and self.tokenizer_config.path == "tokenizer_config.json")
+        _require(type(self.prompt_source_files) is tuple and 1 <= len(self.prompt_source_files) <= 16)
+        _require(all(type(item) is FilePin for item in self.prompt_source_files))
+        _require(len({item.path for item in self.prompt_source_files}) == len(self.prompt_source_files))
+        expected_prompt_paths = (
+            {"encoding/README.md", "encoding/encoding.py", "encoding/test_encoding.py"}
+            if self.model_id == "deepseek-ai/DeepSeek-V4.1-Flash"
+            else {"chat_template.jinja"}
+        )
+        _require({item.path for item in self.prompt_source_files} == expected_prompt_paths)
         _require(
             self.generation_config is None
             or (type(self.generation_config) is FilePin and self.generation_config.path == "generation_config.json")
@@ -190,7 +200,7 @@ _VLLM = dict(
 )
 
 DEEPSEEK_V41_FLASH_CANDIDATE = UnavailableProviderCandidate(
-    schema_version=1,
+    schema_version=2,
     model_id="deepseek-ai/DeepSeek-V4.1-Flash",
     model_revision="dba1be0a40aa45a94ad051997016db3960a90277",
     architecture="DeepseekV41ForCausalLM",
@@ -200,6 +210,13 @@ DEEPSEEK_V41_FLASH_CANDIDATE = UnavailableProviderCandidate(
     config=FilePin("config.json", "8be45ce0476004a3f529fd896115a4a2e800a129ad2d3ec05b16050f52e21879", 3_311),
     tokenizer_config=FilePin(
         "tokenizer_config.json", "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547", 801
+    ),
+    prompt_source_files=(
+        FilePin("encoding/README.md", "a2f0fc3baea318c9cfbceca68cbfe50d37cf7da6605ace887f33148bcff7e3ae", 12_120),
+        FilePin("encoding/encoding.py", "502bdaec8a3fd88ebc24c4721a7038fbe42f2063c664638127056107920035c1", 37_316),
+        FilePin(
+            "encoding/test_encoding.py", "4a470892dad828459958cebfad55da598aafcb7a5878764ccbfc3ab060399d06", 19_371
+        ),
     ),
     generation_config=None,
     license_identifier="MIT",
@@ -234,7 +251,7 @@ DEEPSEEK_V41_FLASH_CANDIDATE = UnavailableProviderCandidate(
 )
 
 GLM_53_CANDIDATE = UnavailableProviderCandidate(
-    schema_version=1,
+    schema_version=2,
     model_id="zai-org/GLM-5.3",
     model_revision="aca966e4e02791568aa6a4ced368624b3d897f42",
     architecture="GlmMoeDsaForCausalLM",
@@ -244,6 +261,9 @@ GLM_53_CANDIDATE = UnavailableProviderCandidate(
     config=FilePin("config.json", "3ac72612095574542f7fff847ada8e59d9199dd8af44bdf625d7e02615572e69", 29_464),
     tokenizer_config=FilePin(
         "tokenizer_config.json", "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc", 761
+    ),
+    prompt_source_files=(
+        FilePin("chat_template.jinja", "3740abcea51c45830cb3ca562084ad5fb2ef53589376f73332e9886f93ade41c", 10_734),
     ),
     generation_config=FilePin(
         "generation_config.json", "ac76b43d8683d3b930126870fc8be73d8679308fe752fa1f381096d8354f6a55", 194

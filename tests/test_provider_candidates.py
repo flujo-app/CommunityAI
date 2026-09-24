@@ -33,6 +33,11 @@ def test_pins_match_research_and_keep_full_glm_distinct_from_flash():
     assert deepseek.tokenizer_config.sha256 == "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547"
     assert deepseek.generation_config is None
     assert deepseek.license_file.sha256 == "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040"
+    assert {item.path: item.sha256 for item in deepseek.prompt_source_files} == {
+        "encoding/README.md": "a2f0fc3baea318c9cfbceca68cbfe50d37cf7da6605ace887f33148bcff7e3ae",
+        "encoding/encoding.py": "502bdaec8a3fd88ebc24c4721a7038fbe42f2063c664638127056107920035c1",
+        "encoding/test_encoding.py": "4a470892dad828459958cebfad55da598aafcb7a5878764ccbfc3ab060399d06",
+    }
 
     glm = candidates.GLM_53_CANDIDATE
     assert glm.model_id == "zai-org/GLM-5.3" and "Flash" not in glm.model_id
@@ -42,6 +47,11 @@ def test_pins_match_research_and_keep_full_glm_distinct_from_flash():
     assert glm.tokenizer_config.sha256 == "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
     assert glm.generation_config.sha256 == "ac76b43d8683d3b930126870fc8be73d8679308fe752fa1f381096d8354f6a55"
     assert glm.license_file.sha256 == "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c"
+    assert glm.prompt_source_files == (
+        candidates.FilePin(
+            "chat_template.jinja", "3740abcea51c45830cb3ca562084ad5fb2ef53589376f73332e9886f93ade41c", 10_734
+        ),
+    )
 
 
 def test_backend_release_source_and_serving_evidence_are_exactly_pinned():
@@ -66,6 +76,13 @@ def test_backend_release_source_and_serving_evidence_are_exactly_pinned():
         lambda value: replace(value, model_revision="0" * 40),
         lambda value: replace(value, config=replace(value.config, sha256="0" * 64)),
         lambda value: replace(value, tokenizer_config=replace(value.tokenizer_config, sha256="0" * 64)),
+        lambda value: replace(
+            value,
+            prompt_source_files=(
+                replace(value.prompt_source_files[0], sha256="0" * 64),
+                *value.prompt_source_files[1:],
+            ),
+        ),
         lambda value: replace(value, license_file=replace(value.license_file, sha256="0" * 64)),
         lambda value: replace(
             value,
@@ -91,9 +108,9 @@ def test_canonical_document_is_complete_detached_and_deterministic():
     assert candidate.canonical_bytes() == candidate.canonical_bytes()
     assert candidate.profile_digest == candidate.provider_profile.profile_id.removeprefix("candidate/sha256:")
     assert candidates.DEEPSEEK_V41_FLASH_CANDIDATE.profile_digest == (
-        "382a5fcaf5b85dd26608e5e0fb583d1e41b2c1e92d6d29015160744841c14fe7"
+        "08a2300e8e3600fef075118b83c8ef6e0b0ec6779a801fca1ddbe1af9e281ee2"
     )
-    assert candidate.profile_digest == "d6cf4813300d35e3bd54765a3f16b04bcd224048914b96a826774cdd047591bc"
+    assert candidate.profile_digest == "820c52463968e66476051aaca854a97a13278277e0c238a4c6d3ef2da9725425"
 
 
 def test_all_missing_authority_and_qualification_inputs_remain_explicit_gates():
@@ -152,6 +169,11 @@ def test_candidates_have_no_availability_promotion_path():
             unresolved_gates=tuple(f"gate_{index:02d}" for index in range(33)),
         ),
         lambda: replace(candidates.GLM_53_CANDIDATE, model_id="zai-org/GLM-5.3-Flash"),
+        lambda: replace(candidates.GLM_53_CANDIDATE, prompt_source_files=()),
+        lambda: replace(
+            candidates.GLM_53_CANDIDATE,
+            prompt_source_files=(candidates.FilePin("encoding/encoding.py", "0" * 64, 1),),
+        ),
     ],
 )
 def test_malformed_or_substituted_metadata_is_refused(build):
