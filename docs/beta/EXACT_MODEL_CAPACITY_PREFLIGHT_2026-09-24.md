@@ -80,6 +80,6 @@ workspace/KV allocation, precision behavior and latency still need H100
 testing. The recipe requires `--trust-remote-code`; the pinned repository also
 includes `sitecustomize.py`. Review exactly which code executes and bind an
 approved runtime image before a managed trial. Rights for this derivative and
-the official [GLM-5.3 license](https://huggingface.co/zai-org/GLM-5.3/blob/main/LICENSE)
+the official [GLM-5.3 license](https://huggingface.co/zai-org/GLM-5.3/blob/aca966e4e02791568aa6a4ced368624b3d897f42/LICENSE)
 need explicit release review. No quantized GLM profile is enabled by this
 capacity calculation.
