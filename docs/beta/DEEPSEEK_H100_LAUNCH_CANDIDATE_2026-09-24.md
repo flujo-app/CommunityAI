@@ -23,14 +23,24 @@ tables. The candidate also limits this first CommunityAI text-only trial to a
 keeps the API key out of argv, and forces local/offline artifacts. These extra
 choices have not been validated against that nightly image.
 
-The upstream H100 result used a **2026-09-15 nightly**; vLLM v0.30.0's
+The upstream H100 result used a **2026-09-15 nightly**. The merged
+[InferenceX H100 run](https://github.com/SemiAnalysisAI/InferenceX/pull/3135)
+identifies vLLM commit `cd10ed6f9f6b37a8ace9cf380007e66fe12ec0c3`.
+The matching Docker Hub tag resolves to the pinned Linux/amd64 image
+`vllm/vllm-openai@sha256:0a329f66a92e19ad8c8e9b9a17bda6ecf70b1a8dcfd9c735360a251ce870d0d8`
+([tag metadata](https://hub.docker.com/v2/repositories/vllm/vllm-openai/tags/nightly-cd10ed6f9f6b37a8ace9cf380007e66fe12ec0c3)).
+The candidate records this image and commit as required upstream provenance.
+It builds argv **for inside that image**; it does not pull or run the image.
+It deliberately does not reuse the managed adapter's v0.30.0 binding.
+
+vLLM v0.30.0's
 [release notes](https://github.com/vllm-project/vllm/releases/tag/v0.30.0)
 list DeepSeek-V4.1-Flash architecture support, and the
 [v0.30.0 serve reference](https://docs.vllm.ai/en/v0.30.0/cli/serve/)
 documents the core flags. Neither establishes that the recipe's nightly-only
-settings work in the pinned CommunityAI backend. No image digest or local
-runtime has been qualified. A test must first identify the actual vLLM build
-and confirm `vllm serve --help` accepts every flag.
+settings work in the pinned CommunityAI backend. The image has not been run
+locally. A test must identify the actual build and confirm `vllm serve --help`
+accepts every flag, then complete model and hardware checks.
 
 The builder accepts a **reported** free-host-RAM value of at least 183 GiB; it
 does not measure available or pinnable memory. Its directory existence check
