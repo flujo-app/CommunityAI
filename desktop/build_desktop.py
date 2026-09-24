@@ -26,9 +26,11 @@ from communityai_desktop.pyside_shell import check_runtime
 
 try:  # Direct script execution and repository test imports use different roots.
     import cgroup_extension
+    from linux_abi import require_ubuntu_20_04_abi
     from runtime_packaging import normalize_runtime
 except ModuleNotFoundError:
     from desktop import cgroup_extension
+    from desktop.linux_abi import require_ubuntu_20_04_abi
     from desktop.runtime_packaging import normalize_runtime
 
 APP_NAME = "CommunityAI"
@@ -109,6 +111,7 @@ _RELEASE_SOURCE_PATHS = (
     "desktop/launch_volunteer.py",
     "desktop/launch_volunteer_node.py",
     "desktop/launch_node.py",
+    "desktop/linux_abi.py",
     "desktop/pyproject.toml",
     "desktop/setup.py",
     "desktop/src",
@@ -1506,6 +1509,8 @@ def main() -> int:
     if args.verify_release_output is not None:
         if args.output_root is not None:
             parser.error("--verify-release-output cannot be combined with --output-root")
+        if profile == VOLUNTEER_BUILD_PROFILE:
+            require_ubuntu_20_04_abi(args.verify_release_output / profile.app_name)
         if args.source_commit is None:
             expected_source_commit = _EXPECTED_UNSET
             expected_source_tree = _EXPECTED_UNSET
@@ -1710,6 +1715,8 @@ def main() -> int:
         node_root, target_platform=platform.system(), torch_version=importlib.metadata.version("torch")
     )
     (bundle_root / "runtime-packaging.json").write_text(_canonical_json(normalization), encoding="utf-8")
+    if profile == VOLUNTEER_BUILD_PROFILE:
+        require_ubuntu_20_04_abi(bundle_root)
 
     with tempfile.TemporaryDirectory(prefix="communityai-build-smoke-") as smoke_home:
         environment = _smoke_environment(Path(smoke_home)) if profile == VOLUNTEER_BUILD_PROFILE else os.environ.copy()
