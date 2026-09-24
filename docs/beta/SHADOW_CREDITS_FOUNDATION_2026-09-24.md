@@ -43,6 +43,13 @@ model download, network call, processor action, or GPU run was used.
   local display order; the view exposes no durable pagination cursor or live
   authentication boundary. The independent SQL prototype ran before this
   method was added; focused local checks cover the result, limits and reopen.
+- `provider_wallet` reads a consistent, content-free view of submitted claims,
+  approved work awaiting settlement, rejected claims and settled units still
+  held in `provider_pending`. It exposes no spend, payout or cash eligibility.
+  A focused standalone script first exercised its expected lifecycle and
+  failed while the method was absent; it then passed in under one second after
+  implementation, including reopen and invalid provider/limit checks. This is
+  not a provider-authenticated wallet endpoint.
 
 ## Next integration boundary
 

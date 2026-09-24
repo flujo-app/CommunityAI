@@ -35,6 +35,9 @@ def check_settlement(path):
         assert not ledger.reserve("q1", "alice", 80)
         rejected(lambda: ledger.reserve("q2", "alice", 21))
         assert ledger.submit_receipt(receipt)
+        provider_before = ledger.provider_wallet("worker1")
+        assert (provider_before["pending_review_receipts"], provider_before["approved_unsettled"]) == (1, 0)
+        assert provider_before["settled_pending_balance"] == 0
         assert not ledger.submit_receipt(receipt)
         rejected(
             lambda: ledger.submit_receipt(
@@ -51,12 +54,22 @@ def check_settlement(path):
         decision = MODULE.ValidationDecision("d1", "r1", receipt.digest, "verifier1", 50, 5)
         assert ledger.approve_receipt(decision)
         assert not ledger.approve_receipt(decision)
+        provider_approved = ledger.provider_wallet("worker1")
+        assert (provider_approved["pending_review_receipts"], provider_approved["approved_unsettled"]) == (0, 50)
         held_wallet = ledger.buyer_wallet("alice")
         assert (held_wallet["available"], held_wallet["held"], held_wallet["approved_unsettled"]) == (20, 80, 50)
         assert ledger.finalize("q1")
         assert not ledger.finalize("q1")
         assert ledger.balance("buyer:alice") == 50
         assert ledger.balance("provider_pending:worker1") == 45
+        provider_settled = ledger.provider_wallet("worker1")
+        assert provider_settled["unit"] == "test_credit"
+        assert provider_settled["settled_pending_balance"] == 45
+        assert provider_settled["approved_unsettled"] == 0
+        assert provider_settled["recent_events"][0]["pending_delta"] == 45
+        assert len(ledger.provider_wallet("worker1", recent_limit=1)["recent_events"]) == 1
+        rejected(lambda: ledger.provider_wallet("worker1", recent_limit=0))
+        rejected(lambda: ledger.provider_wallet("unknown"))
         assert ledger.balance("fees") == 5
         assert ledger.balance("hold:q1") == 0
         wallet = ledger.buyer_wallet("alice")
@@ -73,6 +86,7 @@ def check_settlement(path):
         assert not reopened.finalize("q1")
         assert reopened.balance("buyer:alice") == 50
         assert reopened.buyer_wallet("alice")["settled_spend"] == 50
+        assert reopened.provider_wallet("worker1")["settled_pending_balance"] == 45
 
 
 def check_cancellation_and_concurrency(path):
@@ -84,6 +98,7 @@ def check_cancellation_and_concurrency(path):
         assert ledger.buyer_wallet("bob")["pending_receipts"] == 1
         assert all("q1" not in event["event_id"] for event in ledger.buyer_wallet("bob")["recent_events"])
         ledger.reject_receipt(claim.receipt_id, "no_useful_work")
+        assert ledger.provider_wallet("worker2")["rejected_receipts"] == 1
         assert not ledger.reject_receipt(claim.receipt_id, "no_useful_work")
         ledger.finalize("cancelled")
         assert ledger.balance("buyer:bob") == 100

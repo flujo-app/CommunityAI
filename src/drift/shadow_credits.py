@@ -483,6 +483,52 @@ class ShadowLedger:
                 self._db.execute("ROLLBACK")
                 raise
 
+    def provider_wallet(self, provider_id: str, *, recent_limit: int = 20) -> dict[str, object]:
+        """Show one provider's noncash claims and settled pending test units.
+
+        A settled pending unit is still ineligible for payout or reuse. This
+        view has no provider authentication and must not be exposed directly.
+        """
+        _id(provider_id)
+        _require(type(recent_limit) is int and 1 <= recent_limit <= 100, "invalid wallet history limit")
+        with self._lock:
+            self._db.execute("BEGIN")
+            try:
+                account_id = "provider_pending:" + provider_id
+                row = self._db.execute("SELECT balance FROM accounts WHERE account_id=?", (account_id,)).fetchone()
+                total, pending_review, approved_unsettled, rejected = self._db.execute(
+                    "SELECT COUNT(*), "
+                    "COUNT(CASE WHEN r.status='pending' THEN 1 END), "
+                    "COALESCE(SUM(CASE WHEN r.status='approved' AND v.status='held' "
+                    "THEN r.approved_charge ELSE 0 END), 0), "
+                    "COUNT(CASE WHEN r.status='rejected' THEN 1 END) "
+                    "FROM receipts r JOIN reservations v USING(request_id) WHERE r.provider_id=?",
+                    (provider_id,),
+                ).fetchone()
+                _require(total > 0 or row is not None, "unknown provider")
+                events = self._db.execute(
+                    "SELECT e.event_id, e.kind, p.delta FROM events e "
+                    "JOIN postings p USING(event_id) WHERE p.account_id=? "
+                    "ORDER BY e.rowid DESC LIMIT ?",
+                    (account_id, recent_limit),
+                ).fetchall()
+                result = {
+                    "unit": "test_credit",
+                    "provider_id": provider_id,
+                    "pending_review_receipts": pending_review,
+                    "approved_unsettled": approved_unsettled,
+                    "rejected_receipts": rejected,
+                    "settled_pending_balance": row[0] if row is not None else 0,
+                    "recent_events": [
+                        {"event_id": event_id, "kind": kind, "pending_delta": delta} for event_id, kind, delta in events
+                    ],
+                }
+                self._db.execute("COMMIT")
+                return result
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
     def audit(self) -> dict[str, int]:
         """Check materialized balances, conservation, and held reservations."""
         with self._lock:
