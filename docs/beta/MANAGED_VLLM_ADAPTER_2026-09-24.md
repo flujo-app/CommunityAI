@@ -67,7 +67,8 @@ this checkout; no broad suite or vLLM/model/GPU operation ran.
 4. Qualify a Qwen baseline, then each exact requested model with its pinned
    prompt encoding/template, rights, model artifacts, supported kernels,
    reference correctness, memory and measured performance on real GPUs.
-   DeepSeek-V4.1-Flash custom encoding and GLM-5.3 commercial rights remain
+   DeepSeek-V4.1-Flash and GLM-5.3 have bounded text-only prompt encoders, but
+   backend/hardware qualification and GLM-5.3 commercial rights remain
    separate gates. No automatic fallback to an older/smaller name is allowed.
 
 The package's `api` extra includes `httpx` for this adapter. The main legacy
@@ -81,9 +82,10 @@ path. It inherits the authenticated API request ID and monotonic deadline,
 generates a distinct attempt ID, binds a local manifest digest, bounds the
 initial 2,048-total/512-output-token envelope, forwards validated sampling
 settings, and maps accepted provider output/usage/finish reason to the current
-API response. Chat is refused until a verified model-specific prompt encoder
-exists. This is a test-profile path, not a production model registration or
-automatic backend selection.
+API response. Later bounded text-only DeepSeek-V4.1-Flash and GLM-5.3 prompt
+encoders permit synthetic chat coverage, while their exact provider profiles
+remain unavailable. This is a test-profile path, not a production model
+registration or automatic backend selection.
 
 The standalone bridge experiment (`scripts/prototype_managed_api_bridge.py`)
 passed before the source bridge was added. The focused adapter script passed,
