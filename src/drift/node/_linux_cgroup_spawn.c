@@ -20,9 +20,26 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(__x86_64__) && !defined(SYS_close_range)
+#define SYS_close_range 436
+#endif
 #if !defined(SYS_clone3) || !defined(SYS_pidfd_send_signal) || !defined(SYS_close_range)
 #error "Linux headers with clone3, pidfd_send_signal and close_range are required"
 #endif
+
+/* Ubuntu 20.04 headers predate clone3's cgroup field. The kernel UAPI layout
+ * is fixed; use it directly so build-host headers do not set the ABI floor. */
+#ifndef CLONE_INTO_CGROUP
+#define CLONE_INTO_CGROUP 0x200000000ULL
+#endif
+#ifndef CLONE_CLEAR_SIGHAND
+#define CLONE_CLEAR_SIGHAND 0x100000000ULL
+#endif
+struct restricted_clone_args {
+    uint64_t flags, pidfd, child_tid, parent_tid, exit_signal;
+    uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
+};
+_Static_assert(sizeof(struct restricted_clone_args) == 88, "clone3 cgroup ABI size");
 
 typedef struct {
     PyObject_HEAD
@@ -256,7 +273,7 @@ static PyObject *spawn(PyObject *module, PyObject *arguments) {
     gate[0] = high_fd(gate[0]);
     status[1] = high_fd(status[1]);
     if (output[1] < 0 || gate[0] < 0 || status[1] < 0) goto cleanup;
-    struct clone_args args;
+    struct restricted_clone_args args;
     memset(&args, 0, sizeof(args));
     args.flags = CLONE_INTO_CGROUP | CLONE_PIDFD | CLONE_CLEAR_SIGHAND;
     args.pidfd = (uintptr_t)&pidfd;
@@ -291,7 +308,7 @@ static PyObject *validate(PyObject *module, PyObject *unused) {
     siginfo_t info;
     memset(&info, 0, sizeof(info));
     if (waitid((idtype_t)3, (id_t)INT_MAX, &info, WEXITED | WNOHANG) != -1 || errno != EBADF) return failure();
-    struct clone_args args;
+    struct restricted_clone_args args;
     int pidfd = -1;
     memset(&args, 0, sizeof(args));
     args.flags = CLONE_INTO_CGROUP | CLONE_PIDFD | CLONE_CLEAR_SIGHAND;

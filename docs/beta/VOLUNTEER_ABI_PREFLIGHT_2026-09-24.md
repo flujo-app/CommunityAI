@@ -35,3 +35,13 @@ with Ubuntu 20.04, rerun this ABI gate, and qualify the installer/anchor service
 on that OS. Then exercise the full eight-card Sharing workflow and actual H100
 inference under the volunteer's limits. The current build does not qualify the
 requested DeepSeek, GLM, vLLM, credits or full beta.
+
+The Ubuntu 20.04 build probe also showed that its headers predate the cgroup
+fields of `clone3` and omit the `close_range` syscall number. The native
+extension now declares the fixed 88-byte cgroup `clone3` argument layout and
+uses x86-64 syscall 436 when the headers lack it. These values match the
+[Linux kernel x86-64 syscall table](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl)
+and [kernel UAPI definitions](https://github.com/torvalds/linux/blob/master/include/uapi/linux/sched.h).
+The extension compiled in the Ubuntu 20.04 container in under two seconds.
+Compilation does not establish that the volunteer kernel enables these syscalls
+or that its cgroup v2 hierarchy is delegated; those remain installed-host gates.
