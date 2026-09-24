@@ -17,6 +17,9 @@ logging. It keeps the API key in an environment override instead of argv.
 Artifact verification and process supervision remain with the caller; no
 command is executed by this method. Unavailable exact models cannot obtain a
 launch spec.
+The module also imported successfully through the repository's existing Python
+3.12 test environment with its local dependency overlay and offline flags;
+this import does not launch vLLM or prove an installed-package workflow.
 
 The adapter sends one prompt with `stream_options.include_usage=true`, accepts
 one choice, bounds SSE frames and cumulative output, checks a stable response ID
