@@ -88,6 +88,12 @@ async def check():
         assert ("--pipeline-parallel-size", "1") == command[command.index("--pipeline-parallel-size") :][:2]
         assert environment == {"CUDA_VISIBLE_DEVICES": "0,1", "VLLM_API_KEY": "secret"}
         assert "secret" not in command and "--no-enable-log-requests" in command
+        eight = ManagedVllmBinding(
+            binding.profile, binding.served_model, binding.base_url, "secret", tuple(range(8)), 4, 2
+        )
+        eight_command, eight_environment = eight.launch_spec(Path(model_directory), max_model_len=2048)
+        assert eight_environment["CUDA_VISIBLE_DEVICES"] == "0,1,2,3,4,5,6,7"
+        assert eight_command[eight_command.index("--pipeline-parallel-size") + 1] == "2"
 
     wrong_model = httpx.MockTransport(lambda _: httpx.Response(200, content=sse("wrong")))
     async with httpx.AsyncClient(transport=wrong_model) as client:
