@@ -289,8 +289,15 @@ class ShadowLedger:
                     "INSERT INTO receipts (receipt_id, request_id, provider_id, stage_id, attempt_id, "
                     "claim_digest, proposed_charge, status) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
-                    (receipt.receipt_id, receipt.request_id, receipt.provider_id, receipt.stage_id,
-                     receipt.attempt_id, receipt.digest, receipt.proposed_charge),
+                    (
+                        receipt.receipt_id,
+                        receipt.request_id,
+                        receipt.provider_id,
+                        receipt.stage_id,
+                        receipt.attempt_id,
+                        receipt.digest,
+                        receipt.proposed_charge,
+                    ),
                 )
                 self._db.execute("COMMIT")
                 return True
@@ -334,8 +341,11 @@ class ShadowLedger:
                     "decision_id=?, decision_digest=? "
                     "WHERE receipt_id=?",
                     (
-                        decision.approved_charge, decision.fee_units, decision.decision_id,
-                        decision.digest, decision.receipt_id,
+                        decision.approved_charge,
+                        decision.fee_units,
+                        decision.decision_id,
+                        decision.digest,
+                        decision.receipt_id,
                     ),
                 )
                 self._db.execute("COMMIT")
@@ -389,7 +399,8 @@ class ShadowLedger:
                 _require(pending == 0, "pending receipts remain")
                 rows = self._db.execute(
                     "SELECT provider_id, approved_charge, fee_units FROM receipts "
-                    "WHERE request_id=? AND status='approved' ORDER BY receipt_id", (request_id,)
+                    "WHERE request_id=? AND status='approved' ORDER BY receipt_id",
+                    (request_id,),
                 ).fetchall()
                 charge = sum(item[1] for item in rows)
                 fees = sum(item[2] for item in rows)
@@ -399,8 +410,7 @@ class ShadowLedger:
                     by_provider[provider_id] = by_provider.get(provider_id, 0) + approved_charge - fee_units
                 postings = [("hold:" + request_id, -cap), ("buyer:" + buyer_id, cap - charge)]
                 postings.extend(
-                    ("provider_pending:" + provider_id, value)
-                    for provider_id, value in sorted(by_provider.items())
+                    ("provider_pending:" + provider_id, value) for provider_id, value in sorted(by_provider.items())
                 )
                 postings.append(("fees", fees))
                 self._post("finalize:" + request_id, "finalize", postings, [request_id, buyer_id, cap, rows])
@@ -418,6 +428,61 @@ class ShadowLedger:
             _require(row is not None, "unknown account")
             return row[0]
 
+    def buyer_wallet(self, buyer_id: str, *, recent_limit: int = 20) -> dict[str, object]:
+        """Read one consistent, content-free snapshot of a buyer's test units.
+
+        Recent events use SQLite's local insertion order for display only; the
+        row ID is deliberately not exposed as a durable pagination cursor.
+        This is not an authenticated wallet API or a payment balance.
+        """
+        _id(buyer_id)
+        _require(type(recent_limit) is int and 1 <= recent_limit <= 100, "invalid wallet history limit")
+        with self._lock:
+            self._db.execute("BEGIN")
+            try:
+                buyer_account = "buyer:" + buyer_id
+                row = self._db.execute("SELECT balance FROM accounts WHERE account_id=?", (buyer_account,)).fetchone()
+                _require(row is not None, "unknown buyer")
+                available = row[0]
+                held = self._db.execute(
+                    "SELECT COALESCE(SUM(cap), 0) FROM reservations WHERE buyer_id=? AND status='held'",
+                    (buyer_id,),
+                ).fetchone()[0]
+                pending, approved_unsettled, settled_spend = self._db.execute(
+                    "SELECT "
+                    "COUNT(CASE WHEN r.status='pending' THEN 1 END), "
+                    "COALESCE(SUM(CASE WHEN r.status='approved' AND v.status='held' "
+                    "THEN r.approved_charge ELSE 0 END), 0), "
+                    "COALESCE(SUM(CASE WHEN r.status='approved' AND v.status='settled' "
+                    "THEN r.approved_charge ELSE 0 END), 0) "
+                    "FROM reservations v LEFT JOIN receipts r USING(request_id) WHERE v.buyer_id=?",
+                    (buyer_id,),
+                ).fetchone()
+                events = self._db.execute(
+                    "SELECT e.event_id, e.kind, p.delta FROM events e "
+                    "JOIN postings p USING(event_id) WHERE p.account_id=? "
+                    "ORDER BY e.rowid DESC LIMIT ?",
+                    (buyer_account, recent_limit),
+                ).fetchall()
+                result = {
+                    "unit": "test_credit",
+                    "buyer_id": buyer_id,
+                    "available": available,
+                    "held": held,
+                    "pending_receipts": pending,
+                    "approved_unsettled": approved_unsettled,
+                    "settled_spend": settled_spend,
+                    "recent_events": [
+                        {"event_id": event_id, "kind": kind, "available_delta": delta}
+                        for event_id, kind, delta in events
+                    ],
+                }
+                self._db.execute("COMMIT")
+                return result
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
     def audit(self) -> dict[str, int]:
         """Check materialized balances, conservation, and held reservations."""
         with self._lock:
@@ -428,7 +493,7 @@ class ShadowLedger:
                     "SELECT COALESCE(SUM(delta), 0) FROM postings WHERE account_id=?", (account_id,)
                 ).fetchone()[0]
                 _require(balance == posted and (kind == "issuance" or balance >= 0), "account imbalance")
-            for event_id, in self._db.execute("SELECT event_id FROM events"):
+            for (event_id,) in self._db.execute("SELECT event_id FROM events"):
                 total = self._db.execute(
                     "SELECT COALESCE(SUM(delta), 0) FROM postings WHERE event_id=?", (event_id,)
                 ).fetchone()[0]
@@ -439,7 +504,8 @@ class ShadowLedger:
                 approved, pending = self._db.execute(
                     "SELECT COALESCE(SUM(CASE WHEN status='approved' THEN approved_charge ELSE 0 END), 0), "
                     "COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) "
-                    "FROM receipts WHERE request_id=?", (request_id,)
+                    "FROM receipts WHERE request_id=?",
+                    (request_id,),
                 ).fetchone()
                 _require(approved <= cap and (status == "held" or pending == 0), "receipt imbalance")
             return {

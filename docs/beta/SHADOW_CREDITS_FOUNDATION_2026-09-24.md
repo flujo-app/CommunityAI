@@ -36,6 +36,13 @@ model download, network call, processor action, or GPU run was used.
   balance, materialized balances, held requests and receipt caps. SQLite WAL
   with FULL synchronous mode supplies local process-crash persistence; separate
   backups, disk-loss recovery, fencing and replication are not proven.
+- `buyer_wallet` provides one consistent read snapshot of noncash available
+  units, active holds, pending claims, approved work awaiting settlement,
+  settled spend and recent buyer postings. Its event IDs and deltas contain no
+  conversation content or provider identity. SQLite insertion order is only a
+  local display order; the view exposes no durable pagination cursor or live
+  authentication boundary. The independent SQL prototype ran before this
+  method was added; focused local checks cover the result, limits and reopen.
 
 ## Next integration boundary
 
