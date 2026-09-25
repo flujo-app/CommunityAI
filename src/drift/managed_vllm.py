@@ -155,6 +155,8 @@ class ManagedVllmBinding:
         environment = {
             "CUDA_VISIBLE_DEVICES": ",".join(str(device) for device in self.device_ids),
             "VLLM_API_KEY": self.api_key,
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
         }
         return command, environment
 

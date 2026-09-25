@@ -16,7 +16,8 @@ an explicit 2,048-token-or-smaller context envelope and disabled request
 logging. It keeps the API key in an environment override instead of argv.
 Artifact verification and process supervision remain with the caller; no
 command is executed by this method. Unavailable exact models cannot obtain a
-launch spec.
+launch spec. The launch environment also forces Hugging Face and Transformers
+offline mode so a local artifact path cannot silently fetch missing files.
 The module also imported successfully through the repository's existing Python
 3.12 test environment with its local dependency overlay and offline flags;
 this import does not launch vLLM or prove an installed-package workflow.

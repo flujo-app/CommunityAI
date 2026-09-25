@@ -125,7 +125,12 @@ async def check():
         command, environment = binding.launch_spec(Path(model_directory), max_model_len=2048)
         assert ("--tensor-parallel-size", "2") == command[command.index("--tensor-parallel-size") :][:2]
         assert ("--pipeline-parallel-size", "1") == command[command.index("--pipeline-parallel-size") :][:2]
-        assert environment == {"CUDA_VISIBLE_DEVICES": "0,1", "VLLM_API_KEY": "secret"}
+        assert environment == {
+            "CUDA_VISIBLE_DEVICES": "0,1",
+            "VLLM_API_KEY": "secret",
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+        }
         assert "secret" not in command and "--no-enable-log-requests" in command
         eight = ManagedVllmBinding(
             binding.profile, binding.served_model, binding.base_url, "secret", tuple(range(8)), 4, 2
