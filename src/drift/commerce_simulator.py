@@ -489,6 +489,25 @@ class CommerceSimulator:
                 self._db.execute("ROLLBACK")
                 raise
 
+    def expire_open_resale_listings(self, *, limit: int = 100) -> tuple[str, ...]:
+        """Reclaim expired, unordered seller holds with the audited cancel event.
+
+        Each cancellation commits separately, so a crash leaves a replayable
+        remainder. An already ordered listing stays held for payment resolution.
+        """
+        _require(type(limit) is int and 1 <= limit <= 1000, "invalid expiry batch limit")
+        with self._lock:
+            expired = self._db.execute(
+                "SELECT listing_id FROM resale_listings WHERE status='open' AND expires_at_unix<=? "
+                "ORDER BY expires_at_unix,listing_id LIMIT ?",
+                (int(time.time()), limit),
+            ).fetchall()
+            released = []
+            for (listing_id,) in expired:
+                if self.cancel_resale_listing(listing_id):
+                    released.append(listing_id)
+            return tuple(released)
+
     def place_resale_order(self, listing_id: str, buyer_id: str, processor_ref: str) -> bool:
         """Bind one buyer and payment reference to an existing seller hold."""
         _id(listing_id); _id(buyer_id); _id(processor_ref)

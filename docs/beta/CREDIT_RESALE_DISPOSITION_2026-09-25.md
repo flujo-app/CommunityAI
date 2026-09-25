@@ -131,6 +131,15 @@ their canonical event payloads. `scripts/check_credit_resale_simulator.py` and
 the existing commerce script each passed in under one second. No broad CI,
 payment provider, money, or GPU was used.
 
+A later standalone expiry prototype verified that an expired open listing can
+reuse the audited cancellation journal. The simulator now exposes
+`expire_open_resale_listings(limit=100)`: each released hold commits separately,
+the batch is capped at 1,000 listings, repeated calls are harmless, and a
+listing already ordered by a buyer stays held for its payment outcome. The
+focused `scripts/check_resale_expiry.py` covers restart, replay, batch limits,
+future listings, and late resolution of a pre-expiry order in under one second.
+This method is not yet scheduled by a product service and exposes no user API.
+
 The journal still assumes an upstream authenticated processor event and a
 separate independent useful-work/risk decision. The current single synthetic
 unit cannot represent real exchange rates or currency separation. There is
