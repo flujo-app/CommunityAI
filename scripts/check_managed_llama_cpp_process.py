@@ -10,11 +10,13 @@ import asyncio
 import hashlib
 import socket
 import sys
+import tempfile
 import time
 import types
 from pathlib import Path
 
 import httpx
+from fastapi.testclient import TestClient
 
 PACKAGE = types.ModuleType("drift")
 PACKAGE.__path__ = [str(Path(__file__).resolve().parents[1] / "src" / "drift")]
@@ -27,6 +29,11 @@ from drift.managed_llama_cpp import ManagedLlamaCppBinding  # noqa: E402
 from drift.managed_llama_cpp_process import (  # noqa: E402
     ManagedLlamaCppProcessError, ManagedLlamaCppProcessOwner,
 )
+from drift.commerce_simulator import CommerceSimulator, SimulatedServiceQuote  # noqa: E402
+from drift.managed_vllm_text import ManagedVllmTextClient  # noqa: E402
+from drift.simulated_paid_text import SimulatedPaidTextClient  # noqa: E402
+from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime  # noqa: E402
+from drift.api.server import create_app  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1] / ".gate13-runs" / "llama-b11173"
 SERVER = ROOT / "run" / "llama-server.exe"
@@ -92,6 +99,53 @@ async def main() -> None:
         events = [event async for event in adapter.stream(request(profile, "Reply with one short greeting."))]
         assert events[-1].kind is EventKind.COMPLETED and events[-1].usage.output_units > 0
         assert owner.ready
+        digest = "sha256:" + MODEL_SHA
+        with tempfile.TemporaryDirectory(prefix="communityai-llama-paid-") as temporary:
+            with CommerceSimulator(Path(temporary) / "journal.db") as journal:
+                journal.create_order("order", "buyer", "processor", 100)
+                journal.record_verified_processor_event("capture", "processor", "capture", 100)
+
+                def quote_for_request(_body, _chat, context):
+                    return SimulatedServiceQuote(
+                        request_id=context.request_id, buyer_id=context.caller_id,
+                        provider_id="provider", funding_source="purchased",
+                        model_id=profile.model_id, profile_id=profile.profile_id,
+                        service_class="text_inference", settlement_domain="local_simulation",
+                        artifact_sha256=MODEL_SHA, service_policy_sha256="b" * 64,
+                        price_schedule_sha256="c" * 64, input_unit_price=1,
+                        output_unit_price=1, max_input_units=16, max_output_units=4,
+                        fee_bps=1000, spend_cap=20, expires_at_unix=int(time.time()) + 60,
+                    )
+
+                bridge = ManagedVllmTextClient(
+                    owner.new_adapter(), ProviderIdentity("provider", "instance"), digest,
+                )
+                paid = SimulatedPaidTextClient(bridge, journal, quote_for_request)
+                manager = ModelManager()
+                manager.register(
+                    ModelDescriptor(profile.model_id, manifest_digest=digest),
+                    lambda: ModelRuntime(model=None, tokenizer=None, text_client=paid),
+                )
+                app = create_app(
+                    model_manager=manager,
+                    api_key_identifier=lambda key: "buyer" if key == "buyer-key" else None,
+                    request_timeout=20.0,
+                )
+                with TestClient(app) as client:
+                    answer = client.post(
+                        "/v1/completions",
+                        json={"model": profile.model_id, "prompt": "Reply with one short greeting.",
+                              "max_tokens": 4, "temperature": 0, "stream": False},
+                        headers={"Authorization": "Bearer buyer-key"},
+                    )
+                    assert answer.status_code == 200, answer.text
+                    usage = answer.json()["usage"]
+                    charge = usage["prompt_tokens"] + usage["completion_tokens"]
+                    assert charge > 0
+                assert journal.buyer_wallet("buyer")["purchased_available"] == 100 - charge
+                assert journal.buyer_wallet("buyer")["service_held"] == 0
+                assert journal.provider_wallet("provider")["pending"] == charge - charge // 10
+                assert journal.audit()["unfunded_reversal_loss"] == 0
         iterator = adapter.stream(request(profile, "Continue briefly."))
         assert (await anext(iterator)).kind is EventKind.STARTED
         await iterator.aclose()
@@ -102,7 +156,7 @@ async def main() -> None:
             pass
         else:
             raise AssertionError("stopped llama.cpp owner admitted a route")
-        print("PASS: pinned llama.cpp launch, owned metadata, accepted output and cancellation teardown")
+        print("PASS: pinned llama.cpp launch, owned metadata, simulated paid API and cancellation teardown")
     finally:
         owner.stop()
 
