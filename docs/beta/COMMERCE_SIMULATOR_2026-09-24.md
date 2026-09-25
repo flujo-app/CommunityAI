@@ -14,6 +14,10 @@ The standalone in-memory experiment `scripts/prototype_commerce_lifecycle.py` ra
 
 The provider fee is included within the buyer's simulated service charge. Purchased access and converted earned access occupy different accounts; promotional/test grants from `shadow_credits.py` cannot enter this journal. Literal resale of credits has no transfer operation and remains an open B6c requirement. Current service decisions and risk releases are trusted **fixtures**, not independent useful-work validation or fraud controls. The simulator has no processor/bank reconciliation, funded loss reserve, partial refund or country/currency activation. It cannot make customer balances cash or seller earnings withdrawable.
 
+The proposed earned-credit, one-hop resale transaction and provider questions
+are recorded in [B6c credit resale disposition](CREDIT_RESALE_DISPOSITION_2026-09-25.md).
+It remains disabled; this simulator has no resale listing or transfer state.
+
 The standalone `scripts/check_commerce_simulator.py` passed in about 0.3 seconds on the local Python runtime. It exercises reordered and duplicate funding events; quote conflicts, rate/fee bounds and concurrent double-reserve; buy → use → earn → convert and payout; payout uncertainty across restart; payout failure and replay; a late reversal deficit and admission freeze; and an audit-detected quote tamper. No broad CI or external transaction was run.
 
 [PayPal's webhook guidance](https://developer.paypal.com/api/rest/webhooks/) requires message verification and describes redelivery after non-2xx responses. [Payoneer's Mass Payout guidance](https://www.payoneer.com/developers-docs/mass-payout/mass-submit-payout/) describes prefunded, registered-payee, asynchronous payouts. A live adapter must satisfy those provider-specific contracts, verify the owner's actual account eligibility and process real events durably before acknowledgement. The owner-provided $0 new-spending limit and missing funded loss owner keep activation disabled.
