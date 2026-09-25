@@ -44,8 +44,8 @@ async def probe_managed_vllm(
     """Check health, exact vLLM version, single model and context under one deadline."""
     if type(binding) is not ManagedVllmBinding or binding.profile.availability is not Availability.AVAILABLE:
         raise ValueError("unavailable managed binding")
-    if type(expected_max_model_len) is not int or not 1 <= expected_max_model_len <= 2048:
-        raise ValueError("invalid expected context")
+    if type(expected_max_model_len) is not int or expected_max_model_len != binding.max_model_len:
+        raise ValueError("probe context differs from route binding")
     if type(seconds) not in (int, float) or not 0 < seconds <= 30 or not callable(clock):
         raise ValueError("invalid probe deadline")
     if transport is not None and not isinstance(transport, httpx.AsyncBaseTransport):

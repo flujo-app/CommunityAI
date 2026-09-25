@@ -81,6 +81,7 @@ class ManagedVllmBinding:
     tensor_parallel_size: int
     pipeline_parallel_size: int
     backend_id: str = _BACKEND_ID
+    max_model_len: int = 2048
 
     def __post_init__(self) -> None:
         if type(self.profile) is not ProviderProfile or type(self.served_model) is not str:
@@ -117,6 +118,8 @@ class ManagedVllmBinding:
             raise ValueError("invalid parallel geometry")
         if self.tensor_parallel_size * self.pipeline_parallel_size != len(self.device_ids):
             raise ValueError("parallel geometry does not match selected GPUs")
+        if type(self.max_model_len) is not int or not 1 <= self.max_model_len <= 2048:
+            raise ValueError("invalid managed vLLM context envelope")
 
     def launch_spec(self, model_directory: str | Path, *, max_model_len: int) -> tuple[tuple[str, ...], dict[str, str]]:
         """Build a single-host command for an already qualified test profile.
@@ -129,8 +132,8 @@ class ManagedVllmBinding:
         path = Path(model_directory)
         if not path.is_absolute() or not path.is_dir():
             raise ValueError("model directory must exist locally")
-        if type(max_model_len) is not int or not 1 <= max_model_len <= 2048:
-            raise ValueError("unqualified context envelope")
+        if type(max_model_len) is not int or max_model_len != self.max_model_len:
+            raise ValueError("launch context differs from route binding")
         parsed = urlsplit(self.base_url)
         command = (
             "vllm",
