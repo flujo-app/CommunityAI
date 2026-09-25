@@ -1,6 +1,7 @@
 # B6c: literal credit resale disposition
 
-Status: **proposed mechanism; disabled and unimplemented**. This is a concrete
+Status: **proposed mechanism with a local noncash journal simulation; disabled
+for users and external money**. This is a concrete
 design for the user's requested sale of credits between users. Selling compute,
 converting provider earnings into access, and withdrawing earnings remain
 different transactions. No provider approval, legal classification, reserve,
@@ -97,9 +98,14 @@ provider/setup or explicitly change product scope. Neither choice is presumed.
 
 - Extend the durable commerce journal with resale listings, seller credit
   holds, buyer funding events, one-hop transfer provenance, seller payable
-  holds, reversals and reserve accounting. Test replay, restore, concurrent
-  spend/list/convert/payout, related accounts and reversal-after-use/payout in
-  a standalone script before wider CI.
+  holds, reversals and reserve accounting. The **local noncash simulator now
+  implements** listing/order/transfer/reversal, lot-specific access and
+  service use, pending proceeds, risk release, payouts and an explicit loss
+  account. Its focused script covers replay, restart, concurrent list versus
+  spend, reversal before transfer, reversal after service/payout, cross-listing
+  isolation, a reversal during a held request and v1-to-v2 migration. This is
+  simulation evidence only; related-account identity, funded reserve,
+  partial refunds and actual currencies remain unimplemented.
 - Bind a verified processor adapter and daily reconciliation to the actual
   approved account/corridor. Keep webhook authenticity, order ownership and
   capture/refund identity outside untrusted client requests.
@@ -110,3 +116,24 @@ provider/setup or explicitly change product scope. Neither choice is presumed.
 
 This document resolves the *proposed mechanism* part of B6c. It is not the B6c
 activation gate or a claim that the full beta is commercially ready.
+
+## Local simulation checkpoint (2026-09-25)
+
+`scripts/prototype_credit_resale.py` first checked the double-entry shape in
+0.15 seconds. `src/drift/commerce_simulator.py` now has a schema-v2 migration
+and a deliberately one-to-one synthetic price/credit rate. The fixed listing
+holds only converted earned access. A verified-fixture capture moves that
+specific lot to one buyer and holds the seller's net proceeds; a late reversal
+recovers only that lot. A service hold from a reversed lot returns unused funds
+to operator-loss recovery rather than reviving the buyer's reversed credits.
+The audit compares listing, transfer, void, release and reversal postings with
+their canonical event payloads. `scripts/check_credit_resale_simulator.py` and
+the existing commerce script each passed in under one second. No broad CI,
+payment provider, money, or GPU was used.
+
+The journal still assumes an upstream authenticated processor event and a
+separate independent useful-work/risk decision. The current single synthetic
+unit cannot represent real exchange rates or currency separation. There is
+no seller enrollment, related-account graph, tax/reporting, chargeback reserve,
+processor reconciliation or approved customer contract. Resale remains absent
+from product API and UI until those gates are qualified.
