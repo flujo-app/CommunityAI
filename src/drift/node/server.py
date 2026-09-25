@@ -324,7 +324,7 @@ def create_node_app(
     app = create_app(
         model_manager=model_manager,
         api_keys=api_keys,
-        api_key_verifier=api_key_store.verify if api_key_store is not None else None,
+        api_key_identifier=api_key_store.identify if api_key_store is not None else None,
         max_concurrent=max_concurrent,
         default_max_tokens=default_max_tokens,
         route_outcome_observer=route_outcome_observer,

@@ -73,12 +73,21 @@ class RequestContext:
     issued_at: float
     deadline: float
     _clock: Callable[[], float] = field(repr=False, compare=False)
+    caller_id: str | None = None
+    attempt_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     _last: list[float] = field(default_factory=list, init=False, repr=False, compare=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if type(self.request_id) is not str or re.fullmatch(r"[0-9a-f]{32}", self.request_id) is None:
             raise ValueError("Invalid request identity")
+        if self.caller_id is not None and (
+            type(self.caller_id) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,109}", self.caller_id) is None
+        ):
+            raise ValueError("Invalid caller identity")
+        if type(self.attempt_id) is not str or re.fullmatch(r"[0-9a-f]{32}", self.attempt_id) is None:
+            raise ValueError("Invalid attempt identity")
         _clock_value(self.issued_at)
         _clock_value(self.deadline)
         _duration(self.deadline - self.issued_at)
@@ -87,13 +96,15 @@ class RequestContext:
         self._last.append(self.issued_at)
 
     @classmethod
-    def start(cls, timeout: float, *, clock: Callable[[], float] | None = None) -> "RequestContext":
+    def start(
+        cls, timeout: float, *, clock: Callable[[], float] | None = None, caller_id: str | None = None
+    ) -> "RequestContext":
         duration = _duration(timeout)
         clock = time.monotonic if clock is None else clock
         if not callable(clock):
             raise ValueError("Invalid request clock")
         issued = _clock_value(clock())
-        return cls(uuid.uuid4().hex, issued, issued + duration, clock)
+        return cls(uuid.uuid4().hex, issued, issued + duration, clock, caller_id=caller_id)
 
     def remaining(self, cap: float | None = None) -> float:
         bound = None if cap is None else _duration(cap)

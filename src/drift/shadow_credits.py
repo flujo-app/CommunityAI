@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-LEDGER_SCHEMA_VERSION = 3
+LEDGER_SCHEMA_VERSION = 4
 QUOTE_VERSION = 1
 MAX_CREDITS = 2**62 - 1
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,109}\Z")
@@ -134,6 +134,26 @@ class WorkReceipt:
         return _digest(asdict(self))
 
 
+def _stored_receipt(row: tuple) -> WorkReceipt:
+    receipt_id, raw, digest, request_id, provider_id, stage_id, attempt_id, charge, input_units, output_units = row
+    _require(raw is not None, f"legacy pending receipt requires manual review: {receipt_id}")
+    try:
+        terms = json.loads(raw)
+        _require(type(terms) is dict and _canonical_json(terms) == raw, "noncanonical receipt")
+        receipt = WorkReceipt(**terms)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ShadowCreditError("invalid stored receipt") from exc
+    _require(
+        (receipt.receipt_id, receipt.digest, receipt.request_id, receipt.provider_id,
+         receipt.stage_id, receipt.attempt_id, receipt.proposed_charge, receipt.input_units,
+         receipt.output_units)
+        == (receipt_id, digest, request_id, provider_id, stage_id, attempt_id,
+            charge, input_units, output_units),
+        "receipt binding mismatch",
+    )
+    return receipt
+
+
 @dataclass(frozen=True)
 class ValidationDecision:
     """Input from a future independent work validator, not self-attestation."""
@@ -232,6 +252,7 @@ class ShadowLedger:
                 provider_id TEXT NOT NULL, stage_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
                 claim_digest TEXT NOT NULL, proposed_charge INTEGER NOT NULL,
                 input_units INTEGER, output_units INTEGER,
+                receipt_json TEXT,
                 status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
                 approved_charge INTEGER, fee_units INTEGER, decision_id TEXT UNIQUE,
                 decision_digest TEXT, rejection_reason TEXT,
@@ -248,11 +269,13 @@ class ShadowLedger:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]
-                _require(version in (0, 1, 2, LEDGER_SCHEMA_VERSION), "unsupported ledger schema")
+                _require(version in (0, 1, 2, 3, LEDGER_SCHEMA_VERSION), "unsupported ledger schema")
                 receipt_columns = {row[1] for row in self._db.execute("PRAGMA table_info(receipts)")}
                 for column in ("input_units", "output_units"):
                     if column not in receipt_columns:
                         self._db.execute(f"ALTER TABLE receipts ADD COLUMN {column} INTEGER")
+                if "receipt_json" not in receipt_columns:
+                    self._db.execute("ALTER TABLE receipts ADD COLUMN receipt_json TEXT")
                 if version == 0:
                     count = self._db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
                     _require(count == 0, "unversioned ledger")
@@ -449,8 +472,8 @@ class ShadowLedger:
                 )
                 self._db.execute(
                     "INSERT INTO receipts (receipt_id, request_id, provider_id, stage_id, attempt_id, "
-                    "claim_digest, proposed_charge, input_units, output_units, status) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+                    "claim_digest, proposed_charge, input_units, output_units, receipt_json, status) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
                     (
                         receipt.receipt_id,
                         receipt.request_id,
@@ -461,6 +484,7 @@ class ShadowLedger:
                         receipt.proposed_charge,
                         receipt.input_units,
                         receipt.output_units,
+                        _canonical_json(asdict(receipt)),
                     ),
                 )
                 self._db.execute("COMMIT")
@@ -468,6 +492,21 @@ class ShadowLedger:
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
+
+    def pending_receipts(self, *, limit: int = 100) -> tuple[WorkReceipt, ...]:
+        """Return durable untrusted claims for a separate authenticated validator.
+
+        Legacy claims stored before receipt JSON was added require manual review;
+        they are never silently omitted from this queue.
+        """
+        _require(type(limit) is int and 1 <= limit <= 1000, "invalid pending receipt limit")
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT receipt_id, receipt_json, claim_digest, request_id, provider_id, "
+                "stage_id, attempt_id, proposed_charge, input_units, output_units FROM receipts "
+                "WHERE status='pending' ORDER BY rowid LIMIT ?", (limit,)
+            ).fetchall()
+            return tuple(_stored_receipt(row) for row in rows)
 
     def approve_receipt(self, decision: ValidationDecision) -> bool:
         _require(type(decision) is ValidationDecision, "invalid decision")
@@ -825,6 +864,12 @@ class ShadowLedger:
                         (request_id,),
                     ).fetchone()
                     _require(approved <= cap and (status == "held" or pending == 0), "receipt imbalance")
+                for row in self._db.execute(
+                    "SELECT receipt_id, receipt_json, claim_digest, request_id, provider_id, "
+                    "stage_id, attempt_id, proposed_charge, input_units, output_units "
+                    "FROM receipts WHERE receipt_json IS NOT NULL"
+                ):
+                    _stored_receipt(row)
                 released_by_provider: dict[str, int] = {}
                 for receipt_id, release_id, terms_json, terms_digest, net_units in self._db.execute(
                     "SELECT receipt_id, release_id, terms_json, terms_digest, net_units FROM earning_releases"

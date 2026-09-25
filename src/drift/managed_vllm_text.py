@@ -7,7 +7,6 @@ chat encoder may be supplied for a synthetic profile.
 
 from __future__ import annotations
 
-import uuid
 from typing import AsyncIterator, Callable
 
 from drift.inference_provider import (
@@ -106,7 +105,7 @@ class ManagedVllmTextClient:
             profile.profile_id,
             profile.model_id,
             context.request_id,
-            uuid.uuid4().hex,
+            context.attempt_id,
             context.issued_at,
             context.deadline,
             prompt,

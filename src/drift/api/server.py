@@ -157,6 +157,7 @@ def create_app(
     model_manager: Optional[ModelManager] = None,
     api_keys: Optional[List[str]] = None,
     api_key_verifier: Optional[Callable[[str], bool]] = None,
+    api_key_identifier: Optional[Callable[[str], Optional[str]]] = None,
     max_concurrent: int = 1,
     default_max_tokens: int = DEFAULT_MAX_TOKENS,
     route_outcome_observer: Optional[Callable[..., None]] = None,
@@ -182,8 +183,8 @@ def create_app(
         model_manager.register_loaded(model_name, model, tokenizer)
     elif model is not None or tokenizer is not None or model_name is not None:
         raise ValueError("pass either model_manager or the single-model arguments, not both")
-    if api_keys and api_key_verifier is not None:
-        raise ValueError("pass either api_keys or api_key_verifier, not both")
+    if sum((bool(api_keys), api_key_verifier is not None, api_key_identifier is not None)) > 1:
+        raise ValueError("pass only one API key authentication method")
 
     app = FastAPI(title="DRIFT-LLM OpenAI-compatible API")
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -192,18 +193,22 @@ def create_app(
     load_admission = asyncio.BoundedSemaphore(max_concurrent)
     served_since = int(time.time())
 
-    def check_auth(request: Request) -> None:
-        if not api_keys and api_key_verifier is None:
-            return
+    def check_auth(request: Request) -> str | None:
+        if not api_keys and api_key_verifier is None and api_key_identifier is None:
+            return None
         auth = request.headers.get("authorization", "")
         candidate = auth[len("Bearer ") :] if auth.startswith("Bearer ") else ""
-        valid = (
-            api_key_verifier(candidate)
-            if api_key_verifier is not None
-            else any(secrets.compare_digest(candidate, key) for key in api_keys)
-        )
+        identity = None
+        if api_key_identifier is not None:
+            identity = api_key_identifier(candidate)
+            valid = identity is not None
+        elif api_key_verifier is not None:
+            valid = api_key_verifier(candidate)
+        else:
+            valid = any(secrets.compare_digest(candidate, key) for key in api_keys)
         if not valid:
             raise HTTPException(status_code=401, detail="Invalid API key")
+        return identity
 
     async def load_model(identifier: Optional[str]) -> LoadedModel:
         loop = asyncio.get_running_loop()
@@ -425,10 +430,10 @@ def create_app(
 
     @app.post("/v1/chat/completions")
     async def chat_completions(body: ChatCompletionRequest, request: Request):
-        check_auth(request)
+        caller_id = check_auth(request)
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
-        context = RequestContext.start(request_timeout)
+        context = RequestContext.start(request_timeout, caller_id=caller_id)
         loaded = await load_with_budget(body.model, context)
         if loaded.runtime.text_client is not None:
             from drift.api.text_response import text_peer_response
@@ -495,10 +500,10 @@ def create_app(
 
     @app.post("/v1/completions")
     async def completions(body: CompletionRequest, request: Request):
-        check_auth(request)
+        caller_id = check_auth(request)
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
-        context = RequestContext.start(request_timeout)
+        context = RequestContext.start(request_timeout, caller_id=caller_id)
         loaded = await load_with_budget(body.model, context)
         if loaded.runtime.text_client is not None:
             from drift.api.text_response import text_peer_response

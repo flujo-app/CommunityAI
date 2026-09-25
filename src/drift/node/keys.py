@@ -194,15 +194,20 @@ class ApiKeyStore:
         return self.ensure_key(secret, label=label), secret
 
     def verify(self, candidate: str) -> bool:
+        return self.identify(candidate) is not None
+
+    def identify(self, candidate: str) -> str | None:
+        """Return the stable, nonsecret ID of an active key after a full scan."""
         if not isinstance(candidate, str) or not candidate:
-            return False
+            return None
         candidate_hash = _key_hash(candidate)
         with self._lock:
-            matches = False
+            identity = None
             for record in self._records.values():
                 active_match = record.revoked_at is None and secrets.compare_digest(record.secret_hash, candidate_hash)
-                matches = matches or active_match
-            return matches
+                if active_match:
+                    identity = record.key_id
+            return identity
 
     def contains(self, candidate: str) -> bool:
         """Return whether the secret exists, including as a revoked record."""
