@@ -150,6 +150,7 @@ def check_settlement(path):
             "receipts": 1,
             "quotes": 1,
             "legacy_unquoted": 0,
+            "earning_releases": 0,
         }
     with MODULE.ShadowLedger(path) as reopened:
         assert reopened.audit()["events"] == 3

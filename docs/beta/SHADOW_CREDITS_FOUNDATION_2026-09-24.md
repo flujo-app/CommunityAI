@@ -43,8 +43,20 @@ model download, network call, processor action, or GPU run was used.
 - `finalize` requires all claims resolved. It atomically moves the approved
   amount from the hold to provider-pending and fee accounts, and releases the
   remainder to the buyer. Provider-pending units have no cash-out path.
+- An explicit `TestEarningRelease` can move one approved, settled, quoted
+  receipt's net amount from provider-pending to a separate balance eligible
+  only for **test access**. Its reviewer ID must differ from the provider ID;
+  caller authentication and real independent review remain integration gates.
+  Exact release replay is idempotent, and changed terms are rejected. A provider
+  can atomically convert released test units into its own buyer wallet, where
+  they can fund a bound test quote. Conversion IDs are replay safe and SQLite
+  serialization prevents concurrent overspend. Neither method funds credits,
+  enables resale, or creates a withdrawable balance. The independent SQLite
+  prototype ran first; the focused earn-to-use script then passed in under one
+  second, including reopen, v2 migration, concurrency and tamper checks.
 - Every movement has equal debit and credit postings. `audit` checks event
-  balance, materialized balances, held requests, quote binding and receipt caps.
+  balance, materialized balances, held requests, quote binding, receipt caps,
+  earning-release bindings, provider-pending totals and test conversion totals.
   Its read transaction makes that check one SQLite snapshot across writers.
   Schema-v1 files retain their existing unquoted holds as `legacy_unquoted`:
   new claims/approvals on those holds fail, while rejected or already-approved
@@ -60,7 +72,8 @@ model download, network call, processor action, or GPU run was used.
   method was added; focused local checks cover the result, limits and reopen.
 - `provider_wallet` reads a consistent, content-free view of submitted claims,
   approved work awaiting settlement, rejected claims and settled units still
-  held in `provider_pending`. It exposes no spend, payout or cash eligibility.
+  held in `provider_pending`, plus released test access units. It exposes no
+  payout or cash eligibility.
   A focused standalone script first exercised its expected lifecycle and
   failed while the method was absent; it then passed in under one second after
   implementation, including reopen and invalid provider/limit checks. This is

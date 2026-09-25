@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-LEDGER_SCHEMA_VERSION = 2
+LEDGER_SCHEMA_VERSION = 3
 QUOTE_VERSION = 1
 MAX_CREDITS = 2**62 - 1
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,109}\Z")
@@ -161,6 +161,33 @@ class ValidationDecision:
         return _digest(asdict(self))
 
 
+@dataclass(frozen=True)
+class TestEarningRelease:
+    """Independent local decision to make one settled claim usable as test access."""
+
+    release_id: str
+    receipt_id: str
+    receipt_digest: str
+    provider_id: str
+    reviewer_id: str
+    version: int = SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        for value in (self.release_id, self.receipt_id, self.provider_id, self.reviewer_id):
+            _id(value)
+        _require(len(self.release_id) <= 100, "release identifier too long")
+        _require(self.reviewer_id != self.provider_id, "provider cannot release own earnings")
+        _require(
+            type(self.receipt_digest) is str and _HASH.fullmatch(self.receipt_digest) is not None,
+            "invalid receipt digest",
+        )
+        _require(type(self.version) is int and self.version == SCHEMA_VERSION, "unsupported release version")
+
+    @property
+    def digest(self) -> str:
+        return _digest(asdict(self))
+
+
 class ShadowLedger:
     """Durable, serialized double-entry store for noncash test balances.
 
@@ -210,13 +237,18 @@ class ShadowLedger:
                 decision_digest TEXT, rejection_reason TEXT,
                 UNIQUE(request_id, provider_id, stage_id, attempt_id)
             );
+            CREATE TABLE IF NOT EXISTS earning_releases (
+                receipt_id TEXT PRIMARY KEY REFERENCES receipts(receipt_id),
+                release_id TEXT NOT NULL UNIQUE, terms_json TEXT NOT NULL,
+                terms_digest TEXT NOT NULL, net_units INTEGER NOT NULL
+            );
             """
         )
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]
-                _require(version in (0, 1, LEDGER_SCHEMA_VERSION), "unsupported ledger schema")
+                _require(version in (0, 1, 2, LEDGER_SCHEMA_VERSION), "unsupported ledger schema")
                 receipt_columns = {row[1] for row in self._db.execute("PRAGMA table_info(receipts)")}
                 for column in ("input_units", "output_units"):
                     if column not in receipt_columns:
@@ -558,6 +590,84 @@ class ShadowLedger:
                 self._db.execute("ROLLBACK")
                 raise
 
+    def release_test_earning(self, release: TestEarningRelease) -> bool:
+        """Move one settled net claim into noncash access-eligible test units."""
+        _require(type(release) is TestEarningRelease, "invalid test earning release")
+        with self._lock:
+            self._begin()
+            try:
+                row = self._db.execute(
+                    "SELECT r.request_id, r.provider_id, r.claim_digest, r.approved_charge, r.fee_units, "
+                    "r.status, v.status FROM receipts r JOIN reservations v USING(request_id) "
+                    "WHERE r.receipt_id=?",
+                    (release.receipt_id,),
+                ).fetchone()
+                _require(row is not None, "unknown receipt")
+                request_id, provider_id, claim_digest, charge, fee, receipt_status, reservation_status = row
+                _require(
+                    receipt_status == "approved" and reservation_status == "settled",
+                    "earning is not settled",
+                )
+                _require(
+                    provider_id == release.provider_id and claim_digest == release.receipt_digest,
+                    "earning identity mismatch",
+                )
+                self._load_quote(request_id)
+                net = charge - fee
+                _require(net > 0, "claim has no test earnings")
+                old = self._db.execute(
+                    "SELECT release_id, terms_json, terms_digest, net_units FROM earning_releases WHERE receipt_id=?",
+                    (release.receipt_id,),
+                ).fetchone()
+                if old is not None:
+                    _require(
+                        old == (release.release_id, _canonical_json(asdict(release)), release.digest, net),
+                        "conflicting earning release replay",
+                    )
+                    self._db.execute("COMMIT")
+                    return False
+                eligible = "provider_eligible_test:" + provider_id
+                self._account(eligible, "provider_eligible_test")
+                self._post(
+                    "earn:" + release.release_id,
+                    "test_earning_release",
+                    [("provider_pending:" + provider_id, -net), (eligible, net)],
+                    [release.digest, net],
+                )
+                self._db.execute(
+                    "INSERT INTO earning_releases VALUES (?, ?, ?, ?, ?)",
+                    (release.receipt_id, release.release_id, _canonical_json(asdict(release)), release.digest, net),
+                )
+                self._db.execute("COMMIT")
+                return True
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
+    def convert_test_earnings(self, conversion_id: str, provider_id: str, amount: int) -> bool:
+        """Atomically redeem released noncash earnings for this provider's test access."""
+        _id(conversion_id)
+        _require(len(conversion_id) <= 100, "conversion identifier too long")
+        _id(provider_id)
+        _amount(amount, positive=True)
+        with self._lock:
+            self._begin()
+            try:
+                buyer = "buyer:" + provider_id
+                eligible = "provider_eligible_test:" + provider_id
+                self._account(buyer, "buyer")
+                result = self._post(
+                    "convert:" + conversion_id,
+                    "test_earning_conversion",
+                    [(eligible, -amount), (buyer, amount)],
+                    [provider_id, amount],
+                )
+                self._db.execute("COMMIT")
+                return result
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
     def balance(self, account_id: str) -> int:
         _id(account_id)
         with self._lock:
@@ -621,10 +731,10 @@ class ShadowLedger:
                 raise
 
     def provider_wallet(self, provider_id: str, *, recent_limit: int = 20) -> dict[str, object]:
-        """Show one provider's noncash claims and settled pending test units.
+        """Show one provider's claims, pending units, and released test access.
 
-        A settled pending unit is still ineligible for payout or reuse. This
-        view has no provider authentication and must not be exposed directly.
+        Released units can only be converted to this provider's test buyer
+        wallet. This view has no authentication or cash eligibility.
         """
         _id(provider_id)
         _require(type(recent_limit) is int and 1 <= recent_limit <= 100, "invalid wallet history limit")
@@ -633,6 +743,9 @@ class ShadowLedger:
             try:
                 account_id = "provider_pending:" + provider_id
                 row = self._db.execute("SELECT balance FROM accounts WHERE account_id=?", (account_id,)).fetchone()
+                eligible = self._db.execute(
+                    "SELECT balance FROM accounts WHERE account_id=?", ("provider_eligible_test:" + provider_id,)
+                ).fetchone()
                 total, pending_review, approved_unsettled, rejected = self._db.execute(
                     "SELECT COUNT(*), "
                     "COUNT(CASE WHEN r.status='pending' THEN 1 END), "
@@ -656,6 +769,7 @@ class ShadowLedger:
                     "approved_unsettled": approved_unsettled,
                     "rejected_receipts": rejected,
                     "settled_pending_balance": row[0] if row is not None else 0,
+                    "eligible_test_access_balance": eligible[0] if eligible is not None else 0,
                     "recent_events": [
                         {"event_id": event_id, "kind": kind, "pending_delta": delta} for event_id, kind, delta in events
                     ],
@@ -711,6 +825,114 @@ class ShadowLedger:
                         (request_id,),
                     ).fetchone()
                     _require(approved <= cap and (status == "held" or pending == 0), "receipt imbalance")
+                released_by_provider: dict[str, int] = {}
+                for receipt_id, release_id, terms_json, terms_digest, net_units in self._db.execute(
+                    "SELECT receipt_id, release_id, terms_json, terms_digest, net_units FROM earning_releases"
+                ):
+                    try:
+                        terms = json.loads(terms_json)
+                        _require(type(terms) is dict and _canonical_json(terms) == terms_json, "noncanonical release")
+                        release = TestEarningRelease(**terms)
+                    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                        raise ShadowCreditError("invalid stored earning release") from exc
+                    _require(
+                        (release.receipt_id, release.release_id, release.digest)
+                        == (receipt_id, release_id, terms_digest),
+                        "earning release binding mismatch",
+                    )
+                    claim = self._db.execute(
+                        "SELECT r.request_id, r.provider_id, r.claim_digest, r.approved_charge, r.fee_units, "
+                        "r.status, v.status FROM receipts r JOIN reservations v USING(request_id) "
+                        "WHERE r.receipt_id=?",
+                        (receipt_id,),
+                    ).fetchone()
+                    _require(claim is not None, "earning release has no receipt")
+                    request_id, provider_id, claim_digest, charge, fee, receipt_status, reservation_status = claim
+                    _require(
+                        receipt_status == "approved"
+                        and reservation_status == "settled"
+                        and release.provider_id == provider_id
+                        and release.receipt_digest == claim_digest
+                        and charge - fee == net_units
+                        and net_units > 0,
+                        "earning release receipt mismatch",
+                    )
+                    self._load_quote(request_id)
+                    event = self._db.execute(
+                        "SELECT kind, payload_digest FROM events WHERE event_id=?", ("earn:" + release_id,)
+                    ).fetchone()
+                    postings = self._db.execute(
+                        "SELECT account_id, delta FROM postings WHERE event_id=? ORDER BY ordinal",
+                        ("earn:" + release_id,),
+                    ).fetchall()
+                    _require(
+                        event == ("test_earning_release", _digest([release.digest, net_units]))
+                        and postings
+                        == [
+                            ("provider_pending:" + provider_id, -net_units),
+                            ("provider_eligible_test:" + provider_id, net_units),
+                        ],
+                        "earning release posting mismatch",
+                    )
+                    released_by_provider[provider_id] = released_by_provider.get(provider_id, 0) + net_units
+                settled_by_provider = dict(
+                    self._db.execute(
+                        "SELECT r.provider_id, SUM(r.approved_charge-r.fee_units) "
+                        "FROM receipts r JOIN reservations v USING(request_id) "
+                        "WHERE r.status='approved' AND v.status='settled' GROUP BY r.provider_id"
+                    ).fetchall()
+                )
+                for provider_id, settled in settled_by_provider.items():
+                    row = self._db.execute(
+                        "SELECT balance FROM accounts WHERE account_id=?", ("provider_pending:" + provider_id,)
+                    ).fetchone()
+                    _require(
+                        row is not None and row[0] == settled - released_by_provider.get(provider_id, 0),
+                        "provider pending imbalance",
+                    )
+                expected_release_events = {
+                    "earn:" + release_id
+                    for (release_id,) in self._db.execute("SELECT release_id FROM earning_releases")
+                }
+                actual_release_events = {
+                    event_id
+                    for (event_id,) in self._db.execute("SELECT event_id FROM events WHERE kind='test_earning_release'")
+                }
+                _require(actual_release_events == expected_release_events, "orphan earning release event")
+                converted_by_provider: dict[str, int] = {}
+                for event_id, digest in self._db.execute(
+                    "SELECT event_id, payload_digest FROM events WHERE kind='test_earning_conversion'"
+                ):
+                    postings = self._db.execute(
+                        "SELECT account_id, delta FROM postings WHERE event_id=? ORDER BY ordinal", (event_id,)
+                    ).fetchall()
+                    _require(
+                        event_id.startswith("convert:") and len(postings) == 2,
+                        "invalid earning conversion event",
+                    )
+                    eligible_account, debit = postings[0]
+                    buyer_account, credit = postings[1]
+                    _require(
+                        eligible_account.startswith("provider_eligible_test:") and debit < 0 and credit == -debit,
+                        "invalid earning conversion postings",
+                    )
+                    provider_id = eligible_account.removeprefix("provider_eligible_test:")
+                    _require(
+                        buyer_account == "buyer:" + provider_id and digest == _digest([provider_id, credit]),
+                        "earning conversion identity mismatch",
+                    )
+                    converted_by_provider[provider_id] = converted_by_provider.get(provider_id, 0) + credit
+                for provider_id in released_by_provider.keys() | converted_by_provider.keys():
+                    row = self._db.execute(
+                        "SELECT balance FROM accounts WHERE account_id=?",
+                        ("provider_eligible_test:" + provider_id,),
+                    ).fetchone()
+                    _require(
+                        row is not None
+                        and row[0]
+                        == released_by_provider.get(provider_id, 0) - converted_by_provider.get(provider_id, 0),
+                        "eligible test earnings imbalance",
+                    )
                 result = {
                     "accounts": len(accounts),
                     "events": self._db.execute("SELECT COUNT(*) FROM events").fetchone()[0],
@@ -718,6 +940,7 @@ class ShadowLedger:
                     "receipts": self._db.execute("SELECT COUNT(*) FROM receipts").fetchone()[0],
                     "quotes": self._db.execute("SELECT COUNT(*) FROM quotes").fetchone()[0],
                     "legacy_unquoted": self._db.execute("SELECT COUNT(*) FROM legacy_unquoted").fetchone()[0],
+                    "earning_releases": self._db.execute("SELECT COUNT(*) FROM earning_releases").fetchone()[0],
                 }
                 self._db.execute("COMMIT")
                 return result
