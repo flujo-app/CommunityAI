@@ -170,3 +170,16 @@ deployment needs its existing cgroup containment and host-side accelerator
 evidence before advertising an available provider route. The entry-point
 hash is not a full package or model-artifact signature. No production route or
 credit settlement is enabled by this checkpoint.
+
+The standalone parent/child script was then run in the locally cached Ubuntu
+20.04 Python image with networking disabled and the checkout mounted read-only.
+It exposed a Linux cleanup ordering bug: the direct child remained a zombie in
+its process group until `Popen.poll()` reaped it, while the supervisor waited for
+the group to become empty. `edge_supervisor.py` now polls that child during its
+bounded containment wait. The same script passed in under one second in the
+Ubuntu image with `--init`, and on Windows. Without an init/reaper in the
+container, an orphaned grandchild zombie remains visible and the script still
+fails closed after its three-second bound; this is not interpreted as a live
+worker or a successful cleanup. The focused edge-supervisor suite passed four
+tests in 7.29 seconds, including a new direct-child regression, and the fake
+managed-server check passed again in under ten seconds. No GPU work ran.

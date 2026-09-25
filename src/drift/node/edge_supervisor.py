@@ -280,22 +280,29 @@ def _new_containment():
     return _PosixProcessGroup()
 
 
-def _wait_for_containment_exit(containment, timeout: float, sample_interval: float) -> bool:
+def _wait_for_containment_exit(
+    containment, timeout: float, sample_interval: float, process: subprocess.Popen | None = None
+) -> bool:
     deadline = time.monotonic() + timeout
-    while containment.has_members():
+    while True:
+        # On POSIX the direct child remains in its process group as a zombie
+        # until Popen reaps it. Poll before checking group emptiness.
+        if process is not None:
+            process.poll()
+        if not containment.has_members():
+            return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
         time.sleep(min(sample_interval, remaining))
-    return True
 
 
 def _force_containment_exit(containment, process: subprocess.Popen, sample_interval: float) -> bool:
     containment.terminate()
-    absent = _wait_for_containment_exit(containment, 1.0, sample_interval)
+    absent = _wait_for_containment_exit(containment, 1.0, sample_interval, process)
     if not absent:
         containment.kill()
-        absent = _wait_for_containment_exit(containment, 2.0, sample_interval)
+        absent = _wait_for_containment_exit(containment, 2.0, sample_interval, process)
     if process.poll() is None:
         try:
             process.kill()

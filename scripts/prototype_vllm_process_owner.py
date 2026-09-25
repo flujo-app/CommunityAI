@@ -4,9 +4,16 @@ import subprocess
 import sys
 import tempfile
 import time
+import importlib.util
 from pathlib import Path
 
-from drift.node.edge_supervisor import _force_containment_exit, _new_containment
+SUPERVISOR = Path(__file__).resolve().parents[1] / "src" / "drift" / "node" / "edge_supervisor.py"
+spec = importlib.util.spec_from_file_location("communityai_edge_supervisor_probe", SUPERVISOR)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+_force_containment_exit = module._force_containment_exit
+_new_containment = module._new_containment
 
 
 def main() -> None:

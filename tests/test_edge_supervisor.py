@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import textwrap
 
@@ -6,6 +7,28 @@ import psutil
 
 import drift.node.edge_supervisor as edge_supervisor
 from drift.node.edge_supervisor import supervise_edge_benchmark
+
+
+def test_forced_cleanup_reaps_direct_child_before_group_absence():
+    containment = edge_supervisor._new_containment()
+    process = None
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **containment.popen_kwargs(),
+        )
+        containment.attach(process)
+        containment.resume(process)
+        assert containment.has_members()
+        assert edge_supervisor._force_containment_exit(containment, process, 0.01)
+        assert process.poll() is not None and not containment.has_members()
+    finally:
+        if process is not None and process.poll() is None:
+            edge_supervisor._force_containment_exit(containment, process, 0.01)
+        containment.close()
 
 
 def _child_result():
