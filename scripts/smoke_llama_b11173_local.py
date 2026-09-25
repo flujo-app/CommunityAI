@@ -10,6 +10,7 @@ the owned process tree has stopped. This is not multi-GPU or exact-model proof.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -24,12 +25,21 @@ import types
 from pathlib import Path
 
 import httpx
+from fastapi.testclient import TestClient
 
 PACKAGE = types.ModuleType("drift")
 PACKAGE.__path__ = [str(Path(__file__).resolve().parents[1] / "src" / "drift")]
 sys.modules["drift"] = PACKAGE
 
 from drift.node.edge_supervisor import _force_containment_exit, _new_containment  # noqa: E402
+from drift.inference_provider import (  # noqa: E402
+    Availability, EventKind, InferenceLimits, InferenceRequest, ProviderIdentity, ProviderProfile,
+)
+from drift.managed_llama_cpp import ManagedLlamaCppAdapter, ManagedLlamaCppBinding  # noqa: E402
+from drift.managed_vllm import ManagedGenerationOptions  # noqa: E402
+from drift.managed_vllm_text import ManagedVllmTextClient  # noqa: E402
+from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime  # noqa: E402
+from drift.api.server import create_app  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1] / ".gate13-runs" / "llama-b11173"
 SERVER = ROOT / "run" / "llama-server.exe"
@@ -121,6 +131,15 @@ def main() -> int:
                     else:
                         raise TimeoutError("llama-server startup exceeded 90 seconds")
                     loaded_gpu_memory = gpu_memory_mib()
+                    models = client.get(base + "/v1/models", headers=headers).json()
+                    props = client.get(base + "/props", headers=headers).json()
+                    if (
+                        models.get("object") != "list" or len(models.get("data", [])) != 1
+                        or models["data"][0].get("id") != ALIAS
+                        or props.get("model_path") != str(MODEL)
+                        or props.get("total_slots") != 1
+                    ):
+                        raise RuntimeError("llama.cpp readiness metadata mismatch")
                     runs = []
                     for limit in (4, 16, 16, 16):
                         began = time.monotonic()
@@ -169,11 +188,66 @@ def main() -> int:
                             stream_frames.append(frame)
                     if not stream_done or not stream_frames:
                         raise RuntimeError("llama.cpp SSE did not terminate")
+                    profile = ProviderProfile(
+                        "test/qwen-llama-local", ALIAS, Availability.AVAILABLE,
+                        qualification_id="1" * 64,
+                    )
+                    binding = ManagedLlamaCppBinding(profile, ALIAS, base, key, (0,), "none", 256)
+                    now = time.monotonic()
+                    request = InferenceRequest(
+                        ProviderIdentity("test/local-provider", "test/local-instance"),
+                        profile.profile_id, profile.model_id, secrets.token_hex(16),
+                        secrets.token_hex(16), now, now + 20, PROMPT,
+                        InferenceLimits(252, 4, 100, 4096),
+                    )
+
+                    async def check_adapter():
+                        adapter = ManagedLlamaCppAdapter(binding)
+                        return [event async for event in adapter.stream(
+                            request, options=ManagedGenerationOptions(temperature=0)
+                        )]
+
+                    adapter_events = asyncio.run(check_adapter())
+                    if (
+                        not adapter_events or adapter_events[-1].kind is not EventKind.COMPLETED
+                        or adapter_events[-1].usage is None
+                        or adapter_events[-1].usage.output_units != 4
+                        or not any(event.kind is EventKind.OUTPUT for event in adapter_events)
+                    ):
+                        raise RuntimeError("CommunityAI llama.cpp adapter did not accept real stream")
+                    digest = "sha256:" + "c" * 64
+                    manager = ModelManager()
+                    bridge = ManagedVllmTextClient(
+                        ManagedLlamaCppAdapter(binding), request.identity, digest,
+                    )
+                    manager.register(
+                        ModelDescriptor(ALIAS, manifest_digest=digest),
+                        lambda: ModelRuntime(model=None, tokenizer=None, text_client=bridge),
+                    )
+                    app = create_app(model_manager=manager, api_keys=["local-api-key"], request_timeout=20.0)
+                    with TestClient(app) as app_client:
+                        api_response = app_client.post(
+                            "/v1/completions",
+                            json={"model": ALIAS, "prompt": PROMPT, "max_tokens": 4,
+                                  "temperature": 0, "stream": False},
+                            headers={"Authorization": "Bearer local-api-key"},
+                        )
+                        if api_response.status_code != 200:
+                            raise RuntimeError("CommunityAI API to llama.cpp failed: " + api_response.text[:300])
+                        api_body = api_response.json()
+                        if (
+                            not api_body["choices"][0]["text"]
+                            or api_body["usage"]["completion_tokens"] != 4
+                        ):
+                            raise RuntimeError("CommunityAI API completion or usage mismatch")
                     result = {"model": "Qwen/Qwen3-1.7B", "backend": "llama.cpp b11173 CUDA",
                               "gpu_count_used": 1, "runs": runs,
                               "median_16_token_seconds": round(statistics.median(run["seconds"] for run in runs[1:]), 3),
                               "gpu_memory_delta_mib": loaded_gpu_memory - baseline_gpu_memory,
                               "sse_frames": len(stream_frames),
+                              "communityai_adapter_completed": True,
+                              "communityai_api_completed": True,
+                              "props_build_info": props.get("build_info"),
                               "sse_models": sorted({str(frame.get("model")) for frame in stream_frames}),
                               "sse_final_usage": any(type(frame.get("usage")) is dict for frame in stream_frames),
                               "sse_finish_reasons": sorted({

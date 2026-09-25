@@ -226,9 +226,21 @@ class ManagedVllmAdapter:
         on_quarantine: Callable[[], None] | None = None,
         before_dispatch: Callable[[], bool] | None = None,
     ) -> None:
+        if type(binding) is not ManagedVllmBinding:
+            raise ValueError("invalid adapter input")
+        self._initialize(binding, client, clock, on_quarantine, before_dispatch)
+
+    def _initialize(
+        self,
+        binding: ManagedVllmBinding,
+        client: httpx.AsyncClient | None,
+        clock: Callable[[], float],
+        on_quarantine: Callable[[], None] | None,
+        before_dispatch: Callable[[], bool] | None,
+    ) -> None:
+        """Shared state for a backend with the same bounded OpenAI SSE contract."""
         if (
-            type(binding) is not ManagedVllmBinding
-            or not callable(clock)
+            not callable(clock)
             or (on_quarantine is not None and not callable(on_quarantine))
             or (before_dispatch is not None and not callable(before_dispatch))
         ):

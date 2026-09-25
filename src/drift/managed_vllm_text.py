@@ -1,4 +1,4 @@
-"""Synthetic-profile bridge from the current OpenAI API to managed vLLM.
+"""Synthetic-profile bridge from the current OpenAI API to a managed backend.
 
 Registration remains an explicit local operation.  This bridge has no DHT
 advertisement, model qualification authority, or billing role. A reviewed
@@ -39,7 +39,7 @@ class ManagedVllmTextClient:
         chat_encoder: Callable[[list[dict]], str] | None = None,
         chat_thinking: bool = False,
     ) -> None:
-        if type(adapter) is not ManagedVllmAdapter or type(identity) is not ProviderIdentity:
+        if not isinstance(adapter, ManagedVllmAdapter) or type(identity) is not ProviderIdentity:
             raise ValueError("invalid managed provider identity")
         if type(manifest_digest) is not str or not manifest_digest.startswith("sha256:") or len(manifest_digest) != 71:
             raise ValueError("invalid managed manifest digest")
@@ -89,6 +89,9 @@ class ManagedVllmTextClient:
         maximum = 512 if maximum is None else maximum
         if type(maximum) is not int or not 1 <= maximum <= 512:
             raise ValueError("managed output limit must be 1..512")
+        context_size = getattr(self.adapter.binding, "max_model_len", 2048)
+        if maximum >= context_size:
+            raise ValueError("managed output limit exceeds backend context")
         stop = body.get("stop")
         stop = () if stop is None else ((stop,) if type(stop) is str else stop)
         if type(stop) is list:
@@ -109,7 +112,7 @@ class ManagedVllmTextClient:
             context.issued_at,
             context.deadline,
             prompt,
-            InferenceLimits(2048 - maximum, maximum, 4096, 1 << 20),
+            InferenceLimits(context_size - maximum, maximum, 4096, 1 << 20),
         )
         iterator = self.adapter.stream(request, options=options)
         terminal = False
