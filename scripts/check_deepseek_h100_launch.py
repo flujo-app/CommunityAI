@@ -60,6 +60,7 @@ def check():
         assert candidate.environment["VLLM_USE_V2_MODEL_RUNNER"] == "1"
         assert candidate.environment["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
         assert candidate.environment["HF_HUB_OFFLINE"] == "1"
+        assert candidate.environment["VLLM_NO_USAGE_STATS"] == "1"
         assert candidate.environment["VLLM_API_KEY"] == "secret" and "secret" not in command
         assert candidate.qualified is False
         assert candidate.model_revision == PINNED_WEIGHT_ARTIFACTS[DEEPSEEK_V41_FLASH].revision

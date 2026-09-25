@@ -115,5 +115,6 @@ def build_deepseek_h100_launch_candidate(
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
+        "VLLM_NO_USAGE_STATS": "1",
     }
     return DeepseekH100LaunchCandidate(argv, environment)

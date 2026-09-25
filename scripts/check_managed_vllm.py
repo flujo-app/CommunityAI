@@ -130,6 +130,7 @@ async def check():
             "VLLM_API_KEY": "secret",
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
+            "VLLM_NO_USAGE_STATS": "1",
         }
         assert "secret" not in command and "--no-enable-log-requests" in command
         eight = ManagedVllmBinding(

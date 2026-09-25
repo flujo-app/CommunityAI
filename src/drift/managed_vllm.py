@@ -157,6 +157,7 @@ class ManagedVllmBinding:
             "VLLM_API_KEY": self.api_key,
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
+            "VLLM_NO_USAGE_STATS": "1",
         }
         return command, environment
 
