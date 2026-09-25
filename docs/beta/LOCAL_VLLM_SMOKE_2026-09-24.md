@@ -12,13 +12,14 @@ removes its container after a single bounded readiness/model/version and
 streaming-usage check. It does not start until that pinned image is cached.
 
 The image manifest reports **8,730,525,875 compressed bytes** across its
-layers. A bounded pull attempt was stopped at the observed transfer rate before
-the image was cached. `docker image inspect` confirmed it was absent, the
-script refused to start, and `docker ps` showed no smoke container. No weights
-were downloaded and no GPU inference ran. The attempt is not a vLLM pass or a
-benchmark; reattempt only with a credible short transfer window or an
-already-cached image. The pinned image is separate from the DeepSeek nightly
-candidate and cannot qualify either exact requested model.
+layers. Two bounded pull attempts were stopped before the image was cached. In
+the September 25 attempt, several layers completed during a three-minute cap,
+but `docker image inspect` still returned `No such image` after stopping the
+pull. No smoke container was created, no weights were downloaded, and no GPU
+inference ran. Docker showed no remaining pull process or smoke container. The
+attempt is not a vLLM pass or a benchmark; reattempt only with a credible short
+transfer window or an already-cached image. The pinned image is separate from
+the DeepSeek nightly candidate and cannot qualify either exact requested model.
 
 The local source launch specs now set `VLLM_NO_USAGE_STATS=1` alongside offline
 Hub/Transformers mode. [vLLM v0.30.0 environment documentation](https://docs.vllm.ai/en/v0.30.0/configuration/env_vars/)
