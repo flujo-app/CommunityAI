@@ -51,3 +51,21 @@ and complete the exact DeepSeek-V4.1-Flash, GLM-5.3, vLLM/llama.cpp, credit,
 security, accounting, signing and release gates in the [beta roadmap](../BETA_ROADMAP.MD).
 The packaged worker self-test is dry-run only and no model weights are included.
 No volunteer-facing package or live release was published.
+
+## Read-only host inventory prepared
+
+`scripts/probe_volunteer_linux_host.py` combines the existing bounded H100,
+RAM and model-volume inventory with read-only observations of the cgroup-v2
+mount, user lingering and the fixed systemd anchor unit's required policy. It
+reports the kernel and libc versions but no hostname, user name, GPU UUID or
+storage path. It does not install or enable anything. The standalone parser
+experiment ran first; the final script's fixture self-test passed on Windows
+and in Ubuntu 20.04 in under one second. A read-only Ubuntu 20.04 container
+probe correctly reported its missing user service and root-user context.
+
+On a potential host, run `python3 scripts/probe_volunteer_linux_host.py
+--storage-path /existing/intended/model/volume`. The script has a ten-second
+`nvidia-smi` cap and five-second caps for each systemd query. Its false
+`delegated_cgroup_verified`, `required_syscalls_verified` and
+`installed_anchor_verified` fields intentionally distinguish the inventory
+from installed-host qualification. No volunteer result exists yet.
