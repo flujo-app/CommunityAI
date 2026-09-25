@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -225,6 +226,15 @@ class ManagedVllmAdapter:
         self.binding = binding
         self._client = client
         self._clock = clock
+        self._state_lock = threading.Lock()
+        self._inflight = False
+        self._quarantined = False
+
+    @property
+    def quarantined(self) -> bool:
+        """A dispatched request lacked accepted completion; replace this instance."""
+        with self._state_lock:
+            return self._quarantined
 
     async def stream(
         self, request: InferenceRequest, *, options: ManagedGenerationOptions | None = None
@@ -265,8 +275,18 @@ class ManagedVllmAdapter:
         if profile.availability is not Availability.AVAILABLE:
             raise ManagedVllmError("profile unavailable")
 
+        with self._state_lock:
+            failure = "backend_quarantined" if self._quarantined else "backend_busy" if self._inflight else None
+            if failure is None:
+                self._inflight = True
+        if failure is not None:
+            yield event(EventKind.FAILED, failure_code=failure)
+            return
+
         owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(base_url=self.binding.base_url, trust_env=False)
+        client = None
+        dispatched = False
+        completed = False
         payload = {
             "model": self.binding.served_model,
             "prompt": request.prompt,
@@ -286,6 +306,7 @@ class ManagedVllmAdapter:
         usage = None
         saw_done = False
         try:
+            client = self._client or httpx.AsyncClient(base_url=self.binding.base_url, trust_env=False)
             stream_context = client.stream(
                 "POST",
                 self.binding.base_url + "/v1/completions",
@@ -293,6 +314,7 @@ class ManagedVllmAdapter:
                 headers=headers,
                 timeout=remaining,
             )
+            dispatched = True
             response = await asyncio.wait_for(stream_context.__aenter__(), remaining)
             try:
                 if response.status_code != 200:
@@ -354,7 +376,9 @@ class ManagedVllmAdapter:
                     raise ManagedVllmStopUnconfirmed("backend close timed out; stop unconfirmed") from exc
             if not saw_done or not saw_finish or usage is None:
                 raise ManagedVllmError("backend stream ended without completion and usage")
-            yield event(EventKind.COMPLETED, usage=usage, finish_reason=finish_reason)
+            terminal_event = event(EventKind.COMPLETED, usage=usage, finish_reason=finish_reason)
+            completed = True
+            yield terminal_event
         except ManagedVllmStopUnconfirmed:
             raise
         except TimeoutError as exc:
@@ -366,5 +390,9 @@ class ManagedVllmAdapter:
                 raise ManagedVllmStopUnconfirmed("backend deadline; stop unconfirmed") from exc
             yield event(EventKind.FAILED, failure_code="backend_stream_error")
         finally:
-            if owns_client:
+            with self._state_lock:
+                if dispatched and not completed:
+                    self._quarantined = True
+                self._inflight = False
+            if owns_client and client is not None:
                 await client.aclose()

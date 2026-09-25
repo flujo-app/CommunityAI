@@ -118,3 +118,21 @@ model, redirect, oversized body, timeout, and unavailable profile. The
 existing focused adapter script passed. No vLLM process, model weights or GPU
 were used. The endpoint choices follow the [vLLM v0.30.0 server
 documentation](https://docs.vllm.ai/en/v0.30.0/serving/online_serving/openai_compatible_server/).
+
+## Stop-uncertainty quarantine
+
+`ManagedVllmAdapter` now permits one stream at a time per adapter instance and
+quarantines that instance if a dispatched stream ends without an accepted
+completion. That includes client generator close, deadline, malformed output,
+transport failure and HTTP failure. A later call fails locally with
+`backend_quarantined`; it cannot reuse the same adapter after an unproven stop.
+There is no reset operation on that instance. A supervised process owner must
+prove complete backend teardown and construct a replacement before routing
+again. This change does **not** itself abort vLLM work or prove GPU release.
+
+The standalone `prototype_vllm_quarantine.py` passed before source changes.
+The focused `check_managed_vllm_quarantine.py` passed for concurrent admission,
+normal repeated completions, generator close, malformed model frames, deadline
+and refusal to reuse a quarantined instance. The existing adapter check passed
+in under one second and the real FastAPI/fake-backend check passed in about ten
+seconds. No broad CI or vLLM/GPU run occurred.
