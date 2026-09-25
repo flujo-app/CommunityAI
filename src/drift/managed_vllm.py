@@ -223,12 +223,21 @@ class ManagedVllmAdapter:
         *,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
+        on_quarantine: Callable[[], None] | None = None,
+        before_dispatch: Callable[[], bool] | None = None,
     ) -> None:
-        if type(binding) is not ManagedVllmBinding or not callable(clock):
+        if (
+            type(binding) is not ManagedVllmBinding
+            or not callable(clock)
+            or (on_quarantine is not None and not callable(on_quarantine))
+            or (before_dispatch is not None and not callable(before_dispatch))
+        ):
             raise ValueError("invalid adapter input")
         self.binding = binding
         self._client = client
         self._clock = clock
+        self._on_quarantine = on_quarantine
+        self._before_dispatch = before_dispatch
         self._state_lock = threading.Lock()
         self._inflight = False
         self._quarantined = False
@@ -277,6 +286,14 @@ class ManagedVllmAdapter:
             raise ManagedVllmError("deadline before dispatch")
         if profile.availability is not Availability.AVAILABLE:
             raise ManagedVllmError("profile unavailable")
+        if self._before_dispatch is not None:
+            try:
+                admitted = self._before_dispatch()
+            except Exception:
+                admitted = False
+            if admitted is not True:
+                yield event(EventKind.FAILED, failure_code="backend_unavailable")
+                return
 
         with self._state_lock:
             failure = "backend_quarantined" if self._quarantined else "backend_busy" if self._inflight else None
@@ -393,9 +410,18 @@ class ManagedVllmAdapter:
                 raise ManagedVllmStopUnconfirmed("backend deadline; stop unconfirmed") from exc
             yield event(EventKind.FAILED, failure_code="backend_stream_error")
         finally:
+            newly_quarantined = False
             with self._state_lock:
                 if dispatched and not completed:
+                    newly_quarantined = not self._quarantined
                     self._quarantined = True
                 self._inflight = False
-            if owns_client and client is not None:
-                await client.aclose()
+            try:
+                if newly_quarantined and self._on_quarantine is not None:
+                    try:
+                        self._on_quarantine()
+                    except Exception as exc:
+                        raise ManagedVllmStopUnconfirmed("managed process tree stop unconfirmed") from exc
+            finally:
+                if owns_client and client is not None:
+                    await client.aclose()

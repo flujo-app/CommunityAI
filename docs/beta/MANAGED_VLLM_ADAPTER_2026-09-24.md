@@ -138,3 +138,35 @@ normal repeated completions, generator close, malformed model frames, deadline
 and refusal to reuse a quarantined instance. The existing adapter check passed
 in under one second and the real FastAPI/fake-backend check passed in about ten
 seconds. No broad CI or vLLM/GPU run occurred.
+
+## Supervised local process checkpoint (2026-09-25)
+
+`src/drift/managed_vllm_process.py` can now start one synthetic-profile local
+vLLM command inside the existing OS process-tree containment. It checks the
+absolute entry-point SHA-256 before launch, uses the binding's loopback host,
+selected `CUDA_VISIBLE_DEVICES` and TP/PP geometry, and preserves the offline
+and no-usage-upload flags. Admission requires a live contained parent, an
+owned loopback TCP listener, and the bounded exact-version/model/context HTTP
+probe. A new adapter rechecks ownership before every dispatch. A dispatched
+stream that ends without an accepted completion quarantines the adapter and
+synchronously tears down the complete tracked process tree before that stream
+returns; failed teardown remains unconfirmed and prevents reuse. The owner can
+restart only after confirmed containment cleanup and a fresh probe.
+
+`scripts/prototype_vllm_process_owner.py` ran first with a fake parent and
+child, proving the available OS containment can end both. The focused
+`scripts/check_managed_vllm_process.py` then used a short-lived Python fake
+server plus a child worker to check hash rejection, launch, listener ownership,
+probe, valid output, malformed output teardown, cancellation teardown and
+readmission after a fresh start. It passed in about ten seconds including
+imports. Existing focused adapter and quarantine scripts also passed. The
+local check used no vLLM package, model weights, GPU or long CI job.
+
+This checkpoint does not prove the vLLM package or model artifacts, real GPU
+identity/geometry, memory release, backend stop under hardware load, or exact
+DeepSeek/GLM support. In particular, POSIX process-group containment cannot
+own a descendant that escapes into another session; a production Linux
+deployment needs its existing cgroup containment and host-side accelerator
+evidence before advertising an available provider route. The entry-point
+hash is not a full package or model-artifact signature. No production route or
+credit settlement is enabled by this checkpoint.
