@@ -1059,6 +1059,28 @@ class CommerceSimulator:
                 "SELECT payout_id,status FROM payouts WHERE status IN ('reserved','unknown') ORDER BY payout_id"
             ).fetchall())
 
+    def unresolved_service_holds(self, *, limit: int = 100) -> tuple[SimulatedServiceQuote, ...]:
+        """Inspect durable holds after a crash; caller must verify work has stopped.
+
+        This never refunds automatically. A still-running request can be
+        settled, so recovery must obtain independent stop/receipt evidence
+        before calling ``refund_service`` or ``settle_service``.
+        """
+        _require(type(limit) is int and 1 <= limit <= 1000, "invalid hold inspection limit")
+        with self._lock:
+            self._db.execute("BEGIN")
+            try:
+                rows = self._db.execute(
+                    "SELECT request_id FROM reservations WHERE status='held' ORDER BY rowid LIMIT ?",
+                    (limit,),
+                ).fetchall()
+                quotes = tuple(self._load_quote(request_id) for (request_id,) in rows)
+                self._db.execute("COMMIT")
+                return quotes
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
     def audit(self) -> dict[str, int]:
         """Check journal conservation and materialized holds; no external reconciliation."""
         with self._lock:

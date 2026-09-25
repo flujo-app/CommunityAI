@@ -30,11 +30,19 @@ unfunded reversal loss. This script also confirmed pinned artifact hashes,
 owned listener admission and cancellation process-tree teardown. The whole
 standalone process check finished in about 25 seconds; no server remained.
 
+The 0.3-second `.gate13-runs/prototype_orphan_hold.py` first established that a
+reserved hold survives close/reopen. `unresolved_service_holds(limit=...)` now
+returns bounded, canonically checked quotes for recovery. The focused
+`scripts/check_abandoned_service_holds.py` passed crash/reopen inspection,
+explicit refund, and a concurrent settlement/refund race in under a second.
+The journal does not refund merely because time passed: the caller must verify
+the provider work stopped or adjudicate an accepted receipt first.
+
 This is a synthetic contract check. The simulated processor callback is assumed
 verified, and the stream's accepted usage stands in for independent work
 validation. There is no payment-account integration, funding reconciliation,
 approved provider compensation, seller eligibility, payout or credit-resale
-activation. A crash after reservation also needs explicit recovery of an
-unresolved hold; this bridge currently handles ordinary exception and
-cancellation cleanup, not a durable orphan adjudication service. None of these
-test units represent money.
+activation. A crash after reservation still needs an external process-stop or
+receipt decision before recovering an unresolved hold; this bridge handles
+ordinary exception and cancellation cleanup but does not supply that
+adjudication service. None of these test units represent money.
