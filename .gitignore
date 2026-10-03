@@ -135,3 +135,6 @@ dmypy.json
 
 # Owner-requested local emergency publisher backup; never commit key material.
 /.publisher-secrets/
+
+# Local beta evidence and temporary test environments stay inside this checkout.
+/.communityai-beta/
