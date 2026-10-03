@@ -29,6 +29,11 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+      - name: Test confidential admission policy
+        run: |
+          # This proposal uses only the standard library and needs no model runtime.
+          uv run --no-project --python ${{ matrix.python-version }} python -B -m unittest \
+            discover -s tests -p test_confidential_compute_admission.py -v
       - name: Install dependencies
         run: |
           uv sync --extra dev --python ${{ matrix.python-version }}

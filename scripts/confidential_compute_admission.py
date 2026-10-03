@@ -8,12 +8,12 @@ upstream libraries. This module does not verify quotes, signatures or TLS.
 
 from __future__ import annotations
 
-import math
 import inspect
+import math
 import re
 import time
-from dataclasses import dataclass
 from concurrent.futures import Future
+from dataclasses import dataclass
 from typing import Callable, Iterable, Protocol, TypeVar
 from urllib.parse import urlsplit
 
@@ -44,8 +44,12 @@ def _finite(value: object) -> bool:
 
 
 def _synchronous(value: T) -> T:
-    if (inspect.isawaitable(value) or inspect.isgenerator(value) or inspect.isasyncgen(value)
-            or isinstance(value, Future)):
+    if (
+        inspect.isawaitable(value)
+        or inspect.isgenerator(value)
+        or inspect.isasyncgen(value)
+        or isinstance(value, Future)
+    ):
         if inspect.iscoroutine(value) or inspect.isgenerator(value):
             value.close()
         raise AdmissionDenied("DEFERRED_OPERATION_FORBIDDEN")
@@ -83,33 +87,54 @@ class Binding:
     model_digest: str | None = None
 
     def validate(self) -> None:
-        for value in (self.provider, self.factory_id, self.namespace, self.principal,
-                      self.job_id, self.session_id, self.account_id,
-                      self.commitment_id, self.reservation_id, self.profile_id):
+        for value in (
+            self.provider,
+            self.factory_id,
+            self.namespace,
+            self.principal,
+            self.job_id,
+            self.session_id,
+            self.account_id,
+            self.commitment_id,
+            self.reservation_id,
+            self.profile_id,
+        ):
             _require(type(value) is str and _ID.fullmatch(value) is not None, "BINDING_INVALID")
-        _require(type(self.execution_class) is str and self.execution_class in _CLASSES,
-                 "EXECUTION_CLASS_INVALID")
+        _require(type(self.execution_class) is str and self.execution_class in _CLASSES, "EXECUTION_CLASS_INVALID")
         _require(self.provider_role in ("developer", "reviewer"), "PROVIDER_ROLE_INVALID")
         _require(type(self.attempt) is int and self.attempt > 0, "ATTEMPT_INVALID")
-        _require(_finite(self.original_lease_expires_at) and self.original_lease_expires_at > 0,
-                 "ORIGINAL_LEASE_INVALID")
+        _require(
+            _finite(self.original_lease_expires_at) and self.original_lease_expires_at > 0, "ORIGINAL_LEASE_INVALID"
+        )
         _require(type(self.policy_epoch) is int and self.policy_epoch > 0, "POLICY_EPOCH_INVALID")
-        _require(type(self.nonce) is str and re.fullmatch(r"[0-9a-f]{64}", self.nonce) is not None,
-                 "CHALLENGE_INVALID")
-        for value in (self.policy_digest, self.source_graph_digest, self.workload_digest,
-                      self.tool_policy_digest, self.egress_policy_digest, self.endpoint_key_digest,
-                      self.request_digest):
+        _require(type(self.nonce) is str and re.fullmatch(r"[0-9a-f]{64}", self.nonce) is not None, "CHALLENGE_INVALID")
+        for value in (
+            self.policy_digest,
+            self.source_graph_digest,
+            self.workload_digest,
+            self.tool_policy_digest,
+            self.egress_policy_digest,
+            self.endpoint_key_digest,
+            self.request_digest,
+        ):
             _require(type(value) is str and _DIGEST.fullmatch(value) is not None, "DIGEST_INVALID")
-        _require(self.model_digest is None or (type(self.model_digest) is str
-                 and _DIGEST.fullmatch(self.model_digest) is not None), "MODEL_DIGEST_INVALID")
-        _require(self.execution_class != "gpu-model" or self.model_digest is not None,
-                 "MODEL_DIGEST_REQUIRED")
-        _require(type(self.audience) is str and not any(c.isspace() for c in self.audience),
-                 "AUDIENCE_INVALID")
+        _require(
+            self.model_digest is None
+            or (type(self.model_digest) is str and _DIGEST.fullmatch(self.model_digest) is not None),
+            "MODEL_DIGEST_INVALID",
+        )
+        _require(self.execution_class != "gpu-model" or self.model_digest is not None, "MODEL_DIGEST_REQUIRED")
+        _require(type(self.audience) is str and not any(c.isspace() for c in self.audience), "AUDIENCE_INVALID")
         try:
             url = urlsplit(self.audience)
-            valid = (url.scheme == "https" and bool(url.hostname) and url.username is None
-                     and url.password is None and not url.query and not url.fragment)
+            valid = (
+                url.scheme == "https"
+                and bool(url.hostname)
+                and url.username is None
+                and url.password is None
+                and not url.query
+                and not url.fragment
+            )
             _ = url.port
         except ValueError:
             valid = False
@@ -164,30 +189,59 @@ class AdmissionGate:
     authority_revision reads the current trusted policy/revocation generation.
     """
 
-    def __init__(self, profiles: Iterable[ProviderProfile] = (), *,
-                 authority_revision: Callable[[], int] = lambda: 0,
-                 clock: Callable[[], float] = time.time):
+    def __init__(
+        self,
+        profiles: Iterable[ProviderProfile] = (),
+        *,
+        authority_revision: Callable[[], int] | None = None,
+        clock: Callable[[], float] = time.time,
+    ):
         self._profiles: dict[str, ProviderProfile] = {}
         self._authority_revision = authority_revision
         self._clock = clock
         for profile in profiles:
             _require(type(profile) is ProviderProfile, "PROFILE_INVALID")
-            _require(type(profile.profile_id) is str and _ID.fullmatch(profile.profile_id) is not None
-                     and profile.profile_id not in self._profiles, "PROFILE_INVALID")
-            _require(type(profile.provider) is str and _ID.fullmatch(profile.provider) is not None,
-                     "PROFILE_INVALID")
-            _require(type(profile.platform_digest) is str
-                     and _DIGEST.fullmatch(profile.platform_digest) is not None, "PROFILE_INVALID")
-            _require(type(profile.verifier_issuer) is str and _ID.fullmatch(profile.verifier_issuer) is not None,
-                     "PROFILE_INVALID")
-            _require(type(profile.audiences) is frozenset and bool(profile.audiences)
-                     and all(type(audience) is str for audience in profile.audiences), "PROFILE_INVALID")
-            _require(type(profile.execution_classes) is frozenset and bool(profile.execution_classes)
-                     and profile.execution_classes <= _CLASSES, "PROFILE_INVALID")
+            _require(
+                type(profile.profile_id) is str
+                and _ID.fullmatch(profile.profile_id) is not None
+                and profile.profile_id not in self._profiles,
+                "PROFILE_INVALID",
+            )
+            _require(type(profile.provider) is str and _ID.fullmatch(profile.provider) is not None, "PROFILE_INVALID")
+            _require(
+                type(profile.platform_digest) is str and _DIGEST.fullmatch(profile.platform_digest) is not None,
+                "PROFILE_INVALID",
+            )
+            _require(
+                type(profile.verifier_issuer) is str and _ID.fullmatch(profile.verifier_issuer) is not None,
+                "PROFILE_INVALID",
+            )
+            _require(
+                type(profile.audiences) is frozenset
+                and bool(profile.audiences)
+                and all(type(audience) is str for audience in profile.audiences),
+                "PROFILE_INVALID",
+            )
+            _require(
+                type(profile.execution_classes) is frozenset
+                and bool(profile.execution_classes)
+                and profile.execution_classes <= _CLASSES,
+                "PROFILE_INVALID",
+            )
             for limit in (profile.max_lease_seconds, profile.max_evidence_age_seconds):
                 _require(type(limit) is int and 0 < limit <= 3600, "PROFILE_INVALID")
             _require(callable(getattr(profile.verifier, "appraise", None)), "VERIFIER_REQUIRED")
             self._profiles[profile.profile_id] = profile
+        if self._profiles:
+            _require(callable(authority_revision), "AUTHORITY_REQUIRED")
+
+    def _read_authority(self) -> int:
+        try:
+            revision = self._authority_revision()
+        except Exception:
+            raise AdmissionDenied("AUTHORITY_UNAVAILABLE") from None
+        _require(type(revision) is int and revision >= 0, "AUTHORITY_UNAVAILABLE")
+        return revision
 
     def preflight(self, binding: Binding) -> ProviderProfile:
         """Call before provisioning, allocating paid work or accessing secrets."""
@@ -203,41 +257,54 @@ class AdmissionGate:
     def admit(self, binding: Binding) -> Appraisal:
         """Ask the trusted adapter to appraise before each sensitive operation."""
         profile = self.preflight(binding)
-        revision = self._authority_revision()
-        _require(type(revision) is int and revision >= 0, "AUTHORITY_UNAVAILABLE")
+        revision = self._read_authority()
         try:
             result = _synchronous(profile.verifier.appraise(binding))
         except Exception:
             raise AdmissionDenied("VERIFIER_REJECTED_OR_UNAVAILABLE") from None
         return self._validate(binding, profile, result, revision)
 
-    def _validate(self, binding: Binding, profile: ProviderProfile, result: Appraisal,
-                  revision: int) -> Appraisal:
+    def _validate(self, binding: Binding, profile: ProviderProfile, result: Appraisal, revision: int) -> Appraisal:
         _require(type(result) is Appraisal, "APPRAISAL_INVALID")
         _require(result.binding == binding, "SESSION_BINDING_MISMATCH")
         _require(result.issuer == profile.verifier_issuer, "VERIFIER_ISSUER_MISMATCH")
         _require(result.platform_digest == profile.platform_digest, "PLATFORM_MISMATCH")
-        current_revision = self._authority_revision()
-        _require(type(current_revision) is int and type(result.authority_revision) is int
-                 and result.authority_revision == revision == current_revision, "AUTHORITY_CHANGED")
+        current_revision = self._read_authority()
+        _require(
+            type(current_revision) is int
+            and type(result.authority_revision) is int
+            and result.authority_revision == revision == current_revision,
+            "AUTHORITY_CHANGED",
+        )
         now = self._clock()
-        _require(all(_finite(v) for v in (now, result.evaluated_at, result.expires_at,
-                                         result.collateral_expires_at)), "LIFETIME_INVALID")
-        _require(0 <= now - result.evaluated_at <= profile.max_evidence_age_seconds,
-                 "EVIDENCE_NOT_FRESH")
-        _require(result.evaluated_at < result.expires_at
-                 <= result.evaluated_at + profile.max_lease_seconds, "LEASE_INVALID")
+        _require(
+            all(_finite(v) for v in (now, result.evaluated_at, result.expires_at, result.collateral_expires_at)),
+            "LIFETIME_INVALID",
+        )
+        _require(0 <= now - result.evaluated_at <= profile.max_evidence_age_seconds, "EVIDENCE_NOT_FRESH")
+        _require(
+            result.evaluated_at < result.expires_at <= result.evaluated_at + profile.max_lease_seconds, "LEASE_INVALID"
+        )
         _require(result.expires_at <= binding.original_lease_expires_at, "ORIGINAL_LEASE_EXCEEDED")
         _require(now < min(result.expires_at, result.collateral_expires_at), "AUTHORIZATION_EXPIRED")
         _require(result.cpu_tee in ("tdx", "sev-snp"), "CPU_TEE_REQUIRED")
         if binding.execution_class == "gpu-model":
-            _require(result.gpu_tee == "nvidia-cc" and type(result.cpu_gpu_link_digest) is str
-                     and _DIGEST.fullmatch(result.cpu_gpu_link_digest) is not None,
-                     "COMPOSITE_GPU_TEE_REQUIRED")
+            _require(
+                result.gpu_tee == "nvidia-cc"
+                and type(result.cpu_gpu_link_digest) is str
+                and _DIGEST.fullmatch(result.cpu_gpu_link_digest) is not None,
+                "COMPOSITE_GPU_TEE_REQUIRED",
+            )
         return result
 
-    def dispatch(self, bindings: Iterable[Binding], *, authorize: Callable[[], None],
-                 prepare: Callable[[], T], send: Callable[[T], object]) -> object:
+    def dispatch(
+        self,
+        bindings: Iterable[Binding],
+        *,
+        authorize: Callable[[], None],
+        prepare: Callable[[], T],
+        send: Callable[[T], object],
+    ) -> object:
         """Synchronous example seam, not an atomic distributed send transaction.
 
         authorize must enforce existing budget/OFF/role/writer/capture gates and
@@ -248,19 +315,38 @@ class AdmissionGate:
         """
         requirements = tuple(bindings)
         _require(bool(requirements), "EMPTY_PROTECTION_PLAN")
-        _require(all(callable(callback) and not inspect.iscoroutinefunction(callback)
-                     and not inspect.isgeneratorfunction(callback)
-                     and not inspect.isasyncgenfunction(callback)
-                     for callback in (authorize, prepare, send)), "SYNCHRONOUS_CALLBACK_REQUIRED")
+        _require(
+            all(
+                callable(callback)
+                and not inspect.iscoroutinefunction(callback)
+                and not inspect.isgeneratorfunction(callback)
+                and not inspect.isasyncgenfunction(callback)
+                for callback in (authorize, prepare, send)
+            ),
+            "SYNCHRONOUS_CALLBACK_REQUIRED",
+        )
         for binding in requirements:
             self.preflight(binding)
         first = requirements[0]
-        scope = lambda b: (b.factory_id, b.namespace, b.principal, b.job_id, b.account_id,
-                           b.provider_role, b.request_digest, b.commitment_id, b.reservation_id,
-                           b.attempt, b.original_lease_expires_at)
+        scope = lambda b: (
+            b.factory_id,
+            b.namespace,
+            b.principal,
+            b.job_id,
+            b.account_id,
+            b.provider_role,
+            b.request_digest,
+            b.commitment_id,
+            b.reservation_id,
+            b.attempt,
+            b.original_lease_expires_at,
+        )
         _require(all(scope(b) == scope(first) for b in requirements), "JOB_SCOPE_MISMATCH")
-        _require(len({(b.provider, b.profile_id, b.session_id, b.execution_class)
-                      for b in requirements}) == len(requirements), "DUPLICATE_SESSION_REQUIREMENT")
+        _require(
+            len({(b.provider, b.profile_id, b.session_id, b.execution_class) for b in requirements})
+            == len(requirements),
+            "DUPLICATE_SESSION_REQUIREMENT",
+        )
         _require(_synchronous(authorize()) is None, "EXISTING_AUTHORIZATION_INVALID")
         appraisals = [self.admit(b) for b in requirements]
         _require(_synchronous(authorize()) is None, "EXISTING_AUTHORIZATION_INVALID")
