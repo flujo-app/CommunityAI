@@ -276,7 +276,10 @@ class AdmissionGate:
             and result.authority_revision == revision == current_revision,
             "AUTHORITY_CHANGED",
         )
-        now = self._clock()
+        try:
+            now = self._clock()
+        except Exception:
+            raise AdmissionDenied("CLOCK_UNAVAILABLE") from None
         _require(
             all(_finite(v) for v in (now, result.evaluated_at, result.expires_at, result.collateral_expires_at)),
             "LIFETIME_INVALID",

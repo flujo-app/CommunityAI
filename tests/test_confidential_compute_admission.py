@@ -487,7 +487,7 @@ class AdmissionTests(unittest.TestCase):
                     ),
                 )
 
-    def test_profile_requires_explicit_live_authority(self):
+    def test_profile_requires_explicit_authority_callback(self):
         profile = ProviderProfile(
             "synthetic-gpu-v1",
             "synthetic",
@@ -509,6 +509,13 @@ class AdmissionTests(unittest.TestCase):
         self.gate._authority_revision = unavailable
         self.denied("AUTHORITY_UNAVAILABLE", lambda: self.gate.admit(binding()))
         self.assertEqual(self.verifier.calls, 0)
+
+    def test_clock_failure_is_a_content_free_refusal(self):
+        def unavailable():
+            raise RuntimeError("private clock configuration")
+
+        self.gate._clock = unavailable
+        self.denied("CLOCK_UNAVAILABLE", lambda: self.gate.admit(binding()))
 
 
 if __name__ == "__main__":
