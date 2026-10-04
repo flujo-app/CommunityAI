@@ -13,7 +13,7 @@ import math
 import re
 import time
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Iterable, Protocol, TypeVar
 from urllib.parse import urlsplit
 
@@ -101,7 +101,10 @@ class Binding:
         ):
             _require(type(value) is str and _ID.fullmatch(value) is not None, "BINDING_INVALID")
         _require(type(self.execution_class) is str and self.execution_class in _CLASSES, "EXECUTION_CLASS_INVALID")
-        _require(self.provider_role in ("developer", "reviewer"), "PROVIDER_ROLE_INVALID")
+        _require(
+            type(self.provider_role) is str and self.provider_role in ("developer", "reviewer"),
+            "PROVIDER_ROLE_INVALID",
+        )
         _require(type(self.attempt) is int and self.attempt > 0, "ATTEMPT_INVALID")
         _require(
             _finite(self.original_lease_expires_at) and self.original_lease_expires_at > 0, "ORIGINAL_LEASE_INVALID"
@@ -139,6 +142,15 @@ class Binding:
         except ValueError:
             valid = False
         _require(valid, "AUDIENCE_INVALID")
+
+
+def _binding_snapshot(binding: Binding) -> Binding:
+    # A frozen dataclass can still be changed through object.__setattr__ by
+    # code holding an alias; compare private values across callback boundaries.
+    _require(type(binding) is Binding, "BINDING_INVALID")
+    snapshot = replace(binding)
+    Binding.validate(snapshot)
+    return snapshot
 
 
 @dataclass(frozen=True)
@@ -225,6 +237,7 @@ class AdmissionGate:
             _require(
                 type(profile.execution_classes) is frozenset
                 and bool(profile.execution_classes)
+                and all(type(execution_class) is str for execution_class in profile.execution_classes)
                 and profile.execution_classes <= _CLASSES,
                 "PROFILE_INVALID",
             )
@@ -245,30 +258,41 @@ class AdmissionGate:
 
     def preflight(self, binding: Binding) -> ProviderProfile:
         """Call before provisioning, allocating paid work or accessing secrets."""
-        _require(type(binding) is Binding, "BINDING_INVALID")
-        binding.validate()
-        profile = self._profiles.get(binding.profile_id)
+        expected = _binding_snapshot(binding)
+        profile = self._profiles.get(expected.profile_id)
         _require(profile is not None, "PROVIDER_UNQUALIFIED")
-        _require(binding.provider == profile.provider, "PROFILE_PROVIDER_MISMATCH")
-        _require(binding.audience in profile.audiences, "AUDIENCE_NOT_ADMITTED")
-        _require(binding.execution_class in profile.execution_classes, "EXECUTION_CLASS_UNQUALIFIED")
+        _require(expected.provider == profile.provider, "PROFILE_PROVIDER_MISMATCH")
+        _require(expected.audience in profile.audiences, "AUDIENCE_NOT_ADMITTED")
+        _require(expected.execution_class in profile.execution_classes, "EXECUTION_CLASS_UNQUALIFIED")
         return profile
 
     def admit(self, binding: Binding) -> Appraisal:
         """Ask the trusted adapter to appraise before each sensitive operation."""
-        profile = self.preflight(binding)
+        expected = _binding_snapshot(binding)
+        profile = self.preflight(expected)
         revision = self._read_authority()
         try:
-            result = _synchronous(profile.verifier.appraise(binding))
+            result = _synchronous(profile.verifier.appraise(replace(expected)))
         except Exception:
             raise AdmissionDenied("VERIFIER_REJECTED_OR_UNAVAILABLE") from None
-        return self._validate(binding, profile, result, revision)
+        _require(type(result) is Appraisal, "APPRAISAL_INVALID")
+        _require(type(result.binding) is Binding, "APPRAISAL_INVALID")
+        appraisal = replace(result, binding=_binding_snapshot(result.binding))
+        _require(_binding_snapshot(binding) == expected, "SESSION_BINDING_MISMATCH")
+        validated = self._validate(expected, profile, appraisal, revision)
+        _require(_binding_snapshot(binding) == expected, "SESSION_BINDING_MISMATCH")
+        return validated
 
     def _validate(self, binding: Binding, profile: ProviderProfile, result: Appraisal, revision: int) -> Appraisal:
         _require(type(result) is Appraisal, "APPRAISAL_INVALID")
+        _require(type(result.binding) is Binding, "APPRAISAL_INVALID")
+        Binding.validate(result.binding)
         _require(result.binding == binding, "SESSION_BINDING_MISMATCH")
-        _require(result.issuer == profile.verifier_issuer, "VERIFIER_ISSUER_MISMATCH")
-        _require(result.platform_digest == profile.platform_digest, "PLATFORM_MISMATCH")
+        _require(type(result.issuer) is str and result.issuer == profile.verifier_issuer, "VERIFIER_ISSUER_MISMATCH")
+        _require(
+            type(result.platform_digest) is str and result.platform_digest == profile.platform_digest,
+            "PLATFORM_MISMATCH",
+        )
         current_revision = self._read_authority()
         _require(
             type(current_revision) is int
@@ -290,14 +314,16 @@ class AdmissionGate:
         )
         _require(result.expires_at <= binding.original_lease_expires_at, "ORIGINAL_LEASE_EXCEEDED")
         _require(now < min(result.expires_at, result.collateral_expires_at), "AUTHORIZATION_EXPIRED")
-        _require(result.cpu_tee in ("tdx", "sev-snp"), "CPU_TEE_REQUIRED")
+        _require(type(result.cpu_tee) is str and result.cpu_tee in ("tdx", "sev-snp"), "CPU_TEE_REQUIRED")
         if binding.execution_class == "gpu-model":
             _require(
-                result.gpu_tee == "nvidia-cc"
+                type(result.gpu_tee) is str
+                and result.gpu_tee == "nvidia-cc"
                 and type(result.cpu_gpu_link_digest) is str
                 and _DIGEST.fullmatch(result.cpu_gpu_link_digest) is not None,
                 "COMPOSITE_GPU_TEE_REQUIRED",
             )
+        _require(self._read_authority() == revision, "AUTHORITY_CHANGED")
         return result
 
     def dispatch(
@@ -316,7 +342,8 @@ class AdmissionGate:
         these checks again at their actual transport boundary; never serialize
         an Appraisal as a transferable bearer grant.
         """
-        requirements = tuple(bindings)
+        originals = tuple(bindings)
+        requirements = tuple(_binding_snapshot(binding) for binding in originals)
         _require(bool(requirements), "EMPTY_PROTECTION_PLAN")
         _require(
             all(
@@ -346,19 +373,34 @@ class AdmissionGate:
         )
         _require(all(scope(b) == scope(first) for b in requirements), "JOB_SCOPE_MISMATCH")
         _require(
-            len({(b.provider, b.profile_id, b.session_id, b.execution_class) for b in requirements})
-            == len(requirements),
+            len({b.session_id for b in requirements}) == len(requirements),
             "DUPLICATE_SESSION_REQUIREMENT",
         )
-        _require(_synchronous(authorize()) is None, "EXISTING_AUTHORIZATION_INVALID")
+
+        def assert_plan_stable() -> None:
+            _require(
+                all(_binding_snapshot(original) == expected for original, expected in zip(originals, requirements)),
+                "SESSION_BINDING_MISMATCH",
+            )
+
+        def authorize_stable() -> None:
+            _require(_synchronous(authorize()) is None, "EXISTING_AUTHORIZATION_INVALID")
+            assert_plan_stable()
+
+        authorize_stable()
         appraisals = [self.admit(b) for b in requirements]
-        _require(_synchronous(authorize()) is None, "EXISTING_AUTHORIZATION_INVALID")
+        assert_plan_stable()
+        authorize_stable()
         for binding, result in zip(requirements, appraisals):
             self._validate(binding, self.preflight(binding), result, result.authority_revision)
+        assert_plan_stable()
         payload = _synchronous(prepare())
-        _require(_synchronous(authorize()) is None, "EXISTING_AUTHORIZATION_INVALID")
+        assert_plan_stable()
+        authorize_stable()
         appraisals = [self.admit(b) for b in requirements]
-        _require(_synchronous(authorize()) is None, "EXISTING_AUTHORIZATION_INVALID")
+        assert_plan_stable()
+        authorize_stable()
         for binding, result in zip(requirements, appraisals):
             self._validate(binding, self.preflight(binding), result, result.authority_revision)
+        assert_plan_stable()
         return _synchronous(send(payload))
