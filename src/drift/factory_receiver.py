@@ -236,11 +236,14 @@ def observe_factory_ingress_v2(scope: dict, raw_body: bytes, normalized_body: di
     """Reject unbounded/ambiguous values before any trusted host callback."""
     if type(raw_body) is not bytes or len(raw_body) > MAX_FACTORY_RAW_BODY_BYTES:
         raise FactoryIngressTooLarge()
-    raw_path = scope.get("raw_path", route.encode("ascii"))
+    root_path = scope.get("root_path", "")
+    if type(root_path) is not str or re.fullmatch(r"(?:/[A-Za-z0-9._~-]+)*", root_path) is None:
+        raise RequestAdmissionDenied()
+    full_route = root_path + route
     if (
         scope.get("method") != "POST"
-        or scope.get("path") != route
-        or raw_path != route.encode("ascii")
+        or scope.get("path") != full_route
+        or scope.get("raw_path") != full_route.encode("ascii")
         or scope.get("query_string", b"") != b""
     ):
         raise RequestAdmissionDenied()

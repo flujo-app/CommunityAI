@@ -5,6 +5,7 @@ import json
 import unittest
 
 import httpx
+from fastapi import FastAPI
 from test_factory_sdk_asgi_hold import (
     FLOW_NORMALIZED_SHA256,
     FLOW_SDK_BODY_SHA256,
@@ -177,6 +178,33 @@ class FactoryReceiverV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.claims, 1)
         self.assertEqual(self.peer.after_claim, 0)
         self.assertIn('"code": "request_not_dispatched"', response.text)
+
+    async def test_parent_mount_preserves_exact_route_admission(self):
+        parent = FastAPI()
+        parent.mount("/factory", self.app())
+        response = await self.post(app=parent, path="/factory/v1/chat/completions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.events, ["transport", "original", "bearer"])
+        self.assertEqual(self.observations[0].route, "/v1/chat/completions")
+        self.assertEqual(self.observations[0].raw_body, FLOW_SDK_BODY_UTF8)
+        self.assertEqual(self.claims, 1)
+        self.assertEqual(self.peer.after_claim, 0)
+
+    async def test_missing_raw_path_refuses_before_host_callbacks(self):
+        class WithoutRawPath:
+            def __init__(self, app):
+                self.app = app
+
+            async def __call__(self, scope, receive, send):
+                scope = dict(scope)
+                scope.pop("raw_path", None)
+                await self.app(scope, receive, send)
+
+        response = await self.post(app=WithoutRawPath(self.app()))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.observations, [])
+        self.assertEqual(self.claims, 0)
 
     async def test_headers_and_bearer_cannot_supply_missing_host_transport(self):
         response = await self.post(
