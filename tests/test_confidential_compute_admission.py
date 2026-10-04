@@ -71,6 +71,7 @@ class AdmissionTests(unittest.TestCase):
             30,
             self.verifier,
         )
+        self.profile = profile
         self.gate = AdmissionGate((profile,), authority_revision=lambda: self.revision, clock=lambda: self.now)
 
     def denied(self, code, action):
@@ -95,6 +96,179 @@ class AdmissionTests(unittest.TestCase):
     def test_worker_verified_json_is_rejected(self):
         self.verifier.transform = lambda _: {"verified": True}
         self.denied("APPRAISAL_INVALID", lambda: self.gate.admit(binding()))
+
+    def test_malformed_verifier_binding_cannot_spoof_session_or_role_with_equality(self):
+        class EqualAny:
+            def __eq__(self, other):
+                return True
+
+        self.verifier.transform = lambda result: replace(
+            result,
+            binding=replace(
+                result.binding,
+                session_id=EqualAny(),
+                execution_class=EqualAny(),
+                provider_role=EqualAny(),
+            ),
+        )
+        calls = []
+        self.denied(
+            "BINDING_INVALID",
+            lambda: self.gate.dispatch(
+                (binding(),),
+                authorize=lambda: calls.append("authorize"),
+                prepare=lambda: calls.append("prepare"),
+                send=lambda _: calls.append("send"),
+            ),
+        )
+        self.assertNotIn("prepare", calls)
+        self.assertNotIn("send", calls)
+
+    def test_malformed_verifier_metadata_cannot_spoof_admitted_evidence_with_equality(self):
+        class EqualAny:
+            def __eq__(self, other):
+                return True
+
+        for field, code in (
+            ("issuer", "VERIFIER_ISSUER_MISMATCH"),
+            ("platform_digest", "PLATFORM_MISMATCH"),
+            ("cpu_tee", "CPU_TEE_REQUIRED"),
+            ("gpu_tee", "COMPOSITE_GPU_TEE_REQUIRED"),
+        ):
+            with self.subTest(field=field):
+                self.verifier.transform = lambda result, f=field: replace(result, **{f: EqualAny()})
+                self.denied(code, lambda: self.gate.admit(binding()))
+
+    def test_verifier_cannot_rebind_its_aliased_appraisal_request(self):
+        request = binding()
+
+        def mutate(result):
+            object.__setattr__(result.binding, "nonce", "3" * 64)
+            object.__setattr__(result.binding, "endpoint_key_digest", OTHER)
+            return result
+
+        self.verifier.transform = mutate
+        self.denied("SESSION_BINDING_MISMATCH", lambda: self.gate.admit(request))
+        self.assertEqual(request.nonce, "1" * 64)
+        self.assertEqual(request.endpoint_key_digest, D)
+
+    def test_verifier_cannot_mutate_later_plan_role_or_session_before_prepare(self):
+        for field, value in (("provider_role", "reviewer"), ("session_id", "first")):
+            with self.subTest(field=field):
+                first = binding(session_id="first")
+                second = binding(session_id="second")
+                calls = []
+
+                def mutate(result):
+                    if result.binding.session_id == "first":
+                        object.__setattr__(second, field, value)
+                    return result
+
+                self.verifier.transform = mutate
+                self.denied(
+                    "SESSION_BINDING_MISMATCH",
+                    lambda: self.gate.dispatch(
+                        (first, second),
+                        authorize=lambda: None,
+                        prepare=lambda: calls.append("prepare"),
+                        send=lambda _: calls.append("send"),
+                    ),
+                )
+                self.assertEqual(calls, [])
+
+    def test_late_verifier_mutation_cannot_replace_appraised_nonce_before_send(self):
+        first = binding(session_id="first")
+        second = binding(session_id="second")
+        calls = []
+
+        def mutate(result):
+            if self.verifier.calls == 4:
+                object.__setattr__(first, "nonce", "3" * 64)
+                object.__setattr__(first, "endpoint_key_digest", OTHER)
+            return result
+
+        self.verifier.transform = mutate
+        self.denied(
+            "SESSION_BINDING_MISMATCH",
+            lambda: self.gate.dispatch(
+                (first, second),
+                authorize=lambda: None,
+                prepare=lambda: calls.append("prepare"),
+                send=lambda _: calls.append("send"),
+            ),
+        )
+        self.assertEqual(calls, ["prepare"])
+
+    def test_clock_mutation_during_standalone_admit_is_refused(self):
+        request = binding()
+
+        def clock():
+            object.__setattr__(request, "nonce", "3" * 64)
+            return self.now
+
+        self.gate._clock = clock
+        self.denied("SESSION_BINDING_MISMATCH", lambda: self.gate.admit(request))
+
+    def test_clock_mutation_during_revalidation_blocks_prepare(self):
+        request = binding()
+        effects = []
+        clock_calls = 0
+
+        def clock():
+            nonlocal clock_calls
+            clock_calls += 1
+            if clock_calls == 2:
+                object.__setattr__(request, "nonce", "3" * 64)
+            return self.now
+
+        self.gate._clock = clock
+        self.denied(
+            "SESSION_BINDING_MISMATCH",
+            lambda: self.gate.dispatch(
+                (request,),
+                authorize=lambda: None,
+                prepare=lambda: effects.append("prepare"),
+                send=lambda _: effects.append("send"),
+            ),
+        )
+        self.assertEqual(effects, [])
+
+    def test_revocation_during_final_clock_blocks_send(self):
+        effects = []
+        clock_calls = 0
+
+        def clock():
+            nonlocal clock_calls
+            clock_calls += 1
+            if clock_calls == 4:
+                self.revision = 2
+            return self.now
+
+        self.gate._clock = clock
+        self.denied(
+            "AUTHORITY_CHANGED",
+            lambda: self.gate.dispatch(
+                (binding(),),
+                authorize=lambda: None,
+                prepare=lambda: effects.append("prepare"),
+                send=lambda _: effects.append("send"),
+            ),
+        )
+        self.assertEqual(effects, ["prepare"])
+
+    def test_profile_class_allowlist_rejects_non_string_equality_object(self):
+        class EqualGpuClass:
+            def __hash__(self):
+                return hash("gpu-model")
+
+            def __eq__(self, other):
+                return True
+
+        suspect = replace(self.profile, execution_classes=frozenset((EqualGpuClass(),)))
+        self.denied(
+            "PROFILE_INVALID",
+            lambda: AdmissionGate((suspect,), authority_revision=lambda: self.revision, clock=lambda: self.now),
+        )
 
     def test_every_session_identity_and_policy_field_is_bound(self):
         changes = dict(
@@ -328,6 +502,25 @@ class AdmissionTests(unittest.TestCase):
                 )
         self.assertEqual(self.verifier.calls, 0)
 
+    def test_non_string_role_cannot_masquerade_as_authorized_role(self):
+        class EqualAny:
+            def __eq__(self, other):
+                return True
+
+        callbacks = []
+        suspect = binding(session_id="tools", execution_class="cpu-tools", model_digest=None, provider_role=EqualAny())
+        self.denied(
+            "PROVIDER_ROLE_INVALID",
+            lambda: self.gate.dispatch(
+                (binding(), suspect),
+                authorize=lambda: callbacks.append("authorize"),
+                prepare=lambda: callbacks.append("prepare"),
+                send=lambda _: callbacks.append("send"),
+            ),
+        )
+        self.assertEqual(callbacks, [])
+        self.assertEqual(self.verifier.calls, 0)
+
     def test_boolean_authority_and_nonfinite_time_cannot_admit(self):
         self.revision = True
         self.denied("AUTHORITY_UNAVAILABLE", lambda: self.gate.admit(binding()))
@@ -456,6 +649,20 @@ class AdmissionTests(unittest.TestCase):
                 (binding(), binding()), authorize=lambda: None, prepare=lambda: None, send=lambda _: None
             ),
         )
+        self.assertEqual(self.verifier.calls, 0)
+
+    def test_same_session_id_across_execution_classes_is_rejected(self):
+        callbacks = []
+        self.denied(
+            "DUPLICATE_SESSION_REQUIREMENT",
+            lambda: self.gate.dispatch(
+                (binding(), binding(execution_class="cpu-tools", model_digest=None)),
+                authorize=lambda: callbacks.append("authorize"),
+                prepare=lambda: callbacks.append("prepare"),
+                send=lambda _: callbacks.append("send"),
+            ),
+        )
+        self.assertEqual(callbacks, [])
         self.assertEqual(self.verifier.calls, 0)
 
     def test_wrapped_generator_cannot_release_after_expiry(self):
