@@ -6,11 +6,10 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from communityai_desktop.resource_controls import GpuResourceControls
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractSlider, QApplication
-
-from communityai_desktop.resource_controls import GpuResourceControls
 
 
 def state():

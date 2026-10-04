@@ -1083,7 +1083,10 @@ class VolunteerBuildIsolationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary_directory = TemporaryDirectory()
         self.addCleanup(self._temporary_directory.cleanup)
-        self.tmp_path = Path(self._temporary_directory.name)
+        # macOS exposes its temporary directory through /var -> /private/var.
+        # Keep these safe fixtures on the canonical path; link-rejection tests
+        # below still pass their explicit linked paths to the production guard.
+        self.tmp_path = Path(self._temporary_directory.name).resolve()
         self.project = self.tmp_path / "repository" / "desktop"
         icon = self.project / "src" / "communityai_desktop" / "assets" / "communityai.ico"
         icon.parent.mkdir(parents=True)

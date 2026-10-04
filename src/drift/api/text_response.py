@@ -25,9 +25,11 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
     model_id = loaded.descriptor.manifest_digest if context.single_attempt else loaded.descriptor.model_id
     request = body.model_dump(exclude_none=True)
     # Ordinary mixed-version peers retain their old request surface. Factory
-    # sends retain every admitted body field, including the response option.
+    # sends retain admitted fields in the worker request, but the cache key is
+    # only an opaque bound hint here; it does not enable caching.
     if not context.single_attempt:
         request.pop("stream_options", None)
+        request.pop("prompt_cache_key", None)
     request["model"] = loaded.descriptor.manifest_digest
     include_usage = body.stream_options is not None and body.stream_options.include_usage
     events_started = False

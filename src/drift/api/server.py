@@ -27,7 +27,7 @@ import torch
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from hivemind.utils.logging import get_logger
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer
 
 from drift.factory_admission import FactoryAdmission, RequestAdmissionDenied, synchronous_result
@@ -102,6 +102,9 @@ class ChatCompletionRequest(BaseModel):
     stop: Optional[Union[str, List[str]]] = None
     stream: bool = False
     stream_options: Optional[StreamOptions] = None
+    # An opaque SDK hint, bound into Factory's normalized body. This receiver
+    # does not implement prompt-cache behavior.
+    prompt_cache_key: Optional[StrictStr] = Field(default=None, min_length=1, max_length=256)
     n: int = 1
     # Optional extension for verified templates that expose a reasoning switch.
     # Omission preserves the model's own template default.

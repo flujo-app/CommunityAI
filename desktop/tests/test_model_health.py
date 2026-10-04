@@ -4,12 +4,11 @@ import unittest
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
+from communityai_desktop.model_health import DownloadCard, DownloadsPanel, ModelHealthCard
+from communityai_desktop.telemetry import download_view, route_view
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
-
-from communityai_desktop.model_health import DownloadCard, DownloadsPanel, ModelHealthCard
-from communityai_desktop.telemetry import download_view, route_view
 
 
 class ModelHealthTests(unittest.TestCase):
@@ -265,6 +264,7 @@ class ModelHealthTests(unittest.TestCase):
         from communityai_desktop.acceptance import _FakeNodeState
         from communityai_desktop.client import _normalize_contribution_status
         from communityai_desktop.controller import DesktopController
+
         from drift.node.server import _contribution_status
 
         fixture = _FakeNodeState()

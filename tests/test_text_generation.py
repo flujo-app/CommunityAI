@@ -2,22 +2,23 @@
 
 import asyncio
 import contextlib
-import threading
 import queue
+import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from test_qwen3_5_block import _tiny_config, _wrapped_blocks
 from torch import nn
 
+from drift.api.server import _RequestCancelled
 from drift.models.qwen3_5.model import DistributedQwen3_5ForCausalLM
 from drift.server.text_generation import TextGenerationEngine
-from drift.api.server import _RequestCancelled
-from test_qwen3_5_block import _tiny_config, _wrapped_blocks
 
 
 def test_chunked_generation_preserves_remote_cache_and_full_prompt():
     from transformers.models.qwen3_5 import Qwen3_5ForCausalLM
+
     from drift.models.qwen3_5.cache import Qwen3_5HybridCache
 
     torch.set_num_threads(1)

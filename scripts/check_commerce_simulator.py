@@ -22,14 +22,24 @@ SimulatedServiceQuote = module.SimulatedServiceQuote
 
 def quote(request_id, buyer_id, cap, source="purchased", provider_id="provider_a"):
     return SimulatedServiceQuote(
-        request_id=request_id, buyer_id=buyer_id, provider_id=provider_id, funding_source=source,
-        model_id="test/model", profile_id="test/profile",
-        service_class="text_inference", settlement_domain="local_simulation",
-        artifact_sha256="a" * 64, service_policy_sha256="b" * 64,
+        request_id=request_id,
+        buyer_id=buyer_id,
+        provider_id=provider_id,
+        funding_source=source,
+        model_id="test/model",
+        profile_id="test/profile",
+        service_class="text_inference",
+        settlement_domain="local_simulation",
+        artifact_sha256="a" * 64,
+        service_policy_sha256="b" * 64,
         price_schedule_sha256="c" * 64,
-        input_unit_price=1, output_unit_price=1,
-        max_input_units=cap // 2, max_output_units=cap - cap // 2,
-        fee_bps=2000, spend_cap=cap, expires_at_unix=int(time.time()) + 60,
+        input_unit_price=1,
+        output_unit_price=1,
+        max_input_units=cap // 2,
+        max_output_units=cap - cap // 2,
+        fee_bps=2000,
+        spend_cap=cap,
+        expires_at_unix=int(time.time()) + 60,
     )
 
 
@@ -68,18 +78,26 @@ def check():
             denied(lambda: ledger.reserve_service(replace(main_quote, profile_id="test/changed")))
             assert ledger.buyer_wallet("alice")["service_held"] == 100
             denied(lambda: ledger.reserve_service(quote("request_more", "alice", 2)))
-            denied(lambda: ledger.settle_service("request_main", "provider_a", 60, 13,
-                                                  "decision_bad_fee", "a" * 64, 40, 20))
-            denied(lambda: ledger.settle_service("request_main", "provider_other", 60, 10,
-                                                  "decision_bad_provider", "a" * 64, 40, 20))
-            denied(lambda: ledger.settle_service("request_main", "provider_a", 60, 10,
-                                                  "decision_bad_units", "a" * 64, 51, 9))
-            assert ledger.settle_service("request_main", "provider_a", 60, 10,
-                                         "decision_main", "a" * 64, 40, 20)
-            assert not ledger.settle_service("request_main", "provider_a", 60, 10,
-                                             "decision_main", "a" * 64, 40, 20)
-            denied(lambda: ledger.settle_service("request_main", "provider_a", 61, 10,
-                                                  "decision_main", "a" * 64, 40, 20))
+            denied(
+                lambda: ledger.settle_service(
+                    "request_main", "provider_a", 60, 13, "decision_bad_fee", "a" * 64, 40, 20
+                )
+            )
+            denied(
+                lambda: ledger.settle_service(
+                    "request_main", "provider_other", 60, 10, "decision_bad_provider", "a" * 64, 40, 20
+                )
+            )
+            denied(
+                lambda: ledger.settle_service(
+                    "request_main", "provider_a", 60, 10, "decision_bad_units", "a" * 64, 51, 9
+                )
+            )
+            assert ledger.settle_service("request_main", "provider_a", 60, 10, "decision_main", "a" * 64, 40, 20)
+            assert not ledger.settle_service("request_main", "provider_a", 60, 10, "decision_main", "a" * 64, 40, 20)
+            denied(
+                lambda: ledger.settle_service("request_main", "provider_a", 61, 10, "decision_main", "a" * 64, 40, 20)
+            )
             assert ledger.buyer_wallet("alice")["purchased_available"] == 40
             assert ledger.provider_wallet("provider_a")["pending"] == 50
             assert ledger.release_earnings("release_main", "provider_a", 50, "risk_main")
@@ -124,8 +142,7 @@ def check():
             assert reopened.create_order("order_second", "bob", "processor_second", 50)
             assert reopened.record_verified_processor_event("cap_second", "processor_second", "capture", 50)
             assert reopened.reserve_service(quote("request_second", "bob", 50, provider_id="provider_b"))
-            assert reopened.settle_service("request_second", "provider_b", 50, 0,
-                                           "decision_second", "b" * 64, 25, 25)
+            assert reopened.settle_service("request_second", "provider_b", 50, 0, "decision_second", "b" * 64, 25, 25)
             assert reopened.release_earnings("release_second", "provider_b", 50, "risk_second")
             assert reopened.request_payout("payout_failed", "provider_b", 20, "external_failed")
             assert reopened.mark_payout_unknown("payout_failed")

@@ -91,8 +91,11 @@ class SimulatedPaidTextClient:
                     output_units = usage.get("completion_tokens")
                     total_units = usage.get("total_tokens")
                     if (
-                        type(input_units) is not int or type(output_units) is not int
-                        or type(total_units) is not int or input_units < 0 or output_units < 0
+                        type(input_units) is not int
+                        or type(output_units) is not int
+                        or type(total_units) is not int
+                        or input_units < 0
+                        or output_units < 0
                         or total_units != input_units + output_units
                     ):
                         raise ValueError("invalid simulated usage")
@@ -100,13 +103,23 @@ class SimulatedPaidTextClient:
                     if charge <= 0:
                         raise ValueError("zero priced simulated completion")
                     fee = charge * quote.fee_bps // 10_000
-                    receipt = hashlib.sha256(json.dumps(
-                        [quote.digest, usage, frame.get("finish_reason"), output_hash.hexdigest()],
-                        sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-                    ).encode("ascii")).hexdigest()
+                    receipt = hashlib.sha256(
+                        json.dumps(
+                            [quote.digest, usage, frame.get("finish_reason"), output_hash.hexdigest()],
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            ensure_ascii=True,
+                        ).encode("ascii")
+                    ).hexdigest()
                     if not self.journal.settle_service(
-                        quote.request_id, quote.provider_id, charge, fee,
-                        "simdecision:" + quote.request_id, receipt, input_units, output_units,
+                        quote.request_id,
+                        quote.provider_id,
+                        charge,
+                        fee,
+                        "simdecision:" + quote.request_id,
+                        receipt,
+                        input_units,
+                        output_units,
                     ):
                         raise CommerceSimulationError("simulated settlement already applied")
                     settled = True

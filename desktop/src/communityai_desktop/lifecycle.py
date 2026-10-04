@@ -114,7 +114,9 @@ class NodeLifecycleSupervisor:
         self.node_url = normalize_loopback_url(node_url)
         self.credential_store = credential_store
         self.config_path = _absolute_path(config_path)
-        self.data_dir = Path(data_dir).expanduser().resolve()
+        # Keep the caller's path spelling. On Windows, resolve() expands an
+        # 8.3 alias and makes the fixed-profile sidecar reject the same directory.
+        self.data_dir = _absolute_path(data_dir)
         default_node_command = node_command is None
         self.node_command = tuple(node_command or _default_node_command())
         if not self.node_command or any(not isinstance(part, str) or not part for part in self.node_command):

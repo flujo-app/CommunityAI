@@ -57,9 +57,13 @@ def build_glm53_w4a8_h100_launch_candidate(
             raise ValueError("invalid reported GPU")
         index, name, free = item
         if (
-            type(index) is not int or not 0 <= index <= 255
-            or type(name) is not str or "H100" not in name or len(name) > 128
-            or type(free) is not int or not MINIMUM_PER_RANK_BYTES <= free <= 1 << 50
+            type(index) is not int
+            or not 0 <= index <= 255
+            or type(name) is not str
+            or "H100" not in name
+            or len(name) > 128
+            or type(free) is not int
+            or not MINIMUM_PER_RANK_BYTES <= free <= 1 << 50
         ):
             raise ValueError("H100 identity or free GPU memory preflight failed")
         indexes.append(index)
@@ -76,7 +80,8 @@ def build_glm53_w4a8_h100_launch_candidate(
         or endpoint.username is not None
         or endpoint.password is not None
         or endpoint.path not in {"", "/"}
-        or endpoint.query or endpoint.fragment
+        or endpoint.query
+        or endpoint.fragment
     ):
         raise ValueError("managed endpoint must be explicit loopback HTTP")
     if type(api_key) is not str or not api_key or any(ord(ch) < 33 or ord(ch) > 126 for ch in api_key):
@@ -87,15 +92,33 @@ def build_glm53_w4a8_h100_launch_candidate(
     if not path.is_absolute() or not path.is_dir():
         raise ValueError("model directory must exist locally")
     argv = (
-        "vllm", "serve", str(path.resolve(strict=True)),
-        "--served-model-name", ARTIFACT_ID,
-        "--host", endpoint.hostname, "--port", str(endpoint.port),
-        "--tensor-parallel-size", "8", "--pipeline-parallel-size", "1",
-        "--distributed-executor-backend", "mp",
-        "--enable-expert-parallel", "--kv-cache-dtype", "fp8_ds_mla",
-        "--gpu-memory-utilization", "0.90", "--max-model-len", str(max_model_len),
-        "--max-num-seqs", "1", "--trust-remote-code",
-        "--no-enable-log-requests", "--disable-uvicorn-access-log",
+        "vllm",
+        "serve",
+        str(path.resolve(strict=True)),
+        "--served-model-name",
+        ARTIFACT_ID,
+        "--host",
+        endpoint.hostname,
+        "--port",
+        str(endpoint.port),
+        "--tensor-parallel-size",
+        "8",
+        "--pipeline-parallel-size",
+        "1",
+        "--distributed-executor-backend",
+        "mp",
+        "--enable-expert-parallel",
+        "--kv-cache-dtype",
+        "fp8_ds_mla",
+        "--gpu-memory-utilization",
+        "0.90",
+        "--max-model-len",
+        str(max_model_len),
+        "--max-num-seqs",
+        "1",
+        "--trust-remote-code",
+        "--no-enable-log-requests",
+        "--disable-uvicorn-access-log",
     )
     environment = {
         "CUDA_VISIBLE_DEVICES": ",".join(str(index) for index in indexes),

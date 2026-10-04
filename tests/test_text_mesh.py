@@ -141,6 +141,18 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(chunks[-1]["usage"]["total_tokens"], 6)
                     self.assertFalse(any(chunk["choices"] == [] for chunk in chunks))
 
+    async def test_prompt_cache_key_is_not_forwarded_to_ordinary_peers(self):
+        response = await self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "prompt_cache_key": "opaque-fixture-key",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("prompt_cache_key", self.peer.requests[-1][0])
+
     async def test_failed_peer_stream_does_not_claim_usage(self):
         async def fail_after_delta(body, *, chat):
             yield {"type": "delta", "text": "partial"}

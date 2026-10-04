@@ -10,12 +10,11 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QTimer
-
 from communityai_desktop.acceptance import fake_node
 from communityai_desktop.client import NodeClient
 from communityai_desktop.controller import DesktopController
 from communityai_desktop.presentation import recovery_reason
+from PySide6.QtCore import QTimer
 
 
 def test_recovery_keeps_off_and_pause_truth_while_gating_only_start():

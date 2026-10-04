@@ -20,10 +20,17 @@ from drift.text_request import RequestContext  # noqa: E402
 
 
 async def main():
-    profile = ProviderProfile("test/small-vllm-profile", "test/small-vllm", Availability.AVAILABLE,
-                              qualification_id="a" * 64)
+    profile = ProviderProfile(
+        "test/small-vllm-profile", "test/small-vllm", Availability.AVAILABLE, qualification_id="a" * 64
+    )
     binding = ManagedVllmBinding(
-        profile, profile.model_id, "http://127.0.0.1:18247", "key", (0,), 1, 1,
+        profile,
+        profile.model_id,
+        "http://127.0.0.1:18247",
+        "key",
+        (0,),
+        1,
+        1,
         max_model_len=256,
     )
     with tempfile.TemporaryDirectory() as temporary:
@@ -42,12 +49,15 @@ async def main():
     else:
         raise AssertionError("probe context disagreed with route binding")
     bridge = ManagedVllmTextClient(
-        ManagedVllmAdapter(binding), ProviderIdentity("provider", "instance"), "sha256:" + "c" * 64,
+        ManagedVllmAdapter(binding),
+        ProviderIdentity("provider", "instance"),
+        "sha256:" + "c" * 64,
     )
     try:
         async for _ in bridge.stream(
             {"model": "sha256:" + "c" * 64, "prompt": "hi", "max_tokens": 256},
-            chat=False, context=RequestContext.start(5),
+            chat=False,
+            context=RequestContext.start(5),
         ):
             pass
     except ValueError:

@@ -15,8 +15,7 @@ from uuid import uuid4
 
 import pytest
 
-from drift.node import linux_cgroup_recovery as cgroups
-from drift.node import resource_recovery as recovery
+from drift.node import linux_cgroup_recovery as cgroups, resource_recovery as recovery
 
 DIGEST = "sha256:" + "a" * 64
 HOST = "sha256:" + "b" * 64
