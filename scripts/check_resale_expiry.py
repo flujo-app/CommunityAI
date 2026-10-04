@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-from check_credit_resale_simulator import CommerceSimulator, CommerceSimulationError, quote
+from check_credit_resale_simulator import CommerceSimulationError, CommerceSimulator, quote
 
 
 def denied(action):
@@ -41,10 +41,12 @@ def main():
                 assert ledger.expire_open_resale_listings(limit=1) == ("old_b",)
                 assert ledger.expire_open_resale_listings(limit=1) == ()
             assert ledger.buyer_wallet("seller")["earned_access_available"] == 20
-            assert dict(ledger._db.execute(
-                "SELECT listing_id,status FROM resale_listings"
-            )) == {"old_a": "cancelled", "old_b": "cancelled",
-                   "ordered": "ordered", "future": "open"}
+            assert dict(ledger._db.execute("SELECT listing_id,status FROM resale_listings")) == {
+                "old_a": "cancelled",
+                "old_b": "cancelled",
+                "ordered": "ordered",
+                "future": "open",
+            }
             ledger.audit()
 
         with CommerceSimulator(path) as reopened:
@@ -54,9 +56,9 @@ def main():
             reopened.record_verified_resale_event("ordered_rev", "ordered_ref", "reversal", 10)
             reopened.record_verified_resale_event("ordered_cap", "ordered_ref", "capture", 10)
             assert reopened.buyer_wallet("seller")["earned_access_available"] == 30
-            assert reopened._db.execute(
-                "SELECT status FROM resale_listings WHERE listing_id='ordered'"
-            ).fetchone() == ("reversed",)
+            assert reopened._db.execute("SELECT status FROM resale_listings WHERE listing_id='ordered'").fetchone() == (
+                "reversed",
+            )
             reopened.audit()
     print("PASS: bounded expiry reclamation, replay, and ordered payment resolution")
 

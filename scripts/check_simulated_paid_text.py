@@ -30,13 +30,24 @@ BINDING = ManagedLlamaCppBinding(PROFILE, MODEL, "http://127.0.0.1:18247", "back
 def quote_for_request(body, chat, context):
     assert chat is False and body["model"] == DIGEST
     return SimulatedServiceQuote(
-        request_id=context.request_id, buyer_id=context.caller_id, provider_id="provider",
-        funding_source="purchased", model_id=MODEL, profile_id=PROFILE.profile_id,
-        service_class="text_inference", settlement_domain="local_simulation",
-        artifact_sha256=DIGEST[7:], service_policy_sha256="b" * 64,
-        price_schedule_sha256="d" * 64, input_unit_price=1, output_unit_price=1,
-        max_input_units=20, max_output_units=4, fee_bps=1000,
-        spend_cap=24, expires_at_unix=int(time.time()) + 60,
+        request_id=context.request_id,
+        buyer_id=context.caller_id,
+        provider_id="provider",
+        funding_source="purchased",
+        model_id=MODEL,
+        profile_id=PROFILE.profile_id,
+        service_class="text_inference",
+        settlement_domain="local_simulation",
+        artifact_sha256=DIGEST[7:],
+        service_policy_sha256="b" * 64,
+        price_schedule_sha256="d" * 64,
+        input_unit_price=1,
+        output_unit_price=1,
+        max_input_units=20,
+        max_output_units=4,
+        fee_bps=1000,
+        spend_cap=24,
+        expires_at_unix=int(time.time()) + 60,
     )
 
 
@@ -46,8 +57,12 @@ def fake_response(request):
     frames = [
         {"id": "fake-1", "model": model, "choices": [{"index": 0, "text": "hello", "finish_reason": None}]},
         {"id": "fake-1", "model": model, "choices": [{"index": 0, "text": "", "finish_reason": "length"}]},
-        {"id": "fake-1", "model": model, "choices": [],
-         "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}},
+        {
+            "id": "fake-1",
+            "model": model,
+            "choices": [],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+        },
     ]
     body = b"".join(b"data: " + json.dumps(frame).encode() + b"\n\n" for frame in frames)
     return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body + b"data: [DONE]\n\n")
@@ -56,7 +71,8 @@ def fake_response(request):
 def client_for(journal, backend_client):
     bridge = ManagedVllmTextClient(
         ManagedLlamaCppAdapter(BINDING, client=backend_client),
-        ProviderIdentity("provider", "instance"), DIGEST,
+        ProviderIdentity("provider", "instance"),
+        DIGEST,
     )
     return SimulatedPaidTextClient(bridge, journal, quote_for_request)
 
@@ -67,8 +83,9 @@ async def failed_and_cancelled(journal):
         paid = client_for(journal, backend)
         context = RequestContext.start(5, caller_id="buyer")
         try:
-            async for _ in paid.stream({"model": DIGEST, "prompt": "bad", "max_tokens": 4},
-                                       chat=False, context=context):
+            async for _ in paid.stream(
+                {"model": DIGEST, "prompt": "bad", "max_tokens": 4}, chat=False, context=context
+            ):
                 pass
         except ManagedProviderUnavailable:
             pass
@@ -82,8 +99,7 @@ async def failed_and_cancelled(journal):
     try:
         paid = client_for(journal, backend)
         context = RequestContext.start(5, caller_id="buyer")
-        iterator = paid.stream({"model": DIGEST, "prompt": "cancel", "max_tokens": 4},
-                               chat=False, context=context)
+        iterator = paid.stream({"model": DIGEST, "prompt": "cancel", "max_tokens": 4}, chat=False, context=context)
         assert (await anext(iterator))["type"] == "heartbeat"
         assert journal.buyer_wallet("buyer")["service_held"] == 24
         await iterator.aclose()
@@ -102,8 +118,10 @@ def main():
             try:
                 manager = ModelManager()
                 paid = client_for(journal, backend)
-                manager.register(ModelDescriptor(MODEL, manifest_digest=DIGEST),
-                                 lambda: ModelRuntime(model=None, tokenizer=None, text_client=paid))
+                manager.register(
+                    ModelDescriptor(MODEL, manifest_digest=DIGEST),
+                    lambda: ModelRuntime(model=None, tokenizer=None, text_client=paid),
+                )
                 app = create_app(
                     model_manager=manager,
                     api_key_identifier=lambda key: "buyer" if key == "buyer-key" else None,

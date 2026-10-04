@@ -1,5 +1,6 @@
 """Live block coverage, observed peers, and this computer's artifact transfers."""
 
+from communityai_desktop.presentation import model_name
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -14,8 +15,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-from communityai_desktop.presentation import model_name
 
 COLORS = {
     "covered": "#237851",

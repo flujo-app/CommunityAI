@@ -29,8 +29,12 @@ def main() -> None:
         frames = [
             {"id": "llama-1", "model": model, "choices": [{"index": 0, "text": "hello", "finish_reason": None}]},
             {"id": "llama-1", "model": model, "choices": [{"index": 0, "text": "", "finish_reason": "length"}]},
-            {"id": "llama-1", "model": model, "choices": [],
-             "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}},
+            {
+                "id": "llama-1",
+                "model": model,
+                "choices": [],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+            },
         ]
         payload = b"".join(b"data: " + json.dumps(frame).encode() + b"\n\n" for frame in frames) + b"data: [DONE]\n\n"
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=payload)
@@ -39,8 +43,10 @@ def main() -> None:
     manager = ModelManager()
     adapter = ManagedLlamaCppAdapter(binding, client=backend_client)
     bridge = ManagedVllmTextClient(adapter, ProviderIdentity("test/provider", "test/instance"), digest)
-    manager.register(ModelDescriptor(model, manifest_digest=digest),
-                     lambda: ModelRuntime(model=None, tokenizer=None, text_client=bridge))
+    manager.register(
+        ModelDescriptor(model, manifest_digest=digest),
+        lambda: ModelRuntime(model=None, tokenizer=None, text_client=bridge),
+    )
     app = create_app(model_manager=manager, api_keys=["api-key"], request_timeout=5.0)
     try:
         with TestClient(app) as client:
@@ -59,6 +65,7 @@ def main() -> None:
         print("PASS: llama.cpp fake stream through authenticated API; 256-token context enforced")
     finally:
         import asyncio
+
         asyncio.run(backend_client.aclose())
 
 

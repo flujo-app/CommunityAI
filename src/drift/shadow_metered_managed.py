@@ -95,8 +95,14 @@ class ShadowMeteredManagedClient:
                         output_units=output_units,
                         proposed_charge=input_units + output_units,
                         evidence_sha256=_hash(
-                            [context.request_id, context.attempt_id, self.bridge.identity.instance_id,
-                             input_units, output_units, frame.get("finish_reason")]
+                            [
+                                context.request_id,
+                                context.attempt_id,
+                                self.bridge.identity.instance_id,
+                                input_units,
+                                output_units,
+                                frame.get("finish_reason"),
+                            ]
                         ),
                     )
                     self.ledger.submit_receipt(receipt)

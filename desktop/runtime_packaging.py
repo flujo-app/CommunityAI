@@ -128,12 +128,18 @@ def normalize_runtime(node_root: Path, *, target_platform: str, torch_version: s
                 source, source_identity = canonical[digest]
                 if identity[:2] == source_identity[:2]:
                     continue
-                if _identity(source) != source_identity or _identity(path) != identity:
+                # A same-length rewrite can preserve size and even mtime on a
+                # coarse filesystem. Recheck content before replacing a path.
+                if _identity(source) != source_identity or _identity(path) != identity or _sha256(source) != digest:
                     raise RuntimeError("native library changed during normalization")
                 temporary = path.with_name(f".{path.name}.hardlink-{uuid.uuid4().hex}")
                 try:
                     os.link(source, temporary, follow_symlinks=False)
-                    if _identity(source) != source_identity or _identity(path) != identity:
+                    if (
+                        _identity(source) != source_identity
+                        or _identity(path) != identity
+                        or _sha256(temporary) != digest
+                    ):
                         raise RuntimeError("native library changed during normalization")
                     os.replace(temporary, path)
                 finally:

@@ -62,23 +62,33 @@ def main() -> int:
             torch.cuda.synchronize(device)
             seconds = time.monotonic() - began
             tokens = int(output.shape[-1] - prompt["input_ids"].shape[-1])
-            results.append({"output_tokens": tokens, "seconds": round(seconds, 3),
-                            "tokens_per_second_including_prefill": round(tokens / seconds, 3)})
-    print(json.dumps({
-        "scope": "offline single-GPU Transformers baseline, not vLLM or release qualification",
-        "model": "Qwen/Qwen3-1.7B",
-        "revision": REVISION,
-        "backend": "transformers",
-        "transformers_version": __import__("transformers").__version__,
-        "torch_version": torch.__version__,
-        "gpu": torch.cuda.get_device_name(device),
-        "gpu_count_used": 1,
-        "prompt_tokens": int(prompt["input_ids"].shape[-1]),
-        "load_seconds": round(loaded_seconds, 3),
-        "peak_cuda_bytes": torch.cuda.max_memory_allocated(device),
-        "runs": results,
-        "median_16_token_seconds": round(statistics.median(run["seconds"] for run in results[1:]), 3),
-    }, sort_keys=True))
+            results.append(
+                {
+                    "output_tokens": tokens,
+                    "seconds": round(seconds, 3),
+                    "tokens_per_second_including_prefill": round(tokens / seconds, 3),
+                }
+            )
+    print(
+        json.dumps(
+            {
+                "scope": "offline single-GPU Transformers baseline, not vLLM or release qualification",
+                "model": "Qwen/Qwen3-1.7B",
+                "revision": REVISION,
+                "backend": "transformers",
+                "transformers_version": __import__("transformers").__version__,
+                "torch_version": torch.__version__,
+                "gpu": torch.cuda.get_device_name(device),
+                "gpu_count_used": 1,
+                "prompt_tokens": int(prompt["input_ids"].shape[-1]),
+                "load_seconds": round(loaded_seconds, 3),
+                "peak_cuda_bytes": torch.cuda.max_memory_allocated(device),
+                "runs": results,
+                "median_16_token_seconds": round(statistics.median(run["seconds"] for run in results[1:]), 3),
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 
