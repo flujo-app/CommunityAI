@@ -2,6 +2,7 @@
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -60,6 +61,32 @@ def server_kwargs(s):
     )
 
 
+def construct_from_snapshot(s, monkeypatch, entry):
+    if entry == "server":
+        return server.Server(**server_kwargs(s))
+    if entry == "client":
+        return make_manifest_loader(s.manifest, initial_peers=[], cache_dir=str(s.cache), artifact_root=str(s.root))()
+    if entry == "module":
+        return server.ModuleContainer.create(**module_kwargs(s))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "text-peer",
+            str(s.path),
+            "--cache_dir",
+            str(s.cache),
+            "--artifact_root",
+            str(s.root),
+            "--identity_path",
+            "unused.key",
+            "--initial_peers",
+            "unused",
+        ],
+    )
+    return run_text_peer.main()
+
+
 @pytest.mark.parametrize("entry", ["server", "client", "text-cli", "module"])
 @pytest.mark.parametrize("corrupt", [False, True])
 def test_complete_snapshot_rejected_before_constructors(snapshot, monkeypatch, entry, corrupt):
@@ -71,30 +98,82 @@ def test_complete_snapshot_rejected_before_constructors(snapshot, monkeypatch, e
     else:
         target.unlink()
     with pytest.raises(ManifestError):
-        if entry == "server":
-            server.Server(**server_kwargs(s))
-        elif entry == "client":
-            make_manifest_loader(s.manifest, initial_peers=[], cache_dir=str(s.cache), artifact_root=str(s.root))()
-        elif entry == "module":
-            server.ModuleContainer.create(**module_kwargs(s))
-        else:
-            monkeypatch.setattr(
-                sys,
-                "argv",
-                [
-                    "text-peer",
-                    str(s.path),
-                    "--cache_dir",
-                    str(s.cache),
-                    "--artifact_root",
-                    str(s.root),
-                    "--identity_path",
-                    "unused.key",
-                    "--initial_peers",
-                    "unused",
-                ],
-            )
-            run_text_peer.main()
+        construct_from_snapshot(s, monkeypatch, entry)
+    assert not s.cache.exists()
+
+
+def create_symlink_or_skip(path, target, *, directory=False):
+    try:
+        path.symlink_to(target, target_is_directory=directory)
+    except OSError as exc:
+        pytest.skip(f"Host cannot create symbolic links: {exc}")
+
+
+@pytest.mark.parametrize("entry", ["server", "client", "text-cli", "module"])
+@pytest.mark.parametrize("violation", ["escaping-declared-symlink", "tokenizer-sidecar", "nested-sidecar"])
+def test_snapshot_tree_rejected_before_constructors(snapshot, monkeypatch, entry, violation):
+    s = snapshot
+    if violation == "escaping-declared-symlink":
+        external = s.root.parent / "external-shard"
+        external.write_bytes(s.payloads["shared.safetensors"])
+        declared = s.root / "shared.safetensors"
+        declared.unlink()
+        create_symlink_or_skip(declared, external)
+        # The old hash-only preflight accepted this mutable external target.
+        s.manifest.verify_artifacts(s.root)
+        message = "links or reparse points"
+    elif violation == "tokenizer-sidecar":
+        (s.root / "tokenizer_config.json").write_text('{"tokenizer_class":"UnexpectedTokenizer"}')
+        message = "Undeclared artifact snapshot file"
+    else:
+        templates = s.root / "additional_chat_templates"
+        templates.mkdir()
+        (templates / "default.jinja").write_text("undeclared template")
+        message = "Undeclared artifact snapshot directory"
+    with pytest.raises(ManifestError, match=message):
+        construct_from_snapshot(s, monkeypatch, entry)
+    assert not s.cache.exists()
+
+
+@pytest.mark.parametrize(
+    "filename", ["special_tokens_map.json", "generation_config.json", "model.safetensors", "chat_template.jinja"]
+)
+def test_snapshot_rejects_other_undeclared_loader_inputs(snapshot, monkeypatch, filename):
+    s = snapshot
+    (s.root / filename).write_bytes(b"synthetic undeclared sidecar")
+    with pytest.raises(ManifestError, match="Undeclared artifact snapshot file"):
+        construct_from_snapshot(s, monkeypatch, "client")
+
+
+def test_snapshot_rejects_linked_directory_without_traversing_it(snapshot):
+    s = snapshot
+    external = s.root.parent / "external-directory"
+    external.mkdir()
+    create_symlink_or_skip(s.root / "linked-directory", external, directory=True)
+    with pytest.raises(ManifestError, match="links or reparse points"):
+        validate_artifact_snapshot(s.manifest, s.root, cache_dir=s.cache)
+
+
+def test_snapshot_rejects_undeclared_empty_directory(snapshot):
+    s = snapshot
+    (s.root / "extra-directory").mkdir()
+    with pytest.raises(ManifestError, match="Undeclared artifact snapshot directory"):
+        validate_artifact_snapshot(s.manifest, s.root, cache_dir=s.cache)
+
+
+def test_snapshot_accepts_declared_nested_regular_files(snapshot):
+    s = snapshot
+    nested = s.root / "tokenizer" / "nested" / "tokenizer.json"
+    nested.parent.mkdir(parents=True)
+    (s.root / "tokenizer.json").rename(nested)
+    manifest = replace(
+        s.manifest,
+        artifacts=tuple(
+            replace(artifact, path="tokenizer/nested/tokenizer.json") if artifact.path == "tokenizer.json" else artifact
+            for artifact in s.manifest.artifacts
+        ),
+    )
+    assert validate_artifact_snapshot(manifest, s.root, cache_dir=s.cache) == s.root.resolve()
     assert not s.cache.exists()
 
 

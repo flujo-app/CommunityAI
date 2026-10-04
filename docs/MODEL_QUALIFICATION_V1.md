@@ -76,6 +76,11 @@ drift text-peer <manifest.json> \
 ```
 
 Each declared artifact lives at its manifest-relative path below `artifact_root`.
+This interface requires a materialized tree containing exactly the declared
+regular files and their parent directories. Symlinks, Windows reparse points,
+extra files (including loader sidecars, README/license files) and extra directories
+are rejected. A conventional Hub snapshot containing blob symlinks therefore
+needs a separate materialized, manifest-only snapshot for this interface.
 Every declared file, including unassigned shards and tokenizer files, is checked
 by size and SHA-256 before construction of a model loader; the text-peer CLI also
 checks before identity/DHT startup. Missing or corrupt files fail without Hub or
@@ -84,6 +89,8 @@ and the text-peer client loader. Runtime locks such as `blocks.lock` belong to
 `cache_dir`; neither directory may contain the other. The caller supplies and
 maintains the read-only snapshot mount. Managed workers retain all five manifest,
 span, artifact-byte, artifact-set and writable-cache placement claims.
+These examples apply to direct `drift server` and `drift text-peer` launches.
+The `drift node` supervisor does not propagate this opt-in flag to its children.
 
 The Python `make_manifest_loader(..., artifact_root=..., cache_dir=...)` interface
 uses the same boundary. `ManifestArtifactVerifier(..., cache_only=True)` separately
