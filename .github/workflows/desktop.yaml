@@ -79,9 +79,14 @@ jobs:
         run: python -c "import torch; assert torch.__version__ == '2.6.0+cu124'"
       - name: Run protocol and runtime-boundary tests
         working-directory: .
-        run: |
-          python -m unittest discover -s desktop/tests -v
-          communityai-desktop --self-test
+        env:
+          # The desktop tests share synthetic publication documents with the root suite.
+          PYTHONPATH: ${{ github.workspace }}/tests
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: python -m pytest -q desktop/tests
+      - name: Run installed desktop self-test
+        working-directory: .
+        run: communityai-desktop --self-test
       - name: Verify normalized archive consumers
         working-directory: .
         run: python -m unittest discover -s tests -p test_runtime_archive_hardlinks.py -v
