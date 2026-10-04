@@ -219,6 +219,9 @@ def create_app(
         raise ValueError("Factory admission requires a trusted adapter and API authentication")
 
     app = FastAPI(title="DRIFT-LLM OpenAI-compatible API")
+    if factory_admission is not None:
+        # A slash redirect would precede original admission and allow a body resend.
+        app.router.redirect_slashes = False
     semaphore = asyncio.Semaphore(max_concurrent)
     # Bound executor submissions, including timed-out loads still running in a
     # thread. Inference admission alone cannot bound these detached producers.
