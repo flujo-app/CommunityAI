@@ -40,6 +40,7 @@ def prepare(
     current_bundle: Path,
     output: Path,
     *,
+    expected_source_bundle_index_sha256: str,
     expected_current_catalog_digest: str,
     expected_trust_root_digest: str,
     issued_at: str,
@@ -59,7 +60,12 @@ def prepare(
     # the old catalog's current validity.
     old_issue_time = SignedModelCatalog.load(current_bundle / "catalog.signed.json").signed.issued_at_ms / 1000
     index = load_catalog_publication_bundle(current_bundle, now=old_issue_time)
+    if index["catalog_sequence"] != CURRENT_SEQUENCE:
+        raise ValueError(f"Expected current catalog sequence {CURRENT_SEQUENCE}")
     index_bytes = (current_bundle / "bundle.json").read_bytes()
+    index_digest = "sha256:" + hashlib.sha256(index_bytes).hexdigest()
+    if index_digest != expected_source_bundle_index_sha256:
+        raise ValueError("Current bundle index does not match the explicit review pin")
     if json.loads(index_bytes) != index:
         raise ValueError("Current bundle index changed during verification")
     members = {}
@@ -73,8 +79,6 @@ def prepare(
     bootstrap = CatalogBootstrapConfig.from_json(members["catalog-bootstrap.json"].decode("utf-8"))
     if old_envelope.signed.issued_at_ms / 1000 != old_issue_time:
         raise ValueError("Current catalog changed during verification")
-    if index["catalog_sequence"] != CURRENT_SEQUENCE:
-        raise ValueError(f"Expected current catalog sequence {CURRENT_SEQUENCE}")
     if index["catalog_digest"] != expected_current_catalog_digest:
         raise ValueError("Current catalog digest does not match the explicit review pin")
     if bootstrap.trust_root_digest != expected_trust_root_digest:
@@ -98,7 +102,7 @@ def prepare(
 
     review = {
         "status": "unsigned-review-candidate",
-        "source_bundle_index_sha256": "sha256:" + hashlib.sha256(index_bytes).hexdigest(),
+        "source_bundle_index_sha256": index_digest,
         "source_catalog_digest": old_envelope.signed.digest,
         "source_catalog_sequence": CURRENT_SEQUENCE,
         "source_trust_root_digest": bootstrap.trust_root_digest,
@@ -116,6 +120,8 @@ def prepare(
         "review_required": [
             "Confirm that the model roster, manifest sources, and rung policies remain appropriate",
             "Confirm the explicit validity period and current availability of public mirrors and seed",
+            "Check the latest published catalog sequence and state; offline sequence 2 does not prove sequence 3 is absent",
+            "Recheck candidate validity at sealing and regenerate if its timestamps have become stale",
             "Review the final signed catalog after any publication URL rewrite",
             "Complete release qualification before publication",
         ],
@@ -135,6 +141,7 @@ def prepare(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("current_bundle", type=Path, help="Exact signed sequence-2 publication directory")
+    parser.add_argument("--expected-source-bundle-index-sha256", required=True)
     parser.add_argument("--expected-current-catalog-digest", required=True)
     parser.add_argument("--expected-trust-root-digest", required=True)
     parser.add_argument("--issued-at", required=True, help="Reviewed UTC issue time, YYYY-MM-DDTHH:MM:SSZ")
@@ -144,6 +151,7 @@ def main() -> None:
     review = prepare(
         args.current_bundle,
         args.output,
+        expected_source_bundle_index_sha256=args.expected_source_bundle_index_sha256,
         expected_current_catalog_digest=args.expected_current_catalog_digest,
         expected_trust_root_digest=args.expected_trust_root_digest,
         issued_at=args.issued_at,

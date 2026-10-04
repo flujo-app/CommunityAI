@@ -3,12 +3,15 @@
 import hashlib
 import json
 import shutil
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from drift.catalog_release import load_catalog_publication_bundle, write_catalog_publication_bundle
 from drift.model_catalog import ModelCatalogError, SignedModelCatalog
+from drift.model_manifest import ModelManifest
 from drift.node.catalog_bootstrap import CatalogBootstrapConfig, CatalogBootstrapError
 from scripts.prepare_qwen_catalog_renewal_candidate import prepare
 
@@ -16,6 +19,7 @@ PUBLIC = Path(__file__).resolve().parents[1] / "public-alpha"
 CURRENT = PUBLIC / "catalog-qwen-v2"
 CURRENT_DIGEST = "sha256:13c83590b7b47c86ae676c6e1a0e5277228fabbd2ba90c81babb6eaf430e5a80"
 CURRENT_ROOT = "sha256:7cf438b5e45335741b644fd532c74cfbe57b20c310144d6aa58f34ba712be388"
+SOURCE_INDEX_DIGEST = "sha256:a904ed1b8487762507fcd35c4a125f03f0f71ee6c164bcacb993fbab677e0be9"
 ISSUED = "2026-10-04T00:00:00Z"
 EXPIRES = "2026-11-03T00:00:00Z"
 NOW = datetime(2026, 10, 4, 0, 0, 1, tzinfo=timezone.utc).timestamp()
@@ -23,6 +27,7 @@ NOW = datetime(2026, 10, 4, 0, 0, 1, tzinfo=timezone.utc).timestamp()
 
 def prepare_case(tmp_path, *, current=CURRENT, **overrides):
     args = {
+        "expected_source_bundle_index_sha256": SOURCE_INDEX_DIGEST,
         "expected_current_catalog_digest": CURRENT_DIGEST,
         "expected_trust_root_digest": CURRENT_ROOT,
         "issued_at": ISSUED,
@@ -64,6 +69,7 @@ def test_expired_signed_v2_bundle_yields_only_unsigned_review_candidate(tmp_path
     assert review == json.loads((output / "review.json").read_text(encoding="utf-8"))
     assert review["source_catalog_digest"] == CURRENT_DIGEST
     assert review["source_trust_root_digest"] == CURRENT_ROOT
+    assert review["source_bundle_index_sha256"] == SOURCE_INDEX_DIGEST
     assert review["candidate_catalog_digest"] == new.signed.digest
     assert review["signed"] is False and review["published"] is False
     assert review["complete_release_qualification"] is False
@@ -77,10 +83,43 @@ def test_rejects_stale_sequence_one_source(tmp_path):
 
 
 def test_rejects_wrong_pinned_catalog_or_trust_root(tmp_path):
+    with pytest.raises(ValueError, match="bundle index"):
+        prepare_case(tmp_path, expected_source_bundle_index_sha256="sha256:" + "0" * 64)
     with pytest.raises(ValueError, match="catalog digest"):
         prepare_case(tmp_path, expected_current_catalog_digest="sha256:" + "0" * 64)
     with pytest.raises(ValueError, match="trust root"):
         prepare_case(tmp_path, expected_trust_root_digest="sha256:" + "0" * 64)
+    assert not (tmp_path / "candidate").exists()
+
+
+@pytest.mark.parametrize(
+    "changed_field", ["catalog_mirrors", "initial_peers", "replaces_trust_roots", "max_loaded_models"]
+)
+def test_rejects_reindexed_bundle_with_modified_unsigned_bootstrap(tmp_path, changed_field):
+    old_bootstrap = CatalogBootstrapConfig.load(CURRENT / "catalog-bootstrap.json")
+    changes = {
+        "catalog_mirrors": ("https://other.example.com/catalog.signed.json",),
+        "initial_peers": (
+            old_bootstrap.initial_peers[0].replace("bootstrap.communityai.flujo.com.co", "other.example.com"),
+        ),
+        "replaces_trust_roots": (),
+        "max_loaded_models": 1,
+    }
+    altered_bootstrap = replace(old_bootstrap, **{changed_field: changes[changed_field]})
+    envelope = SignedModelCatalog.load(CURRENT / "catalog.signed.json")
+    manifests = tuple(ModelManifest.load(path) for path in sorted((CURRENT / "manifests").glob("*.json")))
+    source = tmp_path / "reindexed"
+    write_catalog_publication_bundle(
+        source, altered_bootstrap, envelope, manifests, now=envelope.signed.issued_at_ms / 1000
+    )
+    # The altered bundle remains internally valid, with the same signed catalog and public root.
+    assert (
+        load_catalog_publication_bundle(source, now=envelope.signed.issued_at_ms / 1000)["catalog_digest"]
+        == CURRENT_DIGEST
+    )
+    assert altered_bootstrap.trust_root_digest == CURRENT_ROOT
+    with pytest.raises(ValueError, match="bundle index"):
+        prepare_case(tmp_path, current=source)
     assert not (tmp_path / "candidate").exists()
 
 
@@ -140,6 +179,7 @@ def test_rejects_future_issue_and_existing_or_nested_output(tmp_path):
         prepare(
             CURRENT,
             CURRENT / "candidate",
+            expected_source_bundle_index_sha256=SOURCE_INDEX_DIGEST,
             expected_current_catalog_digest=CURRENT_DIGEST,
             expected_trust_root_digest=CURRENT_ROOT,
             issued_at=ISSUED,
@@ -158,6 +198,7 @@ def test_symlinked_source_cannot_hide_output_inside_signed_bundle(tmp_path):
         prepare(
             linked_source,
             CURRENT / "candidate",
+            expected_source_bundle_index_sha256=SOURCE_INDEX_DIGEST,
             expected_current_catalog_digest=CURRENT_DIGEST,
             expected_trust_root_digest=CURRENT_ROOT,
             issued_at=ISSUED,
