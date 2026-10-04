@@ -18,6 +18,7 @@ MAX_FACTORY_RAW_BODY_BYTES = 32_768
 MAX_FACTORY_PROJECTED_HEADER_BYTES = 4096
 MAX_FACTORY_TOTAL_HEADER_BYTES = 16_384
 MAX_FACTORY_HEADER_COUNT = 64
+_BODY_TOO_LARGE_RESPONSE = b'{"detail":"Factory ingress body too large"}'
 _PROJECTED_HEADERS = frozenset(
     {
         "accept",
@@ -38,12 +39,85 @@ _PROJECTED_HEADERS = frozenset(
 )
 
 
+async def _send_body_too_large(send):
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(_BODY_TOO_LARGE_RESPONSE)).encode("ascii")),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": _BODY_TOO_LARGE_RESPONSE})
+
+
 class FactoryIngressTooLarge(RequestAdmissionDenied):
     pass
 
 
 class FactoryIngressHeadersInvalid(RequestAdmissionDenied):
     pass
+
+
+class FactoryBoundedBodyMiddleware:
+    """Cap a v2 ASGI request before FastAPI/Pydantic can parse its body.
+
+    ASGI delivers whole frames, so a single oversized frame is transiently
+    owned by the server. This middleware never retains it and stops requesting
+    frames at the first overflow. The deployment edge must bound frame size.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope.get("type") != "http"
+            or scope.get("method") != "POST"
+            or scope.get("path") not in ("/v1/chat/completions", "/v1/completions")
+        ):
+            return await self.app(scope, receive, send)
+
+        # A truthful Content-Length lets us refuse without asking ASGI for even
+        # one body frame. A missing or false length is still caught below.
+        for name, value in scope.get("headers", []):
+            if type(name) is bytes and name.lower() == b"content-length" and type(value) is bytes and value.isdigit():
+                digits = value.lstrip(b"0") or b"0"
+                if len(digits) > 5 or int(digits) > MAX_FACTORY_RAW_BODY_BYTES:
+                    await _send_body_too_large(send)
+                    return
+
+        chunks = []
+        size = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if message["type"] != "http.request" or type(message.get("body", b"")) is not bytes:
+                raise RequestAdmissionDenied()
+            chunk = message.get("body", b"")
+            if len(chunk) > MAX_FACTORY_RAW_BODY_BYTES - size:
+                await _send_body_too_large(send)
+                return
+            if chunk:
+                chunks.append(chunk)
+            size += len(chunk)
+            if message.get("more_body") is not True:
+                break
+
+        bounded_body = b"".join(chunks)
+        delivered = False
+
+        async def replay():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": bounded_body, "more_body": False}
+            return await receive()
+
+        return await self.app(scope, replay, send)
 
 
 @dataclass(frozen=True)

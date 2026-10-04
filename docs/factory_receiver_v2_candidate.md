@@ -6,10 +6,13 @@ existing ordinary distributed text path. It does not change the v1
 configured together. A v2 adapter must return `FactoryAdmissionV2`; a bare v1
 admission is denied.
 
-The receiver supplies a `FactoryIngressObservationV2` to the host. It contains
-the actual de-chunked bytes returned by ASGI `Request.body()` (maximum 32,768
-bytes), their SHA-256, the independently computed digest of the Pydantic
-normalized body, and the receiver-observed `POST` method, exact route, and
+An outer ASGI gate caps the two v2 inference routes before FastAPI parses JSON.
+It retains at most 32,768 body bytes, stops at the first excess frame with 413,
+rejects a declared oversized `Content-Length` before reading any frame, and
+replays the accepted bytes unchanged. The receiver then supplies a
+`FactoryIngressObservationV2` to the host. It contains those de-chunked bytes,
+their SHA-256, the independently computed digest of the Pydantic normalized
+body, and the receiver-observed `POST` method, exact route, and
 allowlisted header values. Query strings, encoded route variants, duplicate
 projected headers, malformed headers, and size overflow are denied before the
 host's transport or Original-admission callback. Authorization, host, forwarded,
@@ -48,8 +51,9 @@ credential fields and the ten SDK-final headers; it cannot be filled by this
 post-ingress ASGI observation. A separate authenticated post-POST receiver
 receipt and a corrected normalization commitment are required for a join.
 
-FastAPI parses JSON before this route's `Request.body()` bound runs, so the
-deployment ingress must enforce the same raw-body limit before framework
-parsing. This candidate has no Original issuer, authenticated transport,
+ASGI delivers whole frames, so an oversized single frame can exist transiently
+before the gate rejects it. The deployment ingress still needs a global edge
+limit on request/frame size and duration, including paths outside these two
+routes. This candidate has no Original issuer, authenticated transport,
 deployed receiver receipt, or physical send. The offline test host supplies
 synthetic values and holds the dispatch claim.

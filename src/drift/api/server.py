@@ -33,6 +33,7 @@ from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStr
 from drift.factory_admission import FactoryAdmission, RequestAdmissionDenied, synchronous_result
 from drift.factory_receiver import (
     FactoryAdmissionV2,
+    FactoryBoundedBodyMiddleware,
     FactoryIngressHeadersInvalid,
     FactoryIngressTooLarge,
     FactoryReceiverProfileV2,
@@ -254,6 +255,8 @@ def create_app(
         raise ValueError("Factory admission requires a trusted adapter and API authentication")
 
     app = FastAPI(title="DRIFT-LLM OpenAI-compatible API")
+    if factory_receiver_v2 is not None:
+        app.add_middleware(FactoryBoundedBodyMiddleware)
     if factory_admission is not None or factory_receiver_v2 is not None:
         # A slash redirect would precede original admission and allow a body resend.
         app.router.redirect_slashes = False
@@ -297,9 +300,8 @@ def create_app(
                 raise HTTPException(status_code=403, detail="Original request admission denied") from None
         elif factory_receiver_v2 is not None:
             try:
-                # FastAPI has parsed the request by this point. The bound below
-                # caps what reaches the host adapter; deployment ingress must
-                # separately cap request size before framework parsing.
+                # The v2 outer ASGI gate has already capped the body before
+                # framework parsing. Retain this check at the adapter boundary.
                 raw_body = await request.body()
                 observation = observe_factory_ingress_v2(request.scope, raw_body, original_body, route)
             except FactoryIngressTooLarge:

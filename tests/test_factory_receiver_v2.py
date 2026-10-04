@@ -15,7 +15,13 @@ from test_factory_sdk_asgi_hold import (
 
 from drift.api.server import create_factory_receiver_app_v2
 from drift.factory_admission import FactoryAdmission, RequestAdmissionDenied
-from drift.factory_receiver import FactoryAdmissionV2, FactoryReceiverProfileV2, HostVerifiedTransport
+from drift.factory_receiver import (
+    MAX_FACTORY_RAW_BODY_BYTES,
+    FactoryAdmissionV2,
+    FactoryBoundedBodyMiddleware,
+    FactoryReceiverProfileV2,
+    HostVerifiedTransport,
+)
 from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime
 
 EXPECTED_HEADERS = (
@@ -69,7 +75,7 @@ class FactoryReceiverV2Tests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.manager.shutdown()
 
-    def app(self, *, identity=True, verifier=None, original_admission=None):
+    def app(self, *, identity=True, verifier=None, original_admission=None, expected_raw=FLOW_SDK_BODY_UTF8):
         def verify_transport(extensions):
             self.events.append("transport")
             return extensions.get("verified_factory_transport")
@@ -84,8 +90,8 @@ class FactoryReceiverV2Tests(unittest.IsolatedAsyncioTestCase):
                 or observation.method != "POST"
                 or observation.route != "/v1/chat/completions"
                 or observation.headers != EXPECTED_HEADERS
-                or observation.raw_body != FLOW_SDK_BODY_UTF8
-                or observation.raw_body_sha256 != FLOW_SDK_BODY_SHA256
+                or observation.raw_body != expected_raw
+                or observation.raw_body_sha256 != hashlib.sha256(expected_raw).hexdigest()
                 or observation.normalized_body_sha256 != FLOW_NORMALIZED_SHA256
             ):
                 raise RequestAdmissionDenied()
@@ -304,11 +310,111 @@ class FactoryReceiverV2Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_body_overflow_refuses_before_host_or_bearer_callbacks(self):
         expanded = json.loads(FLOW_SDK_BODY_UTF8)
-        expanded["messages"][0]["content"] = "x" * 32_768
+        expanded["messages"][0]["content"] = "x" * MAX_FACTORY_RAW_BODY_BYTES
         response = await self.post(json.dumps(expanded).encode("utf-8"))
         self.assertEqual(response.status_code, 413)
+        # Invalid JSON would normally be 422; the ASGI gate must run first.
+        invalid = b"{" + b"x" * MAX_FACTORY_RAW_BODY_BYTES
+        self.assertEqual((await self.post(invalid)).status_code, 413)
         self.assertEqual(self.events, [])
         self.assertEqual(self.observations, [])
+
+    async def test_exact_body_limit_replays_all_bytes_into_original_adapter(self):
+        raw = FLOW_SDK_BODY_UTF8 + b" " * (MAX_FACTORY_RAW_BODY_BYTES - len(FLOW_SDK_BODY_UTF8))
+        self.assertEqual(len(raw), MAX_FACTORY_RAW_BODY_BYTES)
+        response = await self.post(raw, app=self.app(expected_raw=raw))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.events, ["transport", "original", "bearer"])
+        self.assertEqual(self.observations[0].raw_body, raw)
+        self.assertEqual(self.observations[0].normalized_body_sha256, FLOW_NORMALIZED_SHA256)
+        self.assertEqual(self.claims, 1)
+        self.assertEqual(self.peer.after_claim, 0)
+
+    async def test_chunked_overflow_stops_at_first_excess_frame_before_inner_app(self):
+        entered = []
+        received = []
+        sent = []
+        frames = iter(
+            [
+                {"type": "http.request", "body": b"x" * MAX_FACTORY_RAW_BODY_BYTES, "more_body": True},
+                {"type": "http.request", "body": b"y", "more_body": True},
+                {"type": "http.request", "body": b"z", "more_body": False},
+            ]
+        )
+
+        async def inner(scope, receive, send):
+            entered.append(True)
+
+        async def receive():
+            received.append(True)
+            return next(frames)
+
+        async def send(message):
+            sent.append(message)
+
+        gate = FactoryBoundedBodyMiddleware(inner)
+        await gate({"type": "http", "method": "POST", "path": "/v1/chat/completions"}, receive, send)
+        self.assertEqual(entered, [])
+        self.assertEqual(len(received), 2)
+        self.assertEqual(sent[0]["status"], 413)
+        self.assertEqual(sent[1]["type"], "http.response.body")
+
+    async def test_chunked_299_byte_fixture_replays_exact_body_once(self):
+        frames = iter(
+            [
+                {"type": "http.request", "body": FLOW_SDK_BODY_UTF8[:100], "more_body": True},
+                {"type": "http.request", "body": b"", "more_body": True},
+                {"type": "http.request", "body": FLOW_SDK_BODY_UTF8[100:], "more_body": False},
+            ]
+        )
+        received = []
+        sent = []
+
+        async def inner(scope, receive, send):
+            received.append(await receive())
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def receive():
+            return next(frames)
+
+        async def send(message):
+            sent.append(message)
+
+        gate = FactoryBoundedBodyMiddleware(inner)
+        await gate({"type": "http", "method": "POST", "path": "/v1/chat/completions"}, receive, send)
+        self.assertEqual(received, [{"type": "http.request", "body": FLOW_SDK_BODY_UTF8, "more_body": False}])
+        self.assertEqual(sent[0]["status"], 204)
+
+    async def test_declared_oversize_refuses_without_reading_any_body_frame(self):
+        entered = []
+        received = []
+        sent = []
+
+        async def inner(scope, receive, send):
+            entered.append(True)
+
+        async def receive():
+            received.append(True)
+            raise AssertionError("body frame should not be requested")
+
+        async def send(message):
+            sent.append(message)
+
+        gate = FactoryBoundedBodyMiddleware(inner)
+        await gate(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/chat/completions",
+                "headers": [(b"content-length", str(MAX_FACTORY_RAW_BODY_BYTES + 1).encode("ascii"))],
+            },
+            receive,
+            send,
+        )
+        self.assertEqual(entered, [])
+        self.assertEqual(received, [])
+        self.assertEqual(sent[0]["status"], 413)
 
     async def test_duplicate_or_oversize_projected_header_refuses_before_callbacks(self):
         for headers in (
