@@ -353,7 +353,16 @@ class FactoryReceiverV2Tests(unittest.IsolatedAsyncioTestCase):
             sent.append(message)
 
         gate = FactoryBoundedBodyMiddleware(inner)
-        await gate({"type": "http", "method": "POST", "path": "/v1/chat/completions"}, receive, send)
+        await gate(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/mounted/v1/chat/completions",
+                "root_path": "/mounted",
+            },
+            receive,
+            send,
+        )
         self.assertEqual(entered, [])
         self.assertEqual(len(received), 2)
         self.assertEqual(sent[0]["status"], 413)

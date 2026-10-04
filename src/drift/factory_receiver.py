@@ -73,11 +73,7 @@ class FactoryBoundedBodyMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if (
-            scope.get("type") != "http"
-            or scope.get("method") != "POST"
-            or scope.get("path") not in ("/v1/chat/completions", "/v1/completions")
-        ):
+        if scope.get("type") != "http" or scope.get("method") != "POST":
             return await self.app(scope, receive, send)
 
         # A truthful Content-Length lets us refuse without asking ASGI for even

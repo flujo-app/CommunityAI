@@ -6,7 +6,7 @@ existing ordinary distributed text path. It does not change the v1
 configured together. A v2 adapter must return `FactoryAdmissionV2`; a bare v1
 admission is denied.
 
-An outer ASGI gate caps the two v2 inference routes before FastAPI parses JSON.
+An outer ASGI gate caps every POST to the v2 app before FastAPI parses JSON.
 It retains at most 32,768 body bytes, stops at the first excess frame with 413,
 rejects a declared oversized `Content-Length` before reading any frame, and
 replays the accepted bytes unchanged. The receiver then supplies a
@@ -53,7 +53,7 @@ receipt and a corrected normalization commitment are required for a join.
 
 ASGI delivers whole frames, so an oversized single frame can exist transiently
 before the gate rejects it. The deployment ingress still needs a global edge
-limit on request/frame size and duration, including paths outside these two
-routes. This candidate has no Original issuer, authenticated transport,
+limit on request/frame size and duration, including non-POST paths. This
+candidate has no Original issuer, authenticated transport,
 deployed receiver receipt, or physical send. The offline test host supplies
 synthetic values and holds the dispatch claim.
