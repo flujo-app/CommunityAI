@@ -12,6 +12,8 @@ Before formation, the original host record must bind one complete manifest: repo
 
 ## Original admission and callbacks
 
+Use canonical POST paths `/v1/chat/completions` and `/v1/completions`. The Factory profile returns 404 for trailing-slash variants without redirecting or invoking admission, credential verification, model loading or the dispatch claim. This prevents a framework-issued redirect from causing a client to resend the body. It does not authenticate the ingress or qualify physical sends. The ordinary API retains its existing slash-redirect behavior.
+
 The adapter receives only the validated API body and returns an exact `FactoryAdmission`. Missing, unknown, mismatched or protected class/version, invalid original identity, altered body, changed model, incomplete or stale route all refuse before API key verification and model loading. Unknown API fields, tools, tool roles, tool-call message fields and unsupported image content fail schema validation before the adapter is called.
 
 `FactoryAdmission` is **not an authenticated record or a verifier**. A production host adapter is still missing. It must authenticate a versioned original bootstrap/spec/class before operational bearer/vault reads, DB lookup/mutation, provider formation or paid reservation. Neither a client marker, a caller-provided digest nor bearer authentication may choose or downgrade that class. The adapter itself must not perform those effects while discovering a missing class. Class/version must be authenticated with the original spec, complete native request digest, owner/principal and role mapping, then persisted atomically under the original authority. Grandfathered ordinary v1 requests need an authenticated legacy admission rule; marker absence is not such a rule.

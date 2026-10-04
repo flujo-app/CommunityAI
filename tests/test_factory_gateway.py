@@ -105,6 +105,47 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.auth_checks, [])
         self.assertEqual(self.loads, [])
 
+    async def test_factory_slash_posts_refuse_without_redirect_or_admission(self):
+        admissions = []
+
+        def bootstrap(body):
+            admissions.append(body)
+            return self.admission
+
+        for path, body in (
+            ("/v1/chat/completions/", self.body),
+            ("/v1/completions/", {"model": MANIFEST, "prompt": "hello"}),
+        ):
+            for follow_redirects in (False, True):
+                for auth in (False, True):
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=self.app(bootstrap)),
+                        base_url="http://test",
+                        follow_redirects=follow_redirects,
+                    ) as api:
+                        response = await api.post(
+                            path,
+                            json=body,
+                            headers={"Authorization": "Bearer test-key"} if auth else {},
+                        )
+                    self.assertEqual(admissions, [])
+                    self.assertEqual(self.auth_checks, [])
+                    self.assertEqual(self.loads, [])
+                    self.assertEqual(self.claimed, set())
+                    self.assertEqual(self.peer.contexts, [])
+                    self.assertEqual(response.status_code, 404)
+                    self.assertNotIn("location", response.headers)
+                    self.assertEqual(response.history, [])
+
+    async def test_ordinary_api_retains_slash_redirect_compatibility(self):
+        app = create_app(model_manager=self.manager, api_keys=["test-key"])
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as api:
+            response = await api.post("/v1/chat/completions/", json=self.body)
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], "http://test/v1/chat/completions")
+        self.assertEqual(self.loads, [])
+        self.assertEqual(self.peer.contexts, [])
+
     async def test_unsupported_tools_and_extra_message_fields_refuse_before_load(self):
         for field in ("tools", "tool_choice", "logprobs", "confidentiality_class", "request_id", "arbitrary"):
             with self.subTest(field=field):
