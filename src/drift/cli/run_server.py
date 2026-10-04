@@ -250,6 +250,8 @@ def build_parser(*, bound_worker: bool = False) -> configargparse.ArgParser:
 
     parser.add_argument('--cache_dir', type=str, default=None,
                         help='Path to a directory in which a downloaded pretrained model configuration should be cached if the standard cache should not be used.')
+    parser.add_argument('--artifact_root', type=str, default=None,
+                        help='Read-only snapshot of every manifested artifact; requires --model_manifest and a separate writable --cache_dir. Missing or corrupt files fail without download.')
     parser.add_argument("--max_disk_space", type=str, default=None,
                         help="Maximal disk space used for caches. Example: 50GB, 100GiB (GB != GiB here). "
                              "Default: unlimited. "

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from hivemind import DHT
 
+from drift.artifact_snapshot import validate_artifact_snapshot
 from drift.model_manifest import ModelManifest
 from drift.protocol_identity import NodeIdentity
 from drift.server.text_peer import TextPeerService
@@ -18,12 +19,16 @@ def main():
     parser.add_argument("--initial_peers", nargs="+", required=True)
     parser.add_argument("--identity_path", type=Path, required=True)
     parser.add_argument("--cache_dir", type=Path, required=True)
+    parser.add_argument(
+        "--artifact_root", type=Path, help="Complete read-only manifested snapshot; cache_dir owns locks"
+    )
     parser.add_argument("--host_maddrs", nargs="+", default=["/ip4/0.0.0.0/tcp/31337"])
     parser.add_argument("--announce_maddrs", nargs="+")
     parser.add_argument("--max_context_tokens", type=int, default=2048)
     parser.add_argument("--max_output_tokens", type=int, default=512)
     args = parser.parse_args()
     manifest = ModelManifest.load(args.manifest)
+    artifact_root = validate_artifact_snapshot(manifest, args.artifact_root, cache_dir=args.cache_dir)
     identity = NodeIdentity.ensure(args.identity_path)
     dht = DHT(
         initial_peers=args.initial_peers,
@@ -39,6 +44,7 @@ def main():
         manifest,
         initial_peers=args.initial_peers,
         cache_dir=str(args.cache_dir),
+        artifact_root=artifact_root,
         max_context_tokens=args.max_context_tokens,
         max_output_tokens=args.max_output_tokens,
     ).start()
