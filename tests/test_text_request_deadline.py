@@ -107,6 +107,18 @@ def _manager_for(client):
 
 
 class RequestContextTests(unittest.IsolatedAsyncioTestCase):
+    def test_maximum_budget_with_rounding_never_extends_deadline_or_rejects_valid_input(self):
+        issued = 124.005
+        self.assertGreater((issued + MAX_REQUEST_SECONDS) - issued, MAX_REQUEST_SECONDS)
+        context = RequestContext.start(MAX_REQUEST_SECONDS, clock=lambda: issued)
+        self.assertGreater(context.remaining(), 0)
+        self.assertLessEqual(context.deadline - issued, MAX_REQUEST_SECONDS)
+        self.assertLessEqual(context.remaining(), MAX_REQUEST_SECONDS)
+        with self.assertRaises(ValueError):
+            RequestContext.start(math.nextafter(MAX_REQUEST_SECONDS, math.inf), clock=lambda: issued)
+        with self.assertRaises(ValueError):
+            RequestContext("a" * 32, issued, math.nextafter(issued + MAX_REQUEST_SECONDS, math.inf), lambda: issued)
+
     def test_start_uses_exact_finite_budget_and_generated_identity(self):
         clock = _Clock()
         context = RequestContext.start(12.5, clock=clock)

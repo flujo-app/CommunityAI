@@ -122,10 +122,16 @@ class RequestContext:
         if not callable(clock):
             raise ValueError("Invalid request clock")
         issued = _clock_value(clock())
+        deadline = issued + duration
+        # Addition may round up across an exponent boundary: subtracting the
+        # issue time can then exceed a valid 900s budget by one ULP. Round the
+        # deadline inward, preserving the strict caller budget and constructor.
+        if deadline - issued > duration:
+            deadline = math.nextafter(deadline, issued)
         return cls(
             uuid.uuid4().hex if request_id is None else request_id,
             issued,
-            issued + duration,
+            deadline,
             clock,
             caller_id=caller_id,
             single_attempt=single_attempt,
