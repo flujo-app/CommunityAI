@@ -24,8 +24,7 @@ from drift.inference_provider import (  # noqa: E402
 from drift.managed_vllm import ManagedVllmBinding  # noqa: E402
 from drift.managed_vllm_process import ManagedVllmProcessError, ManagedVllmProcessOwner  # noqa: E402
 
-
-FAKE_SERVE = r'''
+FAKE_SERVE = r"""
 import argparse
 import json
 import subprocess
@@ -90,7 +89,7 @@ class Server(BaseHTTPRequestHandler):
         pass
 
 ThreadingHTTPServer((args.host, args.port), Server).serve_forever()
-'''
+"""
 
 
 def request(prompt: str) -> InferenceRequest:
@@ -131,9 +130,7 @@ async def main() -> None:
         directory = Path(temporary)
         (directory / "serve").write_text(FAKE_SERVE, encoding="utf-8")
         profile = ProviderProfile("test/profile", "test/model", Availability.AVAILABLE, qualification_id="e" * 64)
-        binding = ManagedVllmBinding(
-            profile, "test/model", f"http://127.0.0.1:{unused_port()}", "secret", (0, 1), 2, 1
-        )
+        binding = ManagedVllmBinding(profile, "test/model", f"http://127.0.0.1:{unused_port()}", "secret", (0, 1), 2, 1)
         executable = Path(sys.executable)
         owner = ManagedVllmProcessOwner(
             binding,

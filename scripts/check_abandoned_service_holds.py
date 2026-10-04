@@ -16,12 +16,23 @@ spec.loader.exec_module(module)
 
 def quote(request_id):
     return module.SimulatedServiceQuote(
-        request_id=request_id, buyer_id="buyer", provider_id="provider",
-        funding_source="purchased", model_id="test/model", profile_id="test/profile",
-        service_class="text_inference", settlement_domain="local_simulation",
-        artifact_sha256="a" * 64, service_policy_sha256="b" * 64,
-        price_schedule_sha256="c" * 64, input_unit_price=1, output_unit_price=1,
-        max_input_units=5, max_output_units=5, fee_bps=0, spend_cap=10,
+        request_id=request_id,
+        buyer_id="buyer",
+        provider_id="provider",
+        funding_source="purchased",
+        model_id="test/model",
+        profile_id="test/profile",
+        service_class="text_inference",
+        settlement_domain="local_simulation",
+        artifact_sha256="a" * 64,
+        service_policy_sha256="b" * 64,
+        price_schedule_sha256="c" * 64,
+        input_unit_price=1,
+        output_unit_price=1,
+        max_input_units=5,
+        max_output_units=5,
+        fee_bps=0,
+        spend_cap=10,
         expires_at_unix=int(time.time()) + 60,
     )
 
@@ -51,8 +62,7 @@ def main():
 
             def settle():
                 try:
-                    return journal.settle_service("race", "provider", 5, 0,
-                                                  "decision", "d" * 64, 2, 3)
+                    return journal.settle_service("race", "provider", 5, 0, "decision", "d" * 64, 2, 3)
                 except module.CommerceSimulationError:
                     return False
 

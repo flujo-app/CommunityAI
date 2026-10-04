@@ -10,11 +10,10 @@ import asyncio
 import contextlib
 import json
 import math
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 from unittest import mock
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,18 +51,34 @@ def _load_methods():
             nodes.append(node)
         elif isinstance(node, ast.ClassDef) and node.name in {"MemoryCache", "PagedKVPool"}:
             methods = {"allocate_paged_slots", "_wait_for_free_pages", "register_slot"}
-            nodes.append(ast.ClassDef(
-                name=node.name, bases=[], keywords=[], decorator_list=[],
-                body=[item for item in node.body if getattr(item, "name", None) in methods],
-            ))
+            nodes.append(
+                ast.ClassDef(
+                    name=node.name,
+                    bases=[],
+                    keywords=[],
+                    decorator_list=[],
+                    body=[item for item in node.body if getattr(item, "name", None) in methods],
+                )
+            )
     handler_tree = ast.parse((ROOT / "src/drift/server/handler.py").read_text(encoding="utf-8"))
-    handler = next(node for node in handler_tree.body if isinstance(node, ast.ClassDef)
-                   and node.name == "TransformerConnectionHandler")
-    nodes.append(ast.ClassDef(
-        name=handler.name, bases=[], keywords=[], decorator_list=[],
-        body=[item for item in handler.body
-              if getattr(item, "name", None) in {"rpc_inference", "_inference_batch_size"}],
-    ))
+    handler = next(
+        node
+        for node in handler_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "TransformerConnectionHandler"
+    )
+    nodes.append(
+        ast.ClassDef(
+            name=handler.name,
+            bases=[],
+            keywords=[],
+            decorator_list=[],
+            body=[
+                item
+                for item in handler.body
+                if getattr(item, "name", None) in {"rpc_inference", "_inference_batch_size"}
+            ],
+        )
+    )
     module = ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[]))
     exec(compile(module, "<actual cache/handler source methods>", "exec"), namespace)
     return namespace
@@ -81,12 +96,23 @@ def _load_real_pool_and_paged_backend(torch):
         tree = ast.parse((ROOT / "src/drift/server" / filename).read_text(encoding="utf-8"))
         node = next(item for item in tree.body if isinstance(item, ast.ClassDef) and item.name == class_name)
         if methods is not None:
-            node = ast.ClassDef(name=node.name, bases=[], keywords=[], decorator_list=[],
-                                body=[item for item in node.body if getattr(item, "name", None) in methods])
+            node = ast.ClassDef(
+                name=node.name,
+                bases=[],
+                keywords=[],
+                decorator_list=[],
+                body=[item for item in node.body if getattr(item, "name", None) in methods],
+            )
         nodes.append(node)
     namespace = dict(SOURCE, torch=torch, is_dummy=lambda tensor: tensor.numel() == 0)
-    exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
-                 "<actual pool and paged backend source>", "exec"), namespace)
+    exec(
+        compile(
+            ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
+            "<actual pool and paged backend source>",
+            "exec",
+        ),
+        namespace,
+    )
     return namespace
 
 
@@ -102,8 +128,13 @@ class PagedReorderTests(unittest.TestCase):
 
     def make_pool(self, *, pages=8, batch=2):
         pool = self.source["PagedKVPool"](
-            num_pages=pages, page_size=1, num_kv_heads=1, k_head_dim=1, v_head_dim=1,
-            dtype=self.torch.float32, device=self.torch.device("cpu"),
+            num_pages=pages,
+            page_size=1,
+            num_kv_heads=1,
+            k_head_dim=1,
+            v_head_dim=1,
+            dtype=self.torch.float32,
+            device=self.torch.device("cpu"),
         )
         pool.register_slot(0, batch)
         values = self.torch.arange(batch, dtype=self.torch.float32).reshape(batch, 1, 1)
@@ -111,8 +142,11 @@ class PagedReorderTests(unittest.TestCase):
         return pool
 
     def state(self, pool):
-        return ([list(row) for row in pool._block_tables[0]], list(pool._free_pages),
-                tuple(tensor.clone() for tensor in pool.gather(0, 1)))
+        return (
+            [list(row) for row in pool._block_tables[0]],
+            list(pool._free_pages),
+            tuple(tensor.clone() for tensor in pool.gather(0, 1)),
+        )
 
     def assert_state_equal(self, pool, before):
         table, free, kvs = before
@@ -132,10 +166,19 @@ class PagedReorderTests(unittest.TestCase):
 
     def test_invalid_beam_rank_dtype_count_and_indices_are_atomic(self):
         torch = self.torch
-        for ids in (torch.tensor(0), torch.tensor([[0, 1]]), torch.tensor([0., 1.]),
-                    torch.tensor([False, True]), torch.tensor([0, 1], dtype=torch.int32),
-                    torch.tensor([], dtype=torch.int64), torch.tensor([0]), torch.tensor([0, 1, 1]),
-                    torch.tensor([-1, 0]), torch.tensor([0, 2]), torch.tensor([0, 2**62])):
+        for ids in (
+            torch.tensor(0),
+            torch.tensor([[0, 1]]),
+            torch.tensor([0.0, 1.0]),
+            torch.tensor([False, True]),
+            torch.tensor([0, 1], dtype=torch.int32),
+            torch.tensor([], dtype=torch.int64),
+            torch.tensor([0]),
+            torch.tensor([0, 1, 1]),
+            torch.tensor([-1, 0]),
+            torch.tensor([0, 2]),
+            torch.tensor([0, 2**62]),
+        ):
             with self.subTest(shape=tuple(ids.shape), dtype=str(ids.dtype), ids=ids.tolist()):
                 pool = self.make_pool()
                 before = self.state(pool)
@@ -209,14 +252,19 @@ class PagedReorderTests(unittest.TestCase):
         backend._estimate_max_chunk_length = lambda *args: 1
         backend._forward_chunked = lambda hidden, past, chunk: (hidden, past)
         return backend._paged_inference_step(
-            self.torch.zeros(hidden_batch, 1, 1), ids,
+            self.torch.zeros(hidden_batch, 1, 1),
+            ids,
             SimpleNamespace(cache_handles=(0,), prefix_length=1),
         )
 
     def test_backend_rejects_batch_mismatch_and_invalid_dummy_before_cache_access(self):
         torch = self.torch
-        for batch, ids in ((1, torch.tensor([0, 1])), (1, torch.empty(0, dtype=torch.int64)),
-                           (2, torch.empty((1, 0), dtype=torch.int64)), (2, torch.empty(0))):
+        for batch, ids in (
+            (1, torch.tensor([0, 1])),
+            (1, torch.empty(0, dtype=torch.int64)),
+            (2, torch.empty((1, 0), dtype=torch.int64)),
+            (2, torch.empty(0)),
+        ):
             with self.subTest(batch=batch, shape=tuple(ids.shape), dtype=str(ids.dtype)):
                 pool = self.make_pool()
                 before = self.state(pool)
@@ -226,8 +274,7 @@ class PagedReorderTests(unittest.TestCase):
                 self.assert_state_equal(pool, before)
 
     def test_backend_preserves_valid_dummy_permutation_and_duplicate_steps(self):
-        for ids in (self.torch.empty(0, dtype=self.torch.int64), self.torch.tensor([1, 0]),
-                    self.torch.tensor([1, 1])):
+        for ids in (self.torch.empty(0, dtype=self.torch.int64), self.torch.tensor([1, 0]), self.torch.tensor([1, 1])):
             with self.subTest(ids=ids.tolist()):
                 pool = self.make_pool()
                 before = self.state(pool)
@@ -333,8 +380,13 @@ class PagedAdmissionTests(unittest.IsolatedAsyncioTestCase):
         namespace = dict(SOURCE, torch=torch)
         exec(compile(module, "<actual full PagedKVPool source>", "exec"), namespace)
         pool = namespace["PagedKVPool"](
-            num_pages=12, page_size=2, num_kv_heads=1, k_head_dim=2, v_head_dim=2,
-            dtype=torch.float32, device=torch.device("cpu"),
+            num_pages=12,
+            page_size=2,
+            num_kv_heads=1,
+            k_head_dim=2,
+            v_head_dim=2,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
         )
         with self.assertRaises(ValueError):
             pool.register_slot(0, 10000)
@@ -354,8 +406,19 @@ class PagedAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pool.num_free_pages, 12)
 
     async def test_forged_rpc_shapes_reject_before_any_cache_allocation(self):
-        for shape in ((), (1,), (1, 2), (1, 2, 4, 1), (0, 1, 4), (-1, 1, 4),
-                      (10000, 0, 4), (1, -1, 4), (1, 9, 4), (1, 1, 5), (3, 2, 4)):
+        for shape in (
+            (),
+            (1,),
+            (1, 2),
+            (1, 2, 4, 1),
+            (0, 1, 4),
+            (-1, 1, 4),
+            (10000, 0, 4),
+            (1, -1, 4),
+            (1, 9, 4),
+            (1, 1, 5),
+            (3, 2, 4),
+        ):
             with self.subTest(shape=shape):
                 events = await self.drive_request(shape, rejected=True)
                 self.assertEqual(events, ["acquire", "release"])
@@ -387,10 +450,13 @@ class PagedAdmissionTests(unittest.IsolatedAsyncioTestCase):
         handler._check_uids = lambda uid: (uid,)
         handler._log_request = lambda *args, **kwargs: None
         handler._check_manifest_digest = lambda metadata: None
-        handler.module_backends = {"model.0": SimpleNamespace(
-            config=SimpleNamespace(hidden_size=4), inference_pool=SimpleNamespace(max_batch_size=max_tokens),
-            memory_cache=SimpleNamespace(paged=True),
-        )}
+        handler.module_backends = {
+            "model.0": SimpleNamespace(
+                config=SimpleNamespace(hidden_size=4),
+                inference_pool=SimpleNamespace(max_batch_size=max_tokens),
+                memory_cache=SimpleNamespace(paged=True),
+            )
+        }
         handler._get_active_adapter = lambda metadata: ""
         handler._iterate_inference_steps = lambda *args: None
         handler._prioritizer = handler.quant_type = None
@@ -413,7 +479,8 @@ class PagedAdmissionTests(unittest.IsolatedAsyncioTestCase):
 
         async def requests():
             yield SimpleNamespace(
-                uid="model.0", metadata=json.dumps({"max_length": 8}),
+                uid="model.0",
+                metadata=json.dumps({"max_length": 8}),
                 tensors=[] if shape is None else [SimpleNamespace(size=shape)],
             )
 

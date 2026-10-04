@@ -21,7 +21,6 @@ from drift.node.model_manager import ModelDescriptor, ModelManager, ModelRuntime
 from drift.shadow_credits import ShadowLedger
 from drift.shadow_metered_managed import ShadowMeteredManagedClient
 
-
 MANIFEST = "sha256:" + "c" * 64
 CALLS = []
 
@@ -34,12 +33,22 @@ class FakeBackend(BaseHTTPRequestHandler):
             body = b"data: [DONE]\n\n"
         else:
             frames = [
-                {"id": "local-1", "model": payload["model"], "choices": [
-                    {"index": 0, "text": "ok", "finish_reason": None}]},
-                {"id": "local-1", "model": payload["model"], "choices": [
-                    {"index": 0, "text": "", "finish_reason": "stop"}]},
-                {"id": "local-1", "model": payload["model"], "choices": [], "usage": {
-                    "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
+                {
+                    "id": "local-1",
+                    "model": payload["model"],
+                    "choices": [{"index": 0, "text": "ok", "finish_reason": None}],
+                },
+                {
+                    "id": "local-1",
+                    "model": payload["model"],
+                    "choices": [{"index": 0, "text": "", "finish_reason": "stop"}],
+                },
+                {
+                    "id": "local-1",
+                    "model": payload["model"],
+                    "choices": [],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                },
             ]
             body = b"".join(b"data: " + json.dumps(frame).encode() + b"\n\n" for frame in frames)
             body += b"data: [DONE]\n\n"
@@ -66,11 +75,17 @@ def main():
             ledger_path = root / "shadow.db"
             with ShadowLedger(ledger_path) as ledger:
                 ledger.grant_test_credits("fixture_grant", metadata["id"], 4096)
-                profile = ProviderProfile("test/metered", "test/model", Availability.AVAILABLE,
-                                          qualification_id="e" * 64)
+                profile = ProviderProfile(
+                    "test/metered", "test/model", Availability.AVAILABLE, qualification_id="e" * 64
+                )
                 binding = ManagedVllmBinding(
-                    profile, "test/model", f"http://127.0.0.1:{server.server_port}",
-                    "local-only", (0,), 1, 1,
+                    profile,
+                    "test/model",
+                    f"http://127.0.0.1:{server.server_port}",
+                    "local-only",
+                    (0,),
+                    1,
+                    1,
                 )
                 bridge = ManagedVllmTextClient(
                     ManagedVllmAdapter(binding), ProviderIdentity("test/provider", "test/instance"), MANIFEST
@@ -81,8 +96,7 @@ def main():
                     ModelDescriptor("test/model", manifest_digest=MANIFEST),
                     lambda: ModelRuntime(model=None, tokenizer=None, text_client=metered),
                 )
-                app = create_app(model_manager=manager, api_key_identifier=key_store.identify,
-                                 request_timeout=5.0)
+                app = create_app(model_manager=manager, api_key_identifier=key_store.identify, request_timeout=5.0)
                 with TestClient(app) as client:
                     request = {"model": "test/model", "prompt": "hello", "max_tokens": 20}
                     assert client.post("/v1/completions", json=request).status_code == 401
@@ -96,8 +110,9 @@ def main():
                     receipt = ledger.pending_receipts()[0]
                     assert receipt.input_units == receipt.output_units == 1
                     assert receipt.proposed_charge == 2 and receipt.provider_id == metered.provider_id
-                    unfunded = client.post("/v1/completions", json=request,
-                                           headers={"Authorization": "Bearer " + other_secret})
+                    unfunded = client.post(
+                        "/v1/completions", json=request, headers={"Authorization": "Bearer " + other_secret}
+                    )
                     assert unfunded.status_code == 400 and len(CALLS) == 1
                     streamed = client.post("/v1/completions", json={**request, "stream": True}, headers=headers)
                     assert streamed.status_code == 200 and "data: [DONE]" in streamed.text
@@ -105,12 +120,19 @@ def main():
                     no_balance = client.post("/v1/completions", json=request, headers=headers)
                     assert no_balance.status_code == 400 and len(CALLS) == 2
                     ledger.grant_test_credits("failure_fixture", other_metadata["id"], 2048)
-                    failed = client.post("/v1/completions", json={**request, "prompt": "fail"},
-                                         headers={"Authorization": "Bearer " + other_secret})
+                    failed = client.post(
+                        "/v1/completions",
+                        json={**request, "prompt": "fail"},
+                        headers={"Authorization": "Bearer " + other_secret},
+                    )
                     assert failed.status_code == 503, failed.text
                     assert len(CALLS) == 3
                     other_wallet = ledger.buyer_wallet(other_metadata["id"])
-                    assert (other_wallet["available"], other_wallet["held"], other_wallet["pending_receipts"]) == (2048, 0, 0)
+                    assert (other_wallet["available"], other_wallet["held"], other_wallet["pending_receipts"]) == (
+                        2048,
+                        0,
+                        0,
+                    )
                     key_store.revoke(metadata["id"])
                     assert client.post("/v1/completions", json=request, headers=headers).status_code == 401
                     assert len(CALLS) == 3

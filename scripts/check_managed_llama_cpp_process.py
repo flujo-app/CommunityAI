@@ -23,11 +23,17 @@ PACKAGE.__path__ = [str(Path(__file__).resolve().parents[1] / "src" / "drift")]
 sys.modules["drift"] = PACKAGE
 
 from drift.inference_provider import (  # noqa: E402
-    Availability, EventKind, InferenceLimits, InferenceRequest, ProviderIdentity, ProviderProfile,
+    Availability,
+    EventKind,
+    InferenceLimits,
+    InferenceRequest,
+    ProviderIdentity,
+    ProviderProfile,
 )
 from drift.managed_llama_cpp import ManagedLlamaCppBinding  # noqa: E402
 from drift.managed_llama_cpp_process import (  # noqa: E402
-    ManagedLlamaCppProcessError, ManagedLlamaCppProcessOwner,
+    ManagedLlamaCppProcessError,
+    ManagedLlamaCppProcessOwner,
 )
 from drift.commerce_simulator import CommerceSimulator, SimulatedServiceQuote  # noqa: E402
 from drift.managed_vllm_text import ManagedVllmTextClient  # noqa: E402
@@ -52,23 +58,38 @@ def request(profile: ProviderProfile, prompt: str) -> InferenceRequest:
     now = time.monotonic()
     return InferenceRequest(
         ProviderIdentity("test/local-provider", "test/local-instance"),
-        profile.profile_id, profile.model_id, "a" * 32, "b" * 32,
-        now, now + 20, prompt, InferenceLimits(252, 4, 100, 4096),
+        profile.profile_id,
+        profile.model_id,
+        "a" * 32,
+        "b" * 32,
+        now,
+        now + 20,
+        prompt,
+        InferenceLimits(252, 4, 100, 4096),
     )
 
 
 async def main() -> None:
     profile = ProviderProfile(
-        "test/qwen-llama-owned", "test/qwen3-1.7b-llama-owned",
-        Availability.AVAILABLE, qualification_id="1" * 64,
+        "test/qwen-llama-owned",
+        "test/qwen3-1.7b-llama-owned",
+        Availability.AVAILABLE,
+        qualification_id="1" * 64,
     )
     binding = ManagedLlamaCppBinding(
-        profile, profile.model_id, f"http://127.0.0.1:{free_port()}",
-        "local-owner-secret", (0,), "none", 256,
+        profile,
+        profile.model_id,
+        f"http://127.0.0.1:{free_port()}",
+        "local-owner-secret",
+        (0,),
+        "none",
+        256,
     )
     arguments = dict(
-        executable=SERVER, executable_sha256=SERVER_SHA,
-        model_file=MODEL, model_sha256=MODEL_SHA,
+        executable=SERVER,
+        executable_sha256=SERVER_SHA,
+        model_file=MODEL,
+        model_sha256=MODEL_SHA,
     )
     owner = ManagedLlamaCppProcessOwner(binding, **arguments)
     bad_owner = ManagedLlamaCppProcessOwner(binding, **{**arguments, "model_sha256": "0" * 64})
@@ -107,18 +128,30 @@ async def main() -> None:
 
                 def quote_for_request(_body, _chat, context):
                     return SimulatedServiceQuote(
-                        request_id=context.request_id, buyer_id=context.caller_id,
-                        provider_id="provider", funding_source="purchased",
-                        model_id=profile.model_id, profile_id=profile.profile_id,
-                        service_class="text_inference", settlement_domain="local_simulation",
-                        artifact_sha256=MODEL_SHA, service_policy_sha256="b" * 64,
-                        price_schedule_sha256="c" * 64, input_unit_price=1,
-                        output_unit_price=1, max_input_units=16, max_output_units=4,
-                        fee_bps=1000, spend_cap=20, expires_at_unix=int(time.time()) + 60,
+                        request_id=context.request_id,
+                        buyer_id=context.caller_id,
+                        provider_id="provider",
+                        funding_source="purchased",
+                        model_id=profile.model_id,
+                        profile_id=profile.profile_id,
+                        service_class="text_inference",
+                        settlement_domain="local_simulation",
+                        artifact_sha256=MODEL_SHA,
+                        service_policy_sha256="b" * 64,
+                        price_schedule_sha256="c" * 64,
+                        input_unit_price=1,
+                        output_unit_price=1,
+                        max_input_units=16,
+                        max_output_units=4,
+                        fee_bps=1000,
+                        spend_cap=20,
+                        expires_at_unix=int(time.time()) + 60,
                     )
 
                 bridge = ManagedVllmTextClient(
-                    owner.new_adapter(), ProviderIdentity("provider", "instance"), digest,
+                    owner.new_adapter(),
+                    ProviderIdentity("provider", "instance"),
+                    digest,
                 )
                 paid = SimulatedPaidTextClient(bridge, journal, quote_for_request)
                 manager = ModelManager()
@@ -134,8 +167,13 @@ async def main() -> None:
                 with TestClient(app) as client:
                     answer = client.post(
                         "/v1/completions",
-                        json={"model": profile.model_id, "prompt": "Reply with one short greeting.",
-                              "max_tokens": 4, "temperature": 0, "stream": False},
+                        json={
+                            "model": profile.model_id,
+                            "prompt": "Reply with one short greeting.",
+                            "max_tokens": 4,
+                            "temperature": 0,
+                            "stream": False,
+                        },
                         headers={"Authorization": "Bearer buyer-key"},
                     )
                     assert answer.status_code == 200, answer.text

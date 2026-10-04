@@ -77,12 +77,7 @@ class SupervisedLocalProcess:
             or not Path(command[0]).is_file()
             or not isinstance(environment, Mapping)
             or any(
-                type(key) is not str
-                or not key
-                or "=" in key
-                or "\0" in key
-                or type(value) is not str
-                or "\0" in value
+                type(key) is not str or not key or "=" in key or "\0" in key or type(value) is not str or "\0" in value
                 for key, value in environment.items()
             )
         ):
@@ -209,9 +204,7 @@ class ManagedVllmProcessOwner:
         try:
             if not self._process.owns_tcp_listener(self._host, self._port):
                 raise ManagedVllmProbeError("managed process does not own its loopback listener")
-            result = await probe_managed_vllm(
-                self.binding, expected_max_model_len=self.max_model_len, seconds=seconds
-            )
+            result = await probe_managed_vllm(self.binding, expected_max_model_len=self.max_model_len, seconds=seconds)
             if not self.running or not self._process.owns_tcp_listener(self._host, self._port):
                 raise ManagedVllmProbeError("managed backend listener exited during admission")
         except Exception:

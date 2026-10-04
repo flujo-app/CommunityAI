@@ -14,8 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from probe_deepseek_h100_host import make_report as make_h100_report
-from probe_deepseek_h100_host import parse_gpu_inventory, probe as probe_h100
+from probe_deepseek_h100_host import make_report as make_h100_report, parse_gpu_inventory, probe as probe_h100
 
 _MAX_OUTPUT = 16_384
 _UNIT = "communityai-multigpu-anchor.service"
@@ -125,9 +124,8 @@ def glm_w4a8_h100_preflight(h100: dict[str, object]) -> dict[str, object]:
         "variant": "third-party-W4A8",
         "necessary_checks": {
             "eight_h100_80gb_class": checks.get("eight_h100_80gb_class") is True,
-            "each_gpu_free_at_least_recipe_eighth": len(free) == 8 and all(
-                amount >= _GLM_W4A8_PER_RANK_BYTES for amount in free
-            ),
+            "each_gpu_free_at_least_recipe_eighth": len(free) == 8
+            and all(amount >= _GLM_W4A8_PER_RANK_BYTES for amount in free),
             "aggregate_gpu_free_at_least_recipe_minimum": sum(free) >= _GLM_W4A8_RECIPE_GPU_BYTES,
             "storage_free_at_least_pinned_weight_bytes": storage >= _GLM_W4A8_WEIGHT_BYTES,
         },
@@ -176,8 +174,7 @@ def self_test() -> None:
     missing = systemd_readiness(1000, mount, run=lambda _: None)
     assert missing["linger"] == "unavailable" and missing["anchor_unit_loaded"] is False
     sample = "\n".join(f"{i}, NVIDIA H100 80GB HBM3, 81559, 70000, 570.133.20" for i in range(8))
-    h100 = make_h100_report(parse_gpu_inventory(sample), 250_000_000_000,
-                             _GLM_W4A8_WEIGHT_BYTES, "ubuntu", "20.04")
+    h100 = make_h100_report(parse_gpu_inventory(sample), 250_000_000_000, _GLM_W4A8_WEIGHT_BYTES, "ubuntu", "20.04")
     glm = glm_w4a8_h100_preflight(h100)
     assert all(glm["necessary_checks"].values()) and glm["backend_qualified"] is False
     h100["gpus"][0]["free_bytes"] = _GLM_W4A8_PER_RANK_BYTES - 1

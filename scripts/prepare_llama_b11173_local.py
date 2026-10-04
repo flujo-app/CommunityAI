@@ -13,10 +13,8 @@ import zipfile
 from pathlib import Path
 
 ASSETS = {
-    "llama-b11173-bin-win-cuda-12.4-x64.zip":
-        "322a376be0ebecdf965d3519a8cc9f5b318ea1f8766f5e2a955877f60339900c",
-    "cudart-llama-bin-win-cuda-12.4-x64.zip":
-        "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+    "llama-b11173-bin-win-cuda-12.4-x64.zip": "322a376be0ebecdf965d3519a8cc9f5b318ea1f8766f5e2a955877f60339900c",
+    "cudart-llama-bin-win-cuda-12.4-x64.zip": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
 }
 
 
@@ -50,8 +48,14 @@ def main() -> int:
             for entry in archive.infolist():
                 name = entry.filename
                 if (
-                    entry.is_dir() or not name or name in names or "/" in name or "\\" in name
-                    or name in {".", ".."} or ":" in name or (entry.external_attr >> 16) & 0o170000 == 0o120000
+                    entry.is_dir()
+                    or not name
+                    or name in names
+                    or "/" in name
+                    or "\\" in name
+                    or name in {".", ".."}
+                    or ":" in name
+                    or (entry.external_attr >> 16) & 0o170000 == 0o120000
                 ):
                     parser.error(f"unsafe or duplicate archive member: {name}")
                 names.add(name)

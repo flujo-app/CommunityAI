@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+
 from scripts import qualification_cost_guard as guard
 
 SOURCE_COMMIT = "a" * 40

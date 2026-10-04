@@ -7,8 +7,7 @@ import pytest
 from test_linux_anchor_native import running  # noqa: F401
 from test_linux_anchor_state_native import journal  # noqa: F401
 
-from drift.node import linux_anchor_resources as resources
-from drift.node import linux_anchor_state as state
+from drift.node import linux_anchor_resources as resources, linux_anchor_state as state
 from drift.node.resource_recovery import RecoverableStateError
 from drift.node.resource_reservations import ResourceReservationManager
 

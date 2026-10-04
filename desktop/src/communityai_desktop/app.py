@@ -292,9 +292,8 @@ def main(argv: Optional[Sequence[str]] = None, *, forced_profile: str | None = N
 
         updater = None
         if qualification_automation is None and profile is None:
-            from PySide6.QtCore import QStandardPaths
-
             from communityai_desktop.updater import UpdateManager, installed_root
+            from PySide6.QtCore import QStandardPaths
 
             root = installed_root()
             if root is not None:
