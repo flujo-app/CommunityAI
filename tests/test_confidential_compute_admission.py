@@ -256,6 +256,60 @@ class AdmissionTests(unittest.TestCase):
         )
         self.assertEqual(effects, ["prepare"])
 
+    def test_earlier_session_expiry_blocks_prepare_after_later_session_check(self):
+        self.verifier.transform = lambda result: replace(
+            result, expires_at=115.0 if result.binding.session_id == "first" else 130.0
+        )
+        effects = []
+        clock_calls = 0
+
+        def clock():
+            nonlocal clock_calls
+            clock_calls += 1
+            observed = self.now
+            if clock_calls == 4:
+                self.now = 120.0
+            return observed
+
+        self.gate._clock = clock
+        self.denied(
+            "AUTHORIZATION_EXPIRED",
+            lambda: self.gate.dispatch(
+                (binding(session_id="first"), binding(session_id="second")),
+                authorize=lambda: None,
+                prepare=lambda: effects.append("prepare"),
+                send=lambda _: effects.append("send"),
+            ),
+        )
+        self.assertEqual(effects, [])
+
+    def test_earlier_session_expiry_blocks_send_after_later_session_check(self):
+        self.verifier.transform = lambda result: replace(
+            result, expires_at=115.0 if result.binding.session_id == "first" else 130.0
+        )
+        effects = []
+        clock_calls = 0
+
+        def clock():
+            nonlocal clock_calls
+            clock_calls += 1
+            observed = self.now
+            if clock_calls == 8:
+                self.now = 120.0
+            return observed
+
+        self.gate._clock = clock
+        self.denied(
+            "AUTHORIZATION_EXPIRED",
+            lambda: self.gate.dispatch(
+                (binding(session_id="first"), binding(session_id="second")),
+                authorize=lambda: None,
+                prepare=lambda: effects.append("prepare"),
+                send=lambda _: effects.append("send"),
+            ),
+        )
+        self.assertEqual(effects, ["prepare"])
+
     def test_profile_class_allowlist_rejects_non_string_equality_object(self):
         class EqualGpuClass:
             def __hash__(self):
