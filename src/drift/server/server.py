@@ -22,6 +22,7 @@ from hivemind.utils.timed_storage import MAX_DHT_TIME_DISCREPANCY_SECONDS, get_d
 from transformers import PretrainedConfig
 
 import drift
+from drift.artifact_snapshot import validate_artifact_snapshot
 from drift.constants import DTYPE_MAP
 from drift.data_structures import CHAIN_DELIMITER, UID_DELIMITER, ModelInfo, ServerInfo, ServerState, parse_uid
 from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest
@@ -181,6 +182,7 @@ def _scoped_manifest_artifact_verifier(
         cache_dir=cache_dir,
         max_disk_space=max_disk_space,
         artifact_root=artifact_root,
+        cache_only=artifact_root is not None,
         allowed_paths=startup_paths,
     )
     artifact_plan = verifier.bind_block_artifact_plan(
@@ -257,6 +259,7 @@ class Server:
         admission_policy: Optional[AdmissionPolicy] = None,
         revocation_files: Sequence[str] = (),
         cache_dir: Optional[str] = None,
+        artifact_root: Optional[str] = None,
         max_disk_space: Optional[int] = None,
         max_device_memory: Optional[int] = None,
         max_processing_percent: float = 100,
@@ -292,6 +295,7 @@ class Server:
         self._managed_loading_session = managed_loading_session
         self._managed_lifecycle_started = False
         self._managed_ready = False
+        self.artifact_root = validate_artifact_snapshot(model_manifest, artifact_root, cache_dir=cache_dir)
         converted_model_name_or_path = get_compatible_model_repo(converted_model_name_or_path)
         self.converted_model_name_or_path = converted_model_name_or_path
 
@@ -315,6 +319,8 @@ class Server:
                 token=token,
                 cache_dir=cache_dir,
                 max_disk_space=max_disk_space,
+                artifact_root=self.artifact_root,
+                cache_only=self.artifact_root is not None,
             )
             config_source = artifact_verifier.ensure_startup_metadata()
         else:
@@ -732,6 +738,7 @@ class Server:
             inference_max_length=self.inference_max_length,
             torch_dtype=self.torch_dtype,
             cache_dir=self.cache_dir,
+            artifact_root=self.artifact_root,
             max_disk_space=self.max_disk_space,
             device=self.device,
             compression=self.compression,
@@ -919,6 +926,7 @@ class ModuleContainer(threading.Thread):
         torch_dtype: torch.dtype,
         cache_dir: str,
         max_disk_space: int,
+        artifact_root: Optional[str] = None,
         device: Union[str, torch.device],
         compression: CompressionType,
         update_period: float,
@@ -954,6 +962,7 @@ class ModuleContainer(threading.Thread):
             expected_artifact_bytes=expected_artifact_bytes,
             expected_artifact_set_digest=expected_artifact_set_digest,
             expected_cache_root=expected_cache_root,
+            artifact_root=validate_artifact_snapshot(model_manifest, artifact_root, cache_dir=cache_dir),
         )
         memory_cache = MemoryCache(attn_cache_bytes, max_alloc_timeout, paged=paged_cache, page_size=page_size)
 

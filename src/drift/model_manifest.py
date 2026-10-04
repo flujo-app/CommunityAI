@@ -661,7 +661,8 @@ class ManifestArtifactVerifier:
     A verifier deliberately materializes only requested files. This preserves Petals' partial-checkpoint
     behavior: a worker verifies the shards containing its assigned blocks, while an API client verifies the
     tokenizer and the shards containing its local embeddings/head. Successful hashes are cached only while
-    the resolved path, size, and modification timestamp remain unchanged.
+    the resolved path, size, and modification timestamp remain unchanged. Explicit ``cache_only`` mode
+    accepts verified local files but never starts a transfer on a cache miss.
     """
 
     manifest: ModelManifest
@@ -672,6 +673,7 @@ class ManifestArtifactVerifier:
     max_disk_space: Optional[int] = None
     artifact_root: Optional[Union[str, os.PathLike]] = None
     allowed_paths: Optional[Iterable[str]] = None
+    cache_only: bool = False
     _verified: Dict[Tuple[str, int, int, str], bool] = field(default_factory=dict, init=False, repr=False)
     _snapshot_root: Optional[Path] = field(default=None, init=False, repr=False)
     _weight_map: Optional[Mapping[str, str]] = field(default=None, init=False, repr=False)
@@ -690,6 +692,8 @@ class ManifestArtifactVerifier:
             raise ManifestError(
                 f"Artifact verifier revision is {self.revision!r}, expected {self.manifest.source.revision!r}"
             )
+        if type(self.cache_only) is not bool:
+            raise ManifestError("Artifact verifier cache_only must be a boolean")
         if self.allowed_paths is not None:
             self.allowed_paths = self._normalize_allowed_paths(self.allowed_paths)
         if self.artifact_root is not None:
@@ -842,6 +846,7 @@ class ManifestArtifactVerifier:
             )
 
         candidate = None
+        already_verified = False
         if self._snapshot_root is not None:
             candidate = _artifact_path_below_root(self._snapshot_root, artifact.path)
         if candidate is None or (not candidate.exists() and self.artifact_root is None):
@@ -862,16 +867,24 @@ class ManifestArtifactVerifier:
                     resolved = None
 
                 if resolved is None:
-                    from drift.utils.disk_cache import allow_cache_writes, free_disk_space_for
+                    if self.cache_only:
+                        _, cached_final, _ = self._resumable_paths(artifact)
+                        if not cached_final.exists():
+                            raise ManifestError(f"Artifact {artifact.path} is not available in the local cache")
+                        _verify_artifact_file(artifact, cached_final)
+                        already_verified = True
+                        resolved = str(cached_final)
+                    else:
+                        from drift.utils.disk_cache import allow_cache_writes, free_disk_space_for
 
-                    Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
-                    with allow_cache_writes(self.cache_dir):
-                        free_disk_space_for(
-                            max(0, artifact.size - self.partial_size(artifact.path)),
-                            cache_dir=self.cache_dir,
-                            max_disk_space=self.max_disk_space,
-                        )
-                        resolved = self._resumable_hub_download(artifact, destination=candidate)
+                        Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
+                        with allow_cache_writes(self.cache_dir):
+                            free_disk_space_for(
+                                max(0, artifact.size - self.partial_size(artifact.path)),
+                                cache_dir=self.cache_dir,
+                                max_disk_space=self.max_disk_space,
+                            )
+                            resolved = self._resumable_hub_download(artifact, destination=candidate)
             except ManifestTransferInterrupted:
                 raise
             except Exception as exc:
@@ -893,7 +906,8 @@ class ManifestArtifactVerifier:
                     self._promote_cached_artifact(artifact, resolved_candidate, candidate)
 
         self._report(artifact, "verifying", received=artifact.size)
-        self._verify(artifact, candidate)
+        if not already_verified:
+            self._verify(artifact, candidate)
         return candidate
 
     def _promote_cached_artifact(self, artifact: ManifestArtifact, source: Path, destination: Path) -> None:
@@ -954,6 +968,9 @@ class ManifestArtifactVerifier:
         A partial is never exposed to Transformers.  It is atomically promoted only after
         its exact declared size and SHA-256 pass.
         """
+        if self.cache_only:
+            raise ManifestError("Artifact transfer is disabled in cache-only mode")
+
         import requests
         from huggingface_hub import hf_hub_url
         from huggingface_hub.utils import build_hf_headers
@@ -1096,11 +1113,12 @@ class ManifestArtifactVerifier:
         except OSError as exc:
             raise ManifestError(f"Could not read artifact {artifact.path}: {exc}") from exc
         cache_key = (str(candidate), stat_result.st_size, stat_result.st_mtime_ns, artifact.sha256)
-        if cache_key in self._verified:
+        if not self.cache_only and cache_key in self._verified:
             return
         _verify_artifact_file(artifact, candidate)
-        self._verified = {key: value for key, value in self._verified.items() if key[0] != str(candidate)}
-        self._verified[cache_key] = True
+        if not self.cache_only:
+            self._verified = {key: value for key, value in self._verified.items() if key[0] != str(candidate)}
+            self._verified[cache_key] = True
 
 
 def _select_snapshot_artifacts(files: Iterable[str], root: Path | str) -> Dict[str, str]:

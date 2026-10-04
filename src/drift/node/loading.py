@@ -8,6 +8,7 @@ from typing import Callable, Optional, Sequence
 
 from hivemind.utils.logging import get_logger
 
+from drift.artifact_snapshot import validate_artifact_snapshot
 from drift.model_manifest import ManifestArtifactVerifier, ManifestError, ModelManifest
 from drift.node.model_manager import ModelRuntime
 from drift.node.route_health import sequence_manager_route_health
@@ -63,6 +64,7 @@ def make_manifest_loader(
     initial_peers: Sequence[str],
     token: Optional[str] = None,
     cache_dir: Optional[str] = None,
+    artifact_root: Optional[str] = None,
     revocation_files: Sequence[str] = (),
     request_timeout: float = 30,
     max_retries: int = 3,
@@ -70,6 +72,7 @@ def make_manifest_loader(
     """Return a lazy loader pinned to one exact manifest and swarm namespace."""
 
     def load() -> ModelRuntime:
+        root = validate_artifact_snapshot(manifest, artifact_root, cache_dir=cache_dir)
         import torch
         from transformers import AutoTokenizer
 
@@ -81,6 +84,8 @@ def make_manifest_loader(
             revision=manifest.source.revision,
             token=token,
             cache_dir=cache_dir,
+            artifact_root=root,
+            cache_only=root is not None,
         )
         verifier.ensure_startup_metadata(include_tokenizer=True)
         logger.info(f"Loading tokenizer and client-side weights for {manifest.digest_id}")

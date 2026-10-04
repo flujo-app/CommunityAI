@@ -61,6 +61,45 @@ with opaque labels. The report also records the normalized operating system, req
 device profile, observed worker device, dtype, attention implementation, and the source
 commit when it can resolve one from the checkout.
 
+## Loading an existing read-only snapshot
+
+The fixed-manifest worker and text-peer CLIs accept `--artifact_root` for a
+complete local snapshot, paired with an explicit, separate writable `--cache_dir`:
+
+```text
+drift server <repository> --model_manifest <manifest.json> \
+  --artifact_root /models/verified-snapshot --cache_dir /run/communityai/cache \
+  --block_indices 0:14 --identity_path <owned-worker-identity> <other-worker-options>
+drift text-peer <manifest.json> \
+  --artifact_root /models/verified-snapshot --cache_dir /run/communityai/cache \
+  --identity_path <owned-text-identity> --initial_peers <owned-bootstrap-address>
+```
+
+Each declared artifact lives at its manifest-relative path below `artifact_root`.
+This interface requires a materialized tree containing exactly the declared
+regular files and their parent directories. Symlinks, Windows reparse points,
+extra files (including loader sidecars, README/license files) and extra directories
+are rejected. A conventional Hub snapshot containing blob symlinks therefore
+needs a separate materialized, manifest-only snapshot for this interface.
+Every declared file, including unassigned shards and tokenizer files, is checked
+by size and SHA-256 before construction of a model loader; the text-peer CLI also
+checks before identity/DHT startup. Missing or corrupt files fail without Hub or
+custom HTTP fallback. The root reaches worker config, module and block loaders,
+and the text-peer client loader. Runtime locks such as `blocks.lock` belong to
+`cache_dir`; neither directory may contain the other. The caller supplies and
+maintains the read-only snapshot mount. Managed workers retain all five manifest,
+span, artifact-byte, artifact-set and writable-cache placement claims.
+These examples apply to direct `drift server` and `drift text-peer` launches.
+The `drift node` supervisor does not propagate this opt-in flag to its children.
+
+The Python `make_manifest_loader(..., artifact_root=..., cache_dir=...)` interface
+uses the same boundary. `ManifestArtifactVerifier(..., cache_only=True)` separately
+supports verified existing Hub/custom cache entries without starting a transfer
+on a miss. Omitting these opt-in settings preserves the existing online behavior.
+Content validation does not create signed catalog approval or authorize model or
+provider execution. Direct fixed-manifest experiments and automatic signed-catalog
+selection remain separate interfaces.
+
 ## Cross-platform matrix gate
 
 Each real host must produce a complete artifact, parity, and local-failover report with

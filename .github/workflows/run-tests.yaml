@@ -112,6 +112,7 @@ jobs:
             tests/test_model_catalog.py \
             tests/test_model_manager.py \
             tests/test_model_manifest.py \
+            tests/test_local_artifact_snapshot.py \
             tests/test_multi_machine_qualification.py \
             tests/test_native_credentials.py \
             tests/test_node_config.py \

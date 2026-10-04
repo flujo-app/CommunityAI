@@ -23,6 +23,7 @@ class TextPeerService:
         *,
         initial_peers,
         cache_dir,
+        artifact_root=None,
         max_context_tokens=2048,
         max_output_tokens=512,
         request_timeout=900
@@ -33,6 +34,7 @@ class TextPeerService:
             raise ValueError("Invalid text peer context/output limits")
         self.dht, self.identity, self.manifest = dht, identity, manifest
         self.initial_peers, self.cache_dir = initial_peers, cache_dir
+        self.artifact_root = artifact_root
         self.max_context_tokens, self.max_output_tokens = max_context_tokens, max_output_tokens
         self.request_timeout = request_timeout
         self._stop = threading.Event()
@@ -60,6 +62,7 @@ class TextPeerService:
                 self.manifest,
                 initial_peers=self.initial_peers,
                 cache_dir=self.cache_dir,
+                artifact_root=self.artifact_root,
                 request_timeout=180,
                 max_retries=1,
             )()
