@@ -31,6 +31,15 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer
 
 from drift.factory_admission import FactoryAdmission, RequestAdmissionDenied, synchronous_result
+from drift.factory_receiver import (
+    FactoryAdmissionV2,
+    FactoryBoundedBodyMiddleware,
+    FactoryIngressHeadersInvalid,
+    FactoryIngressTooLarge,
+    FactoryReceiverProfileV2,
+    HostVerifiedTransport,
+    observe_factory_ingress_v2,
+)
 from drift.node.model_manager import (
     AmbiguousModelError,
     AutoModelUnavailableError,
@@ -186,6 +195,17 @@ def create_factory_app(*, factory_admission: Callable[[dict], FactoryAdmission],
     return create_app(factory_admission=factory_admission, **kwargs)
 
 
+def create_factory_receiver_app_v2(*, receiver_profile: FactoryReceiverProfileV2, **kwargs) -> FastAPI:
+    """Opt in to observed ASGI ingress plus host-verified Original admission.
+
+    The profile does not itself verify transport, Original provenance, or the
+    sender's SDK-final wire. Those are obligations of the embedding host.
+    """
+    if type(receiver_profile) is not FactoryReceiverProfileV2:
+        raise ValueError("Factory receiver v2 requires a host-owned profile")
+    return create_app(factory_receiver_v2=receiver_profile, **kwargs)
+
+
 def create_app(
     model=None,
     tokenizer=None,
@@ -200,6 +220,7 @@ def create_app(
     route_outcome_observer: Optional[Callable[..., None]] = None,
     request_timeout: float = 900.0,
     factory_admission: Optional[Callable[[dict], FactoryAdmission]] = None,
+    factory_receiver_v2: Optional[FactoryReceiverProfileV2] = None,
 ) -> FastAPI:
     """Create the OpenAI-compatible application.
 
@@ -223,14 +244,20 @@ def create_app(
         raise ValueError("pass either model_manager or the single-model arguments, not both")
     if sum((bool(api_keys), api_key_verifier is not None, api_key_identifier is not None)) > 1:
         raise ValueError("pass only one API key authentication method")
-    if factory_admission is not None and (
-        not callable(factory_admission)
+    if factory_admission is not None and factory_receiver_v2 is not None:
+        raise ValueError("choose one Factory receiver profile")
+    if factory_receiver_v2 is not None and type(factory_receiver_v2) is not FactoryReceiverProfileV2:
+        raise ValueError("Factory receiver v2 requires a host-owned profile")
+    if (factory_admission is not None or factory_receiver_v2 is not None) and (
+        (factory_admission is not None and not callable(factory_admission))
         or not (api_keys or api_key_verifier is not None or api_key_identifier is not None)
     ):
         raise ValueError("Factory admission requires a trusted adapter and API authentication")
 
     app = FastAPI(title="DRIFT-LLM OpenAI-compatible API")
-    if factory_admission is not None:
+    if factory_receiver_v2 is not None:
+        app.add_middleware(FactoryBoundedBodyMiddleware)
+    if factory_admission is not None or factory_receiver_v2 is not None:
         # A slash redirect would precede original admission and allow a body resend.
         app.router.redirect_slashes = False
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -256,8 +283,9 @@ def create_app(
             raise HTTPException(status_code=401, detail="Invalid API key")
         return identity
 
-    def request_context(body, request):
+    async def request_context(body, request, route):
         admission = None
+        dispatch_guard = None
         original_body = body.model_dump(exclude_none=True)
         if factory_admission is not None:
             try:
@@ -267,6 +295,40 @@ def create_app(
                 if type(admission) is not FactoryAdmission:
                     raise RequestAdmissionDenied()
                 admission.require_current(original_body)
+                dispatch_guard = lambda: admission.require_current(original_body)
+            except Exception:
+                raise HTTPException(status_code=403, detail="Original request admission denied") from None
+        elif factory_receiver_v2 is not None:
+            try:
+                # The v2 outer ASGI gate has already capped the body before
+                # framework parsing. Retain this check at the adapter boundary.
+                raw_body = await request.body()
+                observation = observe_factory_ingress_v2(request.scope, raw_body, original_body, route)
+            except FactoryIngressTooLarge:
+                raise HTTPException(status_code=413, detail="Factory ingress body too large") from None
+            except FactoryIngressHeadersInvalid:
+                raise HTTPException(status_code=431, detail="Factory ingress headers invalid") from None
+            except Exception:
+                raise HTTPException(status_code=403, detail="Original request admission denied") from None
+            try:
+                # Scope extensions are supplied by trusted host middleware. The
+                # HTTP bearer and projected request headers do not mint identity.
+                extensions = request.scope.get("extensions", {})
+                if type(extensions) is not dict:
+                    raise RequestAdmissionDenied()
+                transport = synchronous_result(factory_receiver_v2.transport_verifier(extensions))
+                if (
+                    type(transport) is not HostVerifiedTransport
+                    or transport.host_capability is not factory_receiver_v2.host_capability
+                    or transport.generation_sha256 != factory_receiver_v2.generation_sha256
+                ):
+                    raise RequestAdmissionDenied()
+                decision = synchronous_result(factory_receiver_v2.original_admission(observation, transport))
+                if type(decision) is not FactoryAdmissionV2:
+                    raise RequestAdmissionDenied()
+                decision.require_current(observation, original_body, transport)
+                admission = decision.admission
+                dispatch_guard = lambda: decision.require_current(observation, original_body, transport)
             except Exception:
                 raise HTTPException(status_code=403, detail="Original request admission denied") from None
         caller_id = check_auth(request)
@@ -284,7 +346,7 @@ def create_app(
             caller_id=caller_id,
             request_id=admission.request_id,
             single_attempt=True,
-            dispatch_guard=lambda: admission.require_current(original_body),
+            dispatch_guard=dispatch_guard,
             dispatch_claim=admission.claim_dispatch,
         )
 
@@ -546,7 +608,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
         if body.stream_options is not None and not body.stream:
             raise HTTPException(status_code=400, detail="stream_options requires stream=true")
-        context = request_context(body, request)
+        context = await request_context(body, request, "/v1/chat/completions")
         loaded = await load_with_budget(body.model, context)
         if context.single_attempt and (
             loaded.descriptor.manifest_digest != body.model
@@ -632,7 +694,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
         if body.stream_options is not None and not body.stream:
             raise HTTPException(status_code=400, detail="stream_options requires stream=true")
-        context = request_context(body, request)
+        context = await request_context(body, request, "/v1/completions")
         loaded = await load_with_budget(body.model, context)
         if context.single_attempt and (
             loaded.descriptor.manifest_digest != body.model
