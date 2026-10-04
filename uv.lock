@@ -544,6 +544,7 @@ dependencies = [
 [package.optional-dependencies]
 api = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "keyring" },
     { name = "uvicorn" },
 ]
@@ -574,6 +575,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.115" },
     { name = "hivemind", marker = "sys_platform != 'win32'", specifier = ">=1.1.12,<1.2" },
+    { name = "httpx", marker = "extra == 'api'", specifier = ">=0.27,<1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "huggingface-hub", specifier = ">=0.30" },
     { name = "humanfriendly" },
