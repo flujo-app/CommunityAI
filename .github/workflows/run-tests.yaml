@@ -32,6 +32,8 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync --extra dev --python ${{ matrix.python-version }}
+          # Desktop tests exercise the real Qt runtime, including subprocess diagnostics.
+          uv pip install --python .venv/bin/python -e ./desktop
       - name: Test Factory source contract
         env:
           PYTHONPATH: src:desktop/src

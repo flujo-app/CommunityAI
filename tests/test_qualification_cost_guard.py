@@ -5,7 +5,6 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-
 from scripts import qualification_cost_guard as guard
 
 SOURCE_COMMIT = "a" * 40
@@ -971,7 +970,15 @@ def test_provider_and_workload_must_match():
         _authorization(workload=guard.FLY_DISCOVERY_SEED_WORKLOAD)
 
 
-def test_cli_writes_bounded_plan_without_provider_calls(tmp_path, capsys):
+def test_cli_writes_bounded_plan_without_provider_calls(tmp_path, capsys, monkeypatch):
+    class HistoricalDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 8, 26)
+
+    # Exercise the historical CLI success fixture without changing the live
+    # GCP price-expiry guard, which has a separate stale-price regression test.
+    monkeypatch.setattr(guard, "date", HistoricalDate)
     ledger = tmp_path / "readiness.md"
     ledger.write_text(
         _ledger("| No new paid run recorded | — | — | USD 0 | USD 0 | — | READY |"),

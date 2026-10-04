@@ -46,6 +46,11 @@ def test_qwen_catalog_withdrawal_and_forward_restore_preserve_local_settings_and
     cache.mkdir()
     (cache / "retained-sentinel").write_bytes(b"cache stays across withdrawal")
     local_config = next(item for item in document["models"] if item.get("execution") == "local")
+    remote_config = next(item for item in document["models"] if item.get("execution") == "distributed")
+    remote_manifest = Path(remote_config["manifest"])
+    remote_cache = Path(remote_config["cache_dir"])
+    remote_cache.mkdir(parents=True)
+    (remote_cache / "retained-weights").write_bytes(b"downloaded model")
     local_config.update(cache_dir=str(cache), local_device="cpu", request_timeout=17)
     document["contribution_policy"].update(sharing_enabled=False, max_vram="75%", max_processing_percent=50)
     path.write_text(json.dumps(document))
@@ -60,9 +65,12 @@ def test_qwen_catalog_withdrawal_and_forward_restore_preserve_local_settings_and
     active[0] = SignedModelCatalog(1, withdrawal, ()).add_signature(key)
     assert installer.refresh().created
     withdrawn = NodeConfig.load(path)
-    # Older exact models remain manual choices by design. Withdrawal removes
-    # catalog approval and automatic routing, not operator-owned model history.
-    assert len(withdrawn.models) == 2
+    # Withdrawal removes a retired catalog-managed entry from the config but
+    # leaves its stored manifest and cache intact for a signed forward restore.
+    assert len(withdrawn.models) == 1
+    assert remote_manifest not in {model.manifest_path for model in withdrawn.models}
+    assert remote_manifest.is_file()
+    assert (remote_cache / "retained-weights").read_bytes() == b"downloaded model"
     withdrawn_local = next(model for model in withdrawn.models if model.execution == "local")
     assert withdrawn.auto_model_priority == (local.manifest_digest,)
     assert remote.manifest_digest not in {model.manifest_digest for model in load_configured_catalog(withdrawn).models}
@@ -85,6 +93,7 @@ def test_qwen_catalog_withdrawal_and_forward_restore_preserve_local_settings_and
     active[0] = SignedModelCatalog(1, restored, ()).add_signature(key)
     assert installer.refresh().created
     resumed = NodeConfig.load(path)
+    assert len(resumed.models) == 2
     assert {model.manifest_digest for model in load_configured_catalog(resumed).models} == {
         local.manifest_digest,
         remote.manifest_digest,
@@ -95,3 +104,5 @@ def test_qwen_catalog_withdrawal_and_forward_restore_preserve_local_settings_and
     assert resumed_local.request_timeout == 17
     assert resumed.contribution_policy == retained_policy
     assert (cache / "retained-sentinel").read_bytes() == b"cache stays across withdrawal"
+    assert remote_manifest.is_file()
+    assert (remote_cache / "retained-weights").read_bytes() == b"downloaded model"
