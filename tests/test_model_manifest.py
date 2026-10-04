@@ -855,6 +855,239 @@ def test_incremental_verifier_hashes_metadata_and_requested_shards(tmp_path):
         verifier.ensure_path("README.md")
 
 
+def cache_only_test_manifest(payload: bytes = b"good") -> ModelManifest:
+    source = manifest_dict()
+    config = next(artifact for artifact in source["artifacts"] if artifact["role"] == "config")
+    config.update(sha256=hashlib.sha256(payload).hexdigest(), size=len(payload))
+    return ModelManifest.from_dict(source)
+
+
+def forbid_cache_only_transfer(monkeypatch, verifier):
+    def forbidden(*args, **kwargs):
+        pytest.fail("cache-only verification attempted a transfer or disk reservation")
+
+    monkeypatch.setattr("requests.get", forbidden)
+    monkeypatch.setattr("drift.utils.hub_ranges.download_ranges", forbidden)
+    monkeypatch.setattr("drift.utils.disk_cache.free_disk_space_for", forbidden)
+    monkeypatch.setattr(verifier, "_resumable_hub_download", forbidden)
+
+
+def test_cache_only_uses_local_hub_file_and_rehashes_on_repeated_access(tmp_path, monkeypatch):
+    manifest = cache_only_test_manifest()
+    cache_dir = tmp_path / "cache"
+    snapshot = tmp_path / "hub-snapshot"
+    snapshot.mkdir()
+    cached = snapshot / "config.json"
+    cached.write_bytes(b"good")
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=cache_dir, cache_only=True
+    )
+
+    def local_hub_file(repository, filename, **kwargs):
+        assert (repository, filename, kwargs["revision"]) == (
+            manifest.source.repository,
+            "config.json",
+            manifest.source.revision,
+        )
+        assert kwargs["local_files_only"] is True
+        return str(cached)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", local_hub_file)
+    forbid_cache_only_transfer(monkeypatch, verifier)
+
+    assert verifier.ensure_path("config.json", allowed_roles={"config"}) == cached.absolute()
+    assert verifier.snapshot_root == snapshot.absolute()
+    assert not cache_dir.exists()
+
+    original_stat = cached.stat()
+    cached.write_bytes(b"evil")  # Same size and mtime must not reuse the earlier hash.
+    os.utime(cached, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    with pytest.raises(ManifestError, match="declared SHA-256"):
+        verifier.ensure_path("config.json", allowed_roles={"config"})
+
+
+def test_cache_only_uses_verified_manifest_cache_final(tmp_path, monkeypatch):
+    from huggingface_hub.utils import LocalEntryNotFoundError
+
+    manifest = cache_only_test_manifest()
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=tmp_path, cache_only=True
+    )
+    _, final, _ = verifier._resumable_paths(manifest.get_artifact("config.json"))
+    final.parent.mkdir(parents=True)
+    final.write_bytes(b"good")
+
+    def local_miss(*args, **kwargs):
+        assert kwargs["local_files_only"] is True
+        raise LocalEntryNotFoundError("not cached in the Hub")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", local_miss)
+    forbid_cache_only_transfer(monkeypatch, verifier)
+
+    assert verifier.ensure_path("config.json", allowed_roles={"config"}) == final.absolute()
+    assert verifier.snapshot_root == final.parent.absolute()
+
+
+def test_cache_only_mixed_local_caches_share_one_snapshot_root(tmp_path, monkeypatch):
+    from huggingface_hub.utils import LocalEntryNotFoundError
+
+    source = manifest_dict()
+    payloads = {"config.json": b"good", "tokenizer.json": b"tt"}
+    for artifact in source["artifacts"]:
+        if artifact["path"] in payloads:
+            payload = payloads[artifact["path"]]
+            artifact.update(sha256=hashlib.sha256(payload).hexdigest(), size=len(payload))
+    manifest = ModelManifest.from_dict(source)
+    snapshot = tmp_path / "hub-snapshot"
+    snapshot.mkdir()
+    (snapshot / "config.json").write_bytes(payloads["config.json"])
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=tmp_path / "cache", cache_only=True
+    )
+    _, custom_final, _ = verifier._resumable_paths(manifest.get_artifact("tokenizer.json"))
+    custom_final.parent.mkdir(parents=True)
+    custom_final.write_bytes(payloads["tokenizer.json"])
+
+    def local_hub_file(*args, **kwargs):
+        assert kwargs["local_files_only"] is True
+        if args[1] == "config.json":
+            return str(snapshot / "config.json")
+        raise LocalEntryNotFoundError("not cached in the Hub")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", local_hub_file)
+    forbid_cache_only_transfer(monkeypatch, verifier)
+
+    assert verifier.ensure_path("config.json", allowed_roles={"config"}) == snapshot / "config.json"
+    assert verifier.ensure_path("tokenizer.json", allowed_roles={"tokenizer"}) == snapshot / "tokenizer.json"
+    assert verifier.snapshot_root == snapshot.absolute()
+    assert (snapshot / "tokenizer.json").read_bytes() == payloads["tokenizer.json"]
+    assert custom_final.read_bytes() == payloads["tokenizer.json"]
+
+
+@pytest.mark.parametrize("partial_bytes", [None, b"go", b"good"])
+def test_cache_only_rejects_missing_final_even_with_partial(tmp_path, monkeypatch, partial_bytes):
+    from huggingface_hub.utils import LocalEntryNotFoundError
+
+    manifest = cache_only_test_manifest()
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=tmp_path, cache_only=True
+    )
+    partial, final, _ = verifier._resumable_paths(manifest.get_artifact("config.json"))
+    if partial_bytes is not None:
+        partial.parent.mkdir(parents=True)
+        partial.write_bytes(partial_bytes)
+
+    def local_miss(*args, **kwargs):
+        assert kwargs["local_files_only"] is True
+        raise LocalEntryNotFoundError("not cached")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", local_miss)
+    forbid_cache_only_transfer(monkeypatch, verifier)
+
+    with pytest.raises(ManifestError, match="not available in the local cache"):
+        verifier.ensure_path("config.json", allowed_roles={"config"})
+    assert not final.exists()
+    if partial_bytes is not None:
+        assert partial.read_bytes() == partial_bytes
+
+
+@pytest.mark.parametrize("cached_bytes", [b"go", b"evil"])
+def test_cache_only_rejects_truncated_or_corrupt_manifest_final(tmp_path, monkeypatch, cached_bytes):
+    from huggingface_hub.utils import LocalEntryNotFoundError
+
+    manifest = cache_only_test_manifest()
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=tmp_path, cache_only=True
+    )
+    _, final, _ = verifier._resumable_paths(manifest.get_artifact("config.json"))
+    final.parent.mkdir(parents=True)
+    final.write_bytes(cached_bytes)
+
+    def local_miss(*args, **kwargs):
+        assert kwargs["local_files_only"] is True
+        raise LocalEntryNotFoundError("not cached")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", local_miss)
+    forbid_cache_only_transfer(monkeypatch, verifier)
+
+    with pytest.raises(ManifestError, match="size .* expected|declared SHA-256"):
+        verifier.ensure_path("config.json", allowed_roles={"config"})
+    assert final.read_bytes() == cached_bytes
+
+
+def test_cache_only_explicit_artifact_root_never_falls_back_to_cache(tmp_path, monkeypatch):
+    manifest = cache_only_test_manifest()
+    root = tmp_path / "owner-snapshot"
+    root.mkdir()
+    verifier = ManifestArtifactVerifier(
+        manifest,
+        manifest.source.repository,
+        manifest.source.revision,
+        artifact_root=root,
+        cache_only=True,
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("explicit artifact root attempted a cache lookup")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", forbidden)
+    forbid_cache_only_transfer(monkeypatch, verifier)
+
+    with pytest.raises(ManifestError, match="Could not read artifact"):
+        verifier.ensure_path("config.json", allowed_roles={"config"})
+    (root / "config.json").write_bytes(b"evil")
+    with pytest.raises(ManifestError, match="declared SHA-256"):
+        verifier.ensure_path("config.json", allowed_roles={"config"})
+
+
+def test_cache_only_rejects_direct_transfer_helper_call(tmp_path, monkeypatch):
+    manifest = cache_only_test_manifest()
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=tmp_path, cache_only=True
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("cache-only transfer helper attempted HTTP")
+
+    monkeypatch.setattr("requests.get", forbidden)
+    monkeypatch.setattr("drift.utils.hub_ranges.download_ranges", forbidden)
+
+    with pytest.raises(ManifestError, match="transfer is disabled in cache-only mode"):
+        verifier._resumable_hub_download(manifest.get_artifact("config.json"))
+    assert not (tmp_path / "manifest-artifacts").exists()
+
+
+def test_default_verifier_still_downloads_after_local_cache_miss(tmp_path, monkeypatch):
+    from huggingface_hub.utils import LocalEntryNotFoundError
+
+    manifest = cache_only_test_manifest()
+    verifier = ManifestArtifactVerifier(
+        manifest, manifest.source.repository, manifest.source.revision, cache_dir=tmp_path
+    )
+    reservations = []
+    transfers = []
+
+    def local_miss(*args, **kwargs):
+        assert kwargs["local_files_only"] is True
+        raise LocalEntryNotFoundError("not cached")
+
+    def local_transfer(artifact, *, destination=None):
+        transfers.append((artifact.path, destination))
+        _, final, _ = verifier._resumable_paths(artifact)
+        final.parent.mkdir(parents=True, exist_ok=True)
+        final.write_bytes(b"good")
+        return str(final)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", local_miss)
+    monkeypatch.setattr("drift.utils.disk_cache.free_disk_space_for", lambda size, **kwargs: reservations.append(size))
+    monkeypatch.setattr(verifier, "_resumable_hub_download", local_transfer)
+
+    result = verifier.ensure_path("config.json", allowed_roles={"config"})
+    assert result.read_bytes() == b"good"
+    assert reservations == [4]
+    assert transfers == [("config.json", None)]
+
+
 def test_interrupted_download_can_resume_and_is_reverified(tmp_path, monkeypatch):
     """A real interrupted HTTP response resumes with Range and stays hidden until verified."""
     import socket
