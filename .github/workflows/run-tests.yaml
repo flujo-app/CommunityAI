@@ -29,6 +29,14 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+      - name: Install Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            libdbus-1-3 libegl1 libgl1 libglib2.0-0 libfontconfig1 libfreetype6 \
+            libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libwayland-cursor0 xvfb xauth
       - name: Install dependencies
         run: |
           uv sync --extra dev --python ${{ matrix.python-version }}

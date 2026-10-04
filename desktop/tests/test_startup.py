@@ -402,7 +402,7 @@ class LoginStartupTests(unittest.TestCase):
         from communityai_desktop.pyside_shell import run
 
         application = QApplication.instance() or QApplication([])
-        name = f"communityai-test-{uuid.uuid4().hex}"
+        name = f"cai-{uuid.uuid4().hex}"
         QLocalServer.removeServer(name)
         server = QLocalServer(application)
         server.setSocketOptions(QLocalServer.UserAccessOption)
@@ -440,7 +440,7 @@ class LoginStartupTests(unittest.TestCase):
 
         from communityai_desktop.pyside_shell import run
 
-        name = f"communityai-owner-test-{uuid.uuid4().hex}"
+        name = f"cai-{uuid.uuid4().hex}"
 
         def unavailable():
             raise RuntimeError("offline for UI smoke")
