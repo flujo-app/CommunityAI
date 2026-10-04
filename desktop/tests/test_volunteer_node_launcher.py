@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import ctypes
 import importlib.util
 import io
 import json
@@ -538,6 +539,49 @@ class VolunteerNodeLauncherTests(unittest.TestCase):
         self.assertEqual(bootstrap_calls[0][0][1:3], ("bootstrap", str(bootstrap_input)))
         self.assertEqual(bootstrap_calls[0][1]["cwd"], str(self.profile.data_dir))
         self.assertEqual(len(self.dispatches), 3)
+
+    @unittest.skipUnless(os.name == "nt", "Windows 8.3 path aliases")
+    def test_windows_short_profile_path_keeps_lifecycle_arguments_private(self):
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(self.home), None, 0)
+        if not length:
+            self.skipTest("Windows did not provide a short path")
+        buffer = ctypes.create_unicode_buffer(length)
+        if not ctypes.windll.kernel32.GetShortPathNameW(str(self.home), buffer, length):
+            self.skipTest("Windows did not provide a short path")
+        short_home = Path(buffer.value)
+        if os.path.normcase(str(short_home)) == os.path.normcase(str(self.home)):
+            self.skipTest("8.3 aliases are disabled for this fixture")
+
+        profile = VolunteerProfile(short_home / ".communityai" / "multigpu-volunteer")
+        profile.prepare()
+        from communityai_desktop.lifecycle import NodeLifecycleSupervisor
+
+        supervisor = NodeLifecycleSupervisor(
+            profile.node_url,
+            types.SimpleNamespace(service=profile.credential_service, account=profile.credential_account),
+            config_path=profile.config_path,
+            data_dir=profile.data_dir,
+            node_command=(str(self.home / "volunteer-node"),),
+            pause_sharing_on_start=True,
+            local_inference_cpu_only=True,
+            allow_external_node=False,
+        )
+        with patch.object(VolunteerProfile, "for_current_user", return_value=profile):
+            self.assertEqual(self._run(supervisor._command()[1:]), 0)
+        self.assertEqual(self.dispatches[-1][1], profile.data_dir)
+
+        outside = self.home / "ordinary" / "escape.json"
+        with self.assertRaisesRegex(ValueError, "fixed profile root"):
+            launcher._node_arguments(["--data_dir", str(outside)], profile)
+        outside.parent.mkdir()
+        linked = profile.data_dir / "linked"
+        try:
+            linked.symlink_to(outside.parent, target_is_directory=True)
+        except OSError:
+            pass  # External absolute path above still exercises the escape rejection.
+        else:
+            with self.assertRaisesRegex(ValueError, "symbolic links or junctions"):
+                launcher._node_arguments(["--data_dir", str(linked)], profile)
 
     def test_worker_requires_inherited_current_parent_and_profile_before_dispatch(self):
         arguments = self._worker()

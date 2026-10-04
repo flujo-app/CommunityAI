@@ -1,10 +1,10 @@
 """Short process-tree containment experiment; no vLLM, model or GPU required."""
 
+import importlib.util
 import subprocess
 import sys
 import tempfile
 import time
-import importlib.util
 from pathlib import Path
 
 SUPERVISOR = Path(__file__).resolve().parents[1] / "src" / "drift" / "node" / "edge_supervisor.py"

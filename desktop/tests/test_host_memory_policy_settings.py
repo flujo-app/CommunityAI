@@ -7,12 +7,11 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import test_gpu_sharing_integration as gpu_fixture
+from communityai_desktop.client import NodeClientError, _normalize_policy
+from communityai_desktop.presentation import sharing_reason
 from PySide6.QtCore import QPoint, QRect, QTimer
 from PySide6.QtGui import QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QLabel, QLineEdit, QPlainTextEdit, QScrollArea
-
-from communityai_desktop.client import NodeClientError, _normalize_policy
-from communityai_desktop.presentation import sharing_reason
 
 
 def contrast(foreground, background):

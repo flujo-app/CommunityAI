@@ -58,10 +58,9 @@ class SimpleDesktopInteractionTests(unittest.TestCase):
         self._exercise_poll_race(True)
 
     def _exercise_poll_race(self, fail_poll):
+        from communityai_desktop.pyside_shell import run
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QLabel
-
-        from communityai_desktop.pyside_shell import run
 
         with fake_node(all_workers_paused=True) as (url, token):
             state = DesktopController(NodeClient(url, token)).snapshot()

@@ -50,11 +50,13 @@ class ManagedLlamaCppBinding:
             or endpoint.username is not None
             or endpoint.password is not None
             or endpoint.path not in {"", "/"}
-            or endpoint.query or endpoint.fragment
+            or endpoint.query
+            or endpoint.fragment
         ):
             raise ValueError("managed llama.cpp endpoint must be loopback HTTP")
         if (
-            type(self.api_key) is not str or not self.api_key
+            type(self.api_key) is not str
+            or not self.api_key
             or any(ord(character) < 33 or ord(character) > 126 for character in self.api_key)
         ):
             raise ValueError("invalid managed llama.cpp API key")
@@ -65,9 +67,8 @@ class ManagedLlamaCppBinding:
             or len(set(self.device_ids)) != len(self.device_ids)
         ):
             raise ValueError("invalid llama.cpp GPU selection")
-        if (
-            self.split_mode not in {"none", "layer", "tensor"}
-            or (self.split_mode == "none") != (len(self.device_ids) == 1)
+        if self.split_mode not in {"none", "layer", "tensor"} or (self.split_mode == "none") != (
+            len(self.device_ids) == 1
         ):
             raise ValueError("invalid llama.cpp split mode or GPU count")
         if type(self.max_model_len) is not int or not 1 <= self.max_model_len <= 2048:

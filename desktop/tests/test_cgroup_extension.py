@@ -9,8 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from desktop import cgroup_extension as extension
-from desktop import launch_node
+from desktop import cgroup_extension as extension, launch_node
 
 
 class CgroupExtensionTests(unittest.TestCase):

@@ -144,11 +144,18 @@ def _stored_receipt(row: tuple) -> WorkReceipt:
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ShadowCreditError("invalid stored receipt") from exc
     _require(
-        (receipt.receipt_id, receipt.digest, receipt.request_id, receipt.provider_id,
-         receipt.stage_id, receipt.attempt_id, receipt.proposed_charge, receipt.input_units,
-         receipt.output_units)
-        == (receipt_id, digest, request_id, provider_id, stage_id, attempt_id,
-            charge, input_units, output_units),
+        (
+            receipt.receipt_id,
+            receipt.digest,
+            receipt.request_id,
+            receipt.provider_id,
+            receipt.stage_id,
+            receipt.attempt_id,
+            receipt.proposed_charge,
+            receipt.input_units,
+            receipt.output_units,
+        )
+        == (receipt_id, digest, request_id, provider_id, stage_id, attempt_id, charge, input_units, output_units),
         "receipt binding mismatch",
     )
     return receipt
@@ -504,7 +511,8 @@ class ShadowLedger:
             rows = self._db.execute(
                 "SELECT receipt_id, receipt_json, claim_digest, request_id, provider_id, "
                 "stage_id, attempt_id, proposed_charge, input_units, output_units FROM receipts "
-                "WHERE status='pending' ORDER BY rowid LIMIT ?", (limit,)
+                "WHERE status='pending' ORDER BY rowid LIMIT ?",
+                (limit,),
             ).fetchall()
             return tuple(_stored_receipt(row) for row in rows)
 

@@ -62,13 +62,21 @@ def check():
         assert candidate.environment["VLLM_NO_USAGE_STATS"] == "1"
         assert candidate.artifact_revision == PINNED_QUANTIZED_CANDIDATES[ARTIFACT_ID].revision
         assert candidate.recipe_revision == RECIPE_REVISION and candidate.required_vllm_version == "0.30.0"
-        assert not any((candidate.qualified, candidate.remote_code_reviewed,
-                        candidate.quality_equivalence_proven, candidate.rights_approved))
+        assert not any(
+            (
+                candidate.qualified,
+                candidate.remote_code_reviewed,
+                candidate.quality_equivalence_proven,
+                candidate.rights_approved,
+            )
+        )
 
         refused(path, **(options | {"reported_devices": devices[:7]}))
         refused(path, **(options | {"reported_devices": devices[:-1] + (devices[0],)}))
         refused(path, **(options | {"reported_devices": devices[:-1] + ((7, "NVIDIA H200", 70_000_000_000),)}))
-        refused(path, **(options | {"reported_devices": devices[:-1] + ((7, "NVIDIA H100", MINIMUM_PER_RANK_BYTES - 1),)}))
+        refused(
+            path, **(options | {"reported_devices": devices[:-1] + ((7, "NVIDIA H100", MINIMUM_PER_RANK_BYTES - 1),)})
+        )
         refused(path, **(options | {"reported_devices": devices[:-1] + ((7, "NVIDIA H100", True),)}))
         refused(path, **(options | {"reported_devices": [*devices]}))
         refused(path, **(options | {"max_model_len": 2049}))

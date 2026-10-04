@@ -23,14 +23,26 @@ SimulatedServiceQuote = module.SimulatedServiceQuote
 
 def quote(request_id, buyer_id, cap, source, provider_id, resale_listing_id=None):
     return SimulatedServiceQuote(
-        request_id=request_id, buyer_id=buyer_id, provider_id=provider_id, funding_source=source,
-        model_id="test/model", profile_id="test/profile", service_class="text_inference",
-        settlement_domain="local_simulation", artifact_sha256="a" * 64,
-        service_policy_sha256="b" * 64, price_schedule_sha256="c" * 64,
-        input_unit_price=1, output_unit_price=1, max_input_units=cap // 2,
-        max_output_units=cap - cap // 2, fee_bps=0, spend_cap=cap,
+        request_id=request_id,
+        buyer_id=buyer_id,
+        provider_id=provider_id,
+        funding_source=source,
+        model_id="test/model",
+        profile_id="test/profile",
+        service_class="text_inference",
+        settlement_domain="local_simulation",
+        artifact_sha256="a" * 64,
+        service_policy_sha256="b" * 64,
+        price_schedule_sha256="c" * 64,
+        input_unit_price=1,
+        output_unit_price=1,
+        max_input_units=cap // 2,
+        max_output_units=cap - cap // 2,
+        fee_bps=0,
+        spend_cap=cap,
         expires_at_unix=int(time.time()) + 60,
-        version=2 if source == "resale" else 1, resale_listing_id=resale_listing_id,
+        version=2 if source == "resale" else 1,
+        resale_listing_id=resale_listing_id,
     )
 
 
@@ -121,9 +133,11 @@ def check_resale(path):
         assert ledger.buyer_wallet("buyer")["resale_access_available"] == 25
         assert ledger.resale_lot_balance("buyer", "listing_1") == 20
         assert ledger.resale_lot_balance("buyer", "listing_other") == 5
-        denied(lambda: ledger.reserve_service(
-            quote("wrong_buyer", "buyer_void", 5, "resale", "service_provider", "listing_other")
-        ))
+        denied(
+            lambda: ledger.reserve_service(
+                quote("wrong_buyer", "buyer_void", 5, "resale", "service_provider", "listing_other")
+            )
+        )
 
         # Resale-origin access can be used but cannot itself be listed.
         denied(lambda: ledger.list_earned_credits("buyer_cannot_resell", "buyer", 20, 20, 0, expiry))
@@ -131,18 +145,18 @@ def check_resale(path):
         assert ledger.settle_service("buyer_use", "service_provider", 5, 0, "use_decision", "b" * 64, 2, 3)
         assert ledger.buyer_wallet("buyer")["resale_access_available"] == 20
         assert ledger.resale_lot_balance("buyer", "listing_1") == 15
-        denied(lambda: ledger.reserve_service(
-            quote("wrong_lot_use", "buyer", 20, "resale", "service_provider", "listing_1")
-        ))
+        denied(
+            lambda: ledger.reserve_service(
+                quote("wrong_lot_use", "buyer", 20, "resale", "service_provider", "listing_1")
+            )
+        )
 
         # A reversal while a buyer request is held must route its later refund
         # into loss recovery, never recreate spendable buyer credits.
         assert ledger.list_earned_credits("listing_held", "seller", 10, 10, 0, expiry)
         assert ledger.place_resale_order("listing_held", "buyer_held", "resale_ref_held")
         assert ledger.record_verified_resale_event("held_capture", "resale_ref_held", "capture", 10)
-        assert ledger.reserve_service(quote(
-            "held_use", "buyer_held", 10, "resale", "service_provider", "listing_held"
-        ))
+        assert ledger.reserve_service(quote("held_use", "buyer_held", 10, "resale", "service_provider", "listing_held"))
         assert ledger.record_verified_resale_event("held_reversal", "resale_ref_held", "reversal", 10)
         assert ledger.audit()["unfunded_reversal_loss"] == 10
         assert ledger.refund_service("held_use", "no_output")
@@ -201,18 +215,23 @@ def check_migration(path):
             "INSERT INTO reservations(request_id,buyer_id,source,cap,status) VALUES (?,?,?,?,?)",
             (sample.request_id, sample.buyer_id, sample.funding_source, sample.spend_cap, "held"),
         )
-        connection.execute("INSERT INTO quotes VALUES (?,?,?)",
-                           (sample.request_id, json.dumps(asdict(sample), sort_keys=True,
-                            separators=(",", ":"), ensure_ascii=True), sample.digest))
+        connection.execute(
+            "INSERT INTO quotes VALUES (?,?,?)",
+            (
+                sample.request_id,
+                json.dumps(asdict(sample), sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+                sample.digest,
+            ),
+        )
         connection.execute("PRAGMA user_version=1")
     connection.close()
     with CommerceSimulator(path) as upgraded:
         assert upgraded._load_quote("legacy_request").digest == sample.digest
         assert upgraded._db.execute("PRAGMA user_version").fetchone()[0] == 2
         assert upgraded._db.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert "'resale'" in upgraded._db.execute(
-            "SELECT sql FROM sqlite_master WHERE name='reservations'"
-        ).fetchone()[0]
+        assert (
+            "'resale'" in upgraded._db.execute("SELECT sql FROM sqlite_master WHERE name='reservations'").fetchone()[0]
+        )
 
 
 def check_held_settlement(path):

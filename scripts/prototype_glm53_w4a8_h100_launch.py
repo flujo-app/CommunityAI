@@ -8,18 +8,28 @@ def candidate(artifact: str, devices: tuple[int, ...], free_gpu_bytes: tuple[int
     if artifact != ARTIFACT:
         raise ValueError("wrong artifact")
     if (
-        type(devices) is not tuple or len(devices) != 8
+        type(devices) is not tuple
+        or len(devices) != 8
         or any(type(device) is not int or device < 0 for device in devices)
         or len(set(devices)) != 8
-        or type(free_gpu_bytes) is not tuple or len(free_gpu_bytes) != 8
+        or type(free_gpu_bytes) is not tuple
+        or len(free_gpu_bytes) != 8
         or any(type(amount) is not int or amount < (MINIMUM_GPU_BYTES + 7) // 8 for amount in free_gpu_bytes)
         or sum(free_gpu_bytes) < MINIMUM_GPU_BYTES
     ):
         raise ValueError("H100 W4A8 candidate requires eight distinct adequately free GPUs")
     return (
-        "vllm", "serve", "/reviewed/snapshot", "--served-model-name", ARTIFACT,
-        "--tensor-parallel-size", "8", "--enable-expert-parallel",
-        "--kv-cache-dtype", "fp8_ds_mla", "--trust-remote-code",
+        "vllm",
+        "serve",
+        "/reviewed/snapshot",
+        "--served-model-name",
+        ARTIFACT,
+        "--tensor-parallel-size",
+        "8",
+        "--enable-expert-parallel",
+        "--kv-cache-dtype",
+        "fp8_ds_mla",
+        "--trust-remote-code",
     )
 
 
