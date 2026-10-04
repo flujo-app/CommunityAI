@@ -326,6 +326,25 @@ class AdmissionGate:
         _require(self._read_authority() == revision, "AUTHORITY_CHANGED")
         return result
 
+    def _require_all_current(self, bindings: tuple[Binding, ...], appraisals: list[Appraisal]) -> None:
+        """Check every session against one clock sample before a sensitive callback.
+
+        Per-session validation alone leaves an earlier appraisal stale while a
+        later session is being checked. This is a synchronous boundary check,
+        not an atomic guarantee across a later physical network send.
+        """
+        try:
+            now = self._clock()
+        except Exception:
+            raise AdmissionDenied("CLOCK_UNAVAILABLE") from None
+        _require(_finite(now), "LIFETIME_INVALID")
+        for binding, result in zip(bindings, appraisals):
+            profile = self.preflight(binding)
+            _require(0 <= now - result.evaluated_at <= profile.max_evidence_age_seconds, "EVIDENCE_NOT_FRESH")
+            _require(now < min(result.expires_at, result.collateral_expires_at), "AUTHORIZATION_EXPIRED")
+        revision = self._read_authority()
+        _require(all(result.authority_revision == revision for result in appraisals), "AUTHORITY_CHANGED")
+
     def dispatch(
         self,
         bindings: Iterable[Binding],
@@ -394,6 +413,8 @@ class AdmissionGate:
         for binding, result in zip(requirements, appraisals):
             self._validate(binding, self.preflight(binding), result, result.authority_revision)
         assert_plan_stable()
+        self._require_all_current(requirements, appraisals)
+        assert_plan_stable()
         payload = _synchronous(prepare())
         assert_plan_stable()
         authorize_stable()
@@ -402,5 +423,7 @@ class AdmissionGate:
         authorize_stable()
         for binding, result in zip(requirements, appraisals):
             self._validate(binding, self.preflight(binding), result, result.authority_revision)
+        assert_plan_stable()
+        self._require_all_current(requirements, appraisals)
         assert_plan_stable()
         return _synchronous(send(payload))
