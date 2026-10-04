@@ -103,17 +103,25 @@ class RuntimePackagingTests(unittest.TestCase):
         first = self.write("_internal/a.so")
         second = self.write("_internal/b.so")
         real_hash = packaging._sha256
+        original_stat = first.stat()
+        original_identity = packaging._identity(first)
+        # This rewrite keeps the original byte length and mtime, so metadata
+        # alone cannot detect a stale source digest before hardlink replacement.
+        self.assertEqual(len(b"poison-library"), len(b"native-library"))
 
         def hash_and_change(path):
             digest = real_hash(path)
             if path == first:
-                first.write_bytes(b"changed-longer")
+                first.write_bytes(b"poison-library")
+                os.utime(first, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+                self.assertEqual(packaging._identity(first), original_identity)
             return digest
 
         with patch.object(packaging, "_sha256", side_effect=hash_and_change):
             with self.assertRaisesRegex(RuntimeError, "changed during"):
                 self.normalize()
         self.assertFalse(os.path.samefile(first, second))
+        self.assertEqual(second.read_bytes(), b"native-library")
 
     def test_deb_staging_preserves_hardlinks_even_across_device_copy_fallback(self):
         first = self.write("a.so", b"a" * 1025)
