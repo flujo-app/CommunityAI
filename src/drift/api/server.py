@@ -85,6 +85,12 @@ class ChatMessage(BaseModel):
     content: Union[StrictStr, List[TextContentPart]] = ""
 
 
+class StreamOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    include_usage: StrictBool
+
+
 class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: Optional[str] = None
@@ -95,6 +101,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = None
     stop: Optional[Union[str, List[str]]] = None
     stream: bool = False
+    stream_options: Optional[StreamOptions] = None
     n: int = 1
     # Optional extension for verified templates that expose a reasoning switch.
     # Omission preserves the model's own template default.
@@ -110,6 +117,7 @@ class CompletionRequest(BaseModel):
     top_p: Optional[float] = None
     stop: Optional[Union[str, List[str]]] = None
     stream: bool = False
+    stream_options: Optional[StreamOptions] = None
     n: int = 1
 
 
@@ -419,7 +427,14 @@ def create_app(
     def finish_reason(completion_tokens: int, gen_kwargs: Dict[str, Any]) -> str:
         return "length" if completion_tokens >= gen_kwargs["max_new_tokens"] else "stop"
 
-    async def sse_stream(loaded: LoadedModel, input_ids: torch.Tensor, gen_kwargs: Dict[str, Any], *, chat: bool):
+    async def sse_stream(
+        loaded: LoadedModel,
+        input_ids: torch.Tensor,
+        gen_kwargs: Dict[str, Any],
+        *,
+        chat: bool,
+        include_usage: bool = False,
+    ):
         """Yield OpenAI-format SSE chunks while generate() runs in a worker thread."""
         request_id = f"{'chatcmpl' if chat else 'cmpl'}-{uuid.uuid4().hex[:24]}"
         created = int(time.time())
@@ -432,6 +447,19 @@ def create_app(
             choice.update(payload)
             body = {"id": request_id, "object": object_name, "created": created, "model": selected_model}
             body["choices"] = [choice]
+            if include_usage:
+                body["usage"] = None
+            return f"data: {json.dumps(body)}\n\n"
+
+        def usage_chunk(output_ids: torch.Tensor) -> str:
+            body = {
+                "id": request_id,
+                "object": object_name,
+                "created": created,
+                "model": selected_model,
+                "choices": [],
+                "usage": usage(input_ids, output_ids),
+            }
             return f"data: {json.dumps(body)}\n\n"
 
         future = None
@@ -460,11 +488,15 @@ def create_app(
                 try:
                     output_ids = await asyncio.shield(future)
                     reason = finish_reason(output_ids.shape[1] - input_ids.shape[1], gen_kwargs)
+                    completed = True
                 except Exception as exc:
                     logger.exception("Generation failed mid-stream")
                     yield f"data: {json.dumps({'error': {'message': str(exc), 'type': 'server_error'}})}\n\n"
                     reason = "stop"
+                    completed = False
                 yield chunk({"delta": {}} if chat else {"text": ""}, reason)
+                if include_usage and completed:
+                    yield usage_chunk(output_ids)
                 yield "data: [DONE]\n\n"
         finally:
             cancelled.event.set()
@@ -509,6 +541,8 @@ def create_app(
     async def chat_completions(body: ChatCompletionRequest, request: Request):
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
+        if body.stream_options is not None and not body.stream:
+            raise HTTPException(status_code=400, detail="stream_options requires stream=true")
         context = request_context(body, request)
         loaded = await load_with_budget(body.model, context)
         if context.single_attempt and (
@@ -547,7 +581,14 @@ def create_app(
 
         if body.stream:
             return StreamingResponse(
-                sse_stream(loaded, input_ids, gen_kwargs, chat=True), media_type="text/event-stream"
+                sse_stream(
+                    loaded,
+                    input_ids,
+                    gen_kwargs,
+                    chat=True,
+                    include_usage=body.stream_options is not None and body.stream_options.include_usage,
+                ),
+                media_type="text/event-stream",
             )
 
         future = None
@@ -586,6 +627,8 @@ def create_app(
     async def completions(body: CompletionRequest, request: Request):
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
+        if body.stream_options is not None and not body.stream:
+            raise HTTPException(status_code=400, detail="stream_options requires stream=true")
         context = request_context(body, request)
         loaded = await load_with_budget(body.model, context)
         if context.single_attempt and (
@@ -624,7 +667,14 @@ def create_app(
 
         if body.stream:
             return StreamingResponse(
-                sse_stream(loaded, input_ids, gen_kwargs, chat=False), media_type="text/event-stream"
+                sse_stream(
+                    loaded,
+                    input_ids,
+                    gen_kwargs,
+                    chat=False,
+                    include_usage=body.stream_options is not None and body.stream_options.include_usage,
+                ),
+                media_type="text/event-stream",
             )
 
         future = None

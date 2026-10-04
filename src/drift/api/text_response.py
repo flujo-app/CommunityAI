@@ -24,7 +24,12 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
     created = int(time.time())
     model_id = loaded.descriptor.manifest_digest if context.single_attempt else loaded.descriptor.model_id
     request = body.model_dump(exclude_none=True)
+    # Ordinary mixed-version peers retain their old request surface. Factory
+    # sends retain every admitted body field, including the response option.
+    if not context.single_attempt:
+        request.pop("stream_options", None)
     request["model"] = loaded.descriptor.manifest_digest
+    include_usage = body.stream_options is not None and body.stream_options.include_usage
     events_started = False
 
     def error_detail(exc):
@@ -53,9 +58,27 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
             "model": model_id,
             "choices": [choice],
         }
-        if done is not None:
+        if include_usage:
+            result["usage"] = None
+        elif done is not None:
             result["usage"] = done["usage"]
         return "data: " + json.dumps(result) + "\n\n"
+
+    def usage_chunk(done):
+        return (
+            "data: "
+            + json.dumps(
+                {
+                    "id": request_id,
+                    "object": "chat.completion.chunk" if chat else "text_completion",
+                    "created": created,
+                    "model": model_id,
+                    "choices": [],
+                    "usage": done["usage"],
+                }
+            )
+            + "\n\n"
+        )
 
     async def events():
         nonlocal events_started
@@ -128,6 +151,8 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
                 elif frame["type"] == "done":
                     done = True
                     yield chunk(done=frame)
+                    if include_usage:
+                        yield usage_chunk(frame)
                 else:
                     yield ": waiting for community\n\n"
             if not done:
