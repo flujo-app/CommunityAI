@@ -1,6 +1,7 @@
 """Consumer acceptance: no local model, full text responses, real peer transport."""
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -106,6 +107,73 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         result = await self.client.post("/v1/completions", json={"model": "auto", "prompt": "Hi"})
         self.assertEqual(result.json()["choices"][0]["text"], "Hello from peers.")
         self.assertEqual(self.peer.closed_requests, 2)
+
+    async def test_stream_options_format_validated_peer_usage_without_forwarding(self):
+        for endpoint, payload in (
+            ("/v1/chat/completions", {"messages": [{"role": "user", "content": "Hi"}]}),
+            ("/v1/completions", {"prompt": "Hi"}),
+        ):
+            for include_usage in (False, True):
+                response = await self.client.post(
+                    endpoint,
+                    json={
+                        "model": "auto",
+                        **payload,
+                        "stream": True,
+                        "stream_options": {"include_usage": include_usage},
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn("stream_options", self.peer.requests[-1][0])
+                lines = [line[6:] for line in response.text.splitlines() if line.startswith("data: ")]
+                self.assertEqual(lines[-1], "[DONE]")
+                chunks = [json.loads(line) for line in lines[:-1]]
+                if include_usage:
+                    self.assertTrue(all(chunk["usage"] is None for chunk in chunks[:-1]))
+                    self.assertEqual(chunks[-2]["choices"][0]["finish_reason"], "stop")
+                    self.assertEqual(chunks[-1]["choices"], [])
+                    self.assertEqual(
+                        chunks[-1]["usage"], {"prompt_tokens": 3, "completion_tokens": 3, "total_tokens": 6}
+                    )
+                    self.assertEqual({chunk["id"] for chunk in chunks}, {chunks[0]["id"]})
+                else:
+                    self.assertEqual(chunks[-1]["choices"][0]["finish_reason"], "stop")
+                    self.assertEqual(chunks[-1]["usage"]["total_tokens"], 6)
+                    self.assertFalse(any(chunk["choices"] == [] for chunk in chunks))
+
+    async def test_prompt_cache_key_is_not_forwarded_to_ordinary_peers(self):
+        response = await self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "prompt_cache_key": "opaque-fixture-key",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("prompt_cache_key", self.peer.requests[-1][0])
+
+    async def test_failed_peer_stream_does_not_claim_usage(self):
+        async def fail_after_delta(body, *, chat):
+            yield {"type": "delta", "text": "partial"}
+            raise TextPeerUnavailable("peer stopped")
+
+        self.peer.stream = fail_after_delta
+        response = await self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        lines = [line[6:] for line in response.text.splitlines() if line.startswith("data: ")]
+        chunks = [json.loads(line) for line in lines[:-1]]
+        self.assertTrue(any("error" in chunk for chunk in chunks))
+        self.assertFalse(any(chunk.get("choices") == [] for chunk in chunks))
+        self.assertTrue(all(chunk.get("usage") is None for chunk in chunks))
 
     async def test_fallback_only_when_community_path_unavailable_then_returns(self):
         self.assertEqual(self.manager.resolve("auto").model_id, "Community")

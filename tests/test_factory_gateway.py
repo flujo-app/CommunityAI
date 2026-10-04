@@ -18,11 +18,13 @@ class Client:
 
     def __init__(self):
         self.contexts = []
+        self.bodies = []
         self.fail = False
 
     async def stream(self, body, *, chat, context):
         context.begin_dispatch()
         self.contexts.append(context)
+        self.bodies.append(body)
         if self.fail:
             raise TextPeerOutcomeUnknown(context.request_id)
         yield {"type": "delta", "text": "answer"}
@@ -191,6 +193,54 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(context.single_attempt for context in self.peer.contexts))
         self.assertTrue(all(item.active_requests == 0 for item in self.manager.snapshots()))
 
+    async def test_stream_options_preserve_admitted_peer_body_and_original_identity(self):
+        for endpoint, schema, payload in (
+            ("/v1/chat/completions", ChatCompletionRequest, {"messages": [{"role": "user", "content": "hello"}]}),
+            ("/v1/completions", CompletionRequest, {"prompt": "hello"}),
+        ):
+            for include_usage in (False, True):
+                body = {
+                    "model": MANIFEST,
+                    **payload,
+                    "stream": True,
+                    "stream_options": {"include_usage": include_usage},
+                }
+                normalized = schema(**body).model_dump(exclude_none=True)
+                request_id = f"{len(self.claimed) + 1:032x}"
+                self.admission = self.record(normalized, request_id)
+                response = await self.post(body, path=endpoint)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self.peer.bodies[-1], normalized)
+                lines = [line[6:] for line in response.text.splitlines() if line.startswith("data: ")]
+                self.assertEqual(lines[-1], "[DONE]")
+                frames = [json.loads(line) for line in lines[:-1]]
+                prefix = "chatcmpl-" if endpoint.endswith("chat/completions") else "cmpl-"
+                self.assertTrue(all(frame["id"] == prefix + request_id for frame in frames))
+                if include_usage:
+                    self.assertTrue(all(frame["usage"] is None for frame in frames[:-1]))
+                    self.assertEqual(frames[-2]["choices"][0]["finish_reason"], "stop")
+                    self.assertEqual(frames[-1]["choices"], [])
+                else:
+                    self.assertEqual(frames[-1]["choices"][0]["finish_reason"], "stop")
+                self.assertEqual(frames[-1]["usage"]["total_tokens"], 2)
+                self.assertEqual(self.peer.contexts[-1].request_id, request_id)
+        self.assertEqual(len(self.claimed), 4)
+        self.assertEqual(len(self.peer.contexts), 4)
+
+    async def test_changed_stream_options_cannot_reuse_original_body(self):
+        for endpoint, schema, payload in (
+            ("/v1/chat/completions", ChatCompletionRequest, {"messages": [{"role": "user", "content": "hello"}]}),
+            ("/v1/completions", CompletionRequest, {"prompt": "hello"}),
+        ):
+            admitted = {"model": MANIFEST, **payload, "stream": True, "stream_options": {"include_usage": True}}
+            self.admission = self.record(schema(**admitted).model_dump(exclude_none=True))
+            response = await self.post({**admitted, "stream_options": {"include_usage": False}}, path=endpoint)
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(self.auth_checks, [])
+            self.assertEqual(self.loads, [])
+            self.assertEqual(self.claimed, set())
+            self.assertEqual(self.peer.bodies, [])
+
     async def test_unknown_json_and_sse_do_not_claim_completion_or_retry(self):
         self.peer.fail = True
         response = await self.post()
@@ -200,10 +250,12 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail["request_id"], REQUEST)
         self.assertFalse(detail["retryable"])
         self.body["stream"] = True
+        self.body["stream_options"] = {"include_usage": True}
         self.admission = self.record(ChatCompletionRequest(**self.body).model_dump(exclude_none=True), "c" * 32)
         response = await self.post()
         self.assertIn('"code": "inference_outcome_unknown"', response.text)
         self.assertNotIn('"finish_reason": "stop"', response.text)
+        self.assertNotIn('"choices": []', response.text)
         self.assertEqual(len(self.peer.contexts), 2)  # one entry per explicit fixture request
 
     async def test_plain_completions_share_original_gate_and_identity(self):

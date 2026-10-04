@@ -94,6 +94,26 @@ def test_official_python_client_models_completions_chat_and_streaming():
         assert streamed.replace(" ", "") == "tok101tok102tok103"
 
 
+@pytest.mark.parametrize("chat", [False, True])
+def test_official_python_client_consumes_requested_terminal_usage(chat):
+    app = create_app(_Model(), _Tokenizer(), model_name="local-test", api_keys=["local-key"])
+    with _live_server(app) as base_url:
+        client = openai.OpenAI(api_key="local-key", base_url=base_url, max_retries=0, timeout=5)
+        arguments = dict(model="local-test", max_tokens=3, stream=True, stream_options={"include_usage": True})
+        if chat:
+            stream = client.chat.completions.create(messages=[{"role": "user", "content": "hello"}], **arguments)
+        else:
+            stream = client.completions.create(prompt="hello", **arguments)
+        chunks = list(stream)
+        assert all(chunk.usage is None for chunk in chunks[:-1])
+        assert chunks[-2].choices[0].finish_reason == "length"
+        assert chunks[-1].choices == []
+        assert chunks[-1].usage.prompt_tokens == 2
+        assert chunks[-1].usage.completion_tokens == 3
+        assert chunks[-1].usage.total_tokens == 5
+        assert {chunk.id for chunk in chunks} == {chunks[0].id}
+
+
 def test_official_python_client_observes_bearer_authentication():
     app = create_app(_Model(), _Tokenizer(), model_name="local-test", api_keys=["local-key"])
     with _live_server(app) as base_url:

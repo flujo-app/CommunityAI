@@ -51,7 +51,7 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pytest -p pytest_asyncio.plugin -q --disable-warnings \
-            tests/test_factory_admission.py tests/test_factory_gateway.py \
+            tests/test_factory_admission.py tests/test_factory_gateway.py tests/test_factory_sdk_asgi_hold.py \
             tests/test_text_peer_request_guards.py tests/test_text_request_deadline.py \
             tests/test_openai_api.py tests/test_official_openai_client.py tests/test_text_mesh.py \
             -k 'not RealTransportTests'
@@ -93,6 +93,7 @@ jobs:
             tests/test_external_qualification.py \
             tests/test_factory_admission.py \
             tests/test_factory_gateway.py \
+            tests/test_factory_sdk_asgi_hold.py \
             tests/test_device_portability.py \
             tests/test_gate16_catalog_channel.py \
             tests/test_gate16_catalog_drill.py \

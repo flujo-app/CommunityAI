@@ -336,6 +336,117 @@ def test_chat_completion_stream(api):
     assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
 
 
+@pytest.mark.parametrize("include_usage", [False, True])
+@pytest.mark.parametrize(
+    "path,payload",
+    [
+        ("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}),
+        ("/v1/completions", {"prompt": "hi"}),
+    ],
+)
+def test_stream_options_emit_terminal_usage_only_when_requested(api, include_usage, path, payload):
+    response = api.client.post(
+        path,
+        json={
+            **payload,
+            "stream": True,
+            "stream_options": {"include_usage": include_usage},
+        },
+    )
+    assert response.status_code == 200
+    lines = [line[6:] for line in response.text.splitlines() if line.startswith("data: ")]
+    assert lines[-1] == "[DONE]"
+    chunks = [json.loads(line) for line in lines[:-1]]
+    if include_usage:
+        assert len([chunk for chunk in chunks if chunk["choices"] == []]) == 1
+        assert all(chunk["usage"] is None for chunk in chunks[:-1])
+        assert chunks[-2]["choices"][0]["finish_reason"] == "stop"
+        assert chunks[-1]["choices"] == []
+        prompt_tokens = 3 if path == "/v1/chat/completions" else 1
+        assert chunks[-1]["usage"] == {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": 3,
+            "total_tokens": prompt_tokens + 3,
+        }
+        assert {chunk["id"] for chunk in chunks} == {chunks[0]["id"]}
+    else:
+        assert all("usage" not in chunk for chunk in chunks)
+        assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+
+
+@pytest.mark.parametrize(
+    "options,stream,expected_status",
+    [
+        ({}, True, 422),
+        ({"include_usage": "true"}, True, 422),
+        ({"include_usage": 1}, True, 422),
+        ({"include_usage": True, "unsupported": True}, True, 422),
+        ([], True, 422),
+        ({"include_usage": True}, False, 400),
+    ],
+)
+@pytest.mark.parametrize(
+    "path,payload",
+    [
+        ("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}),
+        ("/v1/completions", {"prompt": "hi"}),
+    ],
+)
+def test_invalid_stream_options_fail_before_model_load(options, stream, expected_status, path, payload):
+    loads = []
+    manager = ModelManager()
+
+    def load():
+        loads.append(True)
+        raise AssertionError("invalid request must not load a model")
+
+    manager.register(ModelDescriptor("lazy"), load)
+    client = TestClient(create_app(model_manager=manager))
+    response = client.post(
+        path,
+        json={
+            "model": "lazy",
+            **payload,
+            "stream": stream,
+            "stream_options": options,
+        },
+    )
+    assert response.status_code == expected_status
+    assert loads == []
+
+
+@pytest.mark.parametrize(
+    "path,payload",
+    [
+        ("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}),
+        ("/v1/completions", {"prompt": "hi"}),
+    ],
+)
+def test_failed_stream_does_not_claim_usage(path, payload):
+    class FailingAfterEnd(FakeModel):
+        def generate(self, input_ids, *, streamer, **kwargs):
+            streamer.put(input_ids)
+            streamer.end()
+            raise RuntimeError("offline generation failure")
+
+    client = TestClient(create_app(FailingAfterEnd(), FakeTokenizer(), model_name="failing"))
+    response = client.post(
+        path,
+        json={
+            **payload,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+    )
+    assert response.status_code == 200
+    lines = [line[6:] for line in response.text.splitlines() if line.startswith("data: ")]
+    chunks = [json.loads(line) for line in lines[:-1]]
+    assert lines[-1] == "[DONE]"
+    assert any("error" in chunk for chunk in chunks)
+    assert all(chunk.get("usage") is None for chunk in chunks)
+    assert not any(chunk.get("choices") == [] for chunk in chunks)
+
+
 def test_completions_endpoint(api):
     response = api.client.post("/v1/completions", json={"prompt": "one two three", "temperature": 0})
     body = response.json()
