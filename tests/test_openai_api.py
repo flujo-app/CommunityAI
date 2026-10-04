@@ -362,7 +362,12 @@ def test_stream_options_emit_terminal_usage_only_when_requested(api, include_usa
         assert all(chunk["usage"] is None for chunk in chunks[:-1])
         assert chunks[-2]["choices"][0]["finish_reason"] == "stop"
         assert chunks[-1]["choices"] == []
-        assert chunks[-1]["usage"] == {"prompt_tokens": 3, "completion_tokens": 3, "total_tokens": 6}
+        prompt_tokens = 3 if path == "/v1/chat/completions" else 1
+        assert chunks[-1]["usage"] == {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": 3,
+            "total_tokens": prompt_tokens + 3,
+        }
         assert {chunk["id"] for chunk in chunks} == {chunks[0]["id"]}
     else:
         assert all("usage" not in chunk for chunk in chunks)
