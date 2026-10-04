@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, TypeVar
 
+from drift.factory_admission import RequestAdmissionDenied, require_authority
+
 _T = TypeVar("_T")
 MAX_REQUEST_SECONDS = 900.0
 _MAX_CLOCK = float(2**53)
@@ -75,6 +77,10 @@ class RequestContext:
     _clock: Callable[[], float] = field(repr=False, compare=False)
     caller_id: str | None = None
     attempt_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    single_attempt: bool = False
+    dispatch_guard: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+    dispatch_claim: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+    _dispatched: list[bool] = field(default_factory=lambda: [False], init=False, repr=False, compare=False)
     _last: list[float] = field(default_factory=list, init=False, repr=False, compare=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False, compare=False)
 
@@ -93,18 +99,39 @@ class RequestContext:
         _duration(self.deadline - self.issued_at)
         if not callable(self._clock):
             raise ValueError("Invalid request clock")
+        if type(self.single_attempt) is not bool or (
+            self.single_attempt and (not callable(self.dispatch_guard) or not callable(self.dispatch_claim))
+        ):
+            raise ValueError("Single-attempt requests require trusted dispatch guard and claim callbacks")
         self._last.append(self.issued_at)
 
     @classmethod
     def start(
-        cls, timeout: float, *, clock: Callable[[], float] | None = None, caller_id: str | None = None
+        cls,
+        timeout: float,
+        *,
+        clock: Callable[[], float] | None = None,
+        caller_id: str | None = None,
+        request_id: str | None = None,
+        single_attempt: bool = False,
+        dispatch_guard: Callable[[], None] | None = None,
+        dispatch_claim: Callable[[], None] | None = None,
     ) -> "RequestContext":
         duration = _duration(timeout)
         clock = time.monotonic if clock is None else clock
         if not callable(clock):
             raise ValueError("Invalid request clock")
         issued = _clock_value(clock())
-        return cls(uuid.uuid4().hex, issued, issued + duration, clock, caller_id=caller_id)
+        return cls(
+            uuid.uuid4().hex if request_id is None else request_id,
+            issued,
+            issued + duration,
+            clock,
+            caller_id=caller_id,
+            single_attempt=single_attempt,
+            dispatch_guard=dispatch_guard,
+            dispatch_claim=dispatch_claim,
+        )
 
     def remaining(self, cap: float | None = None) -> float:
         bound = None if cap is None else _duration(cap)
@@ -120,6 +147,30 @@ class RequestContext:
 
     def require_live(self) -> None:
         self.remaining()
+
+    def require_dispatch(self) -> None:
+        self.require_live()
+        if self.single_attempt:
+            require_authority(self.dispatch_guard)
+            self.require_live()
+
+    @property
+    def dispatch_started(self) -> bool:
+        with self._lock:
+            return self._dispatched[0]
+
+    def begin_dispatch(self) -> None:
+        """One logical rpc_generate entry, not proof of its physical SDK sends."""
+        with self._lock:
+            if self.single_attempt and self._dispatched[0]:
+                raise RequestAdmissionDenied()
+            self.require_dispatch()
+            if self.single_attempt:
+                # The host must atomically consume the original durable dispatch
+                # right across HTTP requests/processes, without a new reservation.
+                require_authority(self.dispatch_claim)
+                self.require_dispatch()
+            self._dispatched[0] = True
 
     async def acquire(self, semaphore: asyncio.Semaphore) -> None:
         """Acquire a local permit, removing abandoned waiters and raced grants.

@@ -21,15 +21,16 @@ import threading
 import time
 import uuid
 from queue import Empty
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 import torch
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from hivemind.utils.logging import get_logger
-from pydantic import BaseModel, StrictBool
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
 from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer
 
+from drift.factory_admission import FactoryAdmission, RequestAdmissionDenied, synchronous_result
 from drift.node.model_manager import (
     AmbiguousModelError,
     AutoModelUnavailableError,
@@ -72,12 +73,20 @@ def _next_piece(streamer):
         return _STREAM_DONE
 
 
+class TextContentPart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["text"]
+    text: StrictStr
+
+
 class ChatMessage(BaseModel):
-    role: str
-    content: Any = ""
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["system", "developer", "user", "assistant"]
+    content: Union[StrictStr, List[TextContentPart]] = ""
 
 
 class ChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model: Optional[str] = None
     messages: List[ChatMessage]
     max_tokens: Optional[int] = None
@@ -93,6 +102,7 @@ class ChatCompletionRequest(BaseModel):
 
 
 class CompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model: Optional[str] = None
     prompt: Union[str, List[str]]
     max_tokens: Optional[int] = None
@@ -108,7 +118,11 @@ def message_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return "".join(
+            part.text if isinstance(part, TextContentPart) else part.get("text", "")
+            for part in content
+            if isinstance(part, (TextContentPart, dict))
+        )
     return str(content)
 
 
@@ -149,6 +163,18 @@ def trim_stop_strings(text: str, stop: Optional[Union[str, List[str]]]) -> str:
     return text
 
 
+def create_factory_app(*, factory_admission: Callable[[dict], FactoryAdmission], **kwargs) -> FastAPI:
+    """Explicit ordinary Factory profile; absent adapter/authentication fails.
+
+    Existing CLI/node launchers use create_app and do not adopt this profile.
+    The host supplies authenticated original records and a durable dispatch claim.
+    This constructor cannot qualify those adapters or protected execution.
+    """
+    if not callable(factory_admission):
+        raise ValueError("Factory requires a trusted original admission adapter")
+    return create_app(factory_admission=factory_admission, **kwargs)
+
+
 def create_app(
     model=None,
     tokenizer=None,
@@ -162,6 +188,7 @@ def create_app(
     default_max_tokens: int = DEFAULT_MAX_TOKENS,
     route_outcome_observer: Optional[Callable[..., None]] = None,
     request_timeout: float = 900.0,
+    factory_admission: Optional[Callable[[dict], FactoryAdmission]] = None,
 ) -> FastAPI:
     """Create the OpenAI-compatible application.
 
@@ -185,6 +212,11 @@ def create_app(
         raise ValueError("pass either model_manager or the single-model arguments, not both")
     if sum((bool(api_keys), api_key_verifier is not None, api_key_identifier is not None)) > 1:
         raise ValueError("pass only one API key authentication method")
+    if factory_admission is not None and (
+        not callable(factory_admission)
+        or not (api_keys or api_key_verifier is not None or api_key_identifier is not None)
+    ):
+        raise ValueError("Factory admission requires a trusted adapter and API authentication")
 
     app = FastAPI(title="DRIFT-LLM OpenAI-compatible API")
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -210,9 +242,47 @@ def create_app(
             raise HTTPException(status_code=401, detail="Invalid API key")
         return identity
 
-    async def load_model(identifier: Optional[str]) -> LoadedModel:
+    def request_context(body, request):
+        admission = None
+        original_body = body.model_dump(exclude_none=True)
+        if factory_admission is not None:
+            try:
+                # Only validated body data reaches the host bootstrap adapter;
+                # operational credential inspection happens after classification.
+                admission = synchronous_result(factory_admission(body.model_dump(exclude_none=True)))
+                if type(admission) is not FactoryAdmission:
+                    raise RequestAdmissionDenied()
+                admission.require_current(original_body)
+            except Exception:
+                raise HTTPException(status_code=403, detail="Original request admission denied") from None
+        caller_id = check_auth(request)
+        if admission is None:
+            return RequestContext.start(request_timeout, caller_id=caller_id)
+        # Exact manifest selection must never resolve through auto/local aliases.
+        try:
+            descriptor = model_manager.resolve(body.model)
+        except (ModelNotFoundError, AmbiguousModelError, AutoModelUnavailableError):
+            raise HTTPException(status_code=403, detail="Original request admission denied") from None
+        if descriptor.manifest_digest != admission.manifest_digest or descriptor.execution != "distributed":
+            raise HTTPException(status_code=403, detail="Original request admission denied")
+        return RequestContext.start(
+            request_timeout,
+            caller_id=caller_id,
+            request_id=admission.request_id,
+            single_attempt=True,
+            dispatch_guard=lambda: admission.require_current(original_body),
+            dispatch_claim=admission.claim_dispatch,
+        )
+
+    async def load_model(identifier: Optional[str], context: RequestContext) -> LoadedModel:
         loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(None, model_manager.load, identifier)
+
+        def authorized_load():
+            # The trusted reader must be thread-safe; recheck after executor wait.
+            context.require_dispatch()
+            return model_manager.load(identifier)
+
+        future = loop.run_in_executor(None, authorized_load)
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:
@@ -235,6 +305,8 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ModelManagerClosedError as exc:
             raise HTTPException(status_code=503, detail="Node is shutting down") from exc
+        except RequestAdmissionDenied:
+            raise HTTPException(status_code=403, detail="Original request admission denied") from None
         except Exception as exc:
             logger.exception("Model %r failed to load", identifier)
             raise HTTPException(status_code=503, detail="Model is unavailable") from exc
@@ -246,9 +318,9 @@ def create_app(
             nonlocal dispatched
             await context.acquire(load_admission)
             try:
-                context.require_live()
+                context.require_dispatch()
                 dispatched = True
-                return await load_model(identifier)
+                return await load_model(identifier, context)
             finally:
                 load_admission.release()
 
@@ -265,6 +337,8 @@ def create_app(
                 raise
         except RequestDeadlineExceeded:
             raise HTTPException(status_code=504, detail="Request deadline exceeded") from None
+        except RequestAdmissionDenied:
+            raise HTTPException(status_code=403, detail="Original request admission denied") from None
 
     def record_route_outcome(
         loaded: LoadedModel,
@@ -430,11 +504,18 @@ def create_app(
 
     @app.post("/v1/chat/completions")
     async def chat_completions(body: ChatCompletionRequest, request: Request):
-        caller_id = check_auth(request)
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
-        context = RequestContext.start(request_timeout, caller_id=caller_id)
+        context = request_context(body, request)
         loaded = await load_with_budget(body.model, context)
+        if context.single_attempt and (
+            loaded.descriptor.manifest_digest != body.model
+            or loaded.descriptor.execution != "distributed"
+            or getattr(loaded.runtime.text_client, "supports_request_context", False) is not True
+            or getattr(loaded.runtime.text_client, "supports_single_attempt", False) is not True
+        ):
+            loaded.release()
+            raise HTTPException(status_code=503, detail="Factory requires the distributed text request path")
         if loaded.runtime.text_client is not None:
             from drift.api.text_response import text_peer_response
 
@@ -500,11 +581,18 @@ def create_app(
 
     @app.post("/v1/completions")
     async def completions(body: CompletionRequest, request: Request):
-        caller_id = check_auth(request)
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n > 1 is not supported")
-        context = RequestContext.start(request_timeout, caller_id=caller_id)
+        context = request_context(body, request)
         loaded = await load_with_budget(body.model, context)
+        if context.single_attempt and (
+            loaded.descriptor.manifest_digest != body.model
+            or loaded.descriptor.execution != "distributed"
+            or getattr(loaded.runtime.text_client, "supports_request_context", False) is not True
+            or getattr(loaded.runtime.text_client, "supports_single_attempt", False) is not True
+        ):
+            loaded.release()
+            raise HTTPException(status_code=503, detail="Factory requires the distributed text request path")
         if loaded.runtime.text_client is not None:
             from drift.api.text_response import text_peer_response
 
