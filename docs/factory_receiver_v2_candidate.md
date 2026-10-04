@@ -42,14 +42,12 @@ The real Flow fixture has a 299-byte SDK body with SHA-256
 `b86e125b6a031a226acc03147b5d865402ad149a621626fcdbf7629f5541fd03`.
 PR35's Python-normalized body has 307 bytes and SHA-256
 `ab288a143d34de92156f01d0d4c4f5d05bbdc51eda4a335e16c8816205cd08b7`.
-The separate FACTORY pure held v3 contract at `697a27d` currently constructs a
-305-byte JavaScript-normalized body (SHA-256
-`f1a06120ca623ed9dafcdd31c1ec6e54468071005306c481a6d071a388237b44`)
-because it serializes `temperature` as `1`, while Python emits `1.0`. Its
-`HELD_BEFORE_POST` expected observation includes authenticated sender and
-credential fields and the ten SDK-final headers; it cannot be filled by this
-post-ingress ASGI observation. A separate authenticated post-POST receiver
-receipt and a corrected normalization commitment are required for a join.
+The separate FACTORY held v3 candidate now commits that same 307-byte Python
+normalization. Its `HELD_BEFORE_POST` expected observation includes the
+authenticated sender and credential fields and the ten SDK-final headers; it
+cannot be filled by this post-ingress ASGI observation. FACTORY has a separate
+synthetic post-POST receipt shape, but a real authenticated receipt and host
+trust root are still required for the join.
 
 ASGI delivers whole frames, so an oversized single frame can exist transiently
 before the gate rejects it. The deployment ingress still needs a global edge
