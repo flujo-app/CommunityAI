@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import drift.text_mesh as text_mesh
+from drift.factory_admission import RequestAdmissionDenied
 from drift.text_request import RequestContext, RequestDeadlineExceeded
 
 
@@ -125,6 +126,90 @@ async def _collect(client, body=None, *, chat=False, context=None):
             context=context,
         )
     ]
+
+
+def _single_context(guard=lambda: None):
+    return RequestContext.start(
+        60, request_id="a" * 32, single_attempt=True, dispatch_guard=guard, dispatch_claim=lambda: None
+    )
+
+
+@pytest.mark.asyncio
+async def test_single_attempt_unknown_before_output_never_fails_over_and_keeps_original_id(mesh):
+    mesh.extend([_candidate("peer-a"), _candidate("peer-b")])
+    first, second = _Stub([OSError("lost after entry")]), _Stub([])
+    dht = _DHT(_P2P({"peer-a": first, "peer-b": second}))
+    context = _single_context()
+    with pytest.raises(text_mesh.TextPeerOutcomeUnknown) as caught:
+        await _collect(_client(dht), context=context)
+    assert caught.value.request_id == context.request_id
+    assert [request["request_id"] for request in first.generated] == [context.request_id]
+    assert first.cancelled == [context.request_id]
+    assert second.generated == []
+
+
+@pytest.mark.asyncio
+async def test_single_attempt_revoked_after_discovery_refuses_before_rpc_or_cancel(mesh):
+    mesh.append(_candidate("peer-a"))
+    stub = _Stub([])
+    state = {"valid": True}
+
+    async def replicate():
+        state["valid"] = False
+        return p2p
+
+    def guard():
+        if not state["valid"]:
+            raise RequestAdmissionDenied()
+
+    p2p = _P2P({"peer-a": stub})
+    with pytest.raises(RequestAdmissionDenied):
+        await _collect(_client(_DHT(p2p, replicate=replicate)), context=_single_context(guard))
+    assert stub.generated == []
+    assert stub.cancelled == []
+    assert p2p.shutdown_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_single_attempt_revoked_during_response_wait_retains_unknown_without_emitting(mesh):
+    mesh.extend([_candidate("peer-a"), _candidate("peer-b")])
+    state = {"valid": True}
+
+    def guard():
+        if not state["valid"]:
+            raise RequestAdmissionDenied()
+
+    async def response_after_revocation():
+        state["valid"] = False
+        return _response({"type": "delta", "text": "must not emit"})
+
+    stream = _Stream([response_after_revocation()])
+    first, second = _Stub([stream]), _Stub([])
+    context = _single_context(guard)
+    with pytest.raises(text_mesh.TextPeerOutcomeUnknown):
+        await _collect(_client(_DHT(_P2P({"peer-a": first, "peer-b": second}))), context=context)
+    assert len(first.generated) == 1
+    assert second.generated == []
+    assert stream.close_completed == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [OSError("lost"), _response(raw=b"not json"), _response({"type": "error", "code": "busy", "message": "busy"})],
+)
+async def test_single_attempt_midstream_failure_is_unknown_without_new_peer(mesh, failure):
+    mesh.extend([_candidate("peer-a"), _candidate("peer-b")])
+    stream = _Stream([_response({"type": "delta", "text": "partial"}), failure])
+    first, second = _Stub([stream]), _Stub([])
+    context = _single_context()
+    iterator = _client(_DHT(_P2P({"peer-a": first, "peer-b": second}))).stream({}, chat=False, context=context)
+    assert (await anext(iterator))["text"] == "partial"
+    with pytest.raises(text_mesh.TextPeerOutcomeUnknown):
+        await anext(iterator)
+    assert second.generated == []
+    assert first.cancelled == [context.request_id]
+    assert stream.close_completed == 1
 
 
 @pytest.mark.asyncio

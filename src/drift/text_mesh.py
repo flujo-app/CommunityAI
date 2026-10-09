@@ -14,6 +14,7 @@ from typing import AsyncIterator, Awaitable, Callable, TypeVar
 from hivemind.p2p import P2PContext, PeerID, ServicerBase
 from hivemind.proto import runtime_pb2
 
+from drift.factory_admission import RequestAdmissionDenied
 from drift.inference_provider import ProviderContractError, Usage
 from drift.protocol_identity import TRANSPORT_SECURITY, ProtocolSecurityError, SignedRecord, _validate_lifetime
 from drift.text_request import RequestContext, RequestDeadlineExceeded, retain_request_task
@@ -171,6 +172,14 @@ class TextPeerUnavailable(RuntimeError):
     pass
 
 
+class TextPeerOutcomeUnknown(TextPeerUnavailable):
+    """A logical dispatch began without a validated terminal result; no replay."""
+
+    def __init__(self, request_id):
+        self.request_id = request_id
+        super().__init__("Inference outcome unknown; reconcile the original request before any further dispatch")
+
+
 class TextPeerMalformedResponse(TextPeerUnavailable):
     """A peer response failed the authenticated legacy protocol checks."""
 
@@ -272,6 +281,7 @@ class TextPeerClient:
     """One lightweight consumer. Retry another peer only before receiving answer text."""
 
     supports_request_context = True
+    supports_single_attempt = True
 
     def __init__(self, manifest, *, initial_peers, revocations=None, request_timeout=30, total_timeout=900, dht=None):
         self.manifest = manifest
@@ -570,7 +580,7 @@ class TextPeerClient:
             context = RequestContext.start(self.total_timeout)
         elif type(context) is not RequestContext:
             raise ValueError("Invalid request context")
-        context.require_live()
+        context.require_dispatch()
         # Encoding before discovery is part of the same caller-owned deadline.
         encode({"request_id": "0" * 32, "chat": chat, "body": body}, MAX_REQUEST_BYTES)
         work = _RequestWork(self._request_gate)
@@ -615,16 +625,21 @@ class TextPeerClient:
                 raise TextPeerUnavailable("Could not connect to a community peer. Please try again shortly.") from None
             last_peer_error = None
             request_limit = self._requested_output_limit(body, chat)
-            for candidate in peers[:3]:
+            for candidate in peers[: (1 if context.single_attempt else 3)]:
                 context.require_live()
-                request_id = uuid.uuid4().hex
+                request_id = context.request_id if context.single_attempt else uuid.uuid4().hex
                 payload = encode({"request_id": request_id, "chat": chat, "body": body}, MAX_REQUEST_BYTES)
                 emitted, complete = False, False
                 received = output_bytes = frame_count = 0
                 stub = TextPeerProtocol.get_stub(p2p, PeerID.from_base58(candidate["peer_id"]))
                 responses = None
                 response_task = None
+                entered = False
                 try:
+                    # No suspension between the host's fresh check and logical
+                    # RPC entry. Hivemind's later physical sends remain unqualified.
+                    context.begin_dispatch()
+                    entered = True
                     responses = await self._run_owned(
                         context,
                         work,
@@ -634,6 +649,7 @@ class TextPeerClient:
                         on_abandoned=lambda value: self._abandon_stream(value, work),
                     )
                     while True:
+                        context.require_dispatch()
                         response_task = work.own(anext(responses))
                         response = await self._run_owned(
                             context,
@@ -642,6 +658,7 @@ class TextPeerClient:
                             cap=self.request_timeout,
                         )
                         response_task = None
+                        context.require_dispatch()
                         if type(response.metadata) is not bytes:
                             raise TextPeerMalformedResponse("The community peer sent an invalid response.")
                         received += len(response.metadata)
@@ -683,13 +700,21 @@ class TextPeerClient:
                         yield frame
                         if complete:
                             return
-                except (RequestDeadlineExceeded, asyncio.CancelledError, GeneratorExit):
-                    raise
-                except TextPeerMalformedResponse:
-                    raise
-                except _TextPeerRejectedRequest:
+                except (asyncio.CancelledError, GeneratorExit):
                     raise
                 except Exception as exc:
+                    if context.single_attempt and entered:
+                        raise TextPeerOutcomeUnknown(context.request_id) from None
+                    if isinstance(
+                        exc,
+                        (
+                            RequestDeadlineExceeded,
+                            RequestAdmissionDenied,
+                            TextPeerMalformedResponse,
+                            _TextPeerRejectedRequest,
+                        ),
+                    ):
+                        raise
                     if emitted:
                         raise TextPeerUnavailable(
                             "The community connection stopped during the answer. Please retry."
@@ -699,7 +724,7 @@ class TextPeerClient:
                     else:
                         logger.warning("Community peer request failed (%s)", type(exc).__name__)
                 finally:
-                    if not complete:
+                    if entered and not complete:
                         await self._cleanup_attempt(stub, request_id, responses, response_task, work)
                     elif responses is not None:
                         await self._close_stream(

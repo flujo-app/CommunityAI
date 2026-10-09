@@ -1,0 +1,69 @@
+# Factory distributed inference contract
+
+This source proposal defines an ordinary CommunityAI gateway for Factory workers on Fly and distributed inference participants on Modal. It does not deploy either service. **The human has not selected a model or revision.** Formation, paid inference and protected execution remain on HOLD. The accompanying [selection record](contracts/factory-distributed-route-v1.json) deliberately contains no selected manifest. A whole-model vLLM container is not this distributed route.
+
+## Gateway and model identity
+
+Use the explicit `drift.api.server.create_factory_app` constructor. It requires a trusted original admission adapter and configured API authentication. The existing `drift api` and node launchers still call the ordinary `create_app`; they do not enable this profile. An omitted adapter cannot silently select the ordinary path inside the Factory constructor. No management or reconciliation endpoint is added here.
+
+The weight-free gateway loader is `drift.node.loading.make_text_peer_loader`: it constructs no tokenizer, model tensors or checkpoint downloader. A selected text peer owns input/output weights and a tokenizer, and executes transformer blocks through the distributed mesh. By comparison, `drift api` constructs a tensor client with local input/output weights. Use the weight-free loader for this contract; loading a whole model on a Modal participant does not satisfy distributed qualification.
+
+Before formation, the original host record must bind one complete manifest: repository, immutable 40-hex source revision, architecture, exact block count, context/output limits, runtime/library versions, dtype, attention implementation, quantization/adapters and all artifact sizes/SHA-256 hashes. The API selector must be that manifest's `sha256:<64 lowercase hex>` digest ID. Its DHT namespace is `drift-m1-<digest>`. An alias, `auto`, floating revision, smaller pilot, different dtype or local fallback cannot substitute for the original selection. Existing candidate manifests are inventory, not human selection or model qualification.
+
+## Original admission and callbacks
+
+The adapter receives only the validated API body and returns an exact `FactoryAdmission`. Missing, unknown, mismatched or protected class/version, invalid original identity, altered body, changed model, incomplete or stale route all refuse before API key verification and model loading. Unknown API fields, tools, tool roles, tool-call message fields and unsupported image content fail schema validation before the adapter is called.
+
+`FactoryAdmission` is **not an authenticated record or a verifier**. A production host adapter is still missing. It must authenticate a versioned original bootstrap/spec/class before operational bearer/vault reads, DB lookup/mutation, provider formation or paid reservation. Neither a client marker, a caller-provided digest nor bearer authentication may choose or downgrade that class. The adapter itself must not perform those effects while discovering a missing class. Class/version must be authenticated with the original spec, complete native request digest, owner/principal and role mapping, then persisted atomically under the original authority. Grandfathered ordinary v1 requests need an authenticated legacy admission rule; marker absence is not such a rule.
+
+| Field or callback | Required meaning |
+| --- | --- |
+| `request_id` | Original host-bound 32-hex text protocol identity. Maintain an explicit mapping to genuine mission/Flow/attempt identities; do not relabel a mission ID as a universal UUID. |
+| `body_digest` | SHA-256 of `model_dump(exclude_none=True)`, including validated defaults, using UTF-8, sorted keys, compact separators, `ensure_ascii=False`, `allow_nan=False`. This payload projection digest does not replace the original full native request/spec digest. |
+| `manifest_digest`, `num_blocks` | The exact human-selected, verified manifest and its full block count. |
+| `confidentiality_class`, `class_version` | Authenticated original immutable class/version. This implementation admits only `ordinary`, version 1; every other value is denied. |
+| `authority()` | Trusted synchronous, thread-safe revalidation of original owner, full writer lease tuple/token hash, task/cell/epoch, original control epoch/status, deadline, original effect/reservation, class/version/body/model binding and approved complete role/recipient graph. Return exactly `None` only if current; otherwise raise. |
+| `route_snapshot()` | Trusted synchronous snapshot from verified fresh discovery for the exact manifest. No network refresh or provider wake inside this callback; perform those separately under original authority. Include the digest and fields below. |
+| `claim_dispatch()` | Trusted synchronous atomic consumption of the ORIGINAL durable dispatch right across HTTP contexts/processes. Refuse if already claimed, completed or unknown. Persist original dispatch intent before returning `None`; never allocate a replacement effect, reservation, lease or attempt. This repository supplies no real ledger implementation. |
+
+The gateway rechecks authority and coverage before load admission, after executor queuing, after inference queuing and immediately before logical `rpc_generate` entry. It rechecks again after the durable claim callback returns. Deferred coroutine, generator, async-generator and awaitable callback results are rejected. Callbacks remain trusted host code and may have effects if incorrectly implemented; these checks cannot authenticate their implementation or undo a claimed intent.
+
+Every derived run, reviewer, tool call, fallback and egress projection must inherit the authenticated original class and compare against the same authority. Missing or changed lineage must deny. This patch does not implement Factory/O intake, derived-role propagation or remote class authentication: the existing text wire remains ordinary `{request_id, chat, body}`. There is no protected protocol namespace, peer attestation, key-release adapter or protected Brain push/pull projection here.
+
+## Block coverage and readiness
+
+The gateway requires a matching digest, `status: complete`, `covered_blocks == total_blocks == num_blocks`, `missing_blocks: []`, one positive integer replica count for every block, positive `peer_count`, `chat_ready: true` and a finite nonnegative `last_updated_age` within the configured maximum (default 5 seconds, at most 30). Discovery periods and announcement expiry must support that bound. A last good snapshot cannot be relabeled fresh after discovery fails.
+
+The host must additionally bind route membership/generation, signatures and revocations, real provider resource identities, each participant's block interval and runtime profile, usable tensor RPC paths, cache capacity and model limits. Recheck changing coverage after every formation/discovery wait and before dispatch. `/health` reports HTTP process health, not route readiness. `/v1/models` lists configured model records and does not certify current block coverage. ModelManager's loaded state and a peer's startup discovery thread also do not prove coverage.
+
+The B0 distributed qualification requires at least three genuinely independent, resource-capped contributors whose intervals cover every block, with no contributor capable of holding the whole chosen model. Peer IDs or three processes on one host do not establish independence. A weight-free consumer, actual WAN formation, deterministic correctness, failure and rejoin evidence are still needed. The replica-count callback is a bounded refusal gate, not that qualification evidence.
+
+## Authenticated JSON and SSE
+
+`GET /v1/models`, `POST /v1/chat/completions` and `POST /v1/completions` use configured bearer authentication. Serve them through an authenticated transport with the approved recipient; ordinary TLS/peer signatures do not imply confidential computing. `/health` remains unauthenticated and should not disclose original request data.
+
+The Factory profile keeps the original 32-hex identity in the peer request and uses `chatcmpl-<original>` or `cmpl-<original>` as the response ID. A valid terminal peer `done` frame must match the manifest, contain validated token usage and finish reason, and respect limits. JSON success contains that usage. SSE uses the same ID across role, text and terminal chunks. An SSE error followed by `[DONE]` is an error, not successful completion; require a valid terminal finish/usage frame before recording success.
+
+One `RequestContext` can enter `rpc_generate` once. The profile selects at most one peer and never fails over after entry, including failure before the first token, busy responses, malformed output or lost terminal output. Such outcomes return `inference_outcome_unknown`, original `request_id` and `retryable: false`; pre-entry refusal returns `request_not_dispatched`. Disconnect/cancellation after entry is also unknown to the original host. Cancellation acknowledgments and local stream closure are not proof that remote work stopped.
+
+The required host claim callback prevents a second logical entry across separate HTTP requests **only if its real atomic ledger implementation is correct**. Without that implementation, the Python object alone offers no durable replay protection. An original read-only reconciliation route must retrieve the original stored outcome/observation; this proposal does not add it. Keep unknown effects, resource handles and reservations held until genuine reconciliation. Pre-entry inference refusal does not refund a prior reservation or undo a committed claim.
+
+This controls logical text RPC entry. Hivemind's asynchronous physical transport sends and the selected text peer's internal tensor-routing/session retry path remain unqualified. An async boundary inside the SDK can occur after the callback check. Do not claim one physical execution, exactly-once inference or protected final-send admission from this code. Qualify each actual sender/retry layer against the original authority before live Factory adoption.
+
+FLUJO's generic OpenAI adapter has wrapper retries, SDK retry behavior and capability-negotiation retries. A dedicated Factory integration must disable and test all of them, keep the original request identity and reconcile unknown results without another POST. Setting SDK retries to zero alone does not qualify the nested calls. This proposal does not modify FLUJO or its running model configuration.
+
+## Cold formation and idle shutdown
+
+The source contract for the host coordinator is `stopped -> forming -> ready -> draining -> stopping -> stopped`, with `unknown` retained whenever a provider effect or resource state cannot be established. Persist original resource handles and formation generation. Authenticate original class/authority before waking any paid participant; protected requests fail before formation while no qualified profile exists. Discovery and health checks can themselves wake a service and require that same authority. Do not send prompts while forming or when any block is missing. Timeout refuses the request and retains the original resource observations for cleanup; it cannot justify a second launch.
+
+Idle shutdown must first stop new admission, retire relevant ready announcements, and wait for actual inference sessions, model leases, tensor caches and owed cleanup to close. ModelManager refuses unload while requests are active; local cancellation does not release a remote-resource obligation. Only then stop the exact original owned provider resources and observe their terminal state/billing. Unknown stop/billing state retains the original reservation. ModelManager unload or an HTTP idle timer does not establish Modal scale-to-zero. Durable wake coordination, seed availability, caches/storage and other billable retained resources need explicit accounting. No Fly/Modal lifecycle implementation or resource mutation occurs in this proposal.
+
+## Coding Flows and confidentiality
+
+Native OpenAI `tools`/`tool_choice`, tool-call results and parallel tool calls are unsupported and rejected. A text-only model step can participate in a Flow with separate explicit tool steps only when their typed arguments, original writer authority, workspace/file access and egress are independently validated. Do not execute unparsed model text as a tool request. Advertising `supportsTools` in provider configuration is not qualification. Native coding-agent tool calling needs a reviewed parser/template/engine contract and end-to-end tests for the exact selected model.
+
+All required-confidential requests remain denied in this profile. Future qualification must cover the gateway, text peer, CPU/GPU block recipients, activations/KV state, tools, reviewers, logs, control-plane inputs and push/pull egress, with recipient/workload attestation, fresh original authority and guest-held application-channel keys checked at actual release/send. Distributed execution, signed discovery, local denial tests and a whole-model vLLM deployment do not supply that evidence. Existing frozen PR30 and Factory stage-zero receipts retain their original limited scopes.
+
+## Local validation scope
+
+Focused tests use HTTP/peer fixtures and synthetic original authority/claim readers. They exercise strict field refusal, missing/unknown/protected class, body/model mismatch, complete fresh block coverage, revocation after waits, repeated original POST refusal including unknown outcome, original JSON/SSE identity, no peer failover and retained cleanup. They do not execute paid jobs, contact a model, establish genuine Factory authority or prove hardware/channel protection. The real host adapter, physical send qualification, chosen manifest, independent participant formation and lifecycle evidence remain adoption blockers.

@@ -8,7 +8,8 @@ import uuid
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from drift.text_mesh import TextPeerUnavailable
+from drift.factory_admission import RequestAdmissionDenied
+from drift.text_mesh import TextPeerOutcomeUnknown, TextPeerUnavailable
 from drift.text_request import RequestContext, RequestDeadlineExceeded, retain_request_task
 
 
@@ -17,12 +18,27 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
     if type(context) is not RequestContext:
         loaded.release()
         raise ValueError("Invalid request context")
-    request_id = ("chatcmpl-" if chat else "cmpl-") + uuid.uuid4().hex[:24]
+    request_id = ("chatcmpl-" if chat else "cmpl-") + (
+        context.request_id if context.single_attempt else uuid.uuid4().hex[:24]
+    )
     created = int(time.time())
-    model_id = loaded.descriptor.model_id
+    model_id = loaded.descriptor.manifest_digest if context.single_attempt else loaded.descriptor.model_id
     request = body.model_dump(exclude_none=True)
     request["model"] = loaded.descriptor.manifest_digest
     events_started = False
+
+    def error_detail(exc):
+        if context.single_attempt:
+            return {
+                "message": "Inference outcome unknown; reconcile the original request"
+                if context.dispatch_started
+                else "Original request refused before inference dispatch",
+                "type": "server_error",
+                "code": "inference_outcome_unknown" if context.dispatch_started else "request_not_dispatched",
+                "request_id": context.request_id,
+                "retryable": False,
+            }
+        return {"message": str(exc), "type": "server_error"}
 
     def chunk(text=None, *, done=None, role=False):
         choice = {"index": 0, "finish_reason": None if done is None else done.get("finish_reason", "stop")}
@@ -63,14 +79,19 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
         try:
             await context.acquire(semaphore)
             acquired = True
-            context.require_live()
+            context.require_dispatch()
             client = loaded.runtime.text_client
+            if context.single_attempt and (
+                getattr(client, "supports_request_context", False) is not True
+                or getattr(client, "supports_single_attempt", False) is not True
+            ):
+                raise RequestAdmissionDenied()
             if getattr(client, "supports_request_context", False) is True:
                 iterator = client.stream(request, chat=chat, context=context)
             else:
                 iterator = client.stream(request, chat=chat)
             while True:
-                context.require_live()
+                context.require_dispatch()
                 pending = asyncio.create_task(anext(iterator))
                 try:
                     frame = await context.run(pending)
@@ -78,6 +99,7 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
                     pending = None
                     break
                 pending = None
+                context.require_dispatch()
                 yield frame
                 if frame.get("type") == "done":
                     # Terminal acceptance precedes cleanup. Do not apply the
@@ -111,8 +133,8 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
             if not done:
                 raise TextPeerUnavailable("The community answer did not finish")
             yield "data: [DONE]\n\n"
-        except (TextPeerUnavailable, ValueError, TimeoutError) as exc:
-            yield "data: " + json.dumps({"error": {"message": str(exc), "type": "server_error"}}) + "\n\n"
+        except (TextPeerUnavailable, RequestAdmissionDenied, ValueError, TimeoutError) as exc:
+            yield "data: " + json.dumps({"error": error_detail(exc)}) + "\n\n"
             yield "data: [DONE]\n\n"
         finally:
             try:
@@ -135,11 +157,21 @@ async def text_peer_response(loaded, body, *, chat, semaphore, context=None):
                 done = frame
         if done is None:
             raise TextPeerUnavailable("The community answer did not finish")
-    except RequestDeadlineExceeded:
+    except (RequestAdmissionDenied, TextPeerOutcomeUnknown) as exc:
+        raise HTTPException(status_code=503 if context.dispatch_started else 403, detail=error_detail(exc)) from None
+    except RequestDeadlineExceeded as exc:
+        if context.single_attempt:
+            raise HTTPException(status_code=504, detail=error_detail(exc)) from None
         raise HTTPException(status_code=504, detail="Request deadline exceeded") from None
     except ValueError as exc:
+        if context.single_attempt:
+            raise HTTPException(
+                status_code=503 if context.dispatch_started else 400, detail=error_detail(exc)
+            ) from None
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (TextPeerUnavailable, TimeoutError) as exc:
+        if context.single_attempt:
+            raise HTTPException(status_code=503, detail=error_detail(exc)) from None
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     finally:
         await frames.aclose()

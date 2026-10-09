@@ -107,6 +107,18 @@ def _manager_for(client):
 
 
 class RequestContextTests(unittest.IsolatedAsyncioTestCase):
+    def test_maximum_budget_with_rounding_never_extends_deadline_or_rejects_valid_input(self):
+        issued = 124.005
+        self.assertGreater((issued + MAX_REQUEST_SECONDS) - issued, MAX_REQUEST_SECONDS)
+        context = RequestContext.start(MAX_REQUEST_SECONDS, clock=lambda: issued)
+        self.assertGreater(context.remaining(), 0)
+        self.assertLessEqual(context.deadline - issued, MAX_REQUEST_SECONDS)
+        self.assertLessEqual(context.remaining(), MAX_REQUEST_SECONDS)
+        with self.assertRaises(ValueError):
+            RequestContext.start(math.nextafter(MAX_REQUEST_SECONDS, math.inf), clock=lambda: issued)
+        with self.assertRaises(ValueError):
+            RequestContext("a" * 32, issued, math.nextafter(issued + MAX_REQUEST_SECONDS, math.inf), lambda: issued)
+
     def test_start_uses_exact_finite_budget_and_generated_identity(self):
         clock = _Clock()
         context = RequestContext.start(12.5, clock=clock)
@@ -497,13 +509,27 @@ class TextApiDeadlineTests(unittest.IsolatedAsyncioTestCase):
             manager.shutdown()
 
     async def test_legacy_heartbeat_does_not_extend_absolute_deadline(self):
-        peer = _LegacyHeartbeatClient()
+        clock = _Clock()
+        context = RequestContext.start(30.0, clock=clock)
+
+        class ExpiringHeartbeatClient:
+            started = closed = 0
+
+            async def stream(self, body, *, chat):
+                self.started += 1
+                try:
+                    yield {"type": "heartbeat"}
+                    clock.now = context.deadline
+                    yield {"type": "heartbeat"}
+                finally:
+                    self.closed += 1
+
+        peer = ExpiringHeartbeatClient()
         manager = _manager_for(peer)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=create_app(model_manager=manager, request_timeout=0.05)),
-            base_url="http://test",
-        ) as client:
-            response = await client.post("/v1/completions", json={"model": "Community", "prompt": "hello"})
+        with patch("drift.api.server.RequestContext.start", return_value=context):
+            app = create_app(model_manager=manager, request_timeout=30.0)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post("/v1/completions", json={"model": "Community", "prompt": "hello"})
         try:
             self.assertEqual(response.status_code, 504)
             self.assertEqual(response.json(), {"detail": "Request deadline exceeded"})

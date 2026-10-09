@@ -32,6 +32,19 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync --extra dev --python ${{ matrix.python-version }}
+      - name: Test Factory source contract
+        env:
+          PYTHONPATH: src:desktop/src
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          source .venv/bin/activate
+          python -m pytest -p pytest_asyncio.plugin -q --disable-warnings \
+            tests/test_factory_admission.py tests/test_factory_gateway.py \
+            tests/test_text_peer_request_guards.py tests/test_text_request_deadline.py \
+            tests/test_openai_api.py tests/test_official_openai_client.py tests/test_text_mesh.py \
+            -k 'not RealTransportTests'
       - name: Test
         run: |
           set -x  # Print executed commands
@@ -68,6 +81,8 @@ jobs:
             tests/test_discovery.py \
             tests/test_edge_benchmark.py \
             tests/test_external_qualification.py \
+            tests/test_factory_admission.py \
+            tests/test_factory_gateway.py \
             tests/test_device_portability.py \
             tests/test_gate16_catalog_channel.py \
             tests/test_gate16_catalog_drill.py \
