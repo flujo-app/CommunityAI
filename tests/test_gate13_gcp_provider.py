@@ -798,3 +798,69 @@ def test_cleanup_instance_inspection_accepts_an_explicit_not_found_response(tmp_
 
     assert item._describe_instance(item.clients["windows"], check=False) is None
     assert len(calls) == 1
+
+
+def test_windows_adapter_survives_real_cmd_boundary():
+    if sys.platform != "win32":
+        pytest.skip("requires native Windows shell")
+    script = "[Console]::Out.Write('literal & | > < % !'); exit 0"
+    command = gcp._windows_powershell_command(script)
+    assert command.split()[:4] == ["powershell.exe", "-NoLogo", "-NonInteractive", "-EncodedCommand"]
+    assert base64.b64decode(command.split()[-1]).decode("utf-16-le") == script
+    result = subprocess.run(["cmd.exe", "/d", "/s", "/c", command], capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert b"literal & | > < % !" in result.stdout
+
+
+def test_exact_key_matches_real_private_key_and_rejects_stale_public(tmp_path):
+    import shutil
+    keygen = shutil.which("ssh-keygen")
+    if keygen is None:
+        pytest.skip("requires ssh-keygen")
+    key = tmp_path / "selected.key"
+    subprocess.run([keygen, "-t", "ed25519", "-N", "", "-f", str(key)], check=True, capture_output=True)
+    public = Path(str(key) + ".pub")
+    identity, fingerprint = gcp._ssh_public_identity(public.read_text().strip())
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _: None))
+    item.ssh_private_key = key
+    item.ssh_public_fingerprint = fingerprint
+    assert item._ensure_ssh_key() == public
+    public.write_text(identity + " unrelated-comment\n", encoding="ascii")
+    assert item._ensure_ssh_key() == public
+    item.ssh_public_fingerprint = "SHA256:incorrect"
+    with pytest.raises(gcp.Gate13CloudError, match="fingerprint"):
+        item._ensure_ssh_key()
+    item.ssh_public_fingerprint = fingerprint
+    other = tmp_path / "other"
+    subprocess.run([keygen, "-t", "ed25519", "-N", "", "-f", str(other)], check=True, capture_output=True)
+    public.write_text(Path(str(other) + ".pub").read_text(), encoding="ascii")
+    with pytest.raises(gcp.Gate13CloudError, match="does not match"):
+        item._ensure_ssh_key()
+
+
+def test_ssh_and_scp_use_the_same_explicit_private_key(tmp_path):
+    fake = CreateRunner()
+    item = provider(tmp_path, fake)
+    item.ssh_private_key = tmp_path / "exact project.key"
+    item._ssh("test", "echo test", action="probe")
+    item._scp([tmp_path / "file"], "test:/tmp/", action="probe")
+    for argv, _ in fake.calls:
+        assert argv[argv.index("--ssh-key-file") + 1] == str(item.ssh_private_key)
+        assert "--tunnel-through-iap" in argv
+        assert not any("StrictHostKeyChecking=no" in arg for arg in argv)
+
+
+def test_key_config_reaches_launcher_provider_and_rejects_relative_path(tmp_path):
+    value = json.loads((ROOT / 'config' / 'gate13_gcp.json').read_text())
+    value['ssh_private_key'] = str((tmp_path / 'selected.key').resolve())
+    value['ssh_public_fingerprint'] = 'SHA256:' + 'A' * 43
+    path = tmp_path / 'config.json'
+    path.write_text(json.dumps(value))
+    config = GcpConfig.load(path)
+    item = GcpProvider(run_id=RUN_ID, repository_root=ROOT, output_root=tmp_path, config=config, runner=CreateRunner(), signed_url=lambda _: '')
+    assert item.ssh_private_key == Path(value['ssh_private_key'])
+    assert item.ssh_public_fingerprint == value['ssh_public_fingerprint']
+    value['ssh_private_key'] = 'relative.key'
+    path.write_text(json.dumps(value))
+    with pytest.raises(gcp.Gate13CloudError, match='absolute'):
+        GcpConfig.load(path)

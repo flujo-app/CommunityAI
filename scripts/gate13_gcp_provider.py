@@ -134,6 +134,29 @@ class LoggedRunner:
             raise CommandError(f"{action} returned invalid JSON") from exc
 
 
+def _windows_powershell_command(script: str) -> str:
+    """Cross cmd.exe without parsing script metacharacters; retain normal profiles."""
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return f"powershell.exe -NoLogo -NonInteractive -EncodedCommand {encoded}"
+
+
+def _ssh_public_identity(value: str) -> tuple[str, str]:
+    fields = value.strip().split()
+    if len(value.splitlines()) != 1 or len(fields) < 2 or fields[0] not in {"ssh-rsa", "ssh-ed25519"}:
+        raise Gate13CloudError("SSH public key must contain one supported key")
+    try:
+        blob = base64.b64decode(fields[1], validate=True)
+    except ValueError as exc:
+        raise Gate13CloudError("SSH public key encoding is invalid") from exc
+    type_length = int.from_bytes(blob[:4], "big")
+    if blob[4:4 + type_length] != fields[0].encode("ascii"):
+        raise Gate13CloudError("SSH public key algorithm does not match encoded key")
+    if len(blob) < 32:
+        raise Gate13CloudError("SSH public key is truncated")
+    fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode("ascii").rstrip("=")
+    return " ".join(fields[:2]), fingerprint
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -476,14 +499,19 @@ class GcpConfig:
     route_wheel_path: str
     route_wheel_sha256: str
     route_wheel_bytes: int
+    ssh_private_key: str | None = None
+    ssh_public_fingerprint: str | None = None
 
     @classmethod
     def load(cls, path: Path) -> "GcpConfig":
         value = _strict_object(path.read_text(encoding="utf-8"), "GCP one-click configuration")
-        expected = set(cls.__dataclass_fields__)
+        optional = {"ssh_private_key", "ssh_public_fingerprint"}
+        expected = set(cls.__dataclass_fields__) - optional
         string_fields = expected - {"route_wheel_bytes"}
         if (
-            set(value) != expected
+            not expected.issubset(value)
+            or set(value) - expected - optional
+            or any(value.get(field) is not None and (not isinstance(value[field], str) or not value[field]) for field in optional)
             or not all(isinstance(value[field], str) and value[field] for field in string_fields)
             or not isinstance(value["route_wheel_bytes"], int)
             or isinstance(value["route_wheel_bytes"], bool)
@@ -491,6 +519,10 @@ class GcpConfig:
         ):
             raise Gate13CloudError("GCP one-click configuration fields are invalid")
         result = cls(**value)
+        if result.ssh_private_key is not None and not Path(result.ssh_private_key).is_absolute():
+            raise Gate13CloudError("configured SSH private key must be absolute")
+        if result.ssh_public_fingerprint is not None and not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", result.ssh_public_fingerprint):
+            raise Gate13CloudError("configured SSH public fingerprint is invalid")
         for commit in (
             result.route_source_commit,
             result.catalog_source_commit,
@@ -523,9 +555,13 @@ class GcpProvider:
         signed_url: Callable[[PackageArtifact], str],
         progress: Callable[[str], None] = print,
         sleeper: Callable[[float], None] = time.sleep,
+        ssh_private_key: Path | None = None,
+        ssh_public_fingerprint: str | None = None,
     ) -> None:
         if not _RUN_RE.fullmatch(run_id):
             raise Gate13CloudError("GCP run ID is invalid")
+        self.ssh_private_key = (ssh_private_key or (Path(config.ssh_private_key) if config.ssh_private_key else None) or Path.home() / ".ssh" / "google_compute_engine").resolve()
+        self.ssh_public_fingerprint = ssh_public_fingerprint or config.ssh_public_fingerprint
         self.run_id = run_id
         self.repository_root = repository_root
         self.output_root = output_root
@@ -596,6 +632,8 @@ class GcpProvider:
             "--zone",
             self.config.zone,
             "--tunnel-through-iap",
+            "--ssh-key-file",
+            os.fspath(self.ssh_private_key),
             "--quiet",
             "--command",
             command,
@@ -622,6 +660,8 @@ class GcpProvider:
             "--zone",
             self.config.zone,
             "--tunnel-through-iap",
+            "--ssh-key-file",
+            os.fspath(self.ssh_private_key),
             "--quiet",
             action=action,
             timeout=timeout,
@@ -710,25 +750,30 @@ class GcpProvider:
         raise Gate13CloudError(f"{action} exceeded its time bound")
 
     def _ensure_ssh_key(self) -> Path:
-        root = Path.home() / ".ssh"
-        private = root / "google_compute_engine"
-        public = private.with_suffix(".pub")
-        root.mkdir(mode=0o700, exist_ok=True)
-        if public.is_file() and 32 <= public.stat().st_size <= 16_384:
-            return public
-        if private.is_file():
-            result = self.runner.run(
-                ["ssh-keygen", "-y", "-f", private], action="Deriving the GCP SSH public key", timeout=60
-            )
-            public.write_text(result.stdout.strip() + "\n", encoding="ascii", newline="\n")
-        else:
+        private = self.ssh_private_key
+        public = private.with_suffix(private.suffix + ".pub")
+        private.parent.mkdir(mode=0o700, exist_ok=True)
+        if not private.is_file():
+            if public.exists() or self.ssh_public_fingerprint is not None:
+                raise Gate13CloudError("configured SSH private key is unavailable")
             self.runner.run(
                 ["ssh-keygen", "-t", "rsa", "-b", "3072", "-N", "", "-f", private],
-                action="Creating the GCP SSH key",
-                timeout=120,
+                action="Creating the GCP SSH key", timeout=120,
             )
-        if not public.is_file():
-            raise Gate13CloudError("GCP SSH public key is unavailable")
+        result = self.runner.run(
+            ["ssh-keygen", "-y", "-f", private], action="Checking the exact GCP SSH public key", timeout=60,
+        )
+        identity, fingerprint = _ssh_public_identity(result.stdout.strip())
+        if self.ssh_public_fingerprint is not None and fingerprint != self.ssh_public_fingerprint:
+            raise Gate13CloudError("configured SSH public fingerprint does not match private key")
+        if public.exists():
+            if not public.is_file() or public.stat().st_size > 16_384:
+                raise Gate13CloudError("GCP SSH public key is invalid")
+            existing, _ = _ssh_public_identity(public.read_text(encoding="ascii").strip())
+            if existing != identity:
+                raise Gate13CloudError("GCP SSH public key does not match private key")
+        else:
+            public.write_text(identity + "\n", encoding="ascii", newline="\n")
         return public
 
     def _resource_absence(self) -> tuple[list[str], list[str], list[str]]:
@@ -1750,13 +1795,12 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         name = self.clients[platform]
         if platform == "windows":
             user = "Gate13Admin"
-            ready_command = (
-                "powershell.exe -NoLogo -NoProfile -NonInteractive -Command "
-                "\"if (!(Test-Path -LiteralPath 'C:\\Gate13Bootstrap\\ready.txt' "
+            ready_command = _windows_powershell_command(
+                "if (!(Test-Path -LiteralPath 'C:\\Gate13Bootstrap\\ready.txt' "
                 "-PathType Leaf)) { exit 1 }; "
                 "$p=@(Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | "
                 "Where-Object {$_.UserName -like '*\\M'}); "
-                'if ($p.Count -ne 1 -or $p[0].SessionId -lt 1) { exit 1 }"'
+                'if ($p.Count -ne 1 -or $p[0].SessionId -lt 1) { exit 1 }'
             )
         else:
             user = None
@@ -1789,7 +1833,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
         )
         if platform == "windows":
             command = (
-                "powershell.exe -NoLogo -NoProfile -NonInteractive "
+                "powershell.exe -NoLogo -NonInteractive "
                 "-ExecutionPolicy Bypass -File C:\\Gate13Run\\stage.ps1"
             )
         else:
@@ -1902,8 +1946,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
                     "[Console]::Out.Write([IO.File]::ReadAllText("
                     f"'C:\\Gate13Run\\{filename}'))"
                 )
-                encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-                command = f"powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}"
+                command = _windows_powershell_command(script)
                 user = "Gate13Admin"
             else:
                 command = f"sudo cat /qualification/{filename}"

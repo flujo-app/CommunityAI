@@ -1,0 +1,9 @@
+# Gate 13 Windows SSH
+
+Gate 13 SSH enters the machine's normal Windows PowerShell explicitly because Windows OpenSSH may start commands in cmd.exe. Script commands use UTF-16LE EncodedCommand to preserve quotes and shell metacharacters. Profiles remain enabled; the harness does not replace HOME or isolate PowerShell. The stage uses its fixed script path, and scheduled qualification and cleanup children also retain profiles.
+
+The zero-input launcher reads optional `ssh_private_key` (absolute local path) and `ssh_public_fingerprint` (`SHA256:` public-key fingerprint from `ssh-keygen -lf PATH.pub -E sha256`) from `config/gate13_gcp.json`. Without these fields it uses the existing `~/.ssh/google_compute_engine` identity. It does not select the last project metadata key. Every SSH and SCP operation passes the same explicit private-key path. Before client creation the provider derives its public key from that private key, verifies an existing .pub file matches, and checks the optional fingerprint. Missing configured identities and mismatches stop before metadata installation. Do not put private-key contents in configuration.
+
+Client metadata contains only that exact public key. Startup refreshes authorized keys even when the ready marker already exists. The installer replaces stale explicit ACL entries, disables inheritance, and verifies the resulting SID-based allow list. The ordinary user owns its profile key; program-data key files permit only Administrators and SYSTEM, preserving the existing OpenSSH Match configuration. IAP transport and existing host-key verification remain unchanged.
+
+Local qualification exercises native cmd.exe-to-PowerShell execution, real temporary ssh-keygen identities, and native ACL replacement on owned temporary files. These tests do not establish a new GCE/IAP cloud acceptance run.
