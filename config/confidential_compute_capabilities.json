@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "checked_on": "2026-10-03",
+  "purpose": "Research snapshot, not an admission authority or runtime configuration",
+  "providers": {
+    "modal": {
+      "ordinary_isolation": "documented-gvisor-or-kvm",
+      "cpu_confidential_execution": "unqualified-public-evidence",
+      "gpu_confidential_execution": "unqualified-public-evidence",
+      "client_verifiable_attestation": "unqualified-public-evidence",
+      "protected_admission": false,
+      "private_offering_status": "unknown",
+      "sources": [
+        "https://modal.com/docs/guide/security",
+        "https://modal.com/docs/guide/sandboxes",
+        "https://modal.com/docs/guide/sandbox-networking"
+      ]
+    }
+  },
+  "installed_hardware_verifiers": [],
+  "runtime_integration": "source-proposal-only",
+  "paid_qualification_performed": false,
+  "flujo_opinion": {
+    "configured_model_id": "42a596b8-ff78-4d69-b5c7-79dd3ce2bb1e",
+    "advertised_api_alias": "model-Claude Opus",
+    "status": "opinion-obtained-after-human-reconnection",
+    "reasoning_effort": "medium",
+    "opinion_obtained": true,
+    "reviewed_source_scope": "policy-proposal-v2-before-audience-and-duplicate-checks",
+    "response_sha256": "d32e566973680395789c8037161a9d236aba9fde3b94a4c7aae59b760b9d5120"
+  },
+  "upstream_research_pins": {
+    "trustee": "3b7c99069a7c89ea51713dcf7cf98c16dbe2d3db",
+    "guest_components": "17ad60d88f9b7e4b3b54d01200985ae72723e8ab",
+    "nvtrust": "858ada9a17f58c482f578414ea2455498fa51e17"
+  }
+}
