@@ -880,3 +880,21 @@ def test_config_pins_the_fixed_windows_startup_blob(tmp_path):
     assert actual == (ROOT / "scripts" / "gate13_windows_client_startup.ps1").read_text(encoding="utf-8")
     assert "-NoProfile" not in actual
     assert "Install-Gate13SshKey" in actual
+
+
+def test_explicit_missing_key_never_generates_replacement(tmp_path):
+    fake = CreateRunner()
+    missing = tmp_path / "missing-directory" / "selected.key"
+    item = GcpProvider(
+        run_id=RUN_ID,
+        repository_root=ROOT,
+        output_root=tmp_path,
+        config=GcpConfig.load(ROOT / "config" / "gate13_gcp.json"),
+        runner=fake,
+        signed_url=lambda _: "",
+        ssh_private_key=missing,
+    )
+    with pytest.raises(gcp.Gate13CloudError, match="unavailable"):
+        item._ensure_ssh_key()
+    assert fake.calls == []
+    assert not missing.parent.exists()

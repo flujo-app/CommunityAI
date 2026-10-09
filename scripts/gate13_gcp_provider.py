@@ -565,6 +565,7 @@ class GcpProvider:
     ) -> None:
         if not _RUN_RE.fullmatch(run_id):
             raise Gate13CloudError("GCP run ID is invalid")
+        self.ssh_key_explicit = ssh_private_key is not None or config.ssh_private_key is not None
         self.ssh_private_key = (
             ssh_private_key
             or (Path(config.ssh_private_key) if config.ssh_private_key else None)
@@ -761,6 +762,8 @@ class GcpProvider:
     def _ensure_ssh_key(self) -> Path:
         private = self.ssh_private_key
         public = private.with_suffix(private.suffix + ".pub")
+        if not private.is_file() and self.ssh_key_explicit:
+            raise Gate13CloudError("configured SSH private key is unavailable")
         private.parent.mkdir(mode=0o700, exist_ok=True)
         if not private.is_file():
             if public.exists() or self.ssh_public_fingerprint is not None:
