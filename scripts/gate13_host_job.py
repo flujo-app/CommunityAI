@@ -56,6 +56,7 @@ WINDOWS_RUNTIME_ENVIRONMENT = (
     "PROGRAMFILES(X86)",
     "PROGRAMW6432",
     "PUBLIC",
+    "PSModulePath",
     "SYSTEMDRIVE",
     "SYSTEMROOT",
     "TEMP",
@@ -544,7 +545,6 @@ def _entrypoint_argv(config: HostJobConfig) -> list[str]:
         return [
             r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
             "-NoLogo",
-            "-NoProfile",
             "-NonInteractive",
             "-ExecutionPolicy",
             "Bypass",
@@ -869,7 +869,6 @@ def _powershell_argv(script: str) -> list[str]:
     return [
         r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
         "-NoLogo",
-        "-NoProfile",
         "-NonInteractive",
         "-EncodedCommand",
         encoded,

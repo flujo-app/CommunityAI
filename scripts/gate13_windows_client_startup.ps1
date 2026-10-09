@@ -7,6 +7,54 @@ $bootstrapRoot = "C:\Gate13Bootstrap"
 $runRoot = "C:\Gate13Run"
 $downloadRoot = "C:\Gate13Download"
 New-Item -ItemType Directory -Force -Path $bootstrapRoot, $runRoot, $downloadRoot | Out-Null
+function Set-Gate13KeyAcl {
+    param([string]$Path, [string[]]$AllowedSids, [switch]$Directory)
+    $item = Get-Item -LiteralPath $Path -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "SSH key path is a reparse point" }
+    if ($Directory) { $acl = [Security.AccessControl.DirectorySecurity]::new() }
+    else { $acl = [Security.AccessControl.FileSecurity]::new() }
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.SetOwner([Security.Principal.SecurityIdentifier]::new($AllowedSids[0]))
+    foreach ($sid in $AllowedSids) {
+        $identity = [Security.Principal.SecurityIdentifier]::new($sid)
+        if ($Directory) {
+            $rule = [Security.AccessControl.FileSystemAccessRule]::new($identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+        } else {
+            $rule = [Security.AccessControl.FileSystemAccessRule]::new($identity, 'FullControl', 'Allow')
+        }
+        $acl.AddAccessRule($rule)
+    }
+    $item.SetAccessControl($acl)
+    $actual = $item.GetAccessControl()
+    $rules = @($actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if (!$actual.AreAccessRulesProtected -or $rules.Count -ne $AllowedSids.Count) { throw "SSH key ACL verification failed" }
+    foreach ($rule in $rules) {
+        if ($rule.IsInherited -or $rule.IdentityReference.Value -notin $AllowedSids -or $rule.AccessControlType -ne 'Allow' -or $rule.FileSystemRights -ne 'FullControl') { throw "SSH key ACL verification failed" }
+    }
+}
+
+function Install-Gate13SshKey {
+    $publicKey = (Invoke-RestMethod -Headers $metadataHeaders -Uri "$metadataRoot/gate13-ssh-public-key").Trim()
+    if ($publicKey -notmatch '^ssh-(rsa|ed25519) [A-Za-z0-9+/]+={0,2}( [^\r\n]*)?$') { throw "Expected one exact SSH public key" }
+    $ordinarySid = (Get-LocalUser -Name 'M').SID.Value
+    $sshRoot = 'C:\Users\M\.ssh'
+    $programDataSsh = Join-Path $env:ProgramData 'ssh'
+    New-Item -ItemType Directory -Force -Path $sshRoot, $programDataSsh | Out-Null
+    Set-Gate13KeyAcl -Path $sshRoot -AllowedSids @($ordinarySid, 'S-1-5-18') -Directory
+    foreach ($name in @('authorized_keys')) {
+        $path = Join-Path $sshRoot $name
+        if (Test-Path -LiteralPath $path) { Set-Gate13KeyAcl -Path $path -AllowedSids @($ordinarySid, 'S-1-5-18') }
+        [IO.File]::WriteAllText($path, $publicKey + "`n", [Text.UTF8Encoding]::new($false))
+        Set-Gate13KeyAcl -Path $path -AllowedSids @($ordinarySid, 'S-1-5-18')
+    }
+    foreach ($name in @('administrators_authorized_keys', 'communityai_gate13_m_authorized_keys')) {
+        $path = Join-Path $programDataSsh $name
+        if (Test-Path -LiteralPath $path) { Set-Gate13KeyAcl -Path $path -AllowedSids @('S-1-5-32-544', 'S-1-5-18') }
+        [IO.File]::WriteAllText($path, $publicKey + "`n", [Text.UTF8Encoding]::new($false))
+        Set-Gate13KeyAcl -Path $path -AllowedSids @('S-1-5-32-544', 'S-1-5-18')
+    }
+}
+
 $readyMarker = Join-Path $bootstrapRoot "ready.txt"
 if (Test-Path -LiteralPath $readyMarker -PathType Leaf) {
     Set-Service -Name sshd -StartupType Automatic
@@ -17,6 +65,7 @@ if (Test-Path -LiteralPath $readyMarker -PathType Leaf) {
     } else {
         Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True -Profile Any
     }
+    Install-Gate13SshKey
     return
 }
 
@@ -59,23 +108,8 @@ if ($openSshMemberNames -notcontains "$env:COMPUTERNAME\M") {
 }
 Remove-LocalGroupMember -Group "Administrators" -Member "M" -ErrorAction SilentlyContinue
 
-$publicKey = (Invoke-RestMethod -Headers $metadataHeaders -Uri "$metadataRoot/gate13-ssh-public-key").Trim()
-$profileRoot = "C:\Users\M"
-$sshRoot = Join-Path $profileRoot ".ssh"
-New-Item -ItemType Directory -Force -Path $profileRoot, $sshRoot | Out-Null
-$authorizedKeys = Join-Path $sshRoot "authorized_keys"
-[IO.File]::WriteAllText($authorizedKeys, $publicKey + "`n", [Text.UTF8Encoding]::new($false))
-& icacls.exe $sshRoot /inheritance:r /grant:r "M:(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
-& icacls.exe $authorizedKeys /inheritance:r /grant:r "M:F" "SYSTEM:F" | Out-Null
-
-$programDataSsh = Join-Path $env:ProgramData "ssh"
-New-Item -ItemType Directory -Force -Path $programDataSsh | Out-Null
-$administratorKeys = Join-Path $programDataSsh "administrators_authorized_keys"
-$ordinaryKeys = Join-Path $programDataSsh "communityai_gate13_m_authorized_keys"
-[IO.File]::WriteAllText($administratorKeys, $publicKey + "`n", [Text.UTF8Encoding]::new($false))
-[IO.File]::WriteAllText($ordinaryKeys, $publicKey + "`n", [Text.UTF8Encoding]::new($false))
-& icacls.exe $administratorKeys /inheritance:r /grant:r "Administrators:F" "SYSTEM:F" | Out-Null
-& icacls.exe $ordinaryKeys /inheritance:r /grant:r "Administrators:F" "SYSTEM:F" | Out-Null
+Install-Gate13SshKey
+$programDataSsh = Join-Path $env:ProgramData 'ssh'
 $sshdConfig = Join-Path $programDataSsh "sshd_config"
 if (-not (Test-Path -LiteralPath $sshdConfig -PathType Leaf)) {
     Copy-Item -LiteralPath "$env:WINDIR\System32\OpenSSH\sshd_config_default" -Destination $sshdConfig
@@ -132,7 +166,7 @@ Set-ItemProperty -Path $winlogon -Name DefaultUserName -Value "M" -Type String
 Set-ItemProperty -Path $winlogon -Name DefaultDomainName -Value $env:COMPUTERNAME -Type String
 Set-ItemProperty -Path $winlogon -Name DefaultPassword -Value $plainPassword -Type String
 Set-ItemProperty -Path $winlogon -Name AutoLogonCount -Value 1 -Type DWord
-$clearArgument = '-NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 60; $p = ''HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon''; Remove-ItemProperty -Path $p -Name DefaultPassword -ErrorAction SilentlyContinue; Set-ItemProperty -Path $p -Name AutoAdminLogon -Value ''0'' -Type String"'
+$clearArgument = '-WindowStyle Hidden -Command "Start-Sleep -Seconds 60; $p = ''HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon''; Remove-ItemProperty -Path $p -Name DefaultPassword -ErrorAction SilentlyContinue; Set-ItemProperty -Path $p -Name AutoAdminLogon -Value ''0'' -Type String"'
 $clearAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $clearArgument
 $clearTrigger = New-ScheduledTaskTrigger -AtLogOn -User "M"
 Register-ScheduledTask -TaskName "Gate13ClearAutoLogon" -Action $clearAction -Trigger $clearTrigger -User "SYSTEM" -RunLevel Highest -Force | Out-Null

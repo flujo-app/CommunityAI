@@ -655,3 +655,11 @@ def test_public_cli_failure_is_bounded_and_path_free(capsys, tmp_path):
         "schema_version": 1,
     }
     assert str(missing) not in output
+
+
+def test_windows_host_powershell_retains_normal_profiles(config_factory):
+    path, _ = config_factory("windows")
+    config = host_job.load_config(path)
+    assert "-NoProfile" not in host_job._entrypoint_argv(config)
+    assert "-NoProfile" not in host_job._powershell_argv("Write-Output 'normal'")
+    assert "PSModulePath" in host_job.WINDOWS_RUNTIME_ENVIRONMENT

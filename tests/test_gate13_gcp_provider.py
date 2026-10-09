@@ -285,7 +285,7 @@ def test_route_bundle_uses_fixed_runtime_and_unchanged_signed_catalog(tmp_path):
         assert hashlib.sha256(payload).hexdigest() == digest
 
 
-def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
+def test_client_startup_scripts_are_taken_from_the_pinned_qualified_sources(tmp_path):
     item = provider(
         tmp_path,
         LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
@@ -293,8 +293,8 @@ def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
 
     expected = {
         "windows": (
-            8779,
-            "3f8600c42a3c0765e100963c2e28cdef7c6b248992924ff3406941aefce7cf47",
+            10705,
+            "a5622b57b4f9143c871d67eba70de61aea10fa22d33f084349ab6c0997512e93",
         ),
         "linux": (
             3808,
@@ -798,3 +798,103 @@ def test_cleanup_instance_inspection_accepts_an_explicit_not_found_response(tmp_
 
     assert item._describe_instance(item.clients["windows"], check=False) is None
     assert len(calls) == 1
+
+
+def test_windows_adapter_survives_real_cmd_boundary():
+    if sys.platform != "win32":
+        pytest.skip("requires native Windows shell")
+    script = "[Console]::Out.Write('literal & | > < % !'); exit 0"
+    command = gcp._windows_powershell_command(script)
+    assert command.split()[:4] == ["powershell.exe", "-NoLogo", "-NonInteractive", "-EncodedCommand"]
+    assert base64.b64decode(command.split()[-1]).decode("utf-16-le") == script
+    result = subprocess.run(["cmd.exe", "/d", "/s", "/c", command], capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert b"literal & | > < % !" in result.stdout
+
+
+def test_exact_key_matches_real_private_key_and_rejects_stale_public(tmp_path):
+    import shutil
+
+    keygen = shutil.which("ssh-keygen")
+    if keygen is None:
+        pytest.skip("requires ssh-keygen")
+    key = tmp_path / "selected.key"
+    subprocess.run([keygen, "-t", "ed25519", "-N", "", "-f", str(key)], check=True, capture_output=True)
+    public = Path(str(key) + ".pub")
+    identity, fingerprint = gcp._ssh_public_identity(public.read_text().strip())
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _: None))
+    item.ssh_private_key = key
+    item.ssh_public_fingerprint = fingerprint
+    assert item._ensure_ssh_key() == public
+    public.write_text(identity + " unrelated-comment\n", encoding="ascii")
+    assert item._ensure_ssh_key() == public
+    item.ssh_public_fingerprint = "SHA256:incorrect"
+    with pytest.raises(gcp.Gate13CloudError, match="fingerprint"):
+        item._ensure_ssh_key()
+    item.ssh_public_fingerprint = fingerprint
+    other = tmp_path / "other"
+    subprocess.run([keygen, "-t", "ed25519", "-N", "", "-f", str(other)], check=True, capture_output=True)
+    public.write_text(Path(str(other) + ".pub").read_text(), encoding="ascii")
+    with pytest.raises(gcp.Gate13CloudError, match="does not match"):
+        item._ensure_ssh_key()
+
+
+def test_ssh_and_scp_use_the_same_explicit_private_key(tmp_path):
+    fake = CreateRunner()
+    item = provider(tmp_path, fake)
+    item.ssh_private_key = tmp_path / "exact project.key"
+    item._ssh("test", "echo test", action="probe")
+    item._scp([tmp_path / "file"], "test:/tmp/", action="probe")
+    for argv, _ in fake.calls:
+        assert argv[argv.index("--ssh-key-file") + 1] == str(item.ssh_private_key)
+        assert "--tunnel-through-iap" in argv
+        assert not any("StrictHostKeyChecking=no" in arg for arg in argv)
+
+
+def test_key_config_reaches_launcher_provider_and_rejects_relative_path(tmp_path):
+    value = json.loads((ROOT / "config" / "gate13_gcp.json").read_text())
+    value["ssh_private_key"] = str((tmp_path / "selected.key").resolve())
+    value["ssh_public_fingerprint"] = "SHA256:" + "A" * 43
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(value))
+    config = GcpConfig.load(path)
+    item = GcpProvider(
+        run_id=RUN_ID,
+        repository_root=ROOT,
+        output_root=tmp_path,
+        config=config,
+        runner=CreateRunner(),
+        signed_url=lambda _: "",
+    )
+    assert item.ssh_private_key == Path(value["ssh_private_key"])
+    assert item.ssh_public_fingerprint == value["ssh_public_fingerprint"]
+    value["ssh_private_key"] = "relative.key"
+    path.write_text(json.dumps(value))
+    with pytest.raises(gcp.Gate13CloudError, match="absolute"):
+        GcpConfig.load(path)
+
+
+def test_config_pins_the_fixed_windows_startup_blob(tmp_path):
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _: None))
+    actual = item._client_startup_script("windows").read_text(encoding="utf-8")
+    assert actual == (ROOT / "scripts" / "gate13_windows_client_startup.ps1").read_text(encoding="utf-8")
+    assert "-NoProfile" not in actual
+    assert "Install-Gate13SshKey" in actual
+
+
+def test_explicit_missing_key_never_generates_replacement(tmp_path):
+    fake = CreateRunner()
+    missing = tmp_path / "missing-directory" / "selected.key"
+    item = GcpProvider(
+        run_id=RUN_ID,
+        repository_root=ROOT,
+        output_root=tmp_path,
+        config=GcpConfig.load(ROOT / "config" / "gate13_gcp.json"),
+        runner=fake,
+        signed_url=lambda _: "",
+        ssh_private_key=missing,
+    )
+    with pytest.raises(gcp.Gate13CloudError, match="unavailable"):
+        item._ensure_ssh_key()
+    assert fake.calls == []
+    assert not missing.parent.exists()
