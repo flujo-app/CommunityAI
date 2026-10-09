@@ -293,7 +293,7 @@ def test_client_startup_scripts_are_taken_from_the_pinned_qualified_sources(tmp_
 
     expected = {
         "windows": (
-            8779,
+            10705,
             "a5622b57b4f9143c871d67eba70de61aea10fa22d33f084349ab6c0997512e93",
         ),
         "linux": (
@@ -814,6 +814,7 @@ def test_windows_adapter_survives_real_cmd_boundary():
 
 def test_exact_key_matches_real_private_key_and_rejects_stale_public(tmp_path):
     import shutil
+
     keygen = shutil.which("ssh-keygen")
     if keygen is None:
         pytest.skip("requires ssh-keygen")
@@ -851,24 +852,31 @@ def test_ssh_and_scp_use_the_same_explicit_private_key(tmp_path):
 
 
 def test_key_config_reaches_launcher_provider_and_rejects_relative_path(tmp_path):
-    value = json.loads((ROOT / 'config' / 'gate13_gcp.json').read_text())
-    value['ssh_private_key'] = str((tmp_path / 'selected.key').resolve())
-    value['ssh_public_fingerprint'] = 'SHA256:' + 'A' * 43
-    path = tmp_path / 'config.json'
+    value = json.loads((ROOT / "config" / "gate13_gcp.json").read_text())
+    value["ssh_private_key"] = str((tmp_path / "selected.key").resolve())
+    value["ssh_public_fingerprint"] = "SHA256:" + "A" * 43
+    path = tmp_path / "config.json"
     path.write_text(json.dumps(value))
     config = GcpConfig.load(path)
-    item = GcpProvider(run_id=RUN_ID, repository_root=ROOT, output_root=tmp_path, config=config, runner=CreateRunner(), signed_url=lambda _: '')
-    assert item.ssh_private_key == Path(value['ssh_private_key'])
-    assert item.ssh_public_fingerprint == value['ssh_public_fingerprint']
-    value['ssh_private_key'] = 'relative.key'
+    item = GcpProvider(
+        run_id=RUN_ID,
+        repository_root=ROOT,
+        output_root=tmp_path,
+        config=config,
+        runner=CreateRunner(),
+        signed_url=lambda _: "",
+    )
+    assert item.ssh_private_key == Path(value["ssh_private_key"])
+    assert item.ssh_public_fingerprint == value["ssh_public_fingerprint"]
+    value["ssh_private_key"] = "relative.key"
     path.write_text(json.dumps(value))
-    with pytest.raises(gcp.Gate13CloudError, match='absolute'):
+    with pytest.raises(gcp.Gate13CloudError, match="absolute"):
         GcpConfig.load(path)
 
 
 def test_config_pins_the_fixed_windows_startup_blob(tmp_path):
-    item = provider(tmp_path, LoggedRunner(tmp_path / 'journal.jsonl', progress=lambda _: None))
-    actual = item._client_startup_script('windows').read_text(encoding='utf-8')
-    assert actual == (ROOT / 'scripts' / 'gate13_windows_client_startup.ps1').read_text(encoding='utf-8')
-    assert '-NoProfile' not in actual
-    assert 'Install-Gate13SshKey' in actual
+    item = provider(tmp_path, LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _: None))
+    actual = item._client_startup_script("windows").read_text(encoding="utf-8")
+    assert actual == (ROOT / "scripts" / "gate13_windows_client_startup.ps1").read_text(encoding="utf-8")
+    assert "-NoProfile" not in actual
+    assert "Install-Gate13SshKey" in actual

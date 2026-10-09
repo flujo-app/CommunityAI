@@ -139,26 +139,32 @@ def test_linux_bootstrap_parses_natively():
 @pytest.mark.skipif(sys.platform != "win32", reason="requires native Windows ACLs")
 def test_key_acl_replaces_extra_grants_and_is_idempotent(tmp_path):
     source = WINDOWS.read_text(encoding="utf-8")
-    function = source[source.index("function Set-Gate13KeyAcl"):source.index("function Install-Gate13SshKey")]
+    function = source[source.index("function Set-Gate13KeyAcl") : source.index("function Install-Gate13SshKey")]
     target = tmp_path / "authorized_keys"
     target.write_text("test")
-    probe = function + f"\n$p='{target}';" + (
-        "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;"
-        "$item=Get-Item -LiteralPath $p;$acl=$item.GetAccessControl();"
-        "$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new('S-1-1-0','Read','Allow'));"
-        "$item.SetAccessControl($acl);"
-        "Set-Gate13KeyAcl -Path $p -AllowedSids @($sid);"
-        "Set-Gate13KeyAcl -Path $p -AllowedSids @($sid);"
-        "$a=$item.GetAccessControl();"
-        "if(@($a.Access).Count -ne 1 -or !$a.AreAccessRulesProtected){exit 2}"
+    probe = (
+        function
+        + f"\n$p='{target}';"
+        + (
+            "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;"
+            "$item=Get-Item -LiteralPath $p;$acl=$item.GetAccessControl();"
+            "$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new('S-1-1-0','Read','Allow'));"
+            "$item.SetAccessControl($acl);"
+            "Set-Gate13KeyAcl -Path $p -AllowedSids @($sid);"
+            "Set-Gate13KeyAcl -Path $p -AllowedSids @($sid);"
+            "$a=$item.GetAccessControl();"
+            "if(@($a.Access).Count -ne 1 -or !$a.AreAccessRulesProtected){exit 2}"
+        )
     )
-    result = subprocess.run(["powershell.exe", "-NoLogo", "-NonInteractive", "-Command", probe], capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        ["powershell.exe", "-NoLogo", "-NonInteractive", "-Command", probe], capture_output=True, text=True, timeout=30
+    )
     assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_ready_restart_refreshes_key_and_profiles_remain_enabled():
     source = WINDOWS.read_text(encoding="utf-8")
-    ready = source[source.index('if (Test-Path -LiteralPath $readyMarker'):source.index('$capability =')]
+    ready = source[source.index("if (Test-Path -LiteralPath $readyMarker") : source.index("$capability =")]
     assert "Install-Gate13SshKey" in ready
     assert "-NoProfile" not in source
     assert "-NoProfile" not in (ROOT / "scripts" / "gate13_gcp_provider.py").read_text()

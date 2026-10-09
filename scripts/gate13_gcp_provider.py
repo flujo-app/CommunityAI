@@ -149,7 +149,7 @@ def _ssh_public_identity(value: str) -> tuple[str, str]:
     except ValueError as exc:
         raise Gate13CloudError("SSH public key encoding is invalid") from exc
     type_length = int.from_bytes(blob[:4], "big")
-    if blob[4:4 + type_length] != fields[0].encode("ascii"):
+    if blob[4 : 4 + type_length] != fields[0].encode("ascii"):
         raise Gate13CloudError("SSH public key algorithm does not match encoded key")
     if len(blob) < 32:
         raise Gate13CloudError("SSH public key is truncated")
@@ -511,7 +511,10 @@ class GcpConfig:
         if (
             not expected.issubset(value)
             or set(value) - expected - optional
-            or any(value.get(field) is not None and (not isinstance(value[field], str) or not value[field]) for field in optional)
+            or any(
+                value.get(field) is not None and (not isinstance(value[field], str) or not value[field])
+                for field in optional
+            )
             or not all(isinstance(value[field], str) and value[field] for field in string_fields)
             or not isinstance(value["route_wheel_bytes"], int)
             or isinstance(value["route_wheel_bytes"], bool)
@@ -521,7 +524,9 @@ class GcpConfig:
         result = cls(**value)
         if result.ssh_private_key is not None and not Path(result.ssh_private_key).is_absolute():
             raise Gate13CloudError("configured SSH private key must be absolute")
-        if result.ssh_public_fingerprint is not None and not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", result.ssh_public_fingerprint):
+        if result.ssh_public_fingerprint is not None and not re.fullmatch(
+            r"SHA256:[A-Za-z0-9+/]{43}", result.ssh_public_fingerprint
+        ):
             raise Gate13CloudError("configured SSH public fingerprint is invalid")
         for commit in (
             result.route_source_commit,
@@ -560,7 +565,11 @@ class GcpProvider:
     ) -> None:
         if not _RUN_RE.fullmatch(run_id):
             raise Gate13CloudError("GCP run ID is invalid")
-        self.ssh_private_key = (ssh_private_key or (Path(config.ssh_private_key) if config.ssh_private_key else None) or Path.home() / ".ssh" / "google_compute_engine").resolve()
+        self.ssh_private_key = (
+            ssh_private_key
+            or (Path(config.ssh_private_key) if config.ssh_private_key else None)
+            or Path.home() / ".ssh" / "google_compute_engine"
+        ).resolve()
         self.ssh_public_fingerprint = ssh_public_fingerprint or config.ssh_public_fingerprint
         self.run_id = run_id
         self.repository_root = repository_root
@@ -758,10 +767,13 @@ class GcpProvider:
                 raise Gate13CloudError("configured SSH private key is unavailable")
             self.runner.run(
                 ["ssh-keygen", "-t", "rsa", "-b", "3072", "-N", "", "-f", private],
-                action="Creating the GCP SSH key", timeout=120,
+                action="Creating the GCP SSH key",
+                timeout=120,
             )
         result = self.runner.run(
-            ["ssh-keygen", "-y", "-f", private], action="Checking the exact GCP SSH public key", timeout=60,
+            ["ssh-keygen", "-y", "-f", private],
+            action="Checking the exact GCP SSH public key",
+            timeout=60,
         )
         identity, fingerprint = _ssh_public_identity(result.stdout.strip())
         if self.ssh_public_fingerprint is not None and fingerprint != self.ssh_public_fingerprint:
@@ -1800,7 +1812,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
                 "-PathType Leaf)) { exit 1 }; "
                 "$p=@(Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | "
                 "Where-Object {$_.UserName -like '*\\M'}); "
-                'if ($p.Count -ne 1 -or $p[0].SessionId -lt 1) { exit 1 }'
+                "if ($p.Count -ne 1 -or $p[0].SessionId -lt 1) { exit 1 }"
             )
         else:
             user = None
@@ -1832,10 +1844,7 @@ printf '%s\\n' '{{"result":"passed","ready":true,"host_user":"gate13","display":
             timeout=900,
         )
         if platform == "windows":
-            command = (
-                "powershell.exe -NoLogo -NonInteractive "
-                "-ExecutionPolicy Bypass -File C:\\Gate13Run\\stage.ps1"
-            )
+            command = "powershell.exe -NoLogo -NonInteractive " "-ExecutionPolicy Bypass -File C:\\Gate13Run\\stage.ps1"
         else:
             command = "sudo bash /tmp/stage.sh"
         result = self._ssh(
