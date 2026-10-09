@@ -23,6 +23,6 @@
   "windows_image": "windows-server-2025-dc-v20260814",
   "windows_image_project": "windows-cloud",
   "windows_machine_type": "e2-standard-8",
-  "windows_startup_commit": "e60c3577c7205ff434cad6e9396f89555626aceb",
+  "windows_startup_commit": "8748732d5881656e6efb7f658b5689ccbe6d0903",
   "zone": "us-central1-b"
 }

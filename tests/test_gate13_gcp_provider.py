@@ -285,7 +285,7 @@ def test_route_bundle_uses_fixed_runtime_and_unchanged_signed_catalog(tmp_path):
         assert hashlib.sha256(payload).hexdigest() == digest
 
 
-def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
+def test_client_startup_scripts_are_taken_from_the_pinned_qualified_sources(tmp_path):
     item = provider(
         tmp_path,
         LoggedRunner(tmp_path / "journal.jsonl", progress=lambda _message: None),
@@ -294,7 +294,7 @@ def test_client_startup_scripts_are_taken_from_the_successful_run(tmp_path):
     expected = {
         "windows": (
             8779,
-            "3f8600c42a3c0765e100963c2e28cdef7c6b248992924ff3406941aefce7cf47",
+            "a5622b57b4f9143c871d67eba70de61aea10fa22d33f084349ab6c0997512e93",
         ),
         "linux": (
             3808,
@@ -864,3 +864,11 @@ def test_key_config_reaches_launcher_provider_and_rejects_relative_path(tmp_path
     path.write_text(json.dumps(value))
     with pytest.raises(gcp.Gate13CloudError, match='absolute'):
         GcpConfig.load(path)
+
+
+def test_config_pins_the_fixed_windows_startup_blob(tmp_path):
+    item = provider(tmp_path, LoggedRunner(tmp_path / 'journal.jsonl', progress=lambda _: None))
+    actual = item._client_startup_script('windows').read_text(encoding='utf-8')
+    assert actual == (ROOT / 'scripts' / 'gate13_windows_client_startup.ps1').read_text(encoding='utf-8')
+    assert '-NoProfile' not in actual
+    assert 'Install-Gate13SshKey' in actual
